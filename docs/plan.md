@@ -44,7 +44,7 @@ Status legend: [x] done, [~] in progress, [ ] not started.
 - [ ] Point at the real Supabase project (env), deploy static host, install
       to phone home screen.
 
-## Phase 4: first real use (Colt)
+## Phase 4: first real use
 
 - [ ] Log training maxes via Claude (set_training_max).
 - [ ] Paste a coach screenshot, confirm parse, upsert + confirm program.

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Strength log + Claude programming layer. Single-user system for Colt.
+Strength log + Claude programming layer. Single-user system, public repo.
 
 A coached lifter logs sets on their phone (PWA). Claude reads the log via MCP to
 analyze progress and writes programming parsed from coach screenshots. The coach

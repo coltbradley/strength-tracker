@@ -12,8 +12,8 @@ first. Spiked via research instead of code, findings:
   the feature request was closed "not planned" (anthropics/claude-ai-mcp
   issues #112, #644).
 - `mcp-remote` (geelen/mcp-remote) supports `--header "Authorization:Bearer x"`.
-  Claude Desktop already uses mcp-remote for the intervals-icu server, so this
-  is the same pattern that's already working on this machine.
+  It is the standard stdio-to-HTTP bridge for Claude Desktop and keeps the
+  secret in local config, out of any cloud connector UI.
 - Supabase officially documents MCP servers on Edge Functions with streamable
   HTTP, deployed with `--no-verify-jwt` so the function does its own auth.
 - Supabase Auth does now ship an OAuth 2.1 server with DCR and PKCE
@@ -72,6 +72,35 @@ policies later without a decision entry here.
 The offline queue replays inserts with `on conflict do nothing`. That is only
 idempotent if the client owns the id. `sessions.id` and `sets.id` have no
 database default on purpose; the PWA generates UUIDv4 at creation time.
+
+## 2026-08-25 repo is public open source
+
+Decided mid-build. Consequences, applied retroactively:
+
+- No secrets, project refs, user uuids, emails, or personal identifiers
+  anywhere in the repo. Secrets exist only in deployment (edge function
+  secrets, local Claude Desktop config, PWA build env). The generated seed
+  and all `.env*` files are gitignored.
+- Security cannot rely on the code being private: docs/security.md holds the
+  threat model and argues each layer (RLS floor, invoker-rights views,
+  tool-surface-as-authorization, constant-time auth, confirm gate).
+- Every non-obvious design choice gets a technical rationale in this file;
+  the README fronts the five load-bearing claims. Open-source readers should
+  be able to reconstruct the reasoning, not just the code.
+- License: MIT for the code. Exercise seed data is Unlicense upstream
+  (public domain), compatible, attributed in the README.
+
+## 2026-08-25 database validated in PGlite, not a local Supabase stack
+
+The dev machine has no Docker, so `supabase start` is unavailable, and
+eyeballing 300 lines of SQL is not verification. `scripts/validate-db.mjs`
+runs the real migrations, seed, and fixtures inside PGlite (Postgres compiled
+to WASM, runs in Node) with a small shim for the `auth` schema
+(`auth.users`, `auth.uid()` reading a session GUC) and an `authenticated`
+role, then asserts view math and RLS behavior (append-only, cross-user
+isolation). Not identical to the Supabase platform (no PostgREST layer, shim
+instead of GoTrue), but it executes every line of committed SQL and the
+core invariants. CI can run it with zero infrastructure.
 
 ## 2026-08-25 kg everywhere in storage, lb is display-only
 
