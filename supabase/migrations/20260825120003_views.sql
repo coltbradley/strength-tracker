@@ -1,12 +1,15 @@
 -- Derived metrics. Views only, never materialized, never stored.
 -- security_invoker=true so RLS on the underlying tables applies to callers.
+-- Calendar bucketing (dates, ISO weeks, "today") uses app_tz(), the user's
+-- home timezone, not the DB's UTC: an evening US workout must land on the
+-- local calendar date, or weekly volume and TM effectivity drift by a day.
 
 -- Current training max per user/exercise (latest effective_date <= today).
 create view v_current_tm with (security_invoker = true) as
 select distinct on (user_id, exercise_id)
   user_id, exercise_id, value_kg, effective_date
 from training_maxes
-where effective_date <= current_date
+where effective_date <= (now() at time zone app_tz())::date
 order by user_id, exercise_id, effective_date desc;
 
 -- Prescriptions with %TM resolved against the current training max.
@@ -44,16 +47,27 @@ select user_id, exercise_id, session_id,
 from v_e1rm
 group by user_id, exercise_id, session_id;
 
--- Working sets per exercise per ISO week (date_trunc('week') = ISO Monday).
+-- Working sets per exercise per ISO week (date_trunc('week') = ISO Monday),
+-- weeks bounded in the user's timezone.
 create view v_weekly_volume with (security_invoker = true) as
 select
   user_id, exercise_id,
-  (date_trunc('week', performed_at))::date as week_start,
+  (date_trunc('week', performed_at at time zone app_tz()))::date as week_start,
   count(*) as working_sets,
   sum(load_kg * reps) as tonnage_kg
 from sets
 where set_type = 'working'
-group by user_id, exercise_id, (date_trunc('week', performed_at))::date;
+group by user_id, exercise_id, (date_trunc('week', performed_at at time zone app_tz()))::date;
+
+-- Set counts per session, for session summaries. Aggregating here instead of
+-- in tool code keeps results correct past PostgREST's row cap.
+create view v_session_set_counts with (security_invoker = true) as
+select
+  user_id, session_id,
+  count(*) as total_sets,
+  count(*) filter (where set_type = 'working') as working_sets
+from sets
+group by user_id, session_id;
 
 -- Prescribed vs achieved, the analytical core of the system.
 -- rep_outcome: hit / missed / exceeded against the prescribed rep range.
@@ -79,7 +93,7 @@ left join lateral (
   from training_maxes t
   where t.user_id = s.user_id
     and t.exercise_id = s.exercise_id
-    and t.effective_date <= s.performed_at::date
+    and t.effective_date <= (s.performed_at at time zone app_tz())::date
   order by t.effective_date desc
   limit 1
 ) tm on true

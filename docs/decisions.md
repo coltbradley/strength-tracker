@@ -63,7 +63,7 @@ committed, so the seed script transforms JSON itself, no jq dependency).
 
 `sets` has insert and select policies only. With RLS deny-by-default, update
 and delete are impossible for the client no matter what the app code does.
-`sessions` additionally gets update (ending a session edits the row) but no
+`sessions` also gets update (ending a session edits the row) but no
 delete. This is the mechanism, not a lint rule; do not add the missing
 policies later without a decision entry here.
 
@@ -108,3 +108,51 @@ Single unit in the database avoids a class of conversion bugs in views and
 analytics. The PWA converts at the edge (display and steppers) with a
 settings toggle. Plate rounding (nearest 2.5 kg / 5 lb) happens client-side
 and in `v_resolved_prescriptions.plate_load_kg` for convenience.
+
+## 2026-08-25 first adversarial review round: what it changed
+
+Five finder agents (correctness x2, cross-layer contracts, cleanup,
+conventions) plus two verifiers ran over the whole repo; 20 findings
+confirmed, 1 refuted. The structural fixes, with reasoning:
+
+- **Timezone bucketing via `app.tz`.** Views bucketed dates and ISO weeks in
+  DB time (UTC), so a Sunday-evening Pacific session landed in Monday's week
+  and could pick the wrong effective TM. Views now bucket through `app_tz()`,
+  a function reading the `app.tz` database setting (UTC fallback). One
+  setting per deployment, no schema change per user, still stateless views.
+- **`goals` gained `unique (user_id, exercise_id)`.** "One goal per
+  exercise" was app-layer convention enforced by a non-transactional
+  delete-then-insert, which loses the goal on partial failure and duplicates
+  it under concurrency. The constraint makes `set_goal` a single upsert:
+  atomic, convergent.
+- **Program replace inverted to insert-then-delete.** PostgREST has no
+  transactions, and deleting the old unconfirmed parse before inserting the
+  new one meant a mid-insert failure destroyed the only copy. Now the new
+  program lands fully before the old one is removed; a failed attempt can
+  leave a stray unconfirmed program (reported in the result), never a lost
+  one. Asymmetry chosen deliberately: stray beats gone.
+- **Outbox dead-lettering.** Retry-forever on the head item meant one
+  permanent failure (FK to a deleted prescription, RLS after sign-out)
+  jammed every later write behind it, and the only escape wiped IndexedDB,
+  losing training data. Errors are now classified: transient retries,
+  permanent parks the item (kept, visible, manually retryable) and the queue
+  moves on. The one auto-repair: a set whose prescription was deleted
+  server-side retries once with `prescription_id = null`, because the set
+  data matters more than the planned-vs-actual link.
+- **OTP code fallback on login.** On an installed iOS PWA the magic link
+  opens in Safari, whose storage the installed app cannot see, so link-only
+  auth locks the app out. The email's 6-digit code, entered in-app, is the
+  reliable path.
+- **Row caps everywhere PostgREST truncates.** Unbounded ascending queries
+  silently drop the newest rows at the 1000-row default cap. History queries
+  now order descending with explicit limits and reverse in code, and session
+  set counts come from a `v_session_set_counts` view instead of counting
+  fetched rows.
+- **Editing migrations in place was allowed this round** because nothing has
+  been deployed anywhere. First deploy freezes them; after that, changes are
+  new migration files only.
+
+Fixed without ceremony: exact-873 seed assertions became ranges (upstream
+grows), case-sensitive Bearer scheme check, calendar-invalid dates passing
+the ISO regex, per-screen duplicated formatting extracted to shared helpers,
+stepper bounds mirroring DB checks.

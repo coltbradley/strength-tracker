@@ -2,11 +2,22 @@
 // screen needs is served from the IndexedDB cache written at session start,
 // so it works fully offline mid-gym. Sets are append-only: a mistake is
 // corrected by logging another set, never edited.
+//
+// State notes:
+// - Entries are keyed by prescription id (or `extra:<exercise_id>` for
+//   unprescribed additions) so the same exercise under two prescriptions
+//   stays two distinct entries. set_index stays scoped per EXERCISE across
+//   entries (matches the DB model).
+// - `setsRef` is the synchronous source of truth for logged sets: log taps
+//   compute set_index from it and update it atomically, so a double-tap can
+//   never mint a duplicate index or drop a set. Bootstrap results merge INTO
+//   it (union by id) rather than replacing it.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
 import { RestTimer } from "../components/RestTimer";
+import { SetRow } from "../components/SetRow";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import {
   getExercises,
@@ -18,9 +29,10 @@ import {
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { prefillSet } from "../lib/prefill";
+import { formatRxTarget, rxHasNoTm } from "../lib/format";
 import { reportError } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
-import { stepKg, toDisplay, formatLoad } from "../lib/units";
+import { stepKg, toDisplay } from "../lib/units";
 import type {
   ActiveSession,
   ExerciseRow,
@@ -35,6 +47,8 @@ interface ExtraExercise {
 }
 
 interface ExerciseEntry {
+  /** prescription id, or `extra:<exercise_id>` for unprescribed additions */
+  key: string;
   exercise_id: string;
   name: string;
   rx: ResolvedPrescriptionRow | null;
@@ -42,6 +56,10 @@ interface ExerciseEntry {
 
 const DEFAULT_REST_SECONDS = 120;
 const SET_TYPES: SetType[] = ["warmup", "working", "backoff"];
+const LOG_LOCK_MS = 400;
+// DB checks: reps between 0 and 100; load_kg numeric(6,2)
+const MAX_REPS = 100;
+const MAX_LOAD_KG = 999;
 
 export function Session() {
   const navigate = useNavigate();
@@ -53,13 +71,15 @@ export function Session() {
   const [rx, setRx] = useState<ResolvedPrescriptionRow[]>([]);
   const [extras, setExtras] = useState<ExtraExercise[]>([]);
   const [sets, setSets] = useState<SetInsert[]>([]);
+  const [setsLoaded, setSetsLoaded] = useState(false);
   const [lastActuals, setLastActuals] = useState<LastActuals>({});
-  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [currentEntryId, setCurrentEntryId] = useState<string | null>(null);
 
   const [loadKg, setLoadKg] = useState(20);
   const [reps, setReps] = useState(8);
   const [setType, setSetType] = useState<SetType>("working");
   const [timerEndsAt, setTimerEndsAt] = useState<number | null>(null);
+  const [logLocked, setLogLocked] = useState(false);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -67,6 +87,18 @@ export function Session() {
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
 
   const sessionId = active?.id ?? null;
+
+  // Synchronous source of truth for logged sets; setSets mirrors it for
+  // rendering. All mutations go through applySets.
+  const setsRef = useRef<SetInsert[]>([]);
+  const applySets = useCallback(
+    (updater: (prev: SetInsert[]) => SetInsert[]): SetInsert[] => {
+      setsRef.current = updater(setsRef.current);
+      setSets(setsRef.current);
+      return setsRef.current;
+    },
+    [],
+  );
 
   // ---- bootstrap -----------------------------------------------------------
 
@@ -95,53 +127,75 @@ export function Session() {
           outbox.pendingSets(a.id),
         ]);
         if (cancelled) return;
-        setSets(mergeSets(server, pending));
+        // Merge INTO current state (a set may have been logged while this
+        // load was in flight) — never replace.
+        applySets((prev) => mergeSets(mergeSets(server, pending), prev));
       } catch (e) {
         reportError(e, "load session");
+      } finally {
+        if (!cancelled) setSetsLoaded(true);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySets]);
 
   // redirect if no active session
   useEffect(() => {
     if (active === null) navigate("/", { replace: true });
   }, [active, navigate]);
 
-  // ---- exercise list -------------------------------------------------------
+  // ---- exercise entries ----------------------------------------------------
 
   const entries: ExerciseEntry[] = useMemo(() => {
     const fromRx = rx.map((r) => ({
+      key: r.id,
       exercise_id: r.exercise_id,
       name: r.exercise_name,
       rx: r,
     }));
     const extraEntries = extras
       .filter((e) => !fromRx.some((f) => f.exercise_id === e.exercise_id))
-      .map((e) => ({ exercise_id: e.exercise_id, name: e.name, rx: null }));
+      .map((e) => ({
+        key: `extra:${e.exercise_id}`,
+        exercise_id: e.exercise_id,
+        name: e.name,
+        rx: null,
+      }));
     return [...fromRx, ...extraEntries];
   }, [rx, extras]);
 
   const current = useMemo(
-    () =>
-      entries.find((e) => e.exercise_id === currentId) ?? entries[0] ?? null,
-    [entries, currentId],
+    () => entries.find((e) => e.key === currentEntryId) ?? entries[0] ?? null,
+    [entries, currentEntryId],
   );
 
-  const setsFor = useCallback(
+  /** all sets for an exercise, across entries (set_index scope) */
+  const setsForExercise = useCallback(
     (exerciseId: string) => sets.filter((s) => s.exercise_id === exerciseId),
     [sets],
   );
 
-  // ---- prefill on exercise switch ------------------------------------------
+  /** sets attributed to one entry (by prescription link) */
+  const setsForEntry = useCallback(
+    (entry: ExerciseEntry) =>
+      entry.rx
+        ? sets.filter((s) => s.prescription_id === entry.rx?.id)
+        : sets.filter(
+            (s) =>
+              s.exercise_id === entry.exercise_id && s.prescription_id === null,
+          ),
+    [sets],
+  );
+
+  // ---- prefill on entry switch ---------------------------------------------
 
   const prefilledFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!current || prefilledFor.current === current.exercise_id) return;
-    prefilledFor.current = current.exercise_id;
-    const logged = setsFor(current.exercise_id);
+    if (!current || prefilledFor.current === current.key) return;
+    prefilledFor.current = current.key;
+    const logged = setsForExercise(current.exercise_id);
     const lastThis = logged[logged.length - 1];
     const p = prefillSet({
       prescription: current.rx
@@ -160,35 +214,42 @@ export function Session() {
     setLoadKg(p.loadKg);
     setReps(p.reps);
     setSetType("working");
-  }, [current, setsFor, lastActuals]);
+  }, [current, setsForExercise, lastActuals]);
 
   // ---- actions -------------------------------------------------------------
 
-  const logSet = async () => {
-    if (!current || !sessionId) return;
-    try {
-      const logged = setsFor(current.exercise_id);
-      const set: SetInsert = {
-        id: uuid(),
-        session_id: sessionId,
-        exercise_id: current.exercise_id,
-        prescription_id: current.rx?.id ?? null,
-        set_index: logged.length,
-        set_type: setType,
-        load_kg: loadKg,
-        reps,
-        performed_at: new Date().toISOString(),
-      };
-      await outbox.enqueue({ kind: "insert", table: "sets", payload: set });
-      const next = [...sets, set];
-      setSets(next);
-      await cacheSet(cacheKeys.sessionSets(sessionId), next);
-      const rest = current.rx?.rest_seconds ?? DEFAULT_REST_SECONDS;
-      setTimerEndsAt(Date.now() + rest * 1000);
-      setSetType("working");
-    } catch (e) {
-      reportError(e, "log set");
-    }
+  const logSet = () => {
+    if (!current || !sessionId || logLocked || !setsLoaded) return;
+    setLogLocked(true);
+    window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
+
+    // set_index from the synchronous ref: max existing index + 1, per exercise
+    const nextIndex =
+      setsRef.current
+        .filter((s) => s.exercise_id === current.exercise_id)
+        .reduce((m, s) => Math.max(m, s.set_index), -1) + 1;
+    const set: SetInsert = {
+      id: uuid(),
+      session_id: sessionId,
+      exercise_id: current.exercise_id,
+      prescription_id: current.rx?.id ?? null,
+      set_index: nextIndex,
+      set_type: setType,
+      load_kg: loadKg,
+      reps,
+      performed_at: new Date().toISOString(),
+    };
+    const next = applySets((prev) => [...prev, set]);
+    cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
+      reportError(e, "cache session sets"),
+    );
+    outbox
+      .enqueue({ kind: "insert", table: "sets", payload: set })
+      .catch((e: unknown) => reportError(e, "log set"));
+
+    const rest = current.rx?.rest_seconds ?? DEFAULT_REST_SECONDS;
+    setTimerEndsAt(Date.now() + rest * 1000);
+    setSetType("working");
   };
 
   const openSearch = () => {
@@ -203,12 +264,18 @@ export function Session() {
 
   const addExercise = async (ex: ExerciseRow) => {
     if (!sessionId) return;
-    const nextExtras = extras.some((e) => e.exercise_id === ex.id)
-      ? extras
-      : [...extras, { exercise_id: ex.id, name: ex.name }];
+    // if the exercise is already on the list (prescribed or added), select it
+    const existing = entries.find((e) => e.exercise_id === ex.id);
+    if (existing) {
+      setCurrentEntryId(existing.key);
+      setSearchOpen(false);
+      setDrawerOpen(false);
+      return;
+    }
+    const nextExtras = [...extras, { exercise_id: ex.id, name: ex.name }];
     setExtras(nextExtras);
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
-    setCurrentId(ex.id);
+    setCurrentEntryId(`extra:${ex.id}`);
     setSearchOpen(false);
     setDrawerOpen(false);
   };
@@ -218,7 +285,7 @@ export function Session() {
   if (active === undefined) return <div className="screen muted">Loading…</div>;
   if (!active) return null;
 
-  const currentSets = current ? setsFor(current.exercise_id) : [];
+  const currentEntrySets = current ? setsForEntry(current) : [];
   const filtered = allExercises
     .filter((e) => e.name.toLowerCase().includes(search.toLowerCase()))
     .slice(0, 30);
@@ -237,20 +304,12 @@ export function Session() {
             </button>
             {current.rx && (
               <div className="rx-context">
-                target {current.rx.sets}×
-                {current.rx.reps_min === current.rx.reps_max
-                  ? current.rx.reps_min
-                  : `${current.rx.reps_min}–${current.rx.reps_max}`}
-                {current.rx.plate_load_kg !== null ||
-                current.rx.resolved_load_kg !== null
-                  ? ` @ ${formatLoad(current.rx.plate_load_kg ?? current.rx.resolved_load_kg ?? 0, unit)}`
-                  : current.rx.load_pct_tm !== null
-                    ? " · no TM set"
-                    : ""}
+                target {formatRxTarget(current.rx, unit)}
+                {rxHasNoTm(current.rx) ? " · no TM set" : ""}
               </div>
             )}
             <div className="rx-context muted">
-              logged {currentSets.length}
+              logged {currentEntrySets.length}
               {current.rx ? ` / ${current.rx.sets}` : ""} sets
             </div>
           </div>
@@ -261,6 +320,7 @@ export function Session() {
             display={String(toDisplay(loadKg, unit))}
             step={stepKg(unit, false)}
             fineStep={stepKg(unit, true)}
+            max={MAX_LOAD_KG}
             onChange={setLoadKg}
           />
           <Stepper
@@ -269,6 +329,7 @@ export function Session() {
             display={String(reps)}
             step={1}
             min={0}
+            max={MAX_REPS}
             onChange={(v) => setReps(Math.round(v))}
           />
 
@@ -288,21 +349,16 @@ export function Session() {
           <button
             type="button"
             className="btn btn-primary btn-log"
-            onClick={() => void logSet()}
+            disabled={logLocked || !setsLoaded}
+            onClick={logSet}
           >
-            Log set
+            {setsLoaded ? "Log set" : "Loading…"}
           </button>
 
-          {currentSets.length > 0 && (
+          {currentEntrySets.length > 0 && (
             <div className="logged-sets">
-              {currentSets.map((s) => (
-                <div key={s.id} className="logged-set">
-                  <span className="muted">#{s.set_index + 1}</span>
-                  <span>
-                    {toDisplay(s.load_kg, unit)} {unit} × {s.reps}
-                  </span>
-                  <span className="muted">{s.set_type}</span>
-                </div>
+              {currentEntrySets.map((s) => (
+                <SetRow key={s.id} set={s} unit={unit} />
               ))}
             </div>
           )}
@@ -344,14 +400,14 @@ export function Session() {
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
             <div className="sheet-title">Exercises</div>
             {entries.map((e) => {
-              const done = setsFor(e.exercise_id).length;
+              const done = setsForEntry(e).length;
               return (
                 <button
-                  key={e.exercise_id}
+                  key={e.key}
                   type="button"
-                  className={`drawer-row ${current?.exercise_id === e.exercise_id ? "drawer-on" : ""}`}
+                  className={`drawer-row ${current?.key === e.key ? "drawer-on" : ""}`}
                   onClick={() => {
-                    setCurrentId(e.exercise_id);
+                    setCurrentEntryId(e.key);
                     setDrawerOpen(false);
                   }}
                 >

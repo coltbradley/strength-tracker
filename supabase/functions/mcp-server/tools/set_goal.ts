@@ -2,9 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must, requireExercise } from "../lib/db.ts";
+import { assertIsoDate } from "../lib/dates.ts";
 import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function registerSetGoal(
   server: McpServer,
@@ -32,37 +31,42 @@ export function registerSetGoal(
           .describe("Target estimated 1RM in kg (not lb)."),
         target_date: z
           .string()
-          .regex(ISO_DATE, "must be an ISO date (YYYY-MM-DD)")
           .optional()
-          .describe("Optional ISO date to hit the target by."),
+          .describe("Optional ISO date (YYYY-MM-DD) to hit the target by."),
       },
     },
     (args) =>
       guard(ctx, "set_goal", async () => {
+        const targetDate = args.target_date
+          ? assertIsoDate(args.target_date, "target_date")
+          : null;
         const exercise = await requireExercise(db, args.exercise_id);
 
-        const { data: replaced, error: deleteError } = await db.client
+        // For reporting only; the write itself is a single atomic upsert on
+        // the (user_id, exercise_id) unique constraint.
+        const { data: previous, error: prevError } = await db.client
           .from("goals")
-          .delete()
+          .select("target_e1rm_kg, target_date")
           .eq("user_id", db.ownerId)
           .eq("exercise_id", args.exercise_id)
-          .select("target_e1rm_kg, target_date");
-        if (deleteError) {
-          throw new Error(`replace existing goal: ${deleteError.message}`);
-        }
+          .maybeSingle();
+        if (prevError) throw new Error(`previous goal: ${prevError.message}`);
 
         const row = must(
           await db.client
             .from("goals")
-            .insert({
-              user_id: db.ownerId,
-              exercise_id: args.exercise_id,
-              target_e1rm_kg: args.target_e1rm_kg,
-              target_date: args.target_date ?? null,
-            })
+            .upsert(
+              {
+                user_id: db.ownerId,
+                exercise_id: args.exercise_id,
+                target_e1rm_kg: args.target_e1rm_kg,
+                target_date: targetDate,
+              },
+              { onConflict: "user_id,exercise_id" },
+            )
             .select("id, target_e1rm_kg, target_date")
             .single(),
-          "insert goal",
+          "upsert goal",
         ) as { id: string; target_e1rm_kg: number; target_date: string | null };
 
         return jsonResult({
@@ -71,7 +75,7 @@ export function registerSetGoal(
           exercise_name: exercise.name,
           target_e1rm_kg: row.target_e1rm_kg,
           target_date: row.target_date,
-          replaced_goal: replaced && replaced.length > 0 ? replaced[0] : null,
+          replaced_goal: previous, // null when this is the first goal
         });
       }),
   );

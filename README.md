@@ -66,12 +66,12 @@ node scripts/validate-db.mjs           # runs migrations+seed+fixtures in PGlite
 
 ## Docs
 
-- [docs/spec.md](docs/spec.md) — original technical direction
-- [docs/architecture.md](docs/architecture.md) — system as built
-- [docs/decisions.md](docs/decisions.md) — every deviation and why
-- [docs/security.md](docs/security.md) — threat model, what's secret, why
+- [docs/spec.md](docs/spec.md): original technical direction
+- [docs/architecture.md](docs/architecture.md): system as built
+- [docs/decisions.md](docs/decisions.md): every deviation and why
+- [docs/security.md](docs/security.md): threat model, what's secret, why
   service-role-behind-a-bearer is acceptable here
-- [docs/plan.md](docs/plan.md) — build status
+- [docs/plan.md](docs/plan.md): build status
 
 ## License
 

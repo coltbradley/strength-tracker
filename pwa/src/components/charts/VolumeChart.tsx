@@ -1,5 +1,6 @@
 // Hand-rolled SVG bar chart: working sets per ISO week.
 
+import { formatShortDate } from "../../lib/format";
 import type { WeeklyVolumeRow } from "../../lib/types";
 
 interface VolumeChartProps {
@@ -21,11 +22,6 @@ export function VolumeChart({ weeks }: VolumeChartProps) {
   const innerH = H - PAD.top - PAD.bottom;
   const slot = innerW / shown.length;
   const barW = Math.min(slot * 0.7, 26);
-
-  const fmtWeek = (iso: string) => {
-    const d = new Date(iso);
-    return `${d.getMonth() + 1}/${d.getDate()}`;
-  };
 
   return (
     <svg
@@ -72,10 +68,10 @@ export function VolumeChart({ weeks }: VolumeChartProps) {
         );
       })}
       <text x={PAD.left} y={H - 6} className="chart-tick">
-        {fmtWeek(shown[0].week_start)}
+        {formatShortDate(shown[0].week_start)}
       </text>
       <text x={W - PAD.right} y={H - 6} className="chart-tick" textAnchor="end">
-        {fmtWeek(shown[shown.length - 1].week_start)}
+        {formatShortDate(shown[shown.length - 1].week_start)}
       </text>
     </svg>
   );

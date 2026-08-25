@@ -15,6 +15,8 @@ export interface OutboxItem {
   created_at: string;
   retries: number;
   last_error: string | null;
+  /** 'dead' = permanently failing, skipped by flush until retryDead() */
+  status: "pending" | "dead";
 }
 
 interface StrengthDB extends DBSchema {
@@ -62,10 +64,15 @@ export const cacheKeys = {
   programs: "programs",
   plannedWorkouts: "plannedWorkouts",
   exercises: "exercises",
-  lastActuals: "lastActuals",
   activeSession: "activeSession",
+  lastActuals: (excludeSessionId?: string) =>
+    `lastActuals:${excludeSessionId ?? "all"}`,
   prescriptions: (plannedWorkoutId: string) => `rx:${plannedWorkoutId}`,
   sessionRx: (sessionId: string) => `sessionRx:${sessionId}`,
   sessionExtras: (sessionId: string) => `sessionExtras:${sessionId}`,
   sessionSets: (sessionId: string) => `sessionSets:${sessionId}`,
+  e1rm: (exerciseId: string) => `e1rm:${exerciseId}`,
+  volume: (exerciseId: string) => `volume:${exerciseId}`,
+  goal: (exerciseId: string) => `goal:${exerciseId}`,
+  recentSets: (exerciseId: string) => `recent:${exerciseId}`,
 };

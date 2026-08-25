@@ -14,7 +14,7 @@ import {
 } from "../lib/data";
 import { reportError } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
-import { toDisplay } from "../lib/units";
+import { SetRow } from "../components/SetRow";
 import type {
   ExerciseRow,
   GoalProgressRow,
@@ -157,13 +157,7 @@ export function History() {
                   .slice()
                   .sort((a, b) => a.set_index - b.set_index)
                   .map((s) => (
-                    <div key={s.id} className="logged-set">
-                      <span className="muted">#{s.set_index + 1}</span>
-                      <span>
-                        {toDisplay(s.load_kg, unit)} {unit} × {s.reps}
-                      </span>
-                      <span className="muted">{s.set_type}</span>
-                    </div>
+                    <SetRow key={s.id} set={s} unit={unit} />
                   ))}
               </div>
             ))}

@@ -44,6 +44,13 @@ Status legend: [x] done, [~] in progress, [ ] not started.
 - [ ] Point at the real Supabase project (env), deploy static host, install
       to phone home screen.
 
+## Phase 3.5: adversarial review (done)
+
+- [x] Five finder agents + verification pass over the whole repo; 20
+      confirmed findings, all fixed (see decisions.md, review round entry).
+      Full verification re-run green: 22 PGlite checks, deno check, PWA
+      build + 26 tests.
+
 ## Phase 4: first real use
 
 - [ ] Log training maxes via Claude (set_training_max).

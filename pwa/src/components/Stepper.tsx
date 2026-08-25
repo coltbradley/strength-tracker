@@ -8,6 +8,7 @@ interface StepperProps {
   step: number;
   fineStep?: number;
   min?: number;
+  max?: number;
   onChange: (next: number) => void;
 }
 
@@ -18,11 +19,12 @@ export function Stepper({
   step,
   fineStep,
   min = 0,
+  max = Number.POSITIVE_INFINITY,
   onChange,
 }: StepperProps) {
   const bump = (delta: number) => {
-    const next = Math.max(min, Math.round((value + delta) * 100) / 100);
-    onChange(next);
+    const raw = Math.round((value + delta) * 100) / 100;
+    onChange(Math.min(max, Math.max(min, raw)));
   };
 
   return (

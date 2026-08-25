@@ -14,7 +14,7 @@ import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { reportError } from "../lib/errors";
-import { formatLoad } from "../lib/units";
+import { formatRxTarget, rxHasNoTm } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import type {
   ActiveSession,
@@ -87,8 +87,10 @@ export function Today() {
         },
       });
       // Best-effort prefetch so the session screen works fully offline.
+      // getLastActuals is keyed by excludeSessionId — warm the exact key the
+      // session screen will read.
       void getExercises().catch(() => undefined);
-      void getLastActuals().catch(() => undefined);
+      void getLastActuals(sessionId).catch(() => undefined);
       navigate("/session");
     } catch (e) {
       reportError(e, "start session");
@@ -139,21 +141,14 @@ export function Today() {
                     <div key={r.id} className="rx-row">
                       <span className="rx-name">{r.exercise_name}</span>
                       <span className="rx-spec">
-                        {r.sets}×
-                        {r.reps_min === r.reps_max
-                          ? r.reps_min
-                          : `${r.reps_min}–${r.reps_max}`}
-                        {r.plate_load_kg !== null || r.resolved_load_kg !== null
-                          ? ` @ ${formatLoad(r.plate_load_kg ?? r.resolved_load_kg ?? 0, unit)}`
-                          : ""}
+                        {formatRxTarget(r, unit)}
                         {r.rest_seconds !== null
                           ? ` · ${r.rest_seconds}s rest`
                           : ""}
                       </span>
-                      {r.load_pct_tm !== null &&
-                        r.resolved_load_kg === null && (
-                          <span className="warn-badge">no TM set</span>
-                        )}
+                      {rxHasNoTm(r) && (
+                        <span className="warn-badge">no TM set</span>
+                      )}
                     </div>
                   ))}
                   {!active && (

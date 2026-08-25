@@ -8,13 +8,13 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 
 ## Layout
 
-- `supabase/migrations/` — schema, RLS, views. Numbered SQL, never edit an
+- `supabase/migrations/`: schema, RLS, views. Numbered SQL, never edit an
   applied migration, add a new one.
-- `supabase/functions/mcp-server/` — MCP server as a Supabase Edge Function
+- `supabase/functions/mcp-server/`: MCP server as a Supabase Edge Function
   (Deno, streamable HTTP). Tools in `tools/`, shared code in `lib/`.
-- `pwa/` — React + Vite PWA. Offline-first, IndexedDB write queue.
-- `scripts/` — seed generation and dev utilities (Node).
-- `docs/` — plan, architecture, decisions, setup. `docs/decisions.md` is the
+- `pwa/`: React + Vite PWA. Offline-first, IndexedDB write queue.
+- `scripts/`: seed generation and dev utilities (Node).
+- `docs/`: plan, architecture, decisions, setup. `docs/decisions.md` is the
   log of every deviation from the original spec and why.
 
 ## Hard rules

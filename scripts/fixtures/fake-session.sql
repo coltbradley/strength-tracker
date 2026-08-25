@@ -1,5 +1,8 @@
 -- Smoke-test fixture: one plausible squat session so Claude has something to
 -- analyze before the PWA exists (build plan phase 2/4).
+-- Deliberate exemption from the "only the PWA writes sessions/sets" rule:
+-- this is a dev fixture run by hand in the SQL editor, not an app write path.
+-- Do not turn this pattern into a script or tool.
 -- Run in the Supabase dashboard SQL editor AFTER replacing :owner below with
 -- your auth.users uuid. Idempotent: fixed uuids + on conflict do nothing.
 -- Remove later with: delete from sessions where id = 'f0000000-0000-4000-8000-000000000001';

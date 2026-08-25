@@ -44,9 +44,9 @@ export async function requireAuth(
   }
 
   const header = req.headers.get("authorization") ?? "";
-  const token = header.startsWith("Bearer ")
-    ? header.slice("Bearer ".length)
-    : "";
+  // Scheme is case-insensitive per RFC 9110.
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  const token = match ? match[1] : "";
 
   if (token.length === 0 || !(await timingSafeEqual(token, secret))) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {

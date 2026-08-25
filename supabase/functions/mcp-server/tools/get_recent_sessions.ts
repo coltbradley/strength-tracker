@@ -52,24 +52,31 @@ export function registerGetRecentSessions(
           "sessions",
         ) as unknown as SessionRow[];
 
+        // Counts come from v_session_set_counts: the DB aggregates, so results
+        // stay correct past PostgREST's row cap (raw set rows would truncate
+        // silently at 1000).
         const counts = new Map<string, { total: number; working: number }>();
         if (sessions.length > 0) {
-          const setRows = must(
+          const countRows = must(
             await db.client
-              .from("sets")
-              .select("session_id, set_type")
+              .from("v_session_set_counts")
+              .select("session_id, total_sets, working_sets")
               .eq("user_id", db.ownerId)
               .in(
                 "session_id",
                 sessions.map((s) => s.id),
               ),
             "set counts",
-          ) as { session_id: string; set_type: string }[];
-          for (const row of setRows) {
-            const c = counts.get(row.session_id) ?? { total: 0, working: 0 };
-            c.total += 1;
-            if (row.set_type === "working") c.working += 1;
-            counts.set(row.session_id, c);
+          ) as {
+            session_id: string;
+            total_sets: number;
+            working_sets: number;
+          }[];
+          for (const row of countRows) {
+            counts.set(row.session_id, {
+              total: row.total_sets,
+              working: row.working_sets,
+            });
           }
         }
 

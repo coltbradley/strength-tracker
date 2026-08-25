@@ -14,7 +14,7 @@ export function registerSearchExercises(
     {
       title: "Search exercises",
       description:
-        "Search the global exercise library (873 entries from free-exercise-db) by " +
+        "Search the global exercise library (800+ entries from free-exercise-db) by " +
         "name or id slug, optionally filtered by equipment and primary muscle. Use " +
         "this to find the exact exercise_id required by every other tool. Ids are " +
         "slugs like 'Barbell_Squat'.",

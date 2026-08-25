@@ -31,7 +31,7 @@ the generated seed are gitignored; `.env.example` documents shape only.
    requests carry a static bearer token, not a user session, so `auth.uid()`
    is null on that path and RLS cannot scope it. Instead: the service client
    is constructed in exactly one module, every query stamps/filters
-   `OWNER_USER_ID`, and the tool surface is the authorization boundary —
+   `OWNER_USER_ID`, and the tool surface is the authorization boundary,
    there are no tools that write `sessions` or `sets`, so the training
    record is unreachable from MCP by construction. The tradeoff (service
    role behind a bearer check vs. running a full OAuth 2.1 server for one

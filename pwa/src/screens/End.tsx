@@ -11,6 +11,8 @@ import { useUnit } from "../hooks/useUnit";
 import { toDisplay, stepKg } from "../lib/units";
 import type { ActiveSession, SetInsert } from "../lib/types";
 
+// Mirror of the DB check: sessions.session_rpe between 0 and 10
+// (supabase/migrations/20260825120001_schema.sql) — keep in sync.
 const RPE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const LAST_BW_KEY = "lastBodyweightKg";
 

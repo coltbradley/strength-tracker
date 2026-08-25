@@ -60,6 +60,7 @@ await db.exec(`
   grant usage on schema public, auth to authenticated;
   grant select, insert, update, delete on all tables in schema public to authenticated;
   grant execute on all functions in schema auth to authenticated;
+  grant execute on all functions in schema public to authenticated;
 `);
 
 // --- seed ------------------------------------------------------------------
@@ -112,9 +113,10 @@ await db.exec(`
 console.log("\nview + invariant checks:");
 
 if (seeded)
-  await check("seed: 873 exercises from free-exercise-db", async () => {
+  await check("seed: 800+ exercises from free-exercise-db", async () => {
+    // range, not exact: CI regenerates from live upstream, which grows over time
     const r = await db.query(`select count(*)::int as n from exercises where source = 'free-exercise-db'`);
-    assertEq(r.rows[0].n, 873, "count");
+    if (r.rows[0].n < 800) throw new Error(`only ${r.rows[0].n} exercises seeded`);
   });
 
 await check("v_current_tm picks latest effective TM, ignores future rows", async () => {
@@ -192,6 +194,48 @@ await check("v_goal_progress computes pct of target", async () => {
   assertEq(r.rows[0].pct, 84.7, "144/170");
 });
 
+await check("v_session_set_counts aggregates per session", async () => {
+  const r = await db.query(
+    `select total_sets::int as t, working_sets::int as w
+       from v_session_set_counts where session_id = '44444444-0000-4000-8000-000000000001'`,
+  );
+  assertEq(r.rows[0].t, 5, "total");
+  assertEq(r.rows[0].w, 3, "working");
+});
+
+await check("timezone: evening local set buckets into the local ISO week", async () => {
+  // Sunday 2026-08-16 18:00 America/Los_Angeles = Monday 2026-08-17 01:00 UTC.
+  // With app.tz set, the set must land in the week starting Mon 2026-08-10.
+  await db.exec(`select set_config('app.tz', 'America/Los_Angeles', false)`);
+  await db.exec(`
+    insert into sessions (id, user_id, started_at) values
+      ('44444444-0000-4000-8000-000000000002', '${OWNER}', '2026-08-17T00:30:00Z');
+    insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps, performed_at) values
+      ('55555555-0000-4000-8000-000000000010', '${OWNER}', '44444444-0000-4000-8000-000000000002',
+       'Barbell_Deadlift', 0, 'working', 180, 3, '2026-08-17T01:00:00Z');
+  `);
+  const r = await db.query(
+    `select week_start::text as w from v_weekly_volume
+      where user_id = $1 and exercise_id = 'Barbell_Deadlift'`,
+    [OWNER],
+  );
+  assertEq(r.rows[0].w, "2026-08-10", "local Sunday stays in the prior ISO week");
+  const utc = await db.query(`select set_config('app.tz', '', false)`);
+  void utc; // reset to UTC fallback for remaining checks
+});
+
+await check("goals: unique (user_id, exercise_id) rejects duplicates", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into goals (user_id, exercise_id, target_e1rm_kg) values ('${OWNER}', 'Barbell_Squat', 999)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("duplicate goal insert succeeded");
+});
+
 // --- RLS: run as `authenticated` ------------------------------------------
 console.log("\nRLS checks (as role authenticated):");
 const asUser = async (uid, sql, params) => {
@@ -205,7 +249,7 @@ const asUser = async (uid, sql, params) => {
 
 await check("owner sees own sets through RLS", async () => {
   const r = await asUser(OWNER, `select count(*)::int as n from sets`);
-  assertEq(r.rows[0].n, 5, "own sets");
+  assertEq(r.rows[0].n, 6, "own sets");
 });
 
 await check("other user sees nothing", async () => {
@@ -229,7 +273,7 @@ await check("sets are append-only: delete affects 0 rows", async () => {
   const r = await asUser(OWNER, `delete from sets where user_id = '${OWNER}'`);
   assertEq(r.affectedRows ?? 0, 0, "no delete policy");
   const still = await db.query(`select count(*)::int as n from sets`);
-  assertEq(still.rows[0].n, 5, "data unchanged");
+  assertEq(still.rows[0].n, 6, "data unchanged");
 });
 
 await check("sessions cannot be deleted, can be updated (end-of-session)", async () => {

@@ -2,6 +2,7 @@
 
 import { toDisplay } from "../../lib/units";
 import { useUnit } from "../../hooks/useUnit";
+import { formatShortDate } from "../../lib/format";
 import type { SessionBestE1rmRow } from "../../lib/types";
 
 interface E1rmChartProps {
@@ -48,7 +49,6 @@ export function E1rmChart({ series, goalKg }: E1rmChartProps) {
   const yTicks = [yMin, (yMin + yMax) / 2, yMax];
   const first = new Date(xMin);
   const last = new Date(xMax);
-  const fmtDate = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
 
   return (
     <svg
@@ -106,10 +106,10 @@ export function E1rmChart({ series, goalKg }: E1rmChartProps) {
         />
       ))}
       <text x={PAD.left} y={H - 6} className="chart-tick">
-        {fmtDate(first)}
+        {formatShortDate(first)}
       </text>
       <text x={W - PAD.right} y={H - 6} className="chart-tick" textAnchor="end">
-        {fmtDate(last)}
+        {formatShortDate(last)}
       </text>
     </svg>
   );

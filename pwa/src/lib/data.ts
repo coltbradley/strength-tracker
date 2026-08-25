@@ -17,6 +17,10 @@ import type {
   WeeklyVolumeRow,
 } from "./types";
 
+/** Column list for every `sets` select — one place, matches SetInsert. */
+const SET_COLUMNS =
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at";
+
 async function fetchWithCache<T>(
   key: string,
   fetcher: () => Promise<T>,
@@ -117,7 +121,7 @@ export async function getLastActuals(excludeSessionId?: string): Promise<{
   data: LastActuals;
   fromCache: boolean;
 }> {
-  return fetchWithCache(cacheKeys.lastActuals, async () => {
+  return fetchWithCache(cacheKeys.lastActuals(excludeSessionId), async () => {
     const { data, error } = await supabase
       .from("sets")
       .select("exercise_id,load_kg,reps,set_type,performed_at,session_id")
@@ -153,9 +157,7 @@ export async function getServerSessionSets(
   try {
     const { data, error } = await supabase
       .from("sets")
-      .select(
-        "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at",
-      )
+      .select(SET_COLUMNS)
       .eq("session_id", sessionId)
       .order("performed_at");
     throwIf(error);
@@ -188,7 +190,7 @@ export function mergeSets(
 export async function getE1rmSeries(
   exerciseId: string,
 ): Promise<{ data: SessionBestE1rmRow[]; fromCache: boolean }> {
-  return fetchWithCache(`e1rm:${exerciseId}`, async () => {
+  return fetchWithCache(cacheKeys.e1rm(exerciseId), async () => {
     const { data, error } = await supabase
       .from("v_session_best_e1rm")
       .select("exercise_id,session_id,performed_at,best_e1rm_kg")
@@ -202,7 +204,7 @@ export async function getE1rmSeries(
 export async function getWeeklyVolume(
   exerciseId: string,
 ): Promise<{ data: WeeklyVolumeRow[]; fromCache: boolean }> {
-  return fetchWithCache(`volume:${exerciseId}`, async () => {
+  return fetchWithCache(cacheKeys.volume(exerciseId), async () => {
     const { data, error } = await supabase
       .from("v_weekly_volume")
       .select("exercise_id,week_start,working_sets,tonnage_kg")
@@ -216,7 +218,7 @@ export async function getWeeklyVolume(
 export async function getGoalProgress(
   exerciseId: string,
 ): Promise<{ data: GoalProgressRow | null; fromCache: boolean }> {
-  return fetchWithCache(`goal:${exerciseId}`, async () => {
+  return fetchWithCache(cacheKeys.goal(exerciseId), async () => {
     const { data, error } = await supabase
       .from("v_goal_progress")
       .select("*")
@@ -231,12 +233,10 @@ export async function getGoalProgress(
 export async function getRecentSets(
   exerciseId: string,
 ): Promise<{ data: SetInsert[]; fromCache: boolean }> {
-  return fetchWithCache(`recent:${exerciseId}`, async () => {
+  return fetchWithCache(cacheKeys.recentSets(exerciseId), async () => {
     const { data, error } = await supabase
       .from("sets")
-      .select(
-        "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at",
-      )
+      .select(SET_COLUMNS)
       .eq("exercise_id", exerciseId)
       .order("performed_at", { ascending: false })
       .limit(60);

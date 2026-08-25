@@ -6,6 +6,7 @@ export function Login() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState("");
 
   const send = async () => {
     setBusy(true);
@@ -23,6 +24,28 @@ export function Login() {
     }
   };
 
+  // Fallback for installed iOS PWAs: the magic link opens in Safari, whose
+  // storage is partitioned away from the installed app, so the session never
+  // reaches the PWA. The same email carries a 6-digit code when the Supabase
+  // email template includes {{ .Token }} — verifying it here signs in inside
+  // the app itself.
+  const verifyCode = async () => {
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email,
+        token: code.trim(),
+        type: "email",
+      });
+      if (error) throw new Error(error.message);
+      // success: onAuthStateChange in useAuth re-renders the app
+    } catch (e) {
+      reportError(e, "verify code");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="login">
       <h1 className="login-title">Strength Log</h1>
@@ -33,9 +56,47 @@ export function Login() {
         </div>
       )}
       {sent ? (
-        <p className="login-sent">
-          Magic link sent to {email}. Open it on this device.
-        </p>
+        <div className="login-form">
+          <p className="login-sent">
+            Magic link sent to {email}. Open it on this device — or, if you’re
+            in the installed app, enter the 6-digit code from the email:
+          </p>
+          <form
+            className="login-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void verifyCode();
+            }}
+          >
+            <input
+              className="input"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]*"
+              maxLength={6}
+              placeholder="6-digit code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={busy || code.trim().length < 6}
+            >
+              {busy ? "Verifying…" : "Verify code"}
+            </button>
+          </form>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              setSent(false);
+              setCode("");
+            }}
+          >
+            Use a different email
+          </button>
+        </div>
       ) : (
         <form
           className="login-form"

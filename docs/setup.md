@@ -24,7 +24,7 @@ supabase link --project-ref <PROJECT_REF>
 supabase db push
 ```
 
-4. Seed exercises (873 rows, idempotent, regenerate any time):
+4. Seed exercises (800+ rows, idempotent, regenerate any time):
 
 ```bash
 node scripts/build-exercise-seed.mjs
@@ -34,10 +34,26 @@ supabase db query < supabase/seed/exercises.generated.sql
 If `supabase db query` isn't in your CLI version, paste the generated file
 into the dashboard SQL editor. It's a single idempotent statement.
 
+5. Set your home timezone for calendar bucketing in the derived-metric views
+   (dates and ISO weeks; without this, evening workouts land on the next UTC
+   day). Dashboard SQL editor:
+
+```sql
+alter database postgres set app.tz to 'America/Los_Angeles';
+```
+
 ## 2. Your user
 
 1. Authentication → Users → Add user (your email, or invite + magic link).
 2. Copy the user's UUID. This is `OWNER_USER_ID`.
+3. Authentication → URL Configuration: set the Site URL to your deployed PWA
+   origin and add it (plus `http://localhost:5173` for dev) to the redirect
+   allowlist. Magic links silently fall back to the Site URL for origins not
+   on this list.
+4. Authentication → Email Templates → Magic Link: make sure the template
+   includes the `{{ .Token }}` 6-digit code as well as the link. The
+   installed iOS app signs in with the code (the link opens in Safari, whose
+   storage the installed app can't see).
 
 ## 3. MCP server
 

@@ -5,6 +5,14 @@
 
 create type set_type as enum ('warmup', 'working', 'backoff');
 
+-- The user's home timezone for calendar bucketing (dates, ISO weeks) in the
+-- derived-metric views. Set once per deployment:
+--   alter database postgres set app.tz to 'America/Los_Angeles';
+-- Falls back to UTC when unset so views never error.
+create function app_tz() returns text
+  language sql stable
+  as $$ select coalesce(nullif(current_setting('app.tz', true), ''), 'UTC') $$;
+
 -- Global exercise library, seeded from yuhonas/free-exercise-db (Unlicense).
 -- id is the upstream slug (e.g. 'Barbell_Squat'); custom entries use source='custom'.
 create table exercises (
@@ -37,7 +45,10 @@ create table goals (
   exercise_id    text not null references exercises (id),
   target_e1rm_kg numeric(6,2) not null check (target_e1rm_kg > 0),
   target_date    date,
-  created_at     timestamptz not null default now()
+  created_at     timestamptz not null default now(),
+  -- one goal per exercise; set_goal upserts on this, and it makes concurrent
+  -- writes converge instead of duplicating
+  unique (user_id, exercise_id)
 );
 
 -- PLANNED ------------------------------------------------------------------

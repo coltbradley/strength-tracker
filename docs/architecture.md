@@ -48,14 +48,15 @@ SQL views only, all `security_invoker`: `v_current_tm`,
 Read (`readOnlyHint: true`):
 
 - `search_exercises(query, equipment?, muscle?)`
-- `get_lift_history(exercise_id, since?)` — sets, e1RM series, adherence
-- `get_recent_sessions(n?)` — sessions with sRPE and set counts
+- `get_lift_history(exercise_id, since?)`: sets, e1RM series, adherence,
+  rest times (capped per section, with truncation flags)
+- `get_recent_sessions(n?)`: sessions with sRPE and set counts
 - `get_goal_progress(exercise_id?)`
 
 Write:
 
-- `upsert_program(program_json)` — always lands `confirmed_at = NULL`
-- `confirm_program(program_id)` — separate call, only after explicit user
+- `upsert_program(program_json)`: always lands `confirmed_at = NULL`
+- `confirm_program(program_id)`: separate call, only after explicit user
   approval in chat
 - `set_training_max(exercise_id, value_kg, effective_date?)`
 - `set_goal(exercise_id, target_e1rm_kg, target_date?)`
@@ -78,10 +79,13 @@ idempotent with zero merge logic.
 
 ## Error tracking
 
-- PWA: all errors route through `pwa/src/lib/errors.ts` — console in dev,
+- PWA: all errors route through `pwa/src/lib/errors.ts`: console in dev,
   optional Sentry when `VITE_SENTRY_DSN` is set, and a global handler for
   unhandled rejections. Queue failures surface in the sync status UI, never
-  silently dropped.
+  silently dropped: transient errors retry, permanent ones (FK, RLS,
+  constraint) park the item as dead but kept, with a visible count and a
+  manual retry. A set whose prescription vanished server-side retries once
+  with the link nulled so the training data always lands.
 - Edge function: structured JSON logs (request id, tool, duration, outcome)
   readable in the Supabase dashboard; tool errors return proper MCP error
   results, never crash the function.

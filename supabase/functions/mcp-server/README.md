@@ -5,7 +5,7 @@ Streamable HTTP, stateless (every POST is independent, no session ids). Claude
 connects through `mcp-remote` with a static bearer token and gets 8 tools: 4
 read (exercises, lift history, sessions, goal progress) and 4 write (programs,
 program confirmation, training maxes, goals). It can never write `sessions` or
-`sets` — those belong to the PWA.
+`sets`: those belong to the PWA.
 
 ## Env vars
 

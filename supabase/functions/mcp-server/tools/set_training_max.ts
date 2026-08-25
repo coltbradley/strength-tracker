@@ -2,9 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must, requireExercise } from "../lib/db.ts";
+import { assertIsoDate, todayIso } from "../lib/dates.ts";
 import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function registerSetTrainingMax(
   server: McpServer,
@@ -33,16 +32,19 @@ export function registerSetTrainingMax(
           .describe("Training max in kg (not lb)."),
         effective_date: z
           .string()
-          .regex(ISO_DATE, "must be an ISO date (YYYY-MM-DD)")
           .optional()
-          .describe("ISO date the TM takes effect. Default: today."),
+          .describe(
+            "ISO date (YYYY-MM-DD) the TM takes effect. Default: today. A " +
+              "future date is allowed but is not current until it arrives.",
+          ),
       },
     },
     (args) =>
       guard(ctx, "set_training_max", async () => {
+        const effectiveDate = args.effective_date
+          ? assertIsoDate(args.effective_date, "effective_date")
+          : todayIso();
         const exercise = await requireExercise(db, args.exercise_id);
-        const effectiveDate =
-          args.effective_date ?? new Date().toISOString().slice(0, 10);
 
         const { data: previous, error: prevError } = await db.client
           .from("v_current_tm")
@@ -69,6 +71,9 @@ export function registerSetTrainingMax(
           "upsert training max",
         ) as { value_kg: number; effective_date: string };
 
+        // A future-dated TM is legal but invisible to v_current_tm (and to
+        // %TM resolution) until the date arrives — make that explicit.
+        const isFuture = effectiveDate > todayIso();
         return jsonResult({
           exercise_id: exercise.id,
           exercise_name: exercise.name,
@@ -77,6 +82,15 @@ export function registerSetTrainingMax(
             value_kg: row.value_kg,
             effective_date: row.effective_date,
           },
+          ...(isFuture
+            ? {
+                note:
+                  `Not current until ${effectiveDate}; ` +
+                  (previous
+                    ? `current TM remains ${previous.value_kg} kg until then.`
+                    : "no TM is current until then."),
+              }
+            : {}),
         });
       }),
   );

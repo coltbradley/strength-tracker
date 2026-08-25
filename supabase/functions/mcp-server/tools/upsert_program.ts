@@ -2,12 +2,14 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
+import { todayIso } from "../lib/dates.ts";
 import {
   guard,
   jsonResult,
   ToolError,
   type RequestContext,
 } from "../lib/errors.ts";
+import { formatRepRange } from "../lib/format.ts";
 
 const prescriptionSchema = z
   .object({
@@ -202,16 +204,46 @@ export function registerUpsertProgram(
           for (const row of tmRows) tms.set(row.exercise_id, row.value_kg);
           const missingTm = pctIds.filter((id) => !tms.has(id));
           if (missingTm.length > 0) {
+            // A future-dated TM exists but is invisible to v_current_tm until
+            // its date arrives — say so instead of just "no TM".
+            const futureRows = must(
+              await db.client
+                .from("training_maxes")
+                .select("exercise_id, value_kg, effective_date")
+                .eq("user_id", db.ownerId)
+                .in("exercise_id", missingTm)
+                .gt("effective_date", todayIso())
+                .order("effective_date", { ascending: true }),
+              "future TM lookup",
+            ) as {
+              exercise_id: string;
+              value_kg: number;
+              effective_date: string;
+            }[];
+            const futureNote =
+              futureRows.length > 0
+                ? " Note: future-dated TMs exist but are not yet current: " +
+                  futureRows
+                    .map(
+                      (r) =>
+                        `${r.exercise_id} (${r.value_kg} kg effective ${r.effective_date})`,
+                    )
+                    .join(", ") +
+                  "."
+                : "";
             throw new ToolError(
               `These exercises use load_pct_tm but have no current training max: ` +
                 `${missingTm.join(", ")}. Set one with set_training_max first; ` +
-                "%TM programs must be resolvable.",
+                "%TM programs must be resolvable." +
+                futureNote,
             );
           }
         }
 
         // Upsert semantics: replace an UNCONFIRMED program with the same name.
-        // Confirmed programs are never touched.
+        // Confirmed programs are never touched. The old program is deleted only
+        // AFTER the new one is fully written: a failed re-parse must never
+        // destroy the previous good parse.
         const existing = must(
           await db.client
             .from("programs")
@@ -220,22 +252,15 @@ export function registerUpsertProgram(
             .eq("name", program.name),
           "existing program lookup",
         ) as { id: string; confirmed_at: string | null }[];
-        const replaced = existing.filter((p) => p.confirmed_at === null);
-        const confirmedSameName = existing.length - replaced.length;
-        if (replaced.length > 0) {
-          const { error } = await db.client
-            .from("programs")
-            .delete()
-            .eq("user_id", db.ownerId)
-            .eq("name", program.name)
-            .is("confirmed_at", null);
-          if (error)
-            throw new Error(`replace unconfirmed program: ${error.message}`);
-        }
+        const oldUnconfirmedIds = existing
+          .filter((p) => p.confirmed_at === null)
+          .map((p) => p.id);
+        const confirmedSameName = existing.length - oldUnconfirmedIds.length;
 
         // Insert program, then workouts, then prescriptions. PostgREST has no
-        // transactions; on failure past the program insert, delete the program
-        // (cascade cleans up children) so no half-written program is left.
+        // transactions; on failure past the program insert, delete the NEW
+        // program (cascade cleans up children) so no half-written program is
+        // left — the old unconfirmed program is still intact at that point.
         const inserted = must(
           await db.client
             .from("programs")
@@ -296,6 +321,24 @@ export function registerUpsertProgram(
           throw err;
         }
 
+        // New program fully written: now retire the old unconfirmed one(s).
+        // If this cleanup fails the write still succeeded — warn, don't fail.
+        let staleWarning: string | null = null;
+        if (oldUnconfirmedIds.length > 0) {
+          const { error: cleanupError } = await db.client
+            .from("programs")
+            .delete()
+            .eq("user_id", db.ownerId)
+            .in("id", oldUnconfirmedIds)
+            .is("confirmed_at", null);
+          if (cleanupError) {
+            staleWarning =
+              `The new program was written, but deleting the old unconfirmed ` +
+              `program(s) failed: ${oldUnconfirmedIds.join(", ")}. ` +
+              `They are now stale duplicates of '${program.name}'.`;
+          }
+        }
+
         // Markdown summary of what was written.
         const lines = [
           `## Program written: ${program.name}`,
@@ -309,13 +352,10 @@ export function registerUpsertProgram(
           for (const p of [...w.prescriptions].sort(
             (a, b) => a.position - b.position,
           )) {
-            const reps =
-              p.reps_min === p.reps_max
-                ? `${p.sets} x ${p.reps_min}`
-                : `${p.sets} x ${p.reps_min}-${p.reps_max}`;
             lines.push(
               `| ${w.day_index} | ${w.label ?? ""} | ${p.position} | ${p.exercise_id} ` +
-                `| ${reps} | ${loadLabel(p, tms)} | ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,
+                `| ${formatRepRange(p.sets, p.reps_min, p.reps_max)} | ${loadLabel(p, tms)} ` +
+                `| ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,
             );
           }
         }
@@ -331,13 +371,22 @@ export function registerUpsertProgram(
               "already exist and were left untouched.",
           );
         }
+        if (staleWarning) {
+          lines.push("", `Warning: ${staleWarning}`);
+        }
 
         return jsonResult(
           {
             program_id: programId,
             name: program.name,
             confirmed: false,
-            replaced_unconfirmed: replaced.length,
+            replaced_unconfirmed: staleWarning ? 0 : oldUnconfirmedIds.length,
+            ...(staleWarning
+              ? {
+                  warning: staleWarning,
+                  stale_unconfirmed_program_ids: oldUnconfirmedIds,
+                }
+              : {}),
             workouts: program.workouts.length,
             prescriptions: program.workouts.reduce(
               (n, w) => n + w.prescriptions.length,
