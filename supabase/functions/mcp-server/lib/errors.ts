@@ -2,7 +2,9 @@
 // to show the caller (validation failures, missing rows). Anything else is
 // logged in full server-side and returned as a generic message + request id.
 
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+// Extensionless on purpose: type-only import (erased at runtime), and the
+// extensionless path is the one whose types resolve under Deno.
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types";
 import { log } from "./log.ts";
 
 /** Expected, user-facing tool failure. The message goes to the client verbatim. */
