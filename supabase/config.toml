@@ -1,0 +1,15 @@
+# Supabase local dev config. Only non-default values; the CLI fills the rest.
+project_id = "strength-tracker"
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed/exercises.generated.sql"]
+
+[auth]
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+
+# MCP server does its own bearer-token auth; the gateway must not demand a
+# Supabase JWT. Deploy with --no-verify-jwt as well.
+[functions.mcp-server]
+verify_jwt = false
