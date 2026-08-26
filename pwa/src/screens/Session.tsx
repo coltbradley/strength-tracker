@@ -1,23 +1,28 @@
-// Set entry — the core screen. Steppers only, no keyboard. Everything the
-// screen needs is served from the IndexedDB cache written at session start,
-// so it works fully offline mid-gym. Sets are append-only: a mistake is
-// corrected by logging another set, never edited.
+// Set entry — the core screen. Everything the screen needs is served from
+// the IndexedDB cache written at session start, so it works fully offline
+// mid-gym. Sets are append-only: a mistake is corrected by logging another
+// set, never edited.
 //
-// State notes:
-// - Entries are keyed by prescription id (or `extra:<exercise_id>` for
-//   unprescribed additions) so the same exercise under two prescriptions
-//   stays two distinct entries. set_index stays scoped per EXERCISE across
-//   entries (matches the DB model).
+// State notes (preserved from the review round):
+// - Entries are keyed by prescription id (or `extra:<exercise_id>`), so the
+//   same exercise under two prescriptions stays two distinct entries.
+//   set_index stays scoped per EXERCISE across entries.
 // - `setsRef` is the synchronous source of truth for logged sets: log taps
-//   compute set_index from it and update it atomically, so a double-tap can
-//   never mint a duplicate index or drop a set. Bootstrap results merge INTO
-//   it (union by id) rather than replacing it.
+//   compute set_index from it atomically; bootstrap merges INTO it by id.
+// - Rest: the timer starts when a set is logged; when the NEXT set is logged
+//   the elapsed rest is stamped onto it as rest_seconds_actual (append-only —
+//   never an update to a prior row). DONE hides the strip but keeps the
+//   clock running for recording; > 3600 s elapsed records null.
+// - Sheets (drawer / search / pad / plates) are mutually exclusive and the
+//   rest strip hides while one is open.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
 import { RestTimer } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
+import { NumberPad, type PadRequest } from "../components/NumberPad";
+import { PlateSheet } from "../components/PlateSheet";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import {
   getExercises,
@@ -29,10 +34,16 @@ import {
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { prefillSet } from "../lib/prefill";
-import { formatRxTarget, rxHasNoTm } from "../lib/format";
+import { split } from "../lib/plates";
+import { formatClock, formatRxTarget, rxHasNoTm } from "../lib/format";
 import { reportError } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
-import { stepKg, toDisplay } from "../lib/units";
+import {
+  useBarKg,
+  useDefaultRestSeconds,
+  usePlatesOnHand,
+} from "../hooks/useSettings";
+import { fromDisplay, kgToLb, stepKg, toDisplay } from "../lib/units";
 import type {
   ActiveSession,
   ExerciseRow,
@@ -54,16 +65,31 @@ interface ExerciseEntry {
   rx: ResolvedPrescriptionRow | null;
 }
 
-const DEFAULT_REST_SECONDS = 120;
+interface RestState {
+  startedAt: number;
+  targetSeconds: number;
+  forLabel: string;
+}
+
+type PadKind = "load" | "reps" | "rest";
+interface PadSpec {
+  kind: PadKind;
+  fromPlates?: boolean;
+}
+
 const SET_TYPES: SetType[] = ["warmup", "working", "backoff"];
 const LOG_LOCK_MS = 400;
-// DB checks: reps between 0 and 100; load_kg numeric(6,2)
+// DB checks: reps between 0 and 100; rest_seconds_actual <= 3600
 const MAX_REPS = 100;
 const MAX_LOAD_KG = 999;
+const MAX_REST_SECONDS = 3600;
 
 export function Session() {
   const navigate = useNavigate();
   const unit = useUnit();
+  const defaultRest = useDefaultRestSeconds();
+  const inventory = usePlatesOnHand(unit);
+  const barKg = useBarKg(unit);
 
   const [active, setActive] = useState<ActiveSession | null | undefined>(
     undefined,
@@ -73,23 +99,50 @@ export function Session() {
   const [sets, setSets] = useState<SetInsert[]>([]);
   const [setsLoaded, setSetsLoaded] = useState(false);
   const [lastActuals, setLastActuals] = useState<LastActuals>({});
+  const [equipMap, setEquipMap] = useState<Record<string, string | null>>({});
   const [currentEntryId, setCurrentEntryId] = useState<string | null>(null);
 
   const [loadKg, setLoadKg] = useState(20);
   const [reps, setReps] = useState(8);
   const [setType, setSetType] = useState<SetType>("working");
-  const [timerEndsAt, setTimerEndsAt] = useState<number | null>(null);
   const [logLocked, setLogLocked] = useState(false);
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [rest, setRest] = useState<RestState | null>(null);
+  // survives DONE so the next log can still record elapsed rest
+  const restRef = useRef<{ startedAt: number } | null>(null);
+
+  const [sheet, setSheet] = useState<"drawer" | "search" | "plates" | null>(
+    null,
+  );
+  const [pad, setPad] = useState<PadSpec | null>(null);
   const [search, setSearch] = useState("");
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
+  const [exercisesFailed, setExercisesFailed] = useState(false);
+
+  // The bootstrap load can come up empty (first run, offline, cold cache);
+  // opening the search sheet retries rather than showing a lying spinner.
+  useEffect(() => {
+    if (sheet !== "search" || allExercises.length > 0) return;
+    let cancelled = false;
+    setExercisesFailed(false);
+    getExercises()
+      .then((r) => {
+        if (cancelled) return;
+        setAllExercises(r.data);
+        setEquipMap(Object.fromEntries(r.data.map((e) => [e.id, e.equipment])));
+      })
+      .catch(() => {
+        if (!cancelled) setExercisesFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet]);
 
   const sessionId = active?.id ?? null;
 
-  // Synchronous source of truth for logged sets; setSets mirrors it for
-  // rendering. All mutations go through applySets.
+  // Synchronous source of truth for logged sets.
   const setsRef = useRef<SetInsert[]>([]);
   const applySets = useCallback(
     (updater: (prev: SetInsert[]) => SetInsert[]): SetInsert[] => {
@@ -113,22 +166,25 @@ export function Session() {
           return;
         }
         setActive(a);
-        const [rxCached, extrasCached, actuals] = await Promise.all([
+        const [rxCached, extrasCached, actuals, exercises] = await Promise.all([
           cacheGet<ResolvedPrescriptionRow[]>(cacheKeys.sessionRx(a.id)),
           cacheGet<ExtraExercise[]>(cacheKeys.sessionExtras(a.id)),
           getLastActuals(a.id).catch(() => ({ data: {} as LastActuals })),
+          getExercises().catch(() => ({ data: [] as ExerciseRow[] })),
         ]);
         if (cancelled) return;
         setRx(rxCached ?? []);
         setExtras(extrasCached ?? []);
         setLastActuals(actuals.data);
+        setEquipMap(
+          Object.fromEntries(exercises.data.map((e) => [e.id, e.equipment])),
+        );
+        setAllExercises(exercises.data);
         const [server, pending] = await Promise.all([
           getServerSessionSets(a.id),
           outbox.pendingSets(a.id),
         ]);
         if (cancelled) return;
-        // Merge INTO current state (a set may have been logged while this
-        // load was in flight) — never replace.
         applySets((prev) => mergeSets(mergeSets(server, pending), prev));
       } catch (e) {
         reportError(e, "load session");
@@ -141,7 +197,6 @@ export function Session() {
     };
   }, [applySets]);
 
-  // redirect if no active session
   useEffect(() => {
     if (active === null) navigate("/", { replace: true });
   }, [active, navigate]);
@@ -171,13 +226,11 @@ export function Session() {
     [entries, currentEntryId],
   );
 
-  /** all sets for an exercise, across entries (set_index scope) */
   const setsForExercise = useCallback(
     (exerciseId: string) => sets.filter((s) => s.exercise_id === exerciseId),
     [sets],
   );
 
-  /** sets attributed to one entry (by prescription link) */
   const setsForEntry = useCallback(
     (entry: ExerciseEntry) =>
       entry.rx
@@ -188,6 +241,10 @@ export function Session() {
           ),
     [sets],
   );
+
+  const equipment = current ? (equipMap[current.exercise_id] ?? null) : null;
+  const plateable = equipment === "barbell" || equipment === "machine";
+  const machine = equipment === "machine";
 
   // ---- prefill on entry switch ---------------------------------------------
 
@@ -216,6 +273,19 @@ export function Session() {
     setSetType("working");
   }, [current, setsForExercise, lastActuals]);
 
+  // ---- rest helpers --------------------------------------------------------
+
+  const restElapsedSeconds = (): number | null => {
+    if (!restRef.current) return null;
+    return (Date.now() - restRef.current.startedAt) / 1000;
+  };
+
+  const recordableRest = (): number | null => {
+    const el = restElapsedSeconds();
+    if (el === null || el > MAX_REST_SECONDS) return null;
+    return Math.max(0, Math.round(el));
+  };
+
   // ---- actions -------------------------------------------------------------
 
   const logSet = () => {
@@ -223,7 +293,6 @@ export function Session() {
     setLogLocked(true);
     window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
 
-    // set_index from the synchronous ref: max existing index + 1, per exercise
     const nextIndex =
       setsRef.current
         .filter((s) => s.exercise_id === current.exercise_id)
@@ -238,6 +307,7 @@ export function Session() {
       load_kg: loadKg,
       reps,
       performed_at: new Date().toISOString(),
+      rest_seconds_actual: recordableRest(),
     };
     const next = applySets((prev) => [...prev, set]);
     cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
@@ -247,37 +317,97 @@ export function Session() {
       .enqueue({ kind: "insert", table: "sets", payload: set })
       .catch((e: unknown) => reportError(e, "log set"));
 
-    const rest = current.rx?.rest_seconds ?? DEFAULT_REST_SECONDS;
-    setTimerEndsAt(Date.now() + rest * 1000);
+    const now = Date.now();
+    restRef.current = { startedAt: now };
+    setRest({
+      startedAt: now,
+      targetSeconds: current.rx?.rest_seconds ?? defaultRest,
+      forLabel: `${current.name} set ${nextIndex + 1}`,
+    });
     setSetType("working");
   };
 
-  const openSearch = () => {
-    setSearchOpen(true);
+  const openSheet = (kind: "drawer" | "search" | "plates") => {
+    setSheet(kind);
+    setPad(null);
     setSearch("");
-    if (allExercises.length === 0) {
-      getExercises()
-        .then((r) => setAllExercises(r.data))
-        .catch((e: unknown) => reportError(e, "load exercises"));
-    }
+  };
+
+  const openPad = (kind: PadKind, fromPlates = false) => {
+    setPad({ kind, fromPlates });
+    setSheet(null);
   };
 
   const addExercise = async (ex: ExerciseRow) => {
     if (!sessionId) return;
-    // if the exercise is already on the list (prescribed or added), select it
     const existing = entries.find((e) => e.exercise_id === ex.id);
     if (existing) {
       setCurrentEntryId(existing.key);
-      setSearchOpen(false);
-      setDrawerOpen(false);
+      setSheet(null);
       return;
     }
     const nextExtras = [...extras, { exercise_id: ex.id, name: ex.name }];
     setExtras(nextExtras);
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
     setCurrentEntryId(`extra:${ex.id}`);
-    setSearchOpen(false);
-    setDrawerOpen(false);
+    setSheet(null);
+  };
+
+  // ---- pad request ---------------------------------------------------------
+
+  const padRequest = (): PadRequest | null => {
+    if (!pad || !current) return null;
+    const U = unit.toUpperCase();
+    if (pad.kind === "load") {
+      return {
+        label: `${current.name.toUpperCase()} · LOAD IN ${U}`,
+        action: pad.fromPlates ? "BACK TO PLATES" : "SET LOAD",
+        initial: String(toDisplay(loadKg, unit)),
+        allowDecimal: true,
+        onCommit: (v) => {
+          const kg = Math.min(MAX_LOAD_KG, Math.max(0, fromDisplay(v, unit)));
+          setLoadKg(Math.round(kg * 100) / 100);
+          setPad(null);
+          if (pad.fromPlates) setSheet("plates");
+        },
+        onCancel: () => {
+          setPad(null);
+          if (pad.fromPlates) setSheet("plates");
+        },
+      };
+    }
+    if (pad.kind === "reps") {
+      return {
+        label: `${current.name.toUpperCase()} · REPS`,
+        action: "SET REPS",
+        initial: String(reps),
+        allowDecimal: false,
+        onCommit: (v) => {
+          setReps(Math.min(MAX_REPS, Math.max(0, Math.round(v))));
+          setPad(null);
+        },
+        onCancel: () => setPad(null),
+      };
+    }
+    // rest: type the seconds REMAINING; target = elapsed + typed
+    const el = restElapsedSeconds() ?? 0;
+    const remaining = rest
+      ? Math.max(0, Math.round(rest.targetSeconds - el))
+      : 0;
+    return {
+      label: "REST · SECONDS REMAINING",
+      action: "SET REST",
+      initial: String(remaining),
+      allowDecimal: false,
+      onCommit: (v) => {
+        const want = Math.min(MAX_REST_SECONDS, Math.max(0, Math.round(v)));
+        // elapsed re-read at commit time so typing delay doesn't skew it
+        const nowEl = Math.round(restElapsedSeconds() ?? 0);
+        setRest((r) => (r ? { ...r, targetSeconds: nowEl + want } : r));
+        setPad(null);
+      },
+      onCancel: () => setPad(null),
+    };
   };
 
   // ---- render --------------------------------------------------------------
@@ -286,121 +416,266 @@ export function Session() {
   if (!active) return null;
 
   const currentEntrySets = current ? setsForEntry(current) : [];
+  const exerciseSets = current ? setsForExercise(current.exercise_id) : [];
+  const nextSetNo =
+    exerciseSets.reduce((m, s) => Math.max(m, s.set_index), -1) + 2;
+
   const filtered = allExercises
     .filter((e) => e.name.toLowerCase().includes(search.toLowerCase()))
     .slice(0, 30);
 
+  const hint = plateable
+    ? (() => {
+        const r = split(loadKg, machine ? 0 : barKg, inventory);
+        return r.plates.length > 0
+          ? r.plates
+              .map(
+                (p) =>
+                  `${p.count > 1 ? `${p.count}×` : ""}${toDisplay(p.plate, unit)}`,
+              )
+              .join("·")
+          : "BAR ONLY";
+      })()
+    : null;
+
+  const loadSub =
+    unit === "lb"
+      ? `${Math.round(loadKg * 10) / 10} kg stored`
+      : `${Math.round(kgToLb(loadKg) * 10) / 10} lb`;
+
+  /** rest AFTER a given set: next exercise-set's stored value, or live timer */
+  const restAfter = (s: SetInsert): string | null => {
+    const nextSet = exerciseSets.find((x) => x.set_index === s.set_index + 1);
+    if (nextSet)
+      return nextSet.rest_seconds_actual !== null
+        ? `rest ${formatClock(nextSet.rest_seconds_actual)}`
+        : null;
+    // last set of the exercise: live rest if it's the one being timed
+    const isLast = exerciseSets.every((x) => x.set_index <= s.set_index);
+    if (isLast && restRef.current) {
+      const el = restElapsedSeconds();
+      if (el !== null && el <= MAX_REST_SECONDS)
+        return `rest ${formatClock(el)}`;
+    }
+    return null;
+  };
+
+  const req = padRequest();
+  const sheetOpen = sheet !== null || pad !== null;
+
   return (
-    <div className="screen session">
-      {current ? (
-        <>
-          <div className="session-head">
+    <div className="session-shell">
+      <div className="session-scroll">
+        {current ? (
+          <>
             <button
               type="button"
-              className="session-exercise"
-              onClick={() => setDrawerOpen(true)}
+              className="session-head"
+              onClick={() => openSheet("drawer")}
             >
-              {current.name} <span className="chev">▾</span>
+              <span className="session-exercise">
+                {current.name} <span className="chev">▾</span>
+              </span>
+              {current.rx && (
+                <span className="rx-context">
+                  TARGET {formatRxTarget(current.rx, unit).toUpperCase()}
+                  {current.rx.rest_seconds !== null
+                    ? ` · REST ${formatClock(current.rx.rest_seconds)}`
+                    : ""}
+                  {rxHasNoTm(current.rx) ? " · NO TM SET" : ""}
+                </span>
+              )}
+              <span className="session-progress">
+                LOGGED {currentEntrySets.length}
+                {current.rx ? ` / ${current.rx.sets}` : ""}
+                {!current.rx && currentEntrySets.length === 1
+                  ? " SET"
+                  : " SETS"}
+                {equipment ? ` · ${equipment.toUpperCase()}` : ""}
+              </span>
             </button>
-            {current.rx && (
-              <div className="rx-context">
-                target {formatRxTarget(current.rx, unit)}
-                {rxHasNoTm(current.rx) ? " · no TM set" : ""}
+
+            <section className="rule-section">
+              <div className="section-head">
+                <span className="field-label">LOAD · {unit.toUpperCase()}</span>
+                {hint !== null && (
+                  <button
+                    type="button"
+                    className="plate-hint"
+                    onClick={() => openSheet("plates")}
+                  >
+                    {hint} ›
+                  </button>
+                )}
               </div>
-            )}
-            <div className="rx-context muted">
-              logged {currentEntrySets.length}
-              {current.rx ? ` / ${current.rx.sets}` : ""} sets
-            </div>
-          </div>
+              <Stepper
+                label="load"
+                accent
+                display={String(toDisplay(loadKg, unit))}
+                subText={loadSub}
+                onTapValue={() => openPad("load")}
+                value={loadKg}
+                min={0}
+                max={MAX_LOAD_KG}
+                onChange={setLoadKg}
+                steps={[
+                  {
+                    label: `− ${unit === "lb" ? 5 : 2.5}`,
+                    delta: -stepKg(unit, false),
+                  },
+                  {
+                    label: `+ ${unit === "lb" ? 5 : 2.5}`,
+                    delta: stepKg(unit, false),
+                  },
+                  {
+                    label: `− ${unit === "lb" ? 1 : 0.5}`,
+                    delta: -stepKg(unit, true),
+                    fine: true,
+                  },
+                  {
+                    label: `+ ${unit === "lb" ? 1 : 0.5}`,
+                    delta: stepKg(unit, true),
+                    fine: true,
+                  },
+                ]}
+              />
+            </section>
 
-          <Stepper
-            label={`load (${unit})`}
-            value={loadKg}
-            display={String(toDisplay(loadKg, unit))}
-            step={stepKg(unit, false)}
-            fineStep={stepKg(unit, true)}
-            max={MAX_LOAD_KG}
-            onChange={setLoadKg}
-          />
-          <Stepper
-            label="reps"
-            value={reps}
-            display={String(reps)}
-            step={1}
-            min={0}
-            max={MAX_REPS}
-            onChange={(v) => setReps(Math.round(v))}
-          />
+            <section className="rule-section">
+              <div className="section-head">
+                <span className="field-label">REPS</span>
+              </div>
+              <Stepper
+                label="reps"
+                inline
+                display={String(reps)}
+                onTapValue={() => openPad("reps")}
+                value={reps}
+                min={0}
+                max={MAX_REPS}
+                onChange={(v) => setReps(Math.round(v))}
+                steps={[
+                  { label: "−", delta: -1 },
+                  { label: "+", delta: 1 },
+                ]}
+              />
+            </section>
 
-          <div className="seg seg-types">
-            {SET_TYPES.map((t) => (
-              <button
-                key={t}
-                type="button"
-                className={`seg-btn ${setType === t ? "seg-on" : ""}`}
-                onClick={() => setSetType(t)}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            className="btn btn-primary btn-log"
-            disabled={logLocked || !setsLoaded}
-            onClick={logSet}
-          >
-            {setsLoaded ? "Log set" : "Loading…"}
-          </button>
-
-          {currentEntrySets.length > 0 && (
-            <div className="logged-sets">
-              {currentEntrySets.map((s) => (
-                <SetRow key={s.id} set={s} unit={unit} />
+            <div className="seg seg-types">
+              {SET_TYPES.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`seg-btn ${setType === t ? "seg-on" : ""}`}
+                  onClick={() => setSetType(t)}
+                >
+                  {t}
+                </button>
               ))}
             </div>
-          )}
-        </>
-      ) : (
-        <div className="session-empty">
-          <p className="muted">No exercises yet.</p>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={openSearch}
-          >
-            Add exercise
-          </button>
-        </div>
+
+            <button
+              type="button"
+              className="btn btn-primary btn-log"
+              disabled={logLocked || !setsLoaded}
+              onClick={logSet}
+            >
+              {setsLoaded ? `LOG SET ${nextSetNo}` : "LOADING…"}
+            </button>
+
+            {currentEntrySets.length > 0 && (
+              <section className="rule-section">
+                <div className="section-head">
+                  <span className="field-label">LOGGED · APPEND ONLY</span>
+                  <span className="section-meta">
+                    {currentEntrySets.length}
+                    {current.rx ? ` OF ${current.rx.sets}` : ""}
+                  </span>
+                </div>
+                <div className="logged-sets">
+                  {currentEntrySets
+                    .slice()
+                    .sort((a, b) => b.set_index - a.set_index)
+                    .map((s) => (
+                      <SetRow
+                        key={s.id}
+                        set={s}
+                        unit={unit}
+                        restLabel={restAfter(s)}
+                      />
+                    ))}
+                </div>
+                <div className="microcopy">
+                  Wrong number? Log the right set — the record keeps both.
+                </div>
+              </section>
+            )}
+          </>
+        ) : (
+          <div className="session-empty">
+            <p className="muted">No exercises yet.</p>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => openSheet("search")}
+            >
+              Add exercise
+            </button>
+          </div>
+        )}
+      </div>
+
+      {!sheetOpen && (
+        <RestTimer
+          rest={rest}
+          onAdjust={(d) =>
+            setRest((r) =>
+              r ? { ...r, targetSeconds: Math.max(0, r.targetSeconds + d) } : r,
+            )
+          }
+          onEdit={() => openPad("rest")}
+          onDone={() => setRest(null)}
+        />
       )}
 
       <div className="session-footer">
         <button
           type="button"
           className="btn btn-secondary"
-          onClick={() => setDrawerOpen(true)}
+          onClick={() => openSheet("drawer")}
         >
           Exercises
         </button>
         <button
           type="button"
-          className="btn btn-primary"
+          className="btn btn-outline-ink"
           onClick={() => navigate("/end")}
         >
           Finish
         </button>
       </div>
 
-      <RestTimer endsAt={timerEndsAt} onDismiss={() => setTimerEndsAt(null)} />
-
-      {drawerOpen && (
-        <div className="sheet-backdrop" onClick={() => setDrawerOpen(false)}>
+      {sheet === "drawer" && (
+        <div className="sheet-backdrop" onClick={() => setSheet(null)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="sheet-title">Exercises</div>
+            <div className="sheet-head">
+              <span className="sheet-title">
+                EXERCISES
+                {active.workout_label
+                  ? ` · ${active.workout_label.toUpperCase()}`
+                  : ""}
+              </span>
+              <button
+                type="button"
+                className="sheet-close"
+                onClick={() => setSheet(null)}
+              >
+                CLOSE
+              </button>
+            </div>
             {entries.map((e) => {
               const done = setsForEntry(e).length;
+              const eq = equipMap[e.exercise_id];
               return (
                 <button
                   key={e.key}
@@ -408,11 +683,16 @@ export function Session() {
                   className={`drawer-row ${current?.key === e.key ? "drawer-on" : ""}`}
                   onClick={() => {
                     setCurrentEntryId(e.key);
-                    setDrawerOpen(false);
+                    setSheet(null);
                   }}
                 >
-                  <span>{e.name}</span>
-                  <span className="muted">
+                  <span className="drawer-name">{e.name}</span>
+                  <span className="drawer-tag">
+                    {eq ? eq.toUpperCase() : ""}
+                  </span>
+                  <span
+                    className={`drawer-count ${e.rx && done >= e.rx.sets ? "drawer-count-done" : ""}`}
+                  >
                     {done}
                     {e.rx ? `/${e.rx.sets}` : ""}
                   </span>
@@ -421,29 +701,36 @@ export function Session() {
             })}
             <button
               type="button"
-              className="btn btn-secondary"
-              onClick={openSearch}
+              className="btn btn-outline-ink"
+              onClick={() => openSheet("search")}
             >
               Add exercise
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => setDrawerOpen(false)}
-            >
-              Close
             </button>
           </div>
         </div>
       )}
 
-      {searchOpen && (
-        <div className="sheet-backdrop" onClick={() => setSearchOpen(false)}>
+      {sheet === "search" && (
+        <div className="sheet-backdrop" onClick={() => setSheet(null)}>
           <div
             className="sheet sheet-tall"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="sheet-title">Add exercise</div>
+            <div className="sheet-head">
+              <span className="sheet-title">
+                ADD EXERCISE
+                {allExercises.length > 0
+                  ? ` · ${allExercises.length} IN LIBRARY`
+                  : ""}
+              </span>
+              <button
+                type="button"
+                className="sheet-close"
+                onClick={() => setSheet(null)}
+              >
+                CANCEL
+              </button>
+            </div>
             <input
               className="input"
               placeholder="Search exercises…"
@@ -459,24 +746,42 @@ export function Session() {
                   className="drawer-row"
                   onClick={() => void addExercise(ex)}
                 >
-                  <span>{ex.name}</span>
-                  <span className="muted">{ex.equipment ?? ""}</span>
+                  <span className="drawer-name">{ex.name}</span>
+                  <span
+                    className={`drawer-tag ${
+                      ex.equipment === "barbell" || ex.equipment === "machine"
+                        ? "drawer-tag-accent"
+                        : ""
+                    }`}
+                  >
+                    {ex.equipment ? ex.equipment.toUpperCase() : ""}
+                  </span>
                 </button>
               ))}
               {allExercises.length === 0 && (
-                <p className="muted">Loading exercise list…</p>
+                <p className="muted">
+                  {exercisesFailed
+                    ? "Exercise list unavailable offline — it caches after the first online load."
+                    : "Loading exercise list…"}
+                </p>
               )}
             </div>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => setSearchOpen(false)}
-            >
-              Cancel
-            </button>
           </div>
         </div>
       )}
+
+      {sheet === "plates" && current && (
+        <PlateSheet
+          exerciseName={current.name}
+          targetKg={loadKg}
+          unit={unit}
+          machine={machine}
+          onTypeTarget={() => openPad("load", true)}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
+      {req && <NumberPad req={req} />}
     </div>
   );
 }

@@ -156,3 +156,30 @@ Fixed without ceremony: exact-873 seed assertions became ranges (upstream
 grows), case-sensitive Bearer scheme check, calendar-invalid dates passing
 the ISO regex, per-screen duplicated formatting extracted to shared helpers,
 stepper bounds mirroring DB checks.
+
+## 2026-08-25 index-card redesign adopted from a Claude Design prototype
+
+The visual direction came from a design prototype authored against this repo
+("codebase fit" variant: same four routes, same append-only model, no schema
+changes required except one). What it changed and why:
+
+- **Tap-to-type joins the steppers.** The original "steppers only, no
+  keyboard" rule existed to avoid the OS keyboard (viewport shift, locale
+  decimal keys). The design keeps that reasoning but adds an in-app number
+  pad component: no OS keyboard, no viewport resize, and the big value
+  becomes the tap target. Steppers remain underneath. If gym use proves the
+  pad unnecessary, it deletes cleanly.
+- **Plate calculator, client-only.** `plate_load_kg` only rounds; nothing
+  computed a plate stack. Added `lib/plates.ts` (pure, tested greedy split),
+  a plate sheet, and a plates-on-hand setting stored in kg (canonical unit).
+  Gated to barbell and machine (bar weight 0) equipment only.
+- **Rest is now recorded, append-only intact.** `sets.rest_seconds_actual`
+  (nullable int) stamps the observed rest BEFORE a set at insert time; no
+  update to prior rows, so the RLS append-only design holds. `v_rest`
+  remains the timestamp-derived fallback. Folded into the existing migration
+  because nothing is deployed yet.
+- **No fabricated dates.** The prototype shows weekday dates on Today; the
+  schema has no calendar mapping for planned workouts, so the build uses
+  DAY N from day_index and real dates only where they exist. Adding a
+  start-date column was considered and rejected: the coach's screenshots
+  don't reliably carry dates either.

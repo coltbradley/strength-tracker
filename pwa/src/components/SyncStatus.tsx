@@ -1,6 +1,6 @@
-// Sync status: pending/syncing/error pill (tap = retry flush) plus a
-// dead-letter pill when permanently-failed writes are parked — tapping it
-// re-queues them ("retry failed").
+// Sync status: teal "N QUEUED" while pending, quiet "SYNCED" at rest, and a
+// burnt "N FAILED · RETRY" pill when permanently-failed writes are parked —
+// tapping that one re-queues them.
 
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
 import { outbox } from "../lib/sync";
@@ -12,11 +12,11 @@ export function SyncStatus() {
     status.dead > 0 ? (
       <button
         type="button"
-        className="sync-pill sync-err"
+        className="sync-pill sync-dead"
         title={status.lastError ?? undefined}
         onClick={() => void outbox.retryDead()}
       >
-        {status.dead} failed · retry
+        {status.dead} FAILED · RETRY
       </button>
     ) : null;
 
@@ -24,7 +24,7 @@ export function SyncStatus() {
     return (
       <span className="sync-group">
         {deadPill}
-        {!deadPill && <span className="sync-pill sync-ok">synced</span>}
+        {!deadPill && <span className="sync-pill sync-ok">SYNCED</span>}
       </span>
     );
   }
@@ -38,10 +38,10 @@ export function SyncStatus() {
 
   const label =
     status.state === "syncing"
-      ? `syncing ${status.pending}…`
+      ? `SYNCING ${status.pending}…`
       : status.state === "error"
-        ? `${status.pending} stuck · retry`
-        : `${status.pending} pending`;
+        ? `${status.pending} STUCK · RETRY`
+        : `${status.pending} QUEUED`;
 
   return (
     <span className="sync-group">

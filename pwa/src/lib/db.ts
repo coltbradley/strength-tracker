@@ -71,6 +71,7 @@ export const cacheKeys = {
   sessionRx: (sessionId: string) => `sessionRx:${sessionId}`,
   sessionExtras: (sessionId: string) => `sessionExtras:${sessionId}`,
   sessionSets: (sessionId: string) => `sessionSets:${sessionId}`,
+  doneWorkouts: (programId: string) => `doneWorkouts:${programId}`,
   e1rm: (exerciseId: string) => `e1rm:${exerciseId}`,
   volume: (exerciseId: string) => `volume:${exerciseId}`,
   goal: (exerciseId: string) => `goal:${exerciseId}`,

@@ -1,8 +1,10 @@
-// Hand-rolled SVG line chart: best e1RM per session, optional goal line.
+// Hand-rolled SVG line chart: best e1RM per session. Ink polyline, dashed
+// teal goal line, orange dot on the latest point, hairline left/bottom frame,
+// month tick labels underneath.
 
-import { toDisplay } from "../../lib/units";
 import { useUnit } from "../../hooks/useUnit";
-import { formatShortDate } from "../../lib/format";
+import { formatMonth, formatShortDate } from "../../lib/format";
+import { toDisplay } from "../../lib/units";
 import type { SessionBestE1rmRow } from "../../lib/types";
 
 interface E1rmChartProps {
@@ -10,9 +12,9 @@ interface E1rmChartProps {
   goalKg: number | null;
 }
 
-const W = 360;
-const H = 180;
-const PAD = { top: 12, right: 10, bottom: 22, left: 40 };
+const W = 340;
+const H = 150;
+const PAD = { top: 14, right: 8, bottom: 8, left: 4 };
 
 export function E1rmChart({ series, goalKg }: E1rmChartProps) {
   const unit = useUnit();
@@ -32,85 +34,65 @@ export function E1rmChart({ series, goalKg }: E1rmChartProps) {
 
   const px = (t: number) =>
     xMax === xMin
-      ? (PAD.left + W - PAD.right) / 2
+      ? W / 2
       : PAD.left + ((t - xMin) / (xMax - xMin)) * (W - PAD.left - PAD.right);
   const py = (v: number) =>
     yMax === yMin
       ? H / 2
       : PAD.top + (1 - (v - yMin) / (yMax - yMin)) * (H - PAD.top - PAD.bottom);
 
-  const path = series
+  const points = series
     .map(
-      (s, i) =>
-        `${i === 0 ? "M" : "L"}${px(new Date(s.performed_at).getTime()).toFixed(1)},${py(s.best_e1rm_kg).toFixed(1)}`,
+      (s) =>
+        `${px(new Date(s.performed_at).getTime()).toFixed(1)},${py(s.best_e1rm_kg).toFixed(1)}`,
     )
     .join(" ");
 
-  const yTicks = [yMin, (yMin + yMax) / 2, yMax];
-  const first = new Date(xMin);
-  const last = new Date(xMax);
+  const last = series[series.length - 1];
+
+  // month labels across the range; fall back to short dates within one month
+  const months: string[] = [];
+  for (const t of xs) {
+    const m = formatMonth(new Date(t));
+    if (months[months.length - 1] !== m) months.push(m);
+  }
+  const ticks =
+    months.length > 1
+      ? months
+      : [formatShortDate(new Date(xMin)), formatShortDate(new Date(xMax))];
 
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="chart"
-      role="img"
-      aria-label="e1RM trend"
-    >
-      {yTicks.map((v) => (
-        <g key={v}>
-          <line
-            x1={PAD.left}
-            x2={W - PAD.right}
-            y1={py(v)}
-            y2={py(v)}
-            className="chart-grid"
+    <div>
+      <div className="chart-frame">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="chart"
+          role="img"
+          aria-label={`e1RM trend, latest ${toDisplay(last.best_e1rm_kg, unit)} ${unit}`}
+        >
+          {goalKg !== null && (
+            <line
+              x1={0}
+              x2={W}
+              y1={py(goalKg)}
+              y2={py(goalKg)}
+              className="chart-goal"
+            />
+          )}
+          <polyline points={points} className="chart-line" fill="none" />
+          <circle
+            cx={px(new Date(last.performed_at).getTime())}
+            cy={py(last.best_e1rm_kg)}
+            r={4}
+            className="chart-dot"
           />
-          <text
-            x={PAD.left - 6}
-            y={py(v) + 4}
-            className="chart-tick"
-            textAnchor="end"
-          >
-            {Math.round(toDisplay(v, unit))}
-          </text>
-        </g>
-      ))}
-      {goalKg !== null && (
-        <g>
-          <line
-            x1={PAD.left}
-            x2={W - PAD.right}
-            y1={py(goalKg)}
-            y2={py(goalKg)}
-            className="chart-goal"
-          />
-          <text
-            x={W - PAD.right}
-            y={py(goalKg) - 4}
-            className="chart-goal-label"
-            textAnchor="end"
-          >
-            goal {toDisplay(goalKg, unit)} {unit}
-          </text>
-        </g>
-      )}
-      <path d={path} className="chart-line" fill="none" />
-      {series.map((s) => (
-        <circle
-          key={s.session_id}
-          cx={px(new Date(s.performed_at).getTime())}
-          cy={py(s.best_e1rm_kg)}
-          r={3}
-          className="chart-dot"
-        />
-      ))}
-      <text x={PAD.left} y={H - 6} className="chart-tick">
-        {formatShortDate(first)}
-      </text>
-      <text x={W - PAD.right} y={H - 6} className="chart-tick" textAnchor="end">
-        {formatShortDate(last)}
-      </text>
-    </svg>
+        </svg>
+      </div>
+      <div className="chart-ticks">
+        {ticks.map((t) => (
+          <span key={t}>{t}</span>
+        ))}
+      </div>
+    </div>
   );
 }

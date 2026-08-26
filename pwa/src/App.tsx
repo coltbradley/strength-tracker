@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  NavLink,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import { useAuth } from "./hooks/useAuth";
 import { Login } from "./screens/Login";
 import { Today } from "./screens/Today";
@@ -10,56 +16,42 @@ import { SyncStatus } from "./components/SyncStatus";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { Toasts } from "./components/Toasts";
 
-export function App() {
-  const { loading, session } = useAuth();
+function Shell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
-
-  if (loading) {
-    return (
-      <div className="splash">
-        <Toasts />
-        Strength Log
-      </div>
-    );
-  }
-
-  if (!session) {
-    return (
-      <>
-        <Toasts />
-        <Login />
-      </>
-    );
-  }
+  const location = useLocation();
+  // Session runs its own footer + rest strip; End keeps its own buttons.
+  // The tab bar exists only on the two tab routes.
+  const inSession = location.pathname === "/session";
+  const showTabs = !inSession && location.pathname !== "/end";
 
   return (
-    <BrowserRouter>
-      <div className="shell">
-        <header className="topbar">
-          <span className="topbar-title">Strength Log</span>
-          <div className="topbar-right">
-            <SyncStatus />
-            <button
-              type="button"
-              className="gear-btn"
-              aria-label="settings"
-              onClick={() => setSettingsOpen(true)}
-            >
-              ⚙
-            </button>
-          </div>
-        </header>
+    <div className="shell">
+      <header className="topbar">
+        <span className="topbar-title">Strength Log</span>
+        <div className="topbar-right">
+          <SyncStatus />
+          <button
+            type="button"
+            className="gear-btn"
+            aria-label="settings"
+            onClick={() => setSettingsOpen(true)}
+          >
+            ⚙
+          </button>
+        </div>
+      </header>
 
-        <main className="content">
-          <Routes>
-            <Route path="/" element={<Today />} />
-            <Route path="/session" element={<Session />} />
-            <Route path="/history" element={<History />} />
-            <Route path="/end" element={<End />} />
-            <Route path="*" element={<Today />} />
-          </Routes>
-        </main>
+      <main className={inSession ? "content content-session" : "content"}>
+        <Routes>
+          <Route path="/" element={<Today />} />
+          <Route path="/session" element={<Session />} />
+          <Route path="/history" element={<History />} />
+          <Route path="/end" element={<End />} />
+          <Route path="*" element={<Today />} />
+        </Routes>
+      </main>
 
+      {showTabs && (
         <nav className="tabbar">
           <NavLink
             to="/"
@@ -75,13 +67,41 @@ export function App() {
             History
           </NavLink>
         </nav>
+      )}
 
-        <SettingsSheet
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-        />
+      <SettingsSheet
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
+      <Toasts />
+    </div>
+  );
+}
+
+export function App() {
+  const { loading, session } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="splash">
         <Toasts />
+        STRENGTH LOG
       </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <>
+        <Toasts />
+        <Login />
+      </>
+    );
+  }
+
+  return (
+    <BrowserRouter>
+      <Shell />
     </BrowserRouter>
   );
 }

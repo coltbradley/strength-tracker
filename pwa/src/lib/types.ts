@@ -13,6 +13,7 @@ export interface ExerciseRow {
 export interface ProgramRow {
   id: string;
   name: string;
+  source_note: string | null;
   created_at: string;
   confirmed_at: string | null;
 }
@@ -67,6 +68,9 @@ export interface SetInsert {
   load_kg: number;
   reps: number;
   performed_at: string;
+  /** rest taken BEFORE this set, seconds (null on the first set of an
+   *  exercise or when the timer state was lost); DB caps at 3600 */
+  rest_seconds_actual: number | null;
 }
 
 export interface SessionBestE1rmRow {

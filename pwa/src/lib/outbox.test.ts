@@ -78,6 +78,7 @@ function makeSet(
     load_kg: 100,
     reps: 5,
     performed_at: `2026-08-25T10:0${setIndex}:00.000Z`,
+    rest_seconds_actual: setIndex === 0 ? null : 150,
   };
 }
 

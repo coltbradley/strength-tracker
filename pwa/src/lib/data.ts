@@ -19,7 +19,7 @@ import type {
 
 /** Column list for every `sets` select — one place, matches SetInsert. */
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual";
 
 async function fetchWithCache<T>(
   key: string,
@@ -54,7 +54,7 @@ export async function getPlannedWorkouts(): Promise<{
   return fetchWithCache(cacheKeys.plannedWorkouts, async () => {
     const { data: programs, error: pErr } = await supabase
       .from("programs")
-      .select("id,name,created_at,confirmed_at")
+      .select("id,name,source_note,created_at,confirmed_at")
       .not("confirmed_at", "is", null)
       .order("created_at", { ascending: false });
     throwIf(pErr);
@@ -73,6 +73,34 @@ export async function getPlannedWorkouts(): Promise<{
       programs: progs,
       workouts: (workouts ?? []) as PlannedWorkoutRow[],
     };
+  });
+}
+
+// ---- workout completion ----------------------------------------------------
+
+/**
+ * planned_workout_ids (of the given set) that already have a session.
+ * Drives DONE / TODAY / TO COME on the Today screen.
+ */
+export async function getDoneWorkoutIds(
+  programId: string,
+  workoutIds: string[],
+): Promise<{ data: string[]; fromCache: boolean }> {
+  return fetchWithCache(cacheKeys.doneWorkouts(programId), async () => {
+    if (workoutIds.length === 0) return [];
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("planned_workout_id")
+      .in("planned_workout_id", workoutIds);
+    throwIf(error);
+    const rows = (data ?? []) as Array<{ planned_workout_id: string | null }>;
+    return [
+      ...new Set(
+        rows
+          .map((r) => r.planned_workout_id)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
   });
 }
 

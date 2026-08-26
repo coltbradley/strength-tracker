@@ -1,39 +1,48 @@
-// Rest countdown that auto-starts after logging a set. Large, dismissible.
-// Uses the Notification API only if permission was already granted elsewhere —
-// never prompts.
+// Rest strip — docked above the session footer (in-flow, not floating).
+// Counts down to the target, then keeps counting up in burnt ("OVER"):
+// rest is recorded either way when the next set is logged.
+// Notification API is used only if permission was already granted — never
+// prompts.
 
 import { useEffect, useRef, useState } from "react";
+import { formatClock } from "../lib/format";
+
+export interface ActiveRest {
+  /** epoch ms when the rest started (i.e. when the set was logged) */
+  startedAt: number;
+  /** prescribed target, adjustable with -30/+30 or the pad */
+  targetSeconds: number;
+  /** "Barbell Row set 2" — what the rest will be recorded against */
+  forLabel: string;
+}
 
 interface RestTimerProps {
-  /** epoch ms when the timer ends; null = no active timer */
-  endsAt: number | null;
-  onDismiss: () => void;
+  rest: ActiveRest | null;
+  onAdjust: (deltaSeconds: number) => void;
+  /** tap the clock: type the remaining seconds */
+  onEdit: () => void;
+  onDone: () => void;
 }
 
-function fmt(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-export function RestTimer({ endsAt, onDismiss }: RestTimerProps) {
+export function RestTimer({ rest, onAdjust, onEdit, onDone }: RestTimerProps) {
   const [now, setNow] = useState(() => Date.now());
   const notified = useRef(false);
 
   useEffect(() => {
-    if (endsAt === null) return;
+    if (!rest) return;
     notified.current = false;
-    const t = setInterval(() => setNow(Date.now()), 250);
+    const t = setInterval(() => setNow(Date.now()), 400);
     return () => clearInterval(t);
-  }, [endsAt]);
+  }, [rest]);
 
-  if (endsAt === null) return null;
+  if (!rest) return null;
 
-  const remaining = Math.ceil((endsAt - now) / 1000);
-  const done = remaining <= 0;
+  const elapsed = Math.max(0, (now - rest.startedAt) / 1000);
+  const remaining = rest.targetSeconds - elapsed;
+  const over = remaining < 0;
 
   if (
-    done &&
+    over &&
     !notified.current &&
     typeof Notification !== "undefined" &&
     Notification.permission === "granted"
@@ -42,16 +51,57 @@ export function RestTimer({ endsAt, onDismiss }: RestTimerProps) {
     try {
       new Notification("Rest over", { body: "Next set." });
     } catch {
-      // notification failures are cosmetic
+      // cosmetic
     }
   }
 
+  const pct = over
+    ? 100
+    : Math.round(
+        Math.max(0, remaining / Math.max(1, rest.targetSeconds)) * 100,
+      );
+
   return (
-    <div className={`rest-timer ${done ? "rest-timer-done" : ""}`}>
-      <div className="rest-timer-time">{done ? "GO" : fmt(remaining)}</div>
-      <button type="button" className="rest-timer-dismiss" onClick={onDismiss}>
-        dismiss
-      </button>
+    <div className={`rest-timer ${over ? "rest-timer-done" : ""}`}>
+      <div className="rest-row">
+        <span className="rest-label">{over ? "OVER" : "REST"}</span>
+        <button
+          type="button"
+          className="rest-timer-time"
+          onClick={onEdit}
+          aria-label="edit remaining rest"
+        >
+          {over ? `+${formatClock(-remaining)}` : formatClock(remaining)}
+        </button>
+        <span className="rest-track">
+          <span
+            className="rest-fill"
+            style={{ transform: `scaleX(${pct / 100})` }}
+          />
+        </span>
+        <button
+          type="button"
+          className="rest-adjust"
+          onClick={() => onAdjust(-30)}
+        >
+          −30
+        </button>
+        <button
+          type="button"
+          className="rest-adjust"
+          onClick={() => onAdjust(30)}
+        >
+          +30
+        </button>
+        <button type="button" className="rest-timer-dismiss" onClick={onDone}>
+          DONE
+        </button>
+      </div>
+      <div className="rest-foot">
+        {over
+          ? `Past the prescribed ${formatClock(rest.targetSeconds)} — still counting, still recorded.`
+          : `Tap to change. Recorded against ${rest.forLabel}.`}
+      </div>
     </div>
   );
 }

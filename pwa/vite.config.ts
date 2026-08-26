@@ -17,8 +17,8 @@ export default defineConfig({
         description: "Offline-first strength training log",
         display: "standalone",
         start_url: "/",
-        background_color: "#0d1117",
-        theme_color: "#0d1117",
+        background_color: "#f4eede",
+        theme_color: "#f4eede",
         icons: [
           {
             src: "icons/icon-192.png",

@@ -1,9 +1,10 @@
-// History: per-exercise e1RM line chart (with goal overlay), weekly
-// working-set bars, recent sets grouped by session. Exactly two charts.
+// History: per-exercise e1RM chart (goal % in teal), weekly working-set bars,
+// recent sets grouped by session date. Exactly two charts.
 
 import { useEffect, useMemo, useState } from "react";
 import { E1rmChart } from "../components/charts/E1rmChart";
 import { VolumeChart } from "../components/charts/VolumeChart";
+import { SetRow } from "../components/SetRow";
 import {
   getE1rmSeries,
   getExercises,
@@ -13,8 +14,8 @@ import {
   getWeeklyVolume,
 } from "../lib/data";
 import { reportError } from "../lib/errors";
+import { formatSessionDate } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
-import { SetRow } from "../components/SetRow";
 import type {
   ExerciseRow,
   GoalProgressRow,
@@ -45,7 +46,6 @@ export function History() {
       .then((r) => {
         const ids = new Set(Object.keys(r.data));
         setWithData(ids);
-        // default selection: first exercise with data
         setSelected((cur) => cur ?? [...ids][0] ?? null);
       })
       .catch((e: unknown) => reportError(e, "load history index"));
@@ -102,26 +102,18 @@ export function History() {
     return [...groups.entries()];
   }, [recent]);
 
-  const fmtDay = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
-
   return (
     <div className="screen">
       <button
         type="button"
-        className="btn btn-secondary btn-block"
+        className="hist-picker"
         onClick={() => {
           setPickerOpen(true);
           setSearch("");
         }}
       >
-        {selectedName || "Pick exercise"} <span className="chev">▾</span>
+        <span>{(selectedName || "Pick exercise").toUpperCase()}</span>
+        <span className="chev">▾</span>
       </button>
 
       {fromCache && (
@@ -130,29 +122,35 @@ export function History() {
 
       {selected && (
         <>
-          <section className="card">
-            <div className="card-title">
-              e1RM ({unit})
+          <section className="rule-section">
+            <div className="section-head">
+              <span className="field-label">E1RM · {unit.toUpperCase()}</span>
               {goal?.pct_of_target != null && (
-                <span className="muted"> · {goal.pct_of_target}% of goal</span>
+                <span className="goal-pct">{goal.pct_of_target}% OF GOAL</span>
               )}
             </div>
             <E1rmChart series={series} goalKg={goal?.target_e1rm_kg ?? null} />
           </section>
 
-          <section className="card">
-            <div className="card-title">Weekly working sets</div>
+          <section className="rule-section">
+            <div className="section-head">
+              <span className="field-label">WEEKLY WORKING SETS</span>
+            </div>
             <VolumeChart weeks={volume} />
           </section>
 
-          <section className="card">
-            <div className="card-title">Recent sets</div>
+          <section className="rule-section">
+            <div className="section-head">
+              <span className="field-label">RECENT SETS</span>
+            </div>
             {bySession.length === 0 && (
               <p className="muted">Nothing logged yet.</p>
             )}
             {bySession.map(([sessionId, ss]) => (
               <div key={sessionId} className="history-session">
-                <div className="history-date">{fmtDay(ss[0].performed_at)}</div>
+                <div className="history-date">
+                  {formatSessionDate(ss[0].performed_at)}
+                </div>
                 {ss
                   .slice()
                   .sort((a, b) => a.set_index - b.set_index)
@@ -171,7 +169,16 @@ export function History() {
             className="sheet sheet-tall"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="sheet-title">Exercise</div>
+            <div className="sheet-head">
+              <span className="sheet-title">EXERCISE</span>
+              <button
+                type="button"
+                className="sheet-close"
+                onClick={() => setPickerOpen(false)}
+              >
+                CANCEL
+              </button>
+            </div>
             <input
               className="input"
               placeholder="Search exercises…"
@@ -190,18 +197,13 @@ export function History() {
                     setPickerOpen(false);
                   }}
                 >
-                  <span>{ex.name}</span>
-                  {withData.has(ex.id) && <span className="muted">logged</span>}
+                  <span className="drawer-name">{ex.name}</span>
+                  {withData.has(ex.id) && (
+                    <span className="drawer-tag">LOGGED</span>
+                  )}
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => setPickerOpen(false)}
-            >
-              Cancel
-            </button>
           </div>
         </div>
       )}

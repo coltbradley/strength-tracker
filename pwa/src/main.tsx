@@ -5,6 +5,7 @@ import { App } from "./App";
 import { installGlobalHandlers, initSentry } from "./lib/errors";
 import { outbox } from "./lib/sync";
 import "./styles.css";
+import "./theme.css";
 
 installGlobalHandlers();
 void initSentry();

@@ -116,6 +116,10 @@ create table sets (
   set_type        set_type not null default 'working',
   load_kg         numeric(6,2) not null check (load_kg >= 0),  -- 0 = bodyweight
   reps            int not null check (reps between 0 and 100),
+  -- rest observed by the in-app timer BEFORE this set (i.e. after the previous
+  -- one). Stamped at insert time, so append-only holds; v_rest stays the
+  -- timestamp-derived fallback. Null for the first set and for old rows.
+  rest_seconds_actual int check (rest_seconds_actual between 0 and 3600),
   performed_at    timestamptz not null default now(),
   created_at      timestamptz not null default now()
 );

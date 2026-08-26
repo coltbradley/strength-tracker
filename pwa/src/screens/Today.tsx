@@ -1,9 +1,12 @@
-// Today: pick a planned workout (confirmed programs, newest first), preview
-// resolved prescriptions, start (or resume) a session.
+// Today: the confirmed program's week as a ruled list — DAY n rows with
+// DONE / TODAY / TO COME states, expandable to prescriptions + start button.
+// The schema has no calendar dates for planned workouts, so days are labeled
+// DAY 1…N from day_index; only the header shows the real current date.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  getDoneWorkoutIds,
   getExercises,
   getLastActuals,
   getPlannedWorkouts,
@@ -14,7 +17,7 @@ import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { reportError } from "../lib/errors";
-import { formatRxTarget, rxHasNoTm } from "../lib/format";
+import { formatRxTarget, formatTodayHeading, rxHasNoTm } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import type {
   ActiveSession,
@@ -22,15 +25,28 @@ import type {
   ResolvedPrescriptionRow,
 } from "../lib/types";
 
+type WorkoutState = "DONE" | "TODAY" | "TO COME";
+
 export function Today() {
   const navigate = useNavigate();
   const unit = useUnit();
   const [list, setList] = useState<WorkoutList | null>(null);
   const [fromCache, setFromCache] = useState(false);
+  const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
   const [active, setActive] = useState<ActiveSession | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
   const [loadError, setLoadError] = useState(false);
+
+  // most recent confirmed program drives the THIS WEEK section
+  const program = list?.programs[0] ?? null;
+  const workouts = useMemo(
+    () =>
+      program
+        ? (list?.workouts.filter((w) => w.program_id === program.id) ?? [])
+        : [],
+    [list, program],
+  );
 
   useEffect(() => {
     void cacheGet<ActiveSession>(cacheKeys.activeSession).then((a) =>
@@ -46,6 +62,34 @@ export function Today() {
         reportError(e, "load workouts");
       });
   }, []);
+
+  useEffect(() => {
+    if (!program || workouts.length === 0) return;
+    getDoneWorkoutIds(
+      program.id,
+      workouts.map((w) => w.id),
+    )
+      .then((r) => setDoneIds(new Set(r.data)))
+      .catch((e: unknown) => reportError(e, "load week state"));
+  }, [program, workouts]);
+
+  const states = useMemo(() => {
+    const map = new Map<string, WorkoutState>();
+    let todayAssigned = false;
+    for (const w of workouts) {
+      if (doneIds.has(w.id)) {
+        map.set(w.id, "DONE");
+      } else if (!todayAssigned) {
+        map.set(w.id, "TODAY");
+        todayAssigned = true;
+      } else {
+        map.set(w.id, "TO COME");
+      }
+    }
+    return map;
+  }, [workouts, doneIds]);
+
+  const doneCount = workouts.filter((w) => states.get(w.id) === "DONE").length;
 
   const expand = (w: PlannedWorkoutRow) => {
     setExpanded(expanded === w.id ? null : w.id);
@@ -97,20 +141,27 @@ export function Today() {
     }
   };
 
-  const programWorkouts = (programId: string) =>
-    list?.workouts.filter((w) => w.program_id === programId) ?? [];
-
   return (
     <div className="screen">
       {active && (
         <button
           type="button"
-          className="btn btn-primary btn-block"
+          className="resume-banner"
           onClick={() => navigate("/session")}
         >
-          Resume session
-          {active.workout_label ? ` · ${active.workout_label}` : ""}
+          RESUME
+          {active.workout_label
+            ? ` · ${active.workout_label.toUpperCase()}`
+            : " SESSION"}
         </button>
+      )}
+
+      <div className="today-heading">{formatTodayHeading()}</div>
+      {program && (
+        <div className="today-context">
+          {program.name}
+          {program.source_note ? ` — ${program.source_note}` : ""}
+        </div>
       )}
 
       {fromCache && (
@@ -122,54 +173,72 @@ export function Today() {
         </div>
       )}
 
-      {list?.programs.map((p) => (
-        <section key={p.id} className="card">
-          <div className="card-title">{p.name}</div>
-          {programWorkouts(p.id).map((w) => (
-            <div key={w.id} className="workout">
-              <button
-                type="button"
-                className="workout-row"
-                onClick={() => expand(w)}
-              >
-                <span>{w.label ?? `Day ${w.day_index + 1}`}</span>
-                <span className="chev">{expanded === w.id ? "▾" : "▸"}</span>
-              </button>
-              {expanded === w.id && (
-                <div className="workout-detail">
-                  {(rx[w.id] ?? []).map((r) => (
-                    <div key={r.id} className="rx-row">
-                      <span className="rx-name">{r.exercise_name}</span>
-                      <span className="rx-spec">
-                        {formatRxTarget(r, unit)}
-                        {r.rest_seconds !== null
-                          ? ` · ${r.rest_seconds}s rest`
-                          : ""}
-                      </span>
-                      {rxHasNoTm(r) && (
-                        <span className="warn-badge">no TM set</span>
-                      )}
-                    </div>
-                  ))}
-                  {!active && (
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-block"
-                      onClick={() => void start(w)}
-                    >
-                      Start session
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+      {program && (
+        <section className="rule-section">
+          <div className="section-head">
+            <span className="field-label">THIS WEEK</span>
+            <span className="section-meta">
+              {doneCount} DONE · {workouts.length - doneCount} TO GO
+            </span>
+          </div>
+          {workouts.map((w) => {
+            const state = states.get(w.id) ?? "TO COME";
+            const open = expanded === w.id;
+            return (
+              <div key={w.id} className="week-item">
+                <button
+                  type="button"
+                  className="week-row"
+                  onClick={() => expand(w)}
+                >
+                  <span
+                    className={`week-day ${state === "TODAY" ? "week-day-today" : ""}`}
+                  >
+                    DAY {w.day_index + 1}
+                  </span>
+                  <span
+                    className={`week-label ${state === "TODAY" ? "week-label-today" : ""} ${state === "DONE" ? "week-label-done" : ""}`}
+                  >
+                    {w.label ?? `Workout ${w.day_index + 1}`}
+                  </span>
+                  <span
+                    className={`week-state ${state === "TODAY" ? "week-state-today" : ""}`}
+                  >
+                    {state}
+                  </span>
+                  <span className="chev">{open ? "▾" : "▸"}</span>
+                </button>
+                {open && (
+                  <div className="week-detail">
+                    {(rx[w.id] ?? []).map((r) => (
+                      <div key={r.id} className="rx-row">
+                        <span className="rx-name">{r.exercise_name}</span>
+                        <span className="rx-spec">
+                          {formatRxTarget(r, unit)}
+                        </span>
+                        {rxHasNoTm(r) && (
+                          <span className="warn-badge">no TM set</span>
+                        )}
+                      </div>
+                    ))}
+                    {!active && state !== "DONE" && (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-block"
+                        onClick={() => void start(w)}
+                      >
+                        Start session
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </section>
-      ))}
-
-      {list && list.programs.length === 0 && (
-        <p className="muted">No confirmed programs yet.</p>
       )}
+
+      {list && !program && <p className="muted">No confirmed programs yet.</p>}
 
       {!active && (
         <button

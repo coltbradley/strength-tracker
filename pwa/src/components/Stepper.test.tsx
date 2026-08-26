@@ -1,48 +1,80 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Stepper } from "./Stepper";
 
+// RTL's automatic cleanup needs a global afterEach; vitest globals are off.
+afterEach(cleanup);
+
 describe("Stepper", () => {
-  it("bumps by the primary and fine steps, clamped at min", () => {
+  it("bumps by each step's delta, clamped to min/max", () => {
     const onChange = vi.fn();
     render(
       <Stepper
-        label="load (kg)"
-        value={100}
+        label="load"
         display="100"
-        step={2.5}
-        fineStep={0.5}
+        value={100}
+        min={0}
+        max={999}
         onChange={onChange}
+        steps={[
+          { label: "− 5", delta: -5 },
+          { label: "+ 5", delta: 5 },
+          { label: "− 1", delta: -1, fine: true },
+          { label: "+ 1", delta: 1, fine: true },
+        ]}
       />,
     );
 
-    fireEvent.click(screen.getByLabelText("increase load (kg)"));
-    expect(onChange).toHaveBeenLastCalledWith(102.5);
+    fireEvent.click(screen.getByLabelText("increase load by 5"));
+    expect(onChange).toHaveBeenLastCalledWith(105);
 
-    fireEvent.click(screen.getByLabelText("decrease load (kg)"));
-    expect(onChange).toHaveBeenLastCalledWith(97.5);
+    fireEvent.click(screen.getByLabelText("decrease load by 5"));
+    expect(onChange).toHaveBeenLastCalledWith(95);
 
-    fireEvent.click(screen.getByLabelText("increase load (kg) (fine)"));
-    expect(onChange).toHaveBeenLastCalledWith(100.5);
+    fireEvent.click(screen.getByLabelText("increase load by 1"));
+    expect(onChange).toHaveBeenLastCalledWith(101);
 
-    fireEvent.click(screen.getByLabelText("decrease load (kg) (fine)"));
-    expect(onChange).toHaveBeenLastCalledWith(99.5);
+    fireEvent.click(screen.getByLabelText("decrease load by 1"));
+    expect(onChange).toHaveBeenLastCalledWith(99);
   });
 
-  it("never goes below min", () => {
+  it("never goes below min or above max", () => {
     const onChange = vi.fn();
     render(
       <Stepper
         label="reps"
-        value={0}
         display="0"
-        step={1}
+        value={0}
         min={0}
+        max={100}
+        inline
         onChange={onChange}
+        steps={[
+          { label: "−", delta: -1 },
+          { label: "+", delta: 200 },
+        ]}
       />,
     );
-    fireEvent.click(screen.getByLabelText("decrease reps"));
+    fireEvent.click(screen.getByLabelText("decrease reps by 1"));
     expect(onChange).toHaveBeenLastCalledWith(0);
+    fireEvent.click(screen.getByLabelText("increase reps by 200"));
+    expect(onChange).toHaveBeenLastCalledWith(100);
+  });
+
+  it("tapping the value fires onTapValue (opens the pad)", () => {
+    const onTap = vi.fn();
+    render(
+      <Stepper
+        label="load"
+        display="155"
+        value={155}
+        onChange={() => undefined}
+        onTapValue={onTap}
+        steps={[]}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("load value — tap to type"));
+    expect(onTap).toHaveBeenCalledTimes(1);
   });
 });

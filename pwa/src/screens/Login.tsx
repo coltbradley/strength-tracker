@@ -68,6 +68,7 @@ export function Login() {
               void verifyCode();
             }}
           >
+            <div className="field-label">CODE FROM THE EMAIL</div>
             <input
               className="input"
               inputMode="numeric"
@@ -105,6 +106,7 @@ export function Login() {
             void send();
           }}
         >
+          <div className="field-label">EMAIL</div>
           <input
             className="input"
             type="email"

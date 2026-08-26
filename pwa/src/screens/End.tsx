@@ -1,20 +1,33 @@
-// End session: sRPE 0-10, optional bodyweight, optional note (the one place
-// a keyboard is fine). The end write is an update, queued like everything else.
+// End session: sRPE 0-10, optional bodyweight (steppers + pad), optional
+// note — the one allowed OS-keyboard field. The end write is an update,
+// queued like everything else.
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
+import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { cacheGet, cacheSet, cacheDelete, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
-import { toDisplay, stepKg } from "../lib/units";
-import type { ActiveSession, SetInsert } from "../lib/types";
+import { fromDisplay, kgToLb, stepKg, toDisplay } from "../lib/units";
+import type {
+  ActiveSession,
+  ResolvedPrescriptionRow,
+  SetInsert,
+} from "../lib/types";
 
 // Mirror of the DB check: sessions.session_rpe between 0 and 10
 // (supabase/migrations/20260825120001_schema.sql) — keep in sync.
 const RPE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const LAST_BW_KEY = "lastBodyweightKg";
+const NOTE_CHIPS = [
+  "Felt strong",
+  "Sleep was short",
+  "Left shoulder",
+  "Bar speed good",
+];
+const MAX_BW_KG = 400;
 
 export function End() {
   const navigate = useNavigate();
@@ -25,8 +38,11 @@ export function End() {
   const [rpe, setRpe] = useState<number | null>(null);
   const [bwOpen, setBwOpen] = useState(false);
   const [bwKg, setBwKg] = useState(80);
+  const [bwPad, setBwPad] = useState(false);
   const [note, setNote] = useState("");
   const [setCount, setSetCount] = useState(0);
+  const [liftsDone, setLiftsDone] = useState(0);
+  const [liftsTotal, setLiftsTotal] = useState(0);
 
   useEffect(() => {
     void (async () => {
@@ -36,8 +52,24 @@ export function End() {
         const cached =
           (await cacheGet<SetInsert[]>(cacheKeys.sessionSets(a.id))) ?? [];
         const pending = await outbox.pendingSets(a.id);
-        const ids = new Set([...cached, ...pending].map((s) => s.id));
-        setSetCount(ids.size);
+        const all = new Map([...cached, ...pending].map((s) => [s.id, s]));
+        setSetCount(all.size);
+        const exercisesLogged = new Set(
+          [...all.values()].map((s) => s.exercise_id),
+        );
+        setLiftsDone(exercisesLogged.size);
+        const rxCached =
+          (await cacheGet<ResolvedPrescriptionRow[]>(
+            cacheKeys.sessionRx(a.id),
+          )) ?? [];
+        const extras =
+          (await cacheGet<Array<{ exercise_id: string }>>(
+            cacheKeys.sessionExtras(a.id),
+          )) ?? [];
+        const planned = new Set(rxCached.map((r) => r.exercise_id));
+        for (const e of extras) planned.add(e.exercise_id);
+        for (const id of exercisesLogged) planned.add(id);
+        setLiftsTotal(planned.size);
       }
       const lastBw = await cacheGet<number>(LAST_BW_KEY);
       if (lastBw) setBwKg(lastBw);
@@ -76,50 +108,111 @@ export function End() {
     }
   };
 
+  const addChip = (chip: string) => {
+    setNote((n) => (n.trim() === "" ? chip : `${n.trimEnd()}. ${chip}`));
+  };
+
+  const bwSub =
+    unit === "lb"
+      ? `${Math.round(bwKg * 10) / 10} kg stored`
+      : `${Math.round(kgToLb(bwKg) * 10) / 10} lb`;
+
+  const bwPadReq: PadRequest | null = bwPad
+    ? {
+        label: `BODYWEIGHT · ${unit.toUpperCase()}`,
+        action: "SET WEIGHT",
+        initial: String(toDisplay(bwKg, unit)),
+        allowDecimal: true,
+        onCommit: (v) => {
+          const kg = Math.min(MAX_BW_KG, Math.max(1, fromDisplay(v, unit)));
+          setBwKg(Math.round(kg * 10) / 10);
+          setBwPad(false);
+        },
+        onCancel: () => setBwPad(false),
+      }
+    : null;
+
   return (
     <div className="screen">
       <h2 className="screen-title">End session</h2>
-      <p className="muted">{setCount} sets logged</p>
+      <p className="end-summary">
+        {setCount} {setCount === 1 ? "SET" : "SETS"} LOGGED · {liftsDone} OF{" "}
+        {Math.max(liftsTotal, liftsDone)} LIFTS
+      </p>
 
-      <div className="field-label">Session RPE</div>
-      <div className="rpe-grid">
-        {RPE.map((n) => (
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">SESSION RPE</span>
+        </div>
+        <div className="rpe-grid">
+          {RPE.map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`seg-btn rpe-btn ${rpe === n ? "seg-on" : ""}`}
+              onClick={() => setRpe(rpe === n ? null : n)}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">BODYWEIGHT · {unit.toUpperCase()}</span>
+          {bwOpen && <span className="section-meta">{bwSub}</span>}
+        </div>
+        {bwOpen ? (
+          <Stepper
+            label="bodyweight"
+            inline
+            display={String(toDisplay(bwKg, unit))}
+            onTapValue={() => setBwPad(true)}
+            value={bwKg}
+            min={1}
+            max={MAX_BW_KG}
+            onChange={setBwKg}
+            steps={[
+              { label: "−", delta: -stepKg(unit, true) },
+              { label: "+", delta: stepKg(unit, true) },
+            ]}
+          />
+        ) : (
           <button
-            key={n}
             type="button"
-            className={`seg-btn rpe-btn ${rpe === n ? "seg-on" : ""}`}
-            onClick={() => setRpe(rpe === n ? null : n)}
+            className="btn btn-secondary"
+            onClick={() => setBwOpen(true)}
           >
-            {n}
+            Add bodyweight
           </button>
-        ))}
-      </div>
+        )}
+      </section>
 
-      {bwOpen ? (
-        <Stepper
-          label={`bodyweight (${unit})`}
-          value={bwKg}
-          display={String(toDisplay(bwKg, unit))}
-          step={stepKg(unit, true)}
-          onChange={setBwKg}
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">NOTE · OPTIONAL</span>
+        </div>
+        <textarea
+          className="input note-input"
+          placeholder="How did it go?"
+          rows={3}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
         />
-      ) : (
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={() => setBwOpen(true)}
-        >
-          Add bodyweight
-        </button>
-      )}
-
-      <textarea
-        className="input note-input"
-        placeholder="Notes (optional)"
-        rows={3}
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-      />
+        <div className="chip-row">
+          {NOTE_CHIPS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              className="chip"
+              onClick={() => addChip(c)}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </section>
 
       <button
         type="button"
@@ -135,6 +228,8 @@ export function End() {
       >
         Back to session
       </button>
+
+      {bwPadReq && <NumberPad req={bwPadReq} />}
     </div>
   );
 }

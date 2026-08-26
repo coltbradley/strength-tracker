@@ -1,16 +1,33 @@
-// One logged set line: "#n  load × reps  type". Used by Session and History.
+// One logged set line: index, load × reps, type, optional rest column.
+// Used by Session (with rest) and History (without).
 
 import { toDisplay, type Unit } from "../lib/units";
 import type { SetInsert } from "../lib/types";
 
-export function SetRow({ set, unit }: { set: SetInsert; unit: Unit }) {
+interface SetRowProps {
+  set: SetInsert;
+  unit: Unit;
+  /** rest AFTER this set ("rest 2:38"); pass undefined to omit the column */
+  restLabel?: string | null;
+}
+
+export function SetRow({ set, unit, restLabel }: SetRowProps) {
   return (
-    <div className="logged-set">
-      <span className="muted">#{set.set_index + 1}</span>
-      <span>
-        {toDisplay(set.load_kg, unit)} {unit} × {set.reps}
+    <div
+      className={`logged-set ${restLabel !== undefined ? "logged-set-rest" : ""}`}
+    >
+      <span className="set-no">{set.set_index + 1}</span>
+      <span className="set-load">
+        {toDisplay(set.load_kg, unit)} × {set.reps}
       </span>
-      <span className="muted">{set.set_type}</span>
+      <span
+        className={`set-type ${set.set_type !== "working" ? "set-type-accent" : ""}`}
+      >
+        {set.set_type}
+      </span>
+      {restLabel !== undefined && (
+        <span className="set-rest">{restLabel ?? ""}</span>
+      )}
     </div>
   );
 }
