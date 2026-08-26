@@ -396,3 +396,12 @@ collapses until asked for; parse artifacts never dominate.
   microcopy; Sign out is two-tap like every destructive action; "LOGGED ·
   APPEND ONLY" is just "LOGGED"; History has a first-run empty state;
   PlateSheet has one exit. One accent element per screen holds everywhere.
+- **MCP delete tools** (same day): delete_program (unconfirmed freely;
+  confirmed only with an explicit flag after chat approval; logged
+  sessions/sets always survive via FK nulling) and delete_exercise (custom
+  + unreferenced only — the FK restraint IS the guarantee; seeded rows
+  refuse since re-seeding restores them). The "exercises are never deleted"
+  hard rule softened to "referenced or seeded exercises are never deleted".
+- **CI gained workflow_dispatch**: GitHub silently dropped push events for
+  two consecutive pushes (64c9705, d8821c0 — commits landed, zero workflow
+  runs); manual dispatch is the recovery path for both workflows now.

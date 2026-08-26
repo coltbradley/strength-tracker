@@ -10,14 +10,17 @@ offline/empty/error edges.
 - **View week** — Today tab (default). A Mon–Sun strip: each day cell shows
   the weekday letter, date, and state (accent underline = today, dot = done,
   faint underline = planned, struck = skipped, red = missed, dim = rest).
-  Tapping a cell previews that day inline below the strip (prescriptions,
-  notes, actions) without losing the week. Today is selected by default.
+  Tapping a cell previews that day inline below the strip without losing the
+  week; the preview leads with its ONE action (Start / Start again /
+  Move to today), then the exercise list (ramp brackets grouped into one row
+  per exercise, superset letters when paired), then collapsed notes. Today
+  is selected by default.
   Days outside this week or undated live in a compact LATER list. Programs
   with no dates at all keep the original ruled list. Offline: cached plan +
   note; no cache: warning; no program: empty state + Start empty session.
-- **Edit a day** — Today → expand → Edit → `/plan/:id`. Date (commits on
-  close), plan note (auto-saves on blur), per-exercise sets/reps/load
-  (kg / %TM / by feel)/rest, add/remove exercise, delete day. Every action
+- **Edit a day** — Today → expand → Edit → `/plan/:id`. EXERCISES lead
+  (sets/reps/load/rest/superset per exercise, add/remove); then schedule
+  (date, reorder chips), plan note, duplicate, delete day. Every action
   saves immediately with a toast. Plan writes are online-only by design.
 - **Reorder the week** — Plan editor ↑/↓ swaps position AND date with the
   neighbor as displayed. Non-atomic (documented accepted risk).
@@ -36,8 +39,9 @@ offline/empty/error edges.
 - **Resume** — RESUME banner. All state (sets, extras, voids, skips, rest
   clock) restores from device cache + server merge.
 - **Finish** — Session footer Finish, or the banner's Finish shortcut →
-  End screen: sRPE, bodyweight, note → End session. A session with ZERO
-  sets defaults to discard (an accidental start must not mark the day done).
+  End screen: sRPE up top, bodyweight and note both collapsed behind Add
+  buttons so End session stays in view. A session with ZERO sets defaults
+  to discard (an accidental start must not mark the day done).
 - **Discard active** — End screen, two-tap.
 - **Recover an orphan** — a same-day open session this device has no cache
   for (other device, restored phone) surfaces as a card on Today:
@@ -60,10 +64,13 @@ offline/empty/error edges.
   Tapping the open header collapses it.
 - **Log a set** — inside the open item: WARMUP | WORKING toggle, REPS
   stepper (above load), LOAD stepper (±5 display units + tap-to-type +
-  plate hint), then "LOG SET n OF m" (working sets vs prescription; warmups
-  don't consume the count). Append-only, offline-first, rest clock starts,
-  auto-unskips. When the exercise completes, a NEXT ▸ hint offers the next
-  incomplete one (never auto-advances).
+  plate hint), then "LOG SET n OF m" (working sets vs the plan; warmups
+  don't consume the count). Ramp brackets (consecutive same-exercise
+  prescriptions) are ONE entry walked in order: each set links to its
+  bracket, crossing a bracket re-prefills its targets, the context line
+  shows "NOW x-y REPS". Append-only, offline-first, rest clock starts,
+  auto-unskips. When the plan is met the log button demotes to LOG EXTRA
+  SET and "Next · [exercise]" becomes the primary (never auto-advances).
 - **Note a set** — "+ NOTE" under any logged set expands a small editor;
   notes save to the database (editable, last-write-wins) and read back in
   History under the exact set.
@@ -95,7 +102,8 @@ offline/empty/error edges.
 - **Charts** — per-exercise e1RM (with goal %) and weekly working sets.
 - **Recent sets** — grouped by session date with notes; void control on each
   set for late corrections (same append-only void as in-session).
-- **Discard a past session** — ✕ on the date row, two-tap; soft delete.
+- **Discard a past session** — the DISCARD word on the date row, two-tap;
+  soft delete. (✕ always means a single-set void, never more.)
 - **Un-void / un-discard** — not in-app by design (append-only; relog is the
   correction). Recoverable in the database.
 

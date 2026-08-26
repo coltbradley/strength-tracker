@@ -217,4 +217,56 @@ export function registerManageExercises(
         });
       }),
   );
+
+  server.registerTool(
+    "delete_exercise",
+    {
+      title: "Delete exercise",
+      description:
+        "Delete a CUSTOM exercise that nothing references (no sets, " +
+        "prescriptions, training maxes, or goals) — cleanup for mistaken " +
+        "add_exercise calls. Seeded exercises ('free-exercise-db'/'curated') " +
+        "can't be deleted (re-seeding restores them), and any referenced " +
+        "exercise is protected: history is never orphaned.",
+      inputSchema: {
+        id: z.string().min(1).describe("Exercise id slug to delete."),
+      },
+    },
+    (args) =>
+      guard(ctx, "delete_exercise", async () => {
+        const existing = must(
+          await db.client
+            .from("exercises")
+            .select("id, name, source")
+            .eq("id", args.id),
+          "exercise lookup",
+        ) as { id: string; name: string; source: string }[];
+        if (existing.length === 0) {
+          throw new ToolError(`No exercise with id '${args.id}'.`);
+        }
+        if (existing[0].source !== "custom") {
+          throw new ToolError(
+            `'${args.id}' is a seeded exercise (source ` +
+              `'${existing[0].source}') — deleting it would just be undone ` +
+              "by the next re-seed. Only custom exercises can be deleted.",
+          );
+        }
+        const { error } = await db.client
+          .from("exercises")
+          .delete()
+          .eq("id", args.id);
+        if (error) {
+          // FK restraint = something references it; that's the guarantee
+          if (error.code === "23503") {
+            throw new ToolError(
+              `'${args.id}' is referenced by logged sets, prescriptions, ` +
+                "training maxes, or goals — it cannot be deleted. Rename it " +
+                "with update_exercise instead.",
+            );
+          }
+          throw new Error(`delete exercise: ${error.message}`);
+        }
+        return jsonResult({ deleted: true, id: args.id, name: existing[0].name });
+      }),
+  );
 }

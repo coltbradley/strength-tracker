@@ -21,6 +21,7 @@ import { getDb } from "./lib/db.ts";
 import type { RequestContext } from "./lib/errors.ts";
 import { log } from "./lib/log.ts";
 import { registerConfirmProgram } from "./tools/confirm_program.ts";
+import { registerDeleteProgram } from "./tools/delete_program.ts";
 import { registerGetGoalProgress } from "./tools/get_goal_progress.ts";
 import { registerGetLiftHistory } from "./tools/get_lift_history.ts";
 import { registerGetRecentSessions } from "./tools/get_recent_sessions.ts";
@@ -42,6 +43,7 @@ function buildServer(ctx: RequestContext): McpServer {
   // belong to the PWA (see CLAUDE.md hard rules).
   registerUpsertProgram(server, db, ctx);
   registerConfirmProgram(server, db, ctx);
+  registerDeleteProgram(server, db, ctx);
   registerSetTrainingMax(server, db, ctx);
   registerSetGoal(server, db, ctx);
   registerManageExercises(server, db, ctx);

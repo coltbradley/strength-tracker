@@ -26,42 +26,55 @@ Phone (PWA, offline-first) ──► Supabase Postgres (Auth + RLS + views)
 
 ## Data model in one paragraph
 
-`exercises` is a global library seeded from free-exercise-db.
-PLANNED tables (`programs` → `planned_workouts` → `prescriptions`) are written
-by Claude via MCP and land unconfirmed until `confirm_program`. ACTUAL tables
-(`sessions` → `sets`) are written only by the PWA; `sets` is append-only and
-enforced so by RLS (no update/delete policies). `sets.prescription_id` joins
-actual to planned, which is the analytical core: prescribed vs achieved,
-measured not self-reported. `training_maxes` and `goals` are small
-user-owned tables that make %TM prescriptions resolvable and progress
-measurable.
+`exercises` is a global library seeded from free-exercise-db plus a curated
+seed (source-tagged so each seed only updates its own rows). PLANNED tables
+(`programs` → `planned_workouts` → `prescriptions`, incl. `scheduled_date`,
+`plan_note`, `skipped_at`, `superset_group`) are written by Claude via MCP
+AND the PWA's plan editor; Claude's programs land unconfirmed until
+`confirm_program`. ACTUAL tables (`sessions` → `sets`, plus `set_voids` and
+`set_notes`) are written only by the PWA; `sets` is append-only and enforced
+so by RLS — corrections are append-only void rows, sessions soft-delete via
+`discarded_at`, and every derived view reads `v_live_sets` (voids and
+discards excluded). `sets.prescription_id` joins actual to planned, which is
+the analytical core: prescribed vs achieved, measured not self-reported.
+`training_maxes` and `goals` make %TM prescriptions resolvable and progress
+measurable. User-flow detail lives in [flows.md](flows.md).
 
 ## Derived metrics
 
-SQL views only, all `security_invoker`: `v_current_tm`,
-`v_resolved_prescriptions`, `v_e1rm` (Epley, working sets, 1-8 reps),
-`v_session_best_e1rm`, `v_weekly_volume`, `v_adherence`, `v_rest`,
-`v_goal_progress`. Nothing derived is ever stored.
+SQL views only, all `security_invoker`: `v_live_sets` (the one definition
+of "sets that count"), `v_current_tm`, `v_resolved_prescriptions`, `v_e1rm`
+(Epley, working sets, 1-8 reps), `v_session_best_e1rm`, `v_weekly_volume`,
+`v_adherence`, `v_rest`, `v_goal_progress`. Nothing derived is ever stored.
 
-## MCP tool surface (8 tools)
+## MCP tool surface (12 tools)
 
 Read (`readOnlyHint: true`):
 
 - `search_exercises(query, equipment?, muscle?)`
-- `get_lift_history(exercise_id, since?)`: sets, e1RM series, adherence,
-  rest times (capped per section, with truncation flags)
-- `get_recent_sessions(n?)`: sessions with sRPE and set counts
+- `get_lift_history(exercise_id, since?)`: live sets, e1RM series,
+  adherence, rest times (capped per section, with truncation flags)
+- `get_recent_sessions(n?)`: sessions with sRPE, notes, and set counts
 - `get_goal_progress(exercise_id?)`
 
 Write:
 
-- `upsert_program(program_json)`: always lands `confirmed_at = NULL`
+- `upsert_program(program_json)`: always lands `confirmed_at = NULL`;
+  per-workout `scheduled_date` and per-prescription `superset_group`;
+  notes are the coach's own brief words (parse caveats go in chat)
 - `confirm_program(program_id)`: separate call, only after explicit user
   approval in chat
+- `delete_program(program_id, confirm_delete_confirmed?)`: unconfirmed
+  freely; confirmed only with the flag after chat approval; logged
+  sessions/sets always survive
 - `set_training_max(exercise_id, value_kg, effective_date?)`
 - `set_goal(exercise_id, target_e1rm_kg, target_date?)`
+- `add_exercise(...)` / `update_exercise(...)`: library management; edits
+  re-tag rows 'custom' so re-seeds can't revert them
+- `delete_exercise(id)`: custom + unreferenced only (FKs enforce it)
 
-Claude cannot write `sessions` or `sets`. Only the PWA logs training.
+Claude cannot write `sessions`, `sets`, `set_voids`, or `set_notes`. Only
+the PWA logs training.
 
 ## PWA scope (4 screens)
 

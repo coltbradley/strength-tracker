@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # GitHub has silently dropped push events for this repo before —
+  # manual dispatch is the recovery path
+  workflow_dispatch:
 
 jobs:
   database:

@@ -21,17 +21,25 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 
 ## Hard rules
 
-- `sets`, `sessions`, and `set_voids` are written ONLY by the PWA. MCP tools
-  never write them.
+- `sets`, `sessions`, `set_voids`, and `set_notes` are written ONLY by the
+  PWA. MCP tools never write them.
 - `sets` is append-only. No update/delete paths anywhere (RLS enforces this).
   Corrections are voids: an insert into `set_voids` (itself append-only)
   hides a set from every view. Never add an update or delete policy.
+  `set_notes` is the one editable set-adjacent row (a user annotation,
+  last-write-wins) — the sessions.notes mutability class, never a way to
+  edit the set itself.
 - `sessions` are soft-deleted only (`discarded_at`); no delete policy exists.
   A discarded session leaves every view but stays in Postgres.
 - Planned tables (`programs`/`planned_workouts`/`prescriptions`) are written
   by BOTH the MCP server (service role, program parsing) and the PWA (RLS
   owner policies, plan editor). `planned_workouts.notes` is coach notes from
-  the parse; `plan_note` is the user's own and the parse must not touch it.
+  the parse (the coach's OWN words, brief — parse caveats go in chat);
+  `plan_note` is the user's own and the parse must not touch it.
+  `prescriptions.superset_group` (1=A…) marks supersets; consecutive
+  same-exercise prescriptions are a ramp and render as one grouped entry.
+  delete_program removes a plan (confirmed ones only with the explicit flag
+  after user approval); logged sessions/sets always survive it.
 - Programs written by Claude land unconfirmed (`confirmed_at IS NULL`) and
   require a separate `confirm_program` call after user approval in chat.
 - Derived metrics (e1RM, volume, adherence, rest) live in SQL views only,
@@ -41,8 +49,9 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 - Exercise library sources: 'free-exercise-db' (generated seed), 'curated'
   (hand-maintained seed), 'custom' (MCP add_exercise / PWA). Each seed only
   updates its own source's rows; update_exercise re-tags edited library rows
-  as 'custom' so re-seeds can't revert them. Exercises are never deleted
-  (history references them).
+  as 'custom' so re-seeds can't revert them. delete_exercise removes ONLY
+  custom exercises that nothing references (FKs enforce it); seeded or
+  referenced exercises are never deleted — history is never orphaned.
 - All client writes carry client-generated UUIDs; replay is idempotent
   (`on conflict do nothing`). Do not break this.
 - Units are kg in the database everywhere. Display conversion is client-side.
