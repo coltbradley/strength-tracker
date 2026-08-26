@@ -11,12 +11,18 @@ import {
   getGoalProgress,
   getLastActuals,
   getRecentSets,
+  getSessionMeta,
   getWeeklyVolume,
+  type SessionMetaRow,
 } from "../lib/data";
-import { reportError } from "../lib/errors";
+import { reportError, toast } from "../lib/errors";
 import { formatSessionDate } from "../lib/format";
+import { cacheDeleteByPrefix, cacheGet, cacheKeys } from "../lib/db";
+import { outbox } from "../lib/sync";
 import { useUnit } from "../hooks/useUnit";
+import { useArmed } from "../hooks/useArmed";
 import type {
+  ActiveSession,
   ExerciseRow,
   GoalProgressRow,
   SessionBestE1rmRow,
@@ -36,9 +42,15 @@ export function History() {
   const [volume, setVolume] = useState<WeeklyVolumeRow[]>([]);
   const [goal, setGoal] = useState<GoalProgressRow | null>(null);
   const [recent, setRecent] = useState<SetInsert[]>([]);
+  const [meta, setMeta] = useState<Record<string, SessionMetaRow>>({});
   const [fromCache, setFromCache] = useState(false);
+  const [discardArm, setDiscardArm] = useArmed();
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   useEffect(() => {
+    void cacheGet<ActiveSession>(cacheKeys.activeSession).then((a) =>
+      setActiveId(a?.id ?? null),
+    );
     getExercises()
       .then((r) => setExercises(r.data))
       .catch((e: unknown) => reportError(e, "load exercises"));
@@ -68,6 +80,13 @@ export function History() {
         setGoal(g.data);
         setRecent(rec.data);
         setFromCache(e1.fromCache || vol.fromCache || rec.fromCache);
+        // post-workout notes + sRPE for the visible sessions; best-effort
+        const ids = [...new Set(rec.data.map((s) => s.session_id))];
+        getSessionMeta(ids)
+          .then((m) => {
+            if (!cancelled) setMeta(m);
+          })
+          .catch(() => undefined);
       } catch (e) {
         if (!cancelled) reportError(e, "load history");
       }
@@ -91,6 +110,35 @@ export function History() {
     }
     return exercises.filter(matches).slice(0, 30);
   }, [exercises, withData, search]);
+
+  /** Soft delete a past session: it and ALL its sets (every exercise, not
+   *  just the one on screen) leave history and charts. */
+  const discardSession = async (sessionId: string) => {
+    try {
+      await outbox.enqueue({
+        kind: "update",
+        table: "sessions",
+        id: sessionId,
+        patch: { discarded_at: new Date().toISOString() },
+      });
+      setRecent((prev) => prev.filter((s) => s.session_id !== sessionId));
+      setDiscardArm(null);
+      // the discard touches EVERY exercise trained that day, not just the one
+      // on screen — clear the whole per-exercise cache family so stale
+      // offline reads can't resurrect it
+      await cacheDeleteByPrefix([
+        "recent:",
+        "e1rm:",
+        "volume:",
+        "goal:",
+        "lastActuals:",
+        "doneWorkouts:",
+      ]);
+      toast("Session discarded — every exercise from that day");
+    } catch (e) {
+      reportError(e, "discard session");
+    }
+  };
 
   const bySession = useMemo(() => {
     const groups = new Map<string, SetInsert[]>();
@@ -150,7 +198,36 @@ export function History() {
               <div key={sessionId} className="history-session">
                 <div className="history-date">
                   {formatSessionDate(ss[0].performed_at)}
+                  {sessionId !== activeId && (
+                    <button
+                      type="button"
+                      className={`set-void ${discardArm === sessionId ? "set-void-armed" : ""}`}
+                      aria-label={
+                        discardArm === sessionId
+                          ? "confirm discard session"
+                          : "discard session"
+                      }
+                      onClick={() =>
+                        discardArm === sessionId
+                          ? void discardSession(sessionId)
+                          : setDiscardArm(sessionId)
+                      }
+                    >
+                      {discardArm === sessionId ? "DISCARD SESSION?" : "✕"}
+                    </button>
+                  )}
                 </div>
+                {meta[sessionId]?.session_rpe != null && (
+                  <div className="muted-mono">
+                    sRPE {meta[sessionId].session_rpe}
+                  </div>
+                )}
+                {meta[sessionId]?.notes && (
+                  <div className="detail-note">
+                    <span className="detail-note-label">NOTE</span>
+                    {meta[sessionId].notes}
+                  </div>
+                )}
                 {ss
                   .slice()
                   .sort((a, b) => a.set_index - b.set_index)

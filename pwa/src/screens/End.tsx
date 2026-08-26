@@ -6,10 +6,17 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
-import { cacheGet, cacheSet, cacheDelete, cacheKeys } from "../lib/db";
+import {
+  cacheGet,
+  cacheSet,
+  cacheDelete,
+  cacheDeleteByPrefix,
+  cacheKeys,
+} from "../lib/db";
 import { outbox } from "../lib/sync";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
+import { useArmed } from "../hooks/useArmed";
 import { fromDisplay, kgToLb, stepKg, toDisplay } from "../lib/units";
 import type {
   ActiveSession,
@@ -43,6 +50,8 @@ export function End() {
   const [setCount, setSetCount] = useState(0);
   const [liftsDone, setLiftsDone] = useState(0);
   const [liftsTotal, setLiftsTotal] = useState(0);
+  const [armed, setArmed] = useArmed();
+  const discardArmed = armed === "discard";
 
   useEffect(() => {
     void (async () => {
@@ -52,7 +61,16 @@ export function End() {
         const cached =
           (await cacheGet<SetInsert[]>(cacheKeys.sessionSets(a.id))) ?? [];
         const pending = await outbox.pendingSets(a.id);
-        const all = new Map([...cached, ...pending].map((s) => [s.id, s]));
+        // pending (and re-cached server rows) can still contain sets whose
+        // void hasn't flushed — the counts must match what Session shows
+        const voided = new Set(
+          (await cacheGet<string[]>(cacheKeys.sessionVoids(a.id))) ?? [],
+        );
+        const all = new Map(
+          [...cached, ...pending]
+            .filter((s) => !voided.has(s.id))
+            .map((s) => [s.id, s]),
+        );
         setSetCount(all.size);
         const exercisesLogged = new Set(
           [...all.values()].map((s) => s.exercise_id),
@@ -66,8 +84,15 @@ export function End() {
           (await cacheGet<Array<{ exercise_id: string }>>(
             cacheKeys.sessionExtras(a.id),
           )) ?? [];
-        const planned = new Set(rxCached.map((r) => r.exercise_id));
-        for (const e of extras) planned.add(e.exercise_id);
+        const skipped = new Set(
+          (await cacheGet<string[]>(cacheKeys.sessionSkips(a.id))) ?? [],
+        );
+        const planned = new Set<string>();
+        for (const r of rxCached)
+          if (!skipped.has(r.id)) planned.add(r.exercise_id);
+        for (const e of extras)
+          if (!skipped.has(`extra:${e.exercise_id}`))
+            planned.add(e.exercise_id);
         for (const id of exercisesLogged) planned.add(id);
         setLiftsTotal(planned.size);
       }
@@ -105,6 +130,33 @@ export function End() {
       navigate("/", { replace: true });
     } catch (e) {
       reportError(e, "end session");
+    }
+  };
+
+  /** Soft delete: the session and its sets leave every chart and history
+   *  list. Nothing is destroyed — recoverable in the database if ever needed. */
+  const discard = async () => {
+    try {
+      await outbox.enqueue({
+        kind: "update",
+        table: "sessions",
+        id: active.id,
+        patch: { discarded_at: new Date().toISOString() },
+      });
+      await cacheDelete(cacheKeys.activeSession);
+      // history caches and week DONE state all reference this session
+      await cacheDeleteByPrefix([
+        "recent:",
+        "e1rm:",
+        "volume:",
+        "goal:",
+        "lastActuals:",
+        "doneWorkouts:",
+      ]);
+      toast("Session discarded");
+      navigate("/", { replace: true });
+    } catch (e) {
+      reportError(e, "discard session");
     }
   };
 
@@ -228,6 +280,22 @@ export function End() {
       >
         Back to session
       </button>
+
+      <section className="rule-section">
+        <button
+          type="button"
+          className={`btn btn-block ${discardArmed ? "btn-danger" : "btn-ghost"}`}
+          onClick={() => (discardArmed ? void discard() : setArmed("discard"))}
+        >
+          {discardArmed ? "Discard session?" : "Discard session"}
+        </button>
+        {discardArmed && (
+          <div className="microcopy">
+            Removes this session and its {setCount}{" "}
+            {setCount === 1 ? "set" : "sets"} from history and charts.
+          </div>
+        )}
+      </section>
 
       {bwPadReq && <NumberPad req={bwPadReq} />}
     </div>

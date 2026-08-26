@@ -3,7 +3,7 @@ project_id = "strength-tracker"
 
 [db.seed]
 enabled = true
-sql_paths = ["./seed/exercises.generated.sql"]
+sql_paths = ["./seed/exercises.generated.sql", "./seed/exercises.curated.sql"]
 
 [auth]
 site_url = "https://coltbradley.github.io/strength-tracker/"

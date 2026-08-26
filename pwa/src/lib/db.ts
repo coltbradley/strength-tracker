@@ -3,12 +3,18 @@
 //  - kv: read cache (exercise list, prescriptions, last actuals, active session)
 
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { SessionEndPatch, SessionInsert, SetInsert } from "./types";
+import type {
+  SessionInsert,
+  SessionPatch,
+  SetInsert,
+  SetVoidInsert,
+} from "./types";
 
 export type OutboxOp =
   | { kind: "insert"; table: "sessions"; payload: SessionInsert }
   | { kind: "insert"; table: "sets"; payload: SetInsert }
-  | { kind: "update"; table: "sessions"; id: string; patch: SessionEndPatch };
+  | { kind: "insert"; table: "set_voids"; payload: SetVoidInsert }
+  | { kind: "update"; table: "sessions"; id: string; patch: SessionPatch };
 
 export interface OutboxItem {
   op: OutboxOp;
@@ -66,6 +72,19 @@ export async function cacheDelete(key: string): Promise<void> {
   await db.delete("kv", key);
 }
 
+/** Drop every cache entry whose key starts with one of the prefixes.
+ *  Used when a write invalidates a whole family (e.g. discarding a session
+ *  touches every exercise's history caches). */
+export async function cacheDeleteByPrefix(prefixes: string[]): Promise<void> {
+  const db = await getDb();
+  const keys = await db.getAllKeys("kv");
+  for (const key of keys) {
+    if (typeof key === "string" && prefixes.some((p) => key.startsWith(p))) {
+      await db.delete("kv", key);
+    }
+  }
+}
+
 export const cacheKeys = {
   programs: "programs",
   plannedWorkouts: "plannedWorkouts",
@@ -77,6 +96,12 @@ export const cacheKeys = {
   sessionRx: (sessionId: string) => `sessionRx:${sessionId}`,
   sessionExtras: (sessionId: string) => `sessionExtras:${sessionId}`,
   sessionSets: (sessionId: string) => `sessionSets:${sessionId}`,
+  /** set ids voided this session (filters merges of server+pending sets) */
+  sessionVoids: (sessionId: string) => `sessionVoids:${sessionId}`,
+  /** entry keys the user marked skipped in this session */
+  sessionSkips: (sessionId: string) => `sessionSkips:${sessionId}`,
+  /** live rest-timer state, so Home round-trips / reloads don't lose it */
+  sessionRest: (sessionId: string) => `sessionRest:${sessionId}`,
   doneWorkouts: (programId: string) => `doneWorkouts:${programId}`,
   e1rm: (exerciseId: string) => `e1rm:${exerciseId}`,
   volume: (exerciseId: string) => `volume:${exerciseId}`,

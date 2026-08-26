@@ -66,6 +66,32 @@ export function formatTodayHeading(d: Date = new Date()): string {
   return `TODAY · ${s}`;
 }
 
+/** Today's calendar date in the device's local timezone, as YYYY-MM-DD.
+ *  Matches planned_workouts.scheduled_date for the start-gating comparison. */
+export function todayLocalIso(d: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Parse a date-only string as LOCAL midnight (new Date('YYYY-MM-DD') would
+ *  parse as UTC and shift the weekday for US evenings). */
+export function parseLocalDate(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** "WED 27 AUG" — scheduled-day labels on the week list. */
+export function formatPlannedDate(iso: string): string {
+  return parseLocalDate(iso)
+    .toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    })
+    .replace(",", "")
+    .toUpperCase();
+}
+
 /** "JUN" — month tick labels under the e1RM chart. */
 export function formatMonth(d: string | Date): string {
   const dd = typeof d === "string" ? new Date(d) : d;

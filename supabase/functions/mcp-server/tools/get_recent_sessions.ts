@@ -47,6 +47,7 @@ export function registerGetRecentSessions(
               "id, started_at, ended_at, session_rpe, bodyweight_kg, notes, planned_workouts(label)",
             )
             .eq("user_id", db.ownerId)
+            .is("discarded_at", null)
             .order("started_at", { ascending: false })
             .limit(args.n),
           "sessions",

@@ -4,12 +4,16 @@
 // by callers so the UI reflects unsynced work.
 
 import { supabase } from "./supabase";
-import { cacheGet, cacheSet, cacheKeys } from "./db";
+import { cacheGet, cacheSet, cacheDelete, cacheKeys } from "./db";
 import { reportError } from "./errors";
+import { uuid } from "./uuid";
 import type {
   ExerciseRow,
   GoalProgressRow,
+  PlannedWorkoutPatch,
   PlannedWorkoutRow,
+  PrescriptionInsert,
+  PrescriptionPatch,
   ProgramRow,
   ResolvedPrescriptionRow,
   SessionBestE1rmRow,
@@ -47,6 +51,20 @@ export interface WorkoutList {
   workouts: PlannedWorkoutRow[];
 }
 
+/** Week display order: chronological when dates exist, coach order
+ *  (day_index) otherwise. The Today list and the plan editor's
+ *  earlier/later buttons must agree on this. */
+export function weekOrder(a: PlannedWorkoutRow, b: PlannedWorkoutRow): number {
+  if (a.scheduled_date && b.scheduled_date)
+    return (
+      a.scheduled_date.localeCompare(b.scheduled_date) ||
+      a.day_index - b.day_index
+    );
+  if (a.scheduled_date) return -1;
+  if (b.scheduled_date) return 1;
+  return a.day_index - b.day_index;
+}
+
 export async function getPlannedWorkouts(): Promise<{
   data: WorkoutList;
   fromCache: boolean;
@@ -62,7 +80,9 @@ export async function getPlannedWorkouts(): Promise<{
     if (progs.length === 0) return { programs: [], workouts: [] };
     const { data: workouts, error: wErr } = await supabase
       .from("planned_workouts")
-      .select("id,program_id,day_index,label,notes")
+      .select(
+        "id,program_id,day_index,label,notes,scheduled_date,plan_note,skipped_at",
+      )
       .in(
         "program_id",
         progs.map((p) => p.id),
@@ -74,6 +94,160 @@ export async function getPlannedWorkouts(): Promise<{
       workouts: (workouts ?? []) as PlannedWorkoutRow[],
     };
   });
+}
+
+// ---- plan editing ----------------------------------------------------------
+// Planning writes are online-only (planning happens at home, not mid-gym) and
+// go straight to Supabase — the offline outbox stays reserved for the
+// session-critical tables. Every mutation invalidates the caches it touches
+// so the next read refetches.
+
+async function invalidatePlanCaches(plannedWorkoutId?: string): Promise<void> {
+  await cacheDelete(cacheKeys.plannedWorkouts);
+  if (plannedWorkoutId)
+    await cacheDelete(cacheKeys.prescriptions(plannedWorkoutId));
+}
+
+export async function updatePlannedWorkout(
+  id: string,
+  patch: PlannedWorkoutPatch,
+): Promise<void> {
+  const { error } = await supabase
+    .from("planned_workouts")
+    .update(patch)
+    .eq("id", id);
+  throwIf(error);
+  await invalidatePlanCaches(id);
+}
+
+/** Swap the week position of two workouts: both day_index (coach order;
+ *  unique per program, so one routes through a temporary slot) and
+ *  scheduled_date (calendar position). "Move leg day before push day" swaps
+ *  the days wholesale. */
+export async function swapWorkoutOrder(
+  a: PlannedWorkoutRow,
+  b: PlannedWorkoutRow,
+): Promise<void> {
+  const temp = 10000 + b.day_index;
+  const step = async (
+    id: string,
+    patch: { day_index: number; scheduled_date?: string | null },
+  ) => {
+    const { error } = await supabase
+      .from("planned_workouts")
+      .update(patch)
+      .eq("id", id);
+    throwIf(error);
+  };
+  await step(a.id, { day_index: temp });
+  await step(b.id, {
+    day_index: a.day_index,
+    scheduled_date: a.scheduled_date,
+  });
+  await step(a.id, {
+    day_index: b.day_index,
+    scheduled_date: b.scheduled_date,
+  });
+  await invalidatePlanCaches();
+}
+
+/** Copy a workout (and its prescriptions) onto another calendar date, at the
+ *  end of the program's day order. */
+export async function duplicatePlannedWorkout(
+  workout: PlannedWorkoutRow,
+  targetDate: string | null,
+): Promise<string> {
+  const { data: maxRows, error: mErr } = await supabase
+    .from("planned_workouts")
+    .select("day_index")
+    .eq("program_id", workout.program_id)
+    .order("day_index", { ascending: false })
+    .limit(1);
+  throwIf(mErr);
+  const nextIndex = ((maxRows?.[0]?.day_index as number | undefined) ?? -1) + 1;
+
+  const newId = uuid();
+  const { error: wErr } = await supabase.from("planned_workouts").insert({
+    id: newId,
+    program_id: workout.program_id,
+    day_index: nextIndex,
+    label: workout.label,
+    notes: workout.notes,
+    plan_note: workout.plan_note,
+    scheduled_date: targetDate,
+  });
+  throwIf(wErr);
+
+  const { data: rx, error: rErr } = await supabase
+    .from("prescriptions")
+    .select(
+      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes",
+    )
+    .eq("planned_workout_id", workout.id);
+  throwIf(rErr);
+  if (rx && rx.length > 0) {
+    const { error: iErr } = await supabase
+      .from("prescriptions")
+      .insert(rx.map((r) => ({ ...r, id: uuid(), planned_workout_id: newId })));
+    throwIf(iErr);
+  }
+  await invalidatePlanCaches();
+  return newId;
+}
+
+export async function deletePlannedWorkout(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("planned_workouts")
+    .delete()
+    .eq("id", id);
+  throwIf(error);
+  await invalidatePlanCaches(id);
+}
+
+export async function updatePrescription(
+  id: string,
+  plannedWorkoutId: string,
+  patch: PrescriptionPatch,
+): Promise<void> {
+  const { error } = await supabase
+    .from("prescriptions")
+    .update(patch)
+    .eq("id", id);
+  throwIf(error);
+  await invalidatePlanCaches(plannedWorkoutId);
+}
+
+export async function deletePrescription(
+  id: string,
+  plannedWorkoutId: string,
+): Promise<void> {
+  const { error } = await supabase.from("prescriptions").delete().eq("id", id);
+  throwIf(error);
+  await invalidatePlanCaches(plannedWorkoutId);
+}
+
+export async function addPrescription(
+  plannedWorkoutId: string,
+  exerciseId: string,
+  existing: ResolvedPrescriptionRow[],
+): Promise<void> {
+  const position = existing.reduce((m, r) => Math.max(m, r.position), -1) + 1;
+  const row: PrescriptionInsert = {
+    id: uuid(),
+    planned_workout_id: plannedWorkoutId,
+    exercise_id: exerciseId,
+    position,
+    sets: 3,
+    reps_min: 8,
+    reps_max: 8,
+    load_kg: null, // "by feel" until edited
+    load_pct_tm: null,
+    rest_seconds: null,
+    notes: null,
+  };
+  const { error } = await supabase.from("prescriptions").insert(row);
+  throwIf(error);
+  await invalidatePlanCaches(plannedWorkoutId);
 }
 
 // ---- workout completion ----------------------------------------------------
@@ -91,6 +265,7 @@ export async function getDoneWorkoutIds(
     const { data, error } = await supabase
       .from("sessions")
       .select("planned_workout_id")
+      .is("discarded_at", null)
       .in("planned_workout_id", workoutIds);
     throwIf(error);
     const rows = (data ?? []) as Array<{ planned_workout_id: string | null }>;
@@ -151,7 +326,7 @@ export async function getLastActuals(excludeSessionId?: string): Promise<{
 }> {
   return fetchWithCache(cacheKeys.lastActuals(excludeSessionId), async () => {
     const { data, error } = await supabase
-      .from("sets")
+      .from("v_live_sets")
       .select("exercise_id,load_kg,reps,set_type,performed_at,session_id")
       .order("performed_at", { ascending: false })
       .limit(1000);
@@ -176,6 +351,30 @@ export async function getLastActuals(excludeSessionId?: string): Promise<{
   });
 }
 
+// ---- session meta (History renders the post-workout note + sRPE) -----------
+
+export interface SessionMetaRow {
+  id: string;
+  session_rpe: number | null;
+  notes: string | null;
+}
+
+/** Notes/sRPE for a set of sessions. Online-only; callers degrade silently
+ *  (the sets themselves still render offline). */
+export async function getSessionMeta(
+  ids: string[],
+): Promise<Record<string, SessionMetaRow>> {
+  if (ids.length === 0) return {};
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("id,session_rpe,notes")
+    .in("id", ids);
+  throwIf(error);
+  return Object.fromEntries(
+    ((data ?? []) as SessionMetaRow[]).map((r) => [r.id, r]),
+  );
+}
+
 // ---- session sets (server + cache; caller merges outbox pending) -----------
 
 export async function getServerSessionSets(
@@ -184,7 +383,7 @@ export async function getServerSessionSets(
   const key = cacheKeys.sessionSets(sessionId);
   try {
     const { data, error } = await supabase
-      .from("sets")
+      .from("v_live_sets")
       .select(SET_COLUMNS)
       .eq("session_id", sessionId)
       .order("performed_at");
@@ -263,7 +462,7 @@ export async function getRecentSets(
 ): Promise<{ data: SetInsert[]; fromCache: boolean }> {
   return fetchWithCache(cacheKeys.recentSets(exerciseId), async () => {
     const { data, error } = await supabase
-      .from("sets")
+      .from("v_live_sets")
       .select(SET_COLUMNS)
       .eq("exercise_id", exerciseId)
       .order("performed_at", { ascending: false })

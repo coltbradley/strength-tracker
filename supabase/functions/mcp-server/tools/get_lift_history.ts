@@ -88,10 +88,13 @@ export function registerGetLiftHistory(
 
         const [sets, e1rm, adherence, rest, tmRes] = await Promise.all([
           // Raw sets stay newest-first (most recent work is what gets read).
+          // v_live_sets, not sets: voided sets and discarded sessions must
+          // not leak into analysis (every other section already excludes
+          // them via its view).
           (async () => {
             const rows = must(
               await base(
-                "sets",
+                "v_live_sets",
                 "id, session_id, prescription_id, set_index, set_type, load_kg, reps, performed_at",
               )
                 .order("performed_at", { ascending: false })

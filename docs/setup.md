@@ -24,23 +24,27 @@ supabase link --project-ref <PROJECT_REF>
 supabase db push
 ```
 
-4. Seed exercises (800+ rows, idempotent, regenerate any time):
+4. Seed exercises (950+ rows across both files, idempotent, re-run any time):
 
 ```bash
 node scripts/build-exercise-seed.mjs
 supabase db query < supabase/seed/exercises.generated.sql
+supabase db query < supabase/seed/exercises.curated.sql
 ```
 
-If `supabase db query` isn't in your CLI version, paste the generated file
-into the dashboard SQL editor. It's a single idempotent statement.
+If `supabase db query` isn't in your CLI version, paste the files into the
+dashboard SQL editor. Each is a single idempotent statement.
 
 5. Set your home timezone for calendar bucketing in the derived-metric views
    (dates and ISO weeks; without this, evening workouts land on the next UTC
    day). Dashboard SQL editor:
 
 ```sql
-alter database postgres set app.tz to 'America/Los_Angeles';
+update app_config set value = 'America/Los_Angeles' where key = 'tz';
 ```
+
+(`alter database ... set` is superuser-only on managed Postgres — that path
+doesn't work; the config table is the supported one.)
 
 ## 2. Your user
 

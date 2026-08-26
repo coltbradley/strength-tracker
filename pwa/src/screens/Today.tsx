@@ -1,9 +1,10 @@
-// Today: the confirmed program's week as a ruled list — DAY n rows with
-// DONE / TODAY / TO COME states, expandable to prescriptions + start button.
-// The schema has no calendar dates for planned workouts, so days are labeled
-// DAY 1…N from day_index; only the header shows the real current date.
+// Today: the confirmed program's week as a ruled list, chronological when
+// workouts carry scheduled dates (DONE / SKIPPED / TODAY / MISSED / date),
+// expandable to prescriptions + notes. Start is gated to today's workout;
+// everything else is editable via the plan editor. Programs without dates
+// fall back to the original inference: first unfinished day is TODAY.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   getDoneWorkoutIds,
@@ -11,13 +12,21 @@ import {
   getLastActuals,
   getPlannedWorkouts,
   getResolvedPrescriptions,
+  updatePlannedWorkout,
+  weekOrder,
   type WorkoutList,
 } from "../lib/data";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
-import { reportError } from "../lib/errors";
-import { formatRxTarget, formatTodayHeading, rxHasNoTm } from "../lib/format";
+import { reportError, toast } from "../lib/errors";
+import {
+  formatPlannedDate,
+  formatRxTarget,
+  formatTodayHeading,
+  rxHasNoTm,
+  todayLocalIso,
+} from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import type {
   ActiveSession,
@@ -25,7 +34,8 @@ import type {
   ResolvedPrescriptionRow,
 } from "../lib/types";
 
-type WorkoutState = "DONE" | "TODAY" | "TO COME";
+type WorkoutState =
+  "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE";
 
 export function Today() {
   const navigate = useNavigate();
@@ -43,25 +53,32 @@ export function Today() {
   const workouts = useMemo(
     () =>
       program
-        ? (list?.workouts.filter((w) => w.program_id === program.id) ?? [])
+        ? (list?.workouts ?? [])
+            .filter((w) => w.program_id === program.id)
+            .sort(weekOrder)
         : [],
     [list, program],
   );
 
-  useEffect(() => {
-    void cacheGet<ActiveSession>(cacheKeys.activeSession).then((a) =>
-      setActive(a ?? null),
-    );
+  const reload = useCallback(() => {
     getPlannedWorkouts()
       .then((r) => {
         setList(r.data);
         setFromCache(r.fromCache);
+        setLoadError(false);
       })
       .catch((e: unknown) => {
         setLoadError(true);
         reportError(e, "load workouts");
       });
   }, []);
+
+  useEffect(() => {
+    void cacheGet<ActiveSession>(cacheKeys.activeSession).then((a) =>
+      setActive(a ?? null),
+    );
+    reload();
+  }, [reload]);
 
   useEffect(() => {
     if (!program || workouts.length === 0) return;
@@ -73,30 +90,73 @@ export function Today() {
       .catch((e: unknown) => reportError(e, "load week state"));
   }, [program, workouts]);
 
+  const today = todayLocalIso();
+  const anyDates = workouts.some((w) => w.scheduled_date !== null);
+
   const states = useMemo(() => {
     const map = new Map<string, WorkoutState>();
     let todayAssigned = false;
     for (const w of workouts) {
       if (doneIds.has(w.id)) {
         map.set(w.id, "DONE");
+      } else if (w.skipped_at !== null) {
+        map.set(w.id, "SKIPPED");
+      } else if (anyDates) {
+        if (w.scheduled_date === null) map.set(w.id, "NO DATE");
+        else if (w.scheduled_date === today) map.set(w.id, "TODAY");
+        else if (w.scheduled_date < today) map.set(w.id, "MISSED");
+        else map.set(w.id, "UPCOMING");
       } else if (!todayAssigned) {
         map.set(w.id, "TODAY");
         todayAssigned = true;
       } else {
-        map.set(w.id, "TO COME");
+        map.set(w.id, "UPCOMING");
       }
     }
     return map;
-  }, [workouts, doneIds]);
+  }, [workouts, doneIds, anyDates, today]);
 
   const doneCount = workouts.filter((w) => states.get(w.id) === "DONE").length;
+  const skippedCount = workouts.filter(
+    (w) => states.get(w.id) === "SKIPPED",
+  ).length;
+
+  const loadRx = useCallback(
+    (workoutId: string) => {
+      if (workoutId in rx) return;
+      getResolvedPrescriptions(workoutId)
+        .then((r) => setRx((prev) => ({ ...prev, [workoutId]: r.data })))
+        .catch((e: unknown) => reportError(e, "load prescriptions"));
+    },
+    [rx],
+  );
 
   const expand = (w: PlannedWorkoutRow) => {
     setExpanded(expanded === w.id ? null : w.id);
-    if (!(w.id in rx)) {
-      getResolvedPrescriptions(w.id)
-        .then((r) => setRx((prev) => ({ ...prev, [w.id]: r.data })))
-        .catch((e: unknown) => reportError(e, "load prescriptions"));
+    loadRx(w.id);
+  };
+
+  // Today's workout opens itself once, so the right Start button is the one
+  // in view (not the empty-session fallback at the bottom).
+  const autoExpanded = useRef(false);
+  useEffect(() => {
+    if (autoExpanded.current || expanded !== null) return;
+    const todayId = workouts.find((w) => states.get(w.id) === "TODAY")?.id;
+    if (!todayId) return;
+    autoExpanded.current = true;
+    setExpanded(todayId);
+    loadRx(todayId);
+  }, [states, workouts, expanded, loadRx]);
+
+  const setSkipped = async (w: PlannedWorkoutRow, skipped: boolean) => {
+    try {
+      await updatePlannedWorkout(w.id, {
+        skipped_at: skipped ? new Date().toISOString() : null,
+      });
+      toast(skipped ? "Workout skipped" : "Workout back on the plan");
+      reload();
+    } catch (e) {
+      reportError(e, skipped ? "skip workout" : "unskip workout");
     }
   };
 
@@ -141,6 +201,25 @@ export function Today() {
     }
   };
 
+  const dayLabel = (w: PlannedWorkoutRow): string =>
+    w.scheduled_date
+      ? formatPlannedDate(w.scheduled_date)
+      : `DAY ${w.day_index + 1}`;
+
+  const stateLabel = (state: WorkoutState): string =>
+    state === "UPCOMING" ? "TO COME" : state;
+
+  const moveToToday = (w: PlannedWorkoutRow) =>
+    void (async () => {
+      try {
+        await updatePlannedWorkout(w.id, { scheduled_date: todayLocalIso() });
+        toast("Moved to today");
+        reload();
+      } catch (e) {
+        reportError(e, "move workout to today");
+      }
+    })();
+
   return (
     <div className="screen">
       {active && (
@@ -178,12 +257,23 @@ export function Today() {
           <div className="section-head">
             <span className="field-label">THIS WEEK</span>
             <span className="section-meta">
-              {doneCount} DONE · {workouts.length - doneCount} TO GO
+              {doneCount} DONE · {workouts.length - doneCount - skippedCount} TO
+              GO
+              {skippedCount > 0 ? ` · ${skippedCount} SKIPPED` : ""}
             </span>
           </div>
+          {anyDates &&
+            !workouts.some((w) => states.get(w.id) === "TODAY") &&
+            doneCount + skippedCount < workouts.length && (
+              <div className="microcopy">
+                Nothing scheduled today — rest day. Move a workout here to train
+                anyway.
+              </div>
+            )}
           {workouts.map((w) => {
-            const state = states.get(w.id) ?? "TO COME";
+            const state = states.get(w.id) ?? "UPCOMING";
             const open = expanded === w.id;
+            const muted = state === "DONE" || state === "SKIPPED";
             return (
               <div key={w.id} className="week-item">
                 <button
@@ -194,22 +284,35 @@ export function Today() {
                   <span
                     className={`week-day ${state === "TODAY" ? "week-day-today" : ""}`}
                   >
-                    DAY {w.day_index + 1}
+                    {dayLabel(w)}
                   </span>
                   <span
-                    className={`week-label ${state === "TODAY" ? "week-label-today" : ""} ${state === "DONE" ? "week-label-done" : ""}`}
+                    className={`week-label ${state === "TODAY" ? "week-label-today" : ""} ${muted ? "week-label-done" : ""}`}
                   >
                     {w.label ?? `Workout ${w.day_index + 1}`}
+                    {w.plan_note ? <span className="note-dot"> ·</span> : ""}
                   </span>
                   <span
-                    className={`week-state ${state === "TODAY" ? "week-state-today" : ""}`}
+                    className={`week-state ${state === "TODAY" ? "week-state-today" : ""} ${state === "MISSED" ? "week-state-missed" : ""} ${state === "NO DATE" ? "week-state-nodate" : ""}`}
                   >
-                    {state}
+                    {stateLabel(state)}
                   </span>
                   <span className="chev">{open ? "▾" : "▸"}</span>
                 </button>
                 {open && (
                   <div className="week-detail">
+                    {w.plan_note && (
+                      <div className="detail-note">
+                        <span className="detail-note-label">PLAN NOTE</span>
+                        {w.plan_note}
+                      </div>
+                    )}
+                    {w.notes && (
+                      <div className="detail-note">
+                        <span className="detail-note-label">COACH</span>
+                        {w.notes}
+                      </div>
+                    )}
                     {(rx[w.id] ?? []).map((r) => (
                       <div key={r.id} className="rx-row">
                         <span className="rx-name">{r.exercise_name}</span>
@@ -221,7 +324,7 @@ export function Today() {
                         )}
                       </div>
                     ))}
-                    {!active && state !== "DONE" && (
+                    {!active && state === "TODAY" && (
                       <button
                         type="button"
                         className="btn btn-primary btn-block"
@@ -230,6 +333,47 @@ export function Today() {
                         Start session
                       </button>
                     )}
+                    {!active && (state === "MISSED" || state === "NO DATE") && (
+                      <button
+                        type="button"
+                        className="btn btn-outline-ink btn-block"
+                        onClick={() => moveToToday(w)}
+                      >
+                        Move to today
+                      </button>
+                    )}
+                    {state === "NO DATE" && (
+                      <div className="microcopy">
+                        No date set — move it to today, or pick a day in Edit.
+                      </div>
+                    )}
+                    <div className="detail-actions">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => navigate(`/plan/${w.id}`)}
+                      >
+                        Edit
+                      </button>
+                      {state !== "DONE" && state !== "SKIPPED" && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void setSkipped(w, true)}
+                        >
+                          Skip
+                        </button>
+                      )}
+                      {state === "SKIPPED" && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void setSkipped(w, false)}
+                        >
+                          Unskip
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

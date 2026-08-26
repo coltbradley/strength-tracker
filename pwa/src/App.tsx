@@ -12,6 +12,7 @@ import { Today } from "./screens/Today";
 import { Session } from "./screens/Session";
 import { History } from "./screens/History";
 import { End } from "./screens/End";
+import { Plan } from "./screens/Plan";
 import { SyncStatus } from "./components/SyncStatus";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { Toasts } from "./components/Toasts";
@@ -47,6 +48,7 @@ function Shell() {
           <Route path="/session" element={<Session />} />
           <Route path="/history" element={<History />} />
           <Route path="/end" element={<End />} />
+          <Route path="/plan/:id" element={<Plan />} />
           <Route path="*" element={<Today />} />
         </Routes>
       </main>

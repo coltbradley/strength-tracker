@@ -27,7 +27,7 @@ const transport: OutboxTransport = {
     const { error, status } = await supabase
       .from(table)
       .upsert(payload as Record<string, unknown>, {
-        onConflict: "id",
+        onConflict: table === "set_voids" ? "set_id" : "id",
         ignoreDuplicates: true,
       });
     return toTransportError(error, status ?? null);

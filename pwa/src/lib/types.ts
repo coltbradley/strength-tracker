@@ -23,7 +23,47 @@ export interface PlannedWorkoutRow {
   program_id: string;
   day_index: number;
   label: string | null;
+  /** coach notes, written by the MCP program parse */
   notes: string | null;
+  /** calendar date (YYYY-MM-DD) — gates the Start button to today */
+  scheduled_date: string | null;
+  /** the user's own pre-workout planning note, edited in the app */
+  plan_note: string | null;
+  skipped_at: string | null;
+}
+
+/** Owner-editable planning fields on planned_workouts. */
+export interface PlannedWorkoutPatch {
+  label?: string | null;
+  scheduled_date?: string | null;
+  plan_note?: string | null;
+  skipped_at?: string | null;
+  day_index?: number;
+}
+
+/** Raw prescriptions insert/update shape (PWA plan editor). */
+export interface PrescriptionInsert {
+  id: string;
+  planned_workout_id: string;
+  exercise_id: string;
+  position: number;
+  sets: number;
+  reps_min: number;
+  reps_max: number;
+  load_kg: number | null;
+  load_pct_tm: number | null;
+  rest_seconds: number | null;
+  notes: string | null;
+}
+
+export interface PrescriptionPatch {
+  sets?: number;
+  reps_min?: number;
+  reps_max?: number;
+  load_kg?: number | null;
+  load_pct_tm?: number | null;
+  rest_seconds?: number | null;
+  position?: number;
 }
 
 export interface ResolvedPrescriptionRow {
@@ -56,6 +96,18 @@ export interface SessionEndPatch {
   session_rpe: number | null;
   bodyweight_kg: number | null;
   notes: string | null;
+}
+
+/** Soft delete: the session (and its sets) leave every view but stay stored. */
+export interface SessionDiscardPatch {
+  discarded_at: string;
+}
+
+export type SessionPatch = SessionEndPatch | SessionDiscardPatch;
+
+/** Append-only correction: hides one set from every view. */
+export interface SetVoidInsert {
+  set_id: string;
 }
 
 export interface SetInsert {

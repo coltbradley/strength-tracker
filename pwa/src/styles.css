@@ -569,6 +569,15 @@ button {
   grid-template-columns: 24px 1fr auto 60px;
 }
 
+/* void control appends one more column */
+.logged-set-voidable {
+  grid-template-columns: 24px 1fr auto 44px;
+}
+
+.logged-set-rest.logged-set-voidable {
+  grid-template-columns: 24px 1fr auto 60px 44px;
+}
+
 .set-no {
   font-size: 10.5px;
   color: rgba(42, 45, 50, 0.42);
@@ -1230,4 +1239,138 @@ button {
   background: var(--bg-raised);
   border: 1px solid var(--danger);
   color: var(--danger);
+}
+
+/* ---- planning: week dates, plan editor, corrections ---- */
+
+.week-state-missed {
+  color: var(--danger);
+}
+
+.note-dot {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.detail-note {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  border-left: 2px solid rgba(42, 45, 50, 0.25);
+  padding: 2px 0 2px 10px;
+}
+
+.detail-note-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.detail-actions .btn {
+  flex: 1;
+  min-height: 44px;
+  font-size: 12px;
+}
+
+.back-link {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  padding: 6px 0 12px;
+  text-align: left;
+}
+
+.date-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.date-input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  min-height: var(--tap);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff9eb;
+}
+
+/* two-tap void / discard controls — full 44px targets, gym thumbs */
+.set-void {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.set-void-armed {
+  color: var(--danger);
+}
+
+/* drawer rows with an inline skip/remove action */
+.drawer-item {
+  display: flex;
+  align-items: stretch;
+  border-bottom: var(--rule-hair);
+}
+
+.drawer-item .drawer-row-main {
+  flex: 1;
+  border-bottom: none;
+}
+
+.drawer-action {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  padding: 0 10px;
+  min-width: 64px;
+  text-align: right;
+}
+
+.drawer-name-skipped {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.history-date {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+/* date labels ("WED 27 AUG") need a little more room than "DAY 1" */
+.week-row {
+  grid-template-columns: 84px 1fr auto 14px;
+}
+
+.week-state-nodate {
+  color: var(--warn);
 }

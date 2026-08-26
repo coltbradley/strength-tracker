@@ -83,6 +83,16 @@ const workoutSchema = z.object({
     .describe("Day within the program, 0-based. Unique per program."),
   label: z.string().optional().describe("Human label, e.g. 'Day 1 - Squat'."),
   notes: z.string().optional().describe("Coach notes for the day."),
+  scheduled_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+    .describe(
+      "Calendar date (YYYY-MM-DD) this workout is planned for. The app only " +
+        "lets the user START a workout on its scheduled date, so set real " +
+        "dates when the user says which days they train. Omit when unknown — " +
+        "the user can schedule and move days in the app.",
+    ),
   prescriptions: z
     .array(prescriptionSchema)
     .min(1)
@@ -287,6 +297,7 @@ export function registerUpsertProgram(
                   day_index: w.day_index,
                   label: w.label ?? null,
                   notes: w.notes ?? null,
+                  scheduled_date: w.scheduled_date ?? null,
                 })),
               )
               .select("id, day_index"),
@@ -343,8 +354,8 @@ export function registerUpsertProgram(
         const lines = [
           `## Program written: ${program.name}`,
           "",
-          "| Day | Label | # | Exercise | Sets x Reps | Load | Rest |",
-          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| Day | Date | Label | # | Exercise | Sets x Reps | Load | Rest |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
         ];
         for (const w of [...program.workouts].sort(
           (a, b) => a.day_index - b.day_index,
@@ -353,7 +364,7 @@ export function registerUpsertProgram(
             (a, b) => a.position - b.position,
           )) {
             lines.push(
-              `| ${w.day_index} | ${w.label ?? ""} | ${p.position} | ${p.exercise_id} ` +
+              `| ${w.day_index} | ${w.scheduled_date ?? ""} | ${w.label ?? ""} | ${p.position} | ${p.exercise_id} ` +
                 `| ${formatRepRange(p.sets, p.reps_min, p.reps_max)} | ${loadLabel(p, tms)} ` +
                 `| ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,
             );

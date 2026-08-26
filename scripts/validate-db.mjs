@@ -72,6 +72,8 @@ try {
 } catch {
   console.log("  note  seed file missing, run scripts/build-exercise-seed.mjs (seed checks skipped)");
 }
+// curated seed is hand-maintained and always present
+await db.exec(await readFile(join(root, "supabase", "seed", "exercises.curated.sql"), "utf8"));
 
 // --- fixtures (as the service role would write them) -----------------------
 const OWNER = "00000000-0000-4000-8000-000000000001";
@@ -118,6 +120,18 @@ if (seeded)
     const r = await db.query(`select count(*)::int as n from exercises where source = 'free-exercise-db'`);
     if (r.rows[0].n < 800) throw new Error(`only ${r.rows[0].n} exercises seeded`);
   });
+
+await check("seed: curated exercises present with source='curated'", async () => {
+  const r = await db.query(`select count(*)::int as n from exercises where source = 'curated'`);
+  if (r.rows[0].n < 100) throw new Error(`only ${r.rows[0].n} curated exercises`);
+});
+
+await check("curated seed re-run is idempotent and respects source guard", async () => {
+  const seed = await readFile(join(root, "supabase", "seed", "exercises.curated.sql"), "utf8");
+  await db.exec(seed); // second run: upsert, no dupes, no error
+  const r = await db.query(`select count(*)::int as n from exercises where id = 'Nordic_Hamstring_Curl'`);
+  assertEq(r.rows[0].n, 1, "single row after re-seed");
+});
 
 await check("v_current_tm picks latest effective TM, ignores future rows", async () => {
   const r = await db.query(
@@ -306,6 +320,70 @@ await check("client uuid replay is idempotent (on conflict do nothing)", async (
      on conflict (id) do nothing`,
   );
   assertEq(r.affectedRows ?? 0, 0, "replay is a no-op");
+});
+
+await check("set void hides the set from every derived view", async () => {
+  // void the 6-rep working set (the session's best e1RM)
+  await asUser(
+    OWNER,
+    `insert into set_voids (set_id, user_id) values ('55555555-0000-4000-8000-000000000004', '${OWNER}')`,
+  );
+  const live = await db.query(
+    `select count(*)::int as n from v_live_sets where session_id = '44444444-0000-4000-8000-000000000001'`,
+  );
+  assertEq(live.rows[0].n, 4, "one of five sets voided");
+  const e1 = await db.query(
+    `select max(e1rm_kg)::float as best from v_e1rm where user_id = $1 and exercise_id = 'Barbell_Squat'`,
+    [OWNER],
+  );
+  assertEq(e1.rows[0].best, 140, "e1RM best recomputed without the voided set");
+});
+
+await check("cannot void another user's set", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      OTHER,
+      `insert into set_voids (set_id, user_id) values ('55555555-0000-4000-8000-000000000001', '${OTHER}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("cross-user void insert succeeded");
+});
+
+await check("set_voids is append-only: update/delete affect 0 rows", async () => {
+  const upd = await asUser(OWNER, `update set_voids set created_at = now() where user_id = '${OWNER}'`);
+  assertEq(upd.affectedRows ?? 0, 0, "no update policy");
+  const del = await asUser(OWNER, `delete from set_voids where user_id = '${OWNER}'`);
+  assertEq(del.affectedRows ?? 0, 0, "no delete policy");
+});
+
+await check("discarded session leaves every view, rows survive", async () => {
+  await asUser(
+    OWNER,
+    `update sessions set discarded_at = now() where id = '44444444-0000-4000-8000-000000000002'`,
+  );
+  const vol = await db.query(
+    `select count(*)::int as n from v_weekly_volume where user_id = $1 and exercise_id = 'Barbell_Deadlift'`,
+    [OWNER],
+  );
+  assertEq(vol.rows[0].n, 0, "volume gone from views");
+  const raw = await db.query(
+    `select count(*)::int as n from sets where session_id = '44444444-0000-4000-8000-000000000002'`,
+  );
+  assertEq(raw.rows[0].n, 1, "raw set row still present");
+  await db.exec(`update sessions set discarded_at = null where id = '44444444-0000-4000-8000-000000000002'`);
+});
+
+await check("owner can edit planning fields on planned_workouts", async () => {
+  const upd = await asUser(
+    OWNER,
+    `update planned_workouts
+        set scheduled_date = current_date, plan_note = 'focus on bracing', skipped_at = null
+      where id = '22222222-0000-4000-8000-000000000001'`,
+  );
+  assertEq(upd.affectedRows ?? 0, 1, "planning update allowed");
 });
 
 await check("auth.uid() default stamps user_id on insert", async () => {

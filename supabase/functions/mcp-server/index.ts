@@ -24,6 +24,7 @@ import { registerConfirmProgram } from "./tools/confirm_program.ts";
 import { registerGetGoalProgress } from "./tools/get_goal_progress.ts";
 import { registerGetLiftHistory } from "./tools/get_lift_history.ts";
 import { registerGetRecentSessions } from "./tools/get_recent_sessions.ts";
+import { registerManageExercises } from "./tools/manage_exercises.ts";
 import { registerSearchExercises } from "./tools/search_exercises.ts";
 import { registerSetGoal } from "./tools/set_goal.ts";
 import { registerSetTrainingMax } from "./tools/set_training_max.ts";
@@ -43,6 +44,7 @@ function buildServer(ctx: RequestContext): McpServer {
   registerConfirmProgram(server, db, ctx);
   registerSetTrainingMax(server, db, ctx);
   registerSetGoal(server, db, ctx);
+  registerManageExercises(server, db, ctx);
   return server;
 }
 

@@ -36,8 +36,9 @@ import { uuid } from "../lib/uuid";
 import { prefillSet } from "../lib/prefill";
 import { split } from "../lib/plates";
 import { formatClock, formatRxTarget, rxHasNoTm } from "../lib/format";
-import { reportError } from "../lib/errors";
+import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
+import { useArmed } from "../hooks/useArmed";
 import {
   useBarKg,
   useDefaultRestSeconds,
@@ -69,6 +70,14 @@ interface RestState {
   startedAt: number;
   targetSeconds: number;
   forLabel: string;
+}
+
+/** Cached mirror of the rest clock. targetSeconds null = strip dismissed but
+ *  the clock still runs for rest_seconds_actual recording. */
+interface RestCache {
+  startedAt: number;
+  targetSeconds: number | null;
+  forLabel: string | null;
 }
 
 type PadKind = "load" | "reps" | "rest";
@@ -110,6 +119,11 @@ export function Session() {
   const [rest, setRest] = useState<RestState | null>(null);
   // survives DONE so the next log can still record elapsed rest
   const restRef = useRef<{ startedAt: number } | null>(null);
+
+  // corrections: voided set ids (append-only voiding) and skipped entry keys
+  const [voids, setVoids] = useState<Set<string>>(new Set());
+  const [skips, setSkips] = useState<Set<string>>(new Set());
+  const [voidArm, setVoidArm] = useArmed();
 
   const [sheet, setSheet] = useState<"drawer" | "search" | "plates" | null>(
     null,
@@ -166,15 +180,44 @@ export function Session() {
           return;
         }
         setActive(a);
-        const [rxCached, extrasCached, actuals, exercises] = await Promise.all([
+        const [
+          rxCached,
+          extrasCached,
+          voidsCached,
+          skipsCached,
+          restCached,
+          actuals,
+          exercises,
+        ] = await Promise.all([
           cacheGet<ResolvedPrescriptionRow[]>(cacheKeys.sessionRx(a.id)),
           cacheGet<ExtraExercise[]>(cacheKeys.sessionExtras(a.id)),
+          cacheGet<string[]>(cacheKeys.sessionVoids(a.id)),
+          cacheGet<string[]>(cacheKeys.sessionSkips(a.id)),
+          cacheGet<RestCache>(cacheKeys.sessionRest(a.id)),
           getLastActuals(a.id).catch(() => ({ data: {} as LastActuals })),
           getExercises().catch(() => ({ data: [] as ExerciseRow[] })),
         ]);
         if (cancelled) return;
+        // rehydrate the rest clock (lost otherwise on Home round-trips and
+        // page evictions); a clock past the recordable window is dropped
+        if (
+          restCached &&
+          (Date.now() - restCached.startedAt) / 1000 <= MAX_REST_SECONDS
+        ) {
+          restRef.current = { startedAt: restCached.startedAt };
+          if (restCached.targetSeconds !== null) {
+            setRest({
+              startedAt: restCached.startedAt,
+              targetSeconds: restCached.targetSeconds,
+              forLabel: restCached.forLabel ?? "",
+            });
+          }
+        }
         setRx(rxCached ?? []);
         setExtras(extrasCached ?? []);
+        const voided = new Set(voidsCached ?? []);
+        setVoids(voided);
+        setSkips(new Set(skipsCached ?? []));
         setLastActuals(actuals.data);
         setEquipMap(
           Object.fromEntries(exercises.data.map((e) => [e.id, e.equipment])),
@@ -185,7 +228,11 @@ export function Session() {
           outbox.pendingSets(a.id),
         ]);
         if (cancelled) return;
-        applySets((prev) => mergeSets(mergeSets(server, pending), prev));
+        applySets((prev) =>
+          mergeSets(mergeSets(server, pending), prev).filter(
+            (s) => !voided.has(s.id),
+          ),
+        );
       } catch (e) {
         reportError(e, "load session");
       } finally {
@@ -200,6 +247,20 @@ export function Session() {
   useEffect(() => {
     if (active === null) navigate("/", { replace: true });
   }, [active, navigate]);
+
+  // mirror the rest clock to the cache; runs on every rest change (log,
+  // adjust, dismiss) — restRef keeps startedAt even after the strip is done
+  useEffect(() => {
+    if (!sessionId) return;
+    const startedAt = restRef.current?.startedAt;
+    if (startedAt === undefined) return;
+    const snapshot: RestCache = {
+      startedAt,
+      targetSeconds: rest?.targetSeconds ?? null,
+      forLabel: rest?.forLabel ?? null,
+    };
+    cacheSet(cacheKeys.sessionRest(sessionId), snapshot).catch(() => undefined);
+  }, [rest, sessionId]);
 
   // ---- exercise entries ----------------------------------------------------
 
@@ -292,6 +353,13 @@ export function Session() {
     if (!current || !sessionId || logLocked || !setsLoaded) return;
     setLogLocked(true);
     window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
+    setVoidArm(null);
+    // logging on a skipped exercise means it's happening after all
+    if (skips.has(current.key)) {
+      const unskipped = new Set(skips);
+      unskipped.delete(current.key);
+      persistSkips(unskipped);
+    }
 
     const nextIndex =
       setsRef.current
@@ -351,6 +419,75 @@ export function Session() {
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
     setCurrentEntryId(`extra:${ex.id}`);
     setSheet(null);
+  };
+
+  /** Void a logged set: hide it from every view via an append-only
+   *  set_voids insert. The row itself is never edited or deleted. */
+  const voidSet = (s: SetInsert) => {
+    if (!sessionId) return;
+    setVoidArm(null);
+    const nextVoids = new Set(voids);
+    nextVoids.add(s.id);
+    setVoids(nextVoids);
+    cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
+      (e: unknown) => reportError(e, "cache voids"),
+    );
+    const next = applySets((prev) => prev.filter((x) => x.id !== s.id));
+    cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
+      reportError(e, "cache session sets"),
+    );
+    outbox
+      .enqueue({
+        kind: "insert",
+        table: "set_voids",
+        payload: { set_id: s.id },
+      })
+      .catch((e: unknown) => reportError(e, "void set"));
+    toast(`Set ${s.set_index + 1} voided`);
+  };
+
+  const persistSkips = (next: Set<string>) => {
+    setSkips(next);
+    if (sessionId)
+      cacheSet(cacheKeys.sessionSkips(sessionId), [...next]).catch(
+        (e: unknown) => reportError(e, "cache skips"),
+      );
+  };
+
+  const toggleSkip = (entry: ExerciseEntry) => {
+    const next = new Set(skips);
+    if (next.has(entry.key)) {
+      next.delete(entry.key);
+      persistSkips(next);
+      return;
+    }
+    next.add(entry.key);
+    persistSkips(next);
+    // skipping the current exercise advances to the next unskipped one
+    if (current?.key === entry.key) {
+      const nxt = entries.find((e) => !next.has(e.key) && e.key !== entry.key);
+      if (nxt) setCurrentEntryId(nxt.key);
+    }
+  };
+
+  /** Extras with no logged sets can be removed outright (session-local). */
+  const removeExtra = async (entry: ExerciseEntry) => {
+    if (!sessionId || entry.rx) return;
+    const nextExtras = extras.filter(
+      (e) => e.exercise_id !== entry.exercise_id,
+    );
+    setExtras(nextExtras);
+    await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
+    // drop any lingering skip so re-adding doesn't arrive pre-skipped
+    if (skips.has(entry.key)) {
+      const nextSkips = new Set(skips);
+      nextSkips.delete(entry.key);
+      persistSkips(nextSkips);
+    }
+    if (current?.key === entry.key) {
+      const nxt = entries.find((e) => e.key !== entry.key);
+      setCurrentEntryId(nxt?.key ?? null);
+    }
   };
 
   // ---- pad request ---------------------------------------------------------
@@ -492,6 +629,7 @@ export function Session() {
                   ? " SET"
                   : " SETS"}
                 {equipment ? ` · ${equipment.toUpperCase()}` : ""}
+                {skips.has(current.key) ? " · SKIPPED" : ""}
               </span>
             </button>
 
@@ -602,11 +740,14 @@ export function Session() {
                         set={s}
                         unit={unit}
                         restLabel={restAfter(s)}
+                        onVoid={() => voidSet(s)}
+                        voidArmed={voidArm === s.id}
+                        onArmVoid={() => setVoidArm(s.id)}
                       />
                     ))}
                 </div>
                 <div className="microcopy">
-                  Wrong number? Log the right set — the record keeps both.
+                  Wrong number? Void the set (✕) and log the right one.
                 </div>
               </section>
             )}
@@ -639,6 +780,14 @@ export function Session() {
       )}
 
       <div className="session-footer">
+        <button
+          type="button"
+          className="btn btn-ghost"
+          aria-label="back to Today — session keeps running"
+          onClick={() => navigate("/")}
+        >
+          Home
+        </button>
         <button
           type="button"
           className="btn btn-secondary"
@@ -676,27 +825,46 @@ export function Session() {
             {entries.map((e) => {
               const done = setsForEntry(e).length;
               const eq = equipMap[e.exercise_id];
+              const skipped = skips.has(e.key);
+              const removable = !e.rx && done === 0;
               return (
-                <button
+                <div
                   key={e.key}
-                  type="button"
-                  className={`drawer-row ${current?.key === e.key ? "drawer-on" : ""}`}
-                  onClick={() => {
-                    setCurrentEntryId(e.key);
-                    setSheet(null);
-                  }}
+                  className={`drawer-item ${current?.key === e.key ? "drawer-on" : ""}`}
                 >
-                  <span className="drawer-name">{e.name}</span>
-                  <span className="drawer-tag">
-                    {eq ? eq.toUpperCase() : ""}
-                  </span>
-                  <span
-                    className={`drawer-count ${e.rx && done >= e.rx.sets ? "drawer-count-done" : ""}`}
+                  <button
+                    type="button"
+                    className="drawer-row drawer-row-main"
+                    onClick={() => {
+                      setCurrentEntryId(e.key);
+                      setSheet(null);
+                    }}
                   >
-                    {done}
-                    {e.rx ? `/${e.rx.sets}` : ""}
-                  </span>
-                </button>
+                    <span
+                      className={`drawer-name ${skipped ? "drawer-name-skipped" : ""}`}
+                    >
+                      {e.name}
+                    </span>
+                    <span className="drawer-tag">
+                      {skipped ? "SKIPPED" : eq ? eq.toUpperCase() : ""}
+                    </span>
+                    <span
+                      className={`drawer-count ${e.rx && done >= e.rx.sets ? "drawer-count-done" : ""}`}
+                    >
+                      {done}
+                      {e.rx ? `/${e.rx.sets}` : ""}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="drawer-action"
+                    onClick={() =>
+                      removable ? void removeExtra(e) : toggleSkip(e)
+                    }
+                  >
+                    {removable ? "REMOVE" : skipped ? "UNSKIP" : "SKIP"}
+                  </button>
+                </div>
               );
             })}
             <button

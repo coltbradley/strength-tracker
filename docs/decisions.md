@@ -202,3 +202,60 @@ code yet. The template is committed (`supabase/templates/magic_link.html` +
 config.toml) and `supabase config push` applies it once SMTP exists or the
 plan changes; until then, installed-app sign-in falls back to using the
 magic link in the browser.
+
+## 2026-08-25 planning round: dates, notes, corrections, library
+
+User-driven feature round (see the PR/commit for the code). Deviations and
+reversals, with reasoning:
+
+- **"No fabricated dates" reversed — planned_workouts.scheduled_date.** The
+  earlier decision rejected a date column because coach screenshots don't
+  carry dates. The user explicitly wants a week to look forward to and a
+  hard rule: a workout can only be STARTED on its scheduled day (edited any
+  day). Dates are nullable; undated programs keep the old first-unfinished-
+  is-today inference, so nothing is fabricated — dates exist only when the
+  user or the parse sets them.
+- **Two note fields, two owners.** `planned_workouts.notes` stays coach
+  notes (MCP parse). New `plan_note` is the user's pre-workout note, edited
+  in the PWA plan editor. Post-workout notes were already `sessions.notes`
+  (End screen). Keeping them separate means a re-parse can never clobber the
+  user's own words.
+- **Sets stay append-only; deletion is voiding.** "Delete a set" is an
+  insert into `set_voids` (append-only: select+insert policies only). A new
+  `v_live_sets` view (sets minus voids minus discarded sessions) is the one
+  definition of "sets that count"; every derived view and every PWA read
+  goes through it. The raw row survives for audit.
+- **Sessions get soft delete.** `sessions.discarded_at` (update, which RLS
+  already allowed) instead of a delete policy. Discard is offered on the End
+  screen and on past sessions in History.
+- **Skip semantics live at two levels.** A planned workout skips in the DB
+  (`skipped_at`, so the week view shows it and Claude can see adherence
+  honestly). An exercise skipped mid-session is session-local UI state
+  (IndexedDB) — the analytical record is simply that no sets were logged;
+  logging a set auto-unskips.
+- **Reorder = swap both day_index and scheduled_date** with the adjacent
+  workout ("move leg day before push day" means swap the days wholesale).
+  day_index is unique per program, so the swap routes through a temp slot.
+  Duplicate copies a workout + prescriptions to a chosen date at the end of
+  the day order.
+- **Planning writes are online-only.** The offline outbox stays reserved for
+  session-critical tables (sessions/sets/set_voids). Plan edits are direct
+  Supabase writes with toasts; planning happens at home, and keeping the
+  outbox op set small protects the replay-ordering guarantees.
+- **Exercise library grew a second seed.** `exercises.curated.sql`
+  (source='curated', ~105 rows): commercial-gym machines, specialty barbell
+  work, unilateral/anti-rotation accessories, runner and climber staples
+  missing from free-exercise-db. Each seed's upsert only updates rows with
+  its own source tag. MCP gained add_exercise (source='custom') and
+  update_exercise, which re-tags edited library rows as 'custom' so
+  re-seeding free-exercise-db can't revert an edit. No delete tool: sets
+  reference exercises forever.
+- **Home button in session.** The session screen footer gained Home; the
+  active session keeps running (resume banner on Today) so history and the
+  upcoming week are reachable mid-workout.
+- **Known accepted risk: reorder swap is non-atomic.** PostgREST has no
+  transactions, so the day_index swap is three updates through a temp slot
+  (10000+). A failure mid-swap can leave a workout at a temp index; retrying
+  the same swap self-heals, and the plan editor's date field remains the
+  recovery path. Acceptable for a single-user planner; revisit only if it
+  ever actually bites.

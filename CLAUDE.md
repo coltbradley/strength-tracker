@@ -14,17 +14,35 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   (Deno, streamable HTTP). Tools in `tools/`, shared code in `lib/`.
 - `pwa/`: React + Vite PWA. Offline-first, IndexedDB write queue.
 - `scripts/`: seed generation and dev utilities (Node).
-- `docs/`: plan, architecture, decisions, setup. `docs/decisions.md` is the
-  log of every deviation from the original spec and why.
+- `docs/`: plan, architecture, decisions, setup, deploy. `docs/decisions.md`
+  is the log of every deviation from the original spec and why.
+  `docs/deploy.md` is the per-release runbook — follow it instead of
+  rediscovering the deploy steps.
 
 ## Hard rules
 
-- `sets` and `sessions` are written ONLY by the PWA. MCP tools never write them.
+- `sets`, `sessions`, and `set_voids` are written ONLY by the PWA. MCP tools
+  never write them.
 - `sets` is append-only. No update/delete paths anywhere (RLS enforces this).
+  Corrections are voids: an insert into `set_voids` (itself append-only)
+  hides a set from every view. Never add an update or delete policy.
+- `sessions` are soft-deleted only (`discarded_at`); no delete policy exists.
+  A discarded session leaves every view but stays in Postgres.
+- Planned tables (`programs`/`planned_workouts`/`prescriptions`) are written
+  by BOTH the MCP server (service role, program parsing) and the PWA (RLS
+  owner policies, plan editor). `planned_workouts.notes` is coach notes from
+  the parse; `plan_note` is the user's own and the parse must not touch it.
 - Programs written by Claude land unconfirmed (`confirmed_at IS NULL`) and
   require a separate `confirm_program` call after user approval in chat.
 - Derived metrics (e1RM, volume, adherence, rest) live in SQL views only,
-  never stored. Views are `security_invoker` so RLS applies.
+  never stored. Views are `security_invoker` so RLS applies, and every
+  set-derived view reads `v_live_sets` (voids and discards excluded) — never
+  `sets` directly.
+- Exercise library sources: 'free-exercise-db' (generated seed), 'curated'
+  (hand-maintained seed), 'custom' (MCP add_exercise / PWA). Each seed only
+  updates its own source's rows; update_exercise re-tags edited library rows
+  as 'custom' so re-seeds can't revert them. Exercises are never deleted
+  (history references them).
 - All client writes carry client-generated UUIDs; replay is idempotent
   (`on conflict do nothing`). Do not break this.
 - Units are kg in the database everywhere. Display conversion is client-side.
