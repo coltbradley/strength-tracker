@@ -205,8 +205,8 @@ await check("v_session_set_counts aggregates per session", async () => {
 
 await check("timezone: evening local set buckets into the local ISO week", async () => {
   // Sunday 2026-08-16 18:00 America/Los_Angeles = Monday 2026-08-17 01:00 UTC.
-  // With app.tz set, the set must land in the week starting Mon 2026-08-10.
-  await db.exec(`select set_config('app.tz', 'America/Los_Angeles', false)`);
+  // With the tz config set, the set must land in the week starting Mon 2026-08-10.
+  await db.exec(`update app_config set value = 'America/Los_Angeles' where key = 'tz'`);
   await db.exec(`
     insert into sessions (id, user_id, started_at) values
       ('44444444-0000-4000-8000-000000000002', '${OWNER}', '2026-08-17T00:30:00Z');
@@ -220,8 +220,7 @@ await check("timezone: evening local set buckets into the local ISO week", async
     [OWNER],
   );
   assertEq(r.rows[0].w, "2026-08-10", "local Sunday stays in the prior ISO week");
-  const utc = await db.query(`select set_config('app.tz', '', false)`);
-  void utc; // reset to UTC fallback for remaining checks
+  await db.exec(`update app_config set value = 'UTC' where key = 'tz'`);
 });
 
 await check("goals: unique (user_id, exercise_id) rejects duplicates", async () => {

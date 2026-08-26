@@ -183,3 +183,22 @@ changes required except one). What it changed and why:
   DAY N from day_index and real dates only where they exist. Adding a
   start-date column was considered and rejected: the coach's screenshots
   don't reliably carry dates either.
+
+## 2026-08-26 deployment: app.tz became a config table
+
+Deploying to a real Supabase project surfaced a managed-Postgres limit:
+`alter database ... set` for custom GUCs is superuser-only, and even the
+`postgres` role gets "permission denied to set parameter". The GUC-based
+`app_tz()` could never be configured in production. Replaced by migration
+`20260825130000_app_config.sql`: a one-row `app_config` table (RLS,
+select-only for authenticated since invoker-rights views call `app_tz()` on
+that path) and `app_tz()` rewritten to read it. Same UTC fallback, same
+contract, needs only DML to configure. First post-deploy migration, so it is
+a new file, not an edit.
+
+Also hit: free-tier projects cannot customize auth email templates without a
+custom SMTP provider, so the magic-link email cannot show the `{{ .Token }}`
+code yet. The template is committed (`supabase/templates/magic_link.html` +
+config.toml) and `supabase config push` applies it once SMTP exists or the
+plan changes; until then, installed-app sign-in falls back to using the
+magic link in the browser.
