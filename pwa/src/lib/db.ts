@@ -29,6 +29,12 @@ export type Database = IDBPDatabase<StrengthDB>;
 let dbPromise: Promise<Database> | null = null;
 
 export function getDb(): Promise<Database> {
+  // DATA SAFETY: this database holds unsynced training data (the outbox).
+  // App updates must never lose it. If you bump the version, the upgrade
+  // callback must be strictly additive (create new stores/indexes, migrate
+  // rows forward); never delete the "outbox" or "kv" stores, and never
+  // rename the database. Guard old-version branches with
+  // `if (oldVersion < N)` so existing data flows through untouched.
   dbPromise ??= openDB<StrengthDB>("strength-log", 1, {
     upgrade(db) {
       db.createObjectStore("outbox", { autoIncrement: true });

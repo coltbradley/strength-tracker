@@ -28,6 +28,11 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 - All client writes carry client-generated UUIDs; replay is idempotent
   (`on conflict do nothing`). Do not break this.
 - Units are kg in the database everywhere. Display conversion is client-side.
+- App updates must never lose device data: the IndexedDB database
+  ("strength-log") holds unsynced sets in the outbox. Version bumps must be
+  strictly additive (see the comment in `pwa/src/lib/db.ts`); never rename
+  the database, delete stores, or clear storage in an update path. Postgres
+  migrations are equally append-only once deployed.
 
 ## Commands
 
