@@ -1374,3 +1374,36 @@ button {
 .week-state-nodate {
   color: var(--warn);
 }
+
+/* ---- open-session lifecycle (resume/finish banner, orphan recovery) ---- */
+
+.banner-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.banner-row .resume-banner {
+  flex: 1;
+}
+
+.banner-finish {
+  min-width: 88px;
+}
+
+.orphan-card {
+  border: 1.5px solid rgba(42, 45, 50, 0.3);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.orphan-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent-dim);
+}

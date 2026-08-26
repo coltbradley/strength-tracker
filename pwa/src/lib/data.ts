@@ -4,7 +4,13 @@
 // by callers so the UI reflects unsynced work.
 
 import { supabase } from "./supabase";
-import { cacheGet, cacheSet, cacheDelete, cacheKeys } from "./db";
+import {
+  cacheGet,
+  cacheSet,
+  cacheDelete,
+  cacheDeleteByPrefix,
+  cacheKeys,
+} from "./db";
 import { reportError } from "./errors";
 import { uuid } from "./uuid";
 import type {
@@ -349,6 +355,117 @@ export async function getLastActuals(excludeSessionId?: string): Promise<{
     }
     return { ...anyType, ...best };
   });
+}
+
+// ---- open-session lifecycle ------------------------------------------------
+// A session left open past its calendar day is finished business: on the
+// next app open it auto-completes (ended_at = last set's time) or, if it
+// never logged a set, auto-discards (an accidental start must not mark the
+// planned workout done). Same-day open sessions this device has no cache
+// for (other device, restored phone) are surfaced for adoption.
+
+export interface OpenSessionRow {
+  id: string;
+  planned_workout_id: string | null;
+  started_at: string;
+}
+
+export interface OpenSessionSync {
+  /** sessions auto-completed this pass */
+  autoCompleted: number;
+  /** empty stale sessions auto-discarded this pass */
+  autoDiscarded: number;
+  /** the local activeSession cache pointed at a closed/discarded session */
+  clearedActive: boolean;
+  /** a same-day open session with no local cache (offer resume/finish) */
+  orphan: OpenSessionRow | null;
+}
+
+/**
+ * Reconcile open sessions with the calendar. Online-only; callers treat a
+ * throw as "offline, retry on next launch". `localDayOf` maps a timestamptz
+ * to the device's local calendar date; `today` is that date for now.
+ */
+export async function syncOpenSessions(
+  activeId: string | null,
+  localDayOf: (iso: string) => string,
+  today: string,
+): Promise<OpenSessionSync> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("id,planned_workout_id,started_at")
+    .is("ended_at", null)
+    .is("discarded_at", null)
+    .order("started_at");
+  throwIf(error);
+  const open = (data ?? []) as OpenSessionRow[];
+
+  let autoCompleted = 0;
+  let autoDiscarded = 0;
+  let clearedActive = false;
+
+  for (const s of open) {
+    if (localDayOf(s.started_at) >= today) continue; // still today's business
+    const { data: lastRows, error: lErr } = await supabase
+      .from("v_live_sets")
+      .select("performed_at")
+      .eq("session_id", s.id)
+      .order("performed_at", { ascending: false })
+      .limit(1);
+    throwIf(lErr);
+    const last = lastRows?.[0]?.performed_at as string | undefined;
+    if (last) {
+      // complete at the last logged set (clamped: the DB requires
+      // ended_at >= started_at)
+      const endedAt = last > s.started_at ? last : s.started_at;
+      const { error: uErr } = await supabase
+        .from("sessions")
+        .update({ ended_at: endedAt })
+        .eq("id", s.id)
+        .is("ended_at", null);
+      throwIf(uErr);
+      autoCompleted++;
+    } else {
+      const { error: dErr } = await supabase
+        .from("sessions")
+        .update({ discarded_at: new Date().toISOString() })
+        .eq("id", s.id);
+      throwIf(dErr);
+      await cacheDeleteByPrefix(["doneWorkouts:"]);
+      autoDiscarded++;
+    }
+    if (activeId === s.id) {
+      await cacheDelete(cacheKeys.activeSession);
+      clearedActive = true;
+    }
+  }
+
+  // The local cache can also point at a session that was finished or
+  // discarded elsewhere. A session MISSING from the server is different —
+  // its insert may still be queued in the outbox — so only a row that
+  // exists and is closed clears the cache.
+  if (activeId !== null && !clearedActive) {
+    const { data: row, error: aErr } = await supabase
+      .from("sessions")
+      .select("id,ended_at,discarded_at")
+      .eq("id", activeId)
+      .maybeSingle();
+    throwIf(aErr);
+    if (row && (row.ended_at !== null || row.discarded_at !== null)) {
+      await cacheDelete(cacheKeys.activeSession);
+      clearedActive = true;
+    }
+  }
+
+  const validActive = activeId !== null && !clearedActive;
+  const orphan =
+    open.find(
+      (s) =>
+        localDayOf(s.started_at) >= today &&
+        (!validActive || s.id !== activeId),
+    ) ?? null;
+
+  return { autoCompleted, autoDiscarded, clearedActive, orphan };
 }
 
 // ---- session meta (History renders the post-workout note + sRPE) -----------

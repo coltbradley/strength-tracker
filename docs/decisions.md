@@ -259,3 +259,29 @@ reversals, with reasoning:
   the same swap self-heals, and the plan editor's date field remains the
   recovery path. Acceptable for a single-user planner; revisit only if it
   ever actually bites.
+
+## 2026-08-26 open-session lifecycle
+
+Real use on day one surfaced a dead end: a session left open (started, never
+finished) kept the resume banner up forever, which hides every Start button —
+the flow had no exit that didn't go through the session screen. Fixes, all
+client-side (no schema change):
+
+- **End-of-day auto-complete.** On app open, any open session started on a
+  previous local day is closed: `ended_at` = its last set's `performed_at`
+  (clamped to `started_at`). An open stale session with NO sets is
+  auto-discarded instead — completing it would falsely mark the planned
+  workout done. Runs in `syncOpenSessions` (data.ts), called from Today's
+  mount; offline it silently waits for the next online launch.
+- **Stale local pointer cleanup.** If the device's activeSession cache points
+  at a session that is ended or discarded server-side, the cache is cleared.
+  A session missing from the server entirely is left alone — its insert may
+  still be in the outbox.
+- **Orphan adoption.** A same-day open session the device has no cache for
+  (other device, restored phone) surfaces as a card on Today with
+  Resume / Finish / Discard; adoption rebuilds the session caches
+  (prescriptions from the plan, extras from already-logged sets).
+- **Finish shortcut on the resume banner.** Ending a session no longer
+  requires going through the set-entry screen.
+- "Pause" is deliberately not a feature: leaving a session open IS the pause,
+  and the end-of-day sweep bounds how long it can dangle.

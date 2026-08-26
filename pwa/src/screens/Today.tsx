@@ -12,13 +12,17 @@ import {
   getLastActuals,
   getPlannedWorkouts,
   getResolvedPrescriptions,
+  getServerSessionSets,
+  syncOpenSessions,
   updatePlannedWorkout,
   weekOrder,
+  type OpenSessionRow,
   type WorkoutList,
 } from "../lib/data";
-import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
+import { cacheGet, cacheSet, cacheDeleteByPrefix, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
+import { useArmed } from "../hooks/useArmed";
 import { reportError, toast } from "../lib/errors";
 import {
   formatPlannedDate,
@@ -47,6 +51,11 @@ export function Today() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
   const [loadError, setLoadError] = useState(false);
+  // a same-day open session this device has no cache for
+  const [orphan, setOrphan] = useState<OpenSessionRow | null>(null);
+  const [orphanArm, setOrphanArm] = useArmed();
+  // bumped when reconciliation closes sessions, so DONE states refresh
+  const [doneTick, setDoneTick] = useState(0);
 
   // most recent confirmed program drives the THIS WEEK section
   const program = list?.programs[0] ?? null;
@@ -74,10 +83,42 @@ export function Today() {
   }, []);
 
   useEffect(() => {
-    void cacheGet<ActiveSession>(cacheKeys.activeSession).then((a) =>
-      setActive(a ?? null),
-    );
-    reload();
+    let cancelled = false;
+    void (async () => {
+      const a =
+        (await cacheGet<ActiveSession>(cacheKeys.activeSession)) ?? null;
+      if (cancelled) return;
+      setActive(a);
+      reload();
+      // Reconcile open sessions with the calendar: yesterday's open session
+      // auto-completes (or auto-discards if empty), a stale local pointer is
+      // cleared, and a same-day session with no local cache is surfaced.
+      try {
+        const r = await syncOpenSessions(
+          a?.id ?? null,
+          (iso) => todayLocalIso(new Date(iso)),
+          todayLocalIso(),
+        );
+        if (cancelled) return;
+        if (r.clearedActive) setActive(null);
+        if (r.autoCompleted > 0)
+          toast(
+            r.autoCompleted === 1
+              ? "An unfinished session from a past day was auto-completed"
+              : `${r.autoCompleted} unfinished sessions were auto-completed`,
+          );
+        if (r.autoDiscarded > 0)
+          toast("An empty unfinished session was cleaned up");
+        if (r.autoCompleted + r.autoDiscarded > 0 || r.clearedActive)
+          setDoneTick((t) => t + 1);
+        setOrphan(r.orphan);
+      } catch {
+        // offline: reconcile on the next online launch
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [reload]);
 
   useEffect(() => {
@@ -88,7 +129,7 @@ export function Today() {
     )
       .then((r) => setDoneIds(new Set(r.data)))
       .catch((e: unknown) => reportError(e, "load week state"));
-  }, [program, workouts]);
+  }, [program, workouts, doneTick]);
 
   const today = todayLocalIso();
   const anyDates = workouts.some((w) => w.scheduled_date !== null);
@@ -220,19 +261,143 @@ export function Today() {
       }
     })();
 
+  /** Rebuild the local caches for a server-side open session (started on
+   *  another device or before storage was cleared) and take it over. */
+  const adoptOrphan = async (s: OpenSessionRow, dest: "/session" | "/end") => {
+    try {
+      let label: string | null = null;
+      let rxRows: ResolvedPrescriptionRow[] = [];
+      if (s.planned_workout_id) {
+        label =
+          list?.workouts.find((w) => w.id === s.planned_workout_id)?.label ??
+          null;
+        try {
+          rxRows = (await getResolvedPrescriptions(s.planned_workout_id)).data;
+        } catch {
+          rxRows = [];
+        }
+      }
+      await cacheSet(cacheKeys.sessionRx(s.id), rxRows);
+      try {
+        // exercises already logged but not prescribed become extras again
+        const sets = await getServerSessionSets(s.id);
+        const known = new Set(rxRows.map((r) => r.exercise_id));
+        const lib = (await getExercises()).data;
+        const extras = [...new Set(sets.map((x) => x.exercise_id))]
+          .filter((id) => !known.has(id))
+          .map((id) => ({
+            exercise_id: id,
+            name: lib.find((e) => e.id === id)?.name ?? id,
+          }));
+        await cacheSet(cacheKeys.sessionExtras(s.id), extras);
+      } catch {
+        // best-effort; the session screen also merges server sets itself
+      }
+      const adopted: ActiveSession = {
+        id: s.id,
+        planned_workout_id: s.planned_workout_id,
+        started_at: s.started_at,
+        workout_label: label,
+      };
+      await cacheSet(cacheKeys.activeSession, adopted);
+      setOrphan(null);
+      navigate(dest);
+    } catch (e) {
+      reportError(e, "recover open session");
+    }
+  };
+
+  const discardOrphan = async (s: OpenSessionRow) => {
+    try {
+      await outbox.enqueue({
+        kind: "update",
+        table: "sessions",
+        id: s.id,
+        patch: { discarded_at: new Date().toISOString() },
+      });
+      await cacheDeleteByPrefix([
+        "doneWorkouts:",
+        "recent:",
+        "e1rm:",
+        "volume:",
+        "goal:",
+        "lastActuals:",
+      ]);
+      setOrphan(null);
+      setDoneTick((t) => t + 1);
+      toast("Session discarded");
+    } catch (e) {
+      reportError(e, "discard open session");
+    }
+  };
+
   return (
     <div className="screen">
       {active && (
-        <button
-          type="button"
-          className="resume-banner"
-          onClick={() => navigate("/session")}
-        >
-          RESUME
-          {active.workout_label
-            ? ` · ${active.workout_label.toUpperCase()}`
-            : " SESSION"}
-        </button>
+        <div className="banner-row">
+          <button
+            type="button"
+            className="resume-banner"
+            onClick={() => navigate("/session")}
+          >
+            RESUME
+            {active.workout_label
+              ? ` · ${active.workout_label.toUpperCase()}`
+              : " SESSION"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-outline-ink banner-finish"
+            onClick={() => navigate("/end")}
+          >
+            Finish
+          </button>
+        </div>
+      )}
+
+      {!active && orphan && (
+        <div className="orphan-card">
+          <div className="orphan-title">
+            OPEN SESSION · STARTED{" "}
+            {new Date(orphan.started_at)
+              .toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+              })
+              .toUpperCase()}
+          </div>
+          <div className="microcopy">
+            Started earlier today but this phone lost track of it. Pick it
+            back up, finish it, or discard it.
+          </div>
+          <div className="detail-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void adoptOrphan(orphan, "/session")}
+            >
+              Resume
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => void adoptOrphan(orphan, "/end")}
+            >
+              Finish
+            </button>
+            <button
+              type="button"
+              className={`btn ${orphanArm === orphan.id ? "btn-danger" : "btn-ghost"}`}
+              onClick={() =>
+                orphanArm === orphan.id
+                  ? void discardOrphan(orphan)
+                  : setOrphanArm(orphan.id)
+              }
+            >
+              {orphanArm === orphan.id ? "Discard?" : "Discard"}
+            </button>
+          </div>
+        </div>
       )}
 
       <div className="today-heading">{formatTodayHeading()}</div>
