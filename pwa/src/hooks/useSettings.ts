@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import {
   getBarKg,
   getDefaultRestSeconds,
+  getExerciseBarKg,
   getPlatesOnHand,
   subscribeSettings,
 } from "../lib/settings";
@@ -17,4 +18,15 @@ export function useBarKg(unit: Unit): number {
 
 export function useDefaultRestSeconds(): number {
   return useSyncExternalStore(subscribeSettings, getDefaultRestSeconds);
+}
+
+/** The bar this exercise loads onto (kg; 0 = no bar). */
+export function useExerciseBarKg(
+  exerciseId: string | null,
+  unit: Unit,
+  equipment: string | null,
+): number {
+  return useSyncExternalStore(subscribeSettings, () =>
+    exerciseId === null ? 0 : getExerciseBarKg(exerciseId, unit, equipment),
+  );
 }

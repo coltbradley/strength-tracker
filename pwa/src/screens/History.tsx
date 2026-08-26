@@ -12,6 +12,7 @@ import {
   getLastActuals,
   getRecentSets,
   getSessionMeta,
+  getSetNotesForExercise,
   getWeeklyVolume,
   type SessionMetaRow,
 } from "../lib/data";
@@ -43,6 +44,7 @@ export function History() {
   const [goal, setGoal] = useState<GoalProgressRow | null>(null);
   const [recent, setRecent] = useState<SetInsert[]>([]);
   const [meta, setMeta] = useState<Record<string, SessionMetaRow>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const [fromCache, setFromCache] = useState(false);
   const [discardArm, setDiscardArm] = useArmed();
   const [voidArm, setVoidArm] = useArmed();
@@ -87,6 +89,14 @@ export function History() {
         getSessionMeta(selected, ids)
           .then((m) => {
             if (!cancelled) setMeta(m.data);
+          })
+          .catch(() => undefined);
+        getSetNotesForExercise(
+          selected,
+          rec.data.map((s) => s.id),
+        )
+          .then((n) => {
+            if (!cancelled) setNotes(n.data);
           })
           .catch(() => undefined);
       } catch (e) {
@@ -158,6 +168,7 @@ export function History() {
         "volume:",
         "goal:",
         "sessionMeta:",
+        "setNotes:",
         "lastActuals:",
         "doneWorkouts:",
       ]);
@@ -259,18 +270,22 @@ export function History() {
                   .slice()
                   .sort((a, b) => a.set_index - b.set_index)
                   .map((s) => (
-                    <SetRow
-                      key={s.id}
-                      set={s}
-                      unit={unit}
-                      onVoid={
-                        sessionId !== activeId
-                          ? () => void voidPastSet(s)
-                          : undefined
-                      }
-                      voidArmed={voidArm === s.id}
-                      onArmVoid={() => setVoidArm(s.id)}
-                    />
+                    <div key={s.id} className="logged-set-wrap">
+                      <SetRow
+                        set={s}
+                        unit={unit}
+                        onVoid={
+                          sessionId !== activeId
+                            ? () => void voidPastSet(s)
+                            : undefined
+                        }
+                        voidArmed={voidArm === s.id}
+                        onArmVoid={() => setVoidArm(s.id)}
+                      />
+                      {notes[s.id] && (
+                        <div className="set-note-preview">{notes[s.id]}</div>
+                      )}
+                    </div>
                   ))}
               </div>
             ))}

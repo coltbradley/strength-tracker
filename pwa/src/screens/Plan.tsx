@@ -48,6 +48,8 @@ interface RxDraft {
   load_pct: number; // meaningful in pct mode
   rest_seconds: number;
   hasRest: boolean;
+  /** 0 = not in a superset; 1-4 = group A-D */
+  superset: number;
 }
 
 function draftFrom(r: ResolvedPrescriptionRow): RxDraft {
@@ -60,6 +62,7 @@ function draftFrom(r: ResolvedPrescriptionRow): RxDraft {
     load_pct: r.load_pct_tm ?? 75,
     rest_seconds: r.rest_seconds ?? 180,
     hasRest: r.rest_seconds !== null,
+    superset: r.superset_group ?? 0,
   };
 }
 
@@ -71,8 +74,17 @@ function patchFrom(d: RxDraft): PrescriptionPatch {
     load_kg: d.mode === "kg" ? Math.max(0.5, d.load_kg) : null,
     load_pct_tm: d.mode === "pct" ? d.load_pct : null,
     rest_seconds: d.hasRest ? d.rest_seconds : null,
+    superset_group: d.superset === 0 ? null : d.superset,
   };
 }
+
+const SUPERSET_CHOICES: [number, string][] = [
+  [0, "NONE"],
+  [1, "A"],
+  [2, "B"],
+  [3, "C"],
+  [4, "D"],
+];
 
 export function Plan() {
   const { id } = useParams<{ id: string }>();
@@ -382,6 +394,9 @@ export function Plan() {
               >
                 <span className="week-label">{r.exercise_name}</span>
                 <span className="week-state">
+                  {r.superset_group !== null
+                    ? `${String.fromCharCode(64 + r.superset_group)} · `
+                    : ""}
                   {r.sets} × {formatRepRange(r.reps_min, r.reps_max)}
                   {r.load_kg !== null
                     ? ` · ${toDisplay(r.load_kg, unit)} ${unit}`
@@ -492,6 +507,20 @@ export function Plan() {
                       ]}
                     />
                   )}
+
+  {/* superset: exercises sharing a letter run together (A1/A2) */}
+                  <div className="seg seg-types">
+                    {SUPERSET_CHOICES.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`seg-btn ${draft.superset === value ? "seg-on" : ""}`}
+                        onClick={() => setDraft({ ...draft, superset: value })}
+                      >
+                        {label === "NONE" ? "NO SS" : `SS ${label}`}
+                      </button>
+                    ))}
+                  </div>
 
                   <div className="seg seg-types">
                     <button

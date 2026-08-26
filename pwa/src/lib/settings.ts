@@ -143,11 +143,46 @@ export function setBarKg(u: Unit, kg: number): void {
   notify();
 }
 
+// ---- per-exercise bar ------------------------------------------------------
+// Which bar (if any) an exercise loads onto. Keyed by exercise id, kg value,
+// 0 = no bar (plate-loaded machines like the leg press). Defaults: barbell
+// exercises use the unit's chosen bar; everything else has no bar.
+
+const EXERCISE_BAR_KEY = "strength-log.exerciseBar"; // Record<exercise_id, kg>
+
+let exerciseBars: Record<string, number> =
+  read<Record<string, number>>(EXERCISE_BAR_KEY) ?? {};
+
+export function getExerciseBarKg(
+  exerciseId: string,
+  u: Unit,
+  equipment: string | null,
+): number {
+  const override = exerciseBars[exerciseId];
+  if (override !== undefined) return override;
+  return equipment === "barbell" ? getBarKg(u) : 0;
+}
+
+/** kg value from BAR_CATALOG, or 0 for no bar; null clears the override */
+export function setExerciseBarKg(exerciseId: string, kg: number | null): void {
+  if (kg === null) {
+    const { [exerciseId]: _dropped, ...rest } = exerciseBars;
+    exerciseBars = rest;
+  } else {
+    exerciseBars = { ...exerciseBars, [exerciseId]: kg };
+  }
+  write(EXERCISE_BAR_KEY, exerciseBars);
+  notify();
+}
+
 // ---- default rest ----------------------------------------------------------
 
 let defaultRest: number = (() => {
   const v = read<number>(REST_KEY);
-  return v !== null && REST_CHOICES.includes(v) ? v : 120;
+  // any sane stored value survives a reload (typed values aren't presets)
+  return v !== null && Number.isFinite(v) && v >= 0 && v <= 3600
+    ? Math.round(v)
+    : 120;
 })();
 
 export function getDefaultRestSeconds(): number {
@@ -157,6 +192,13 @@ export function getDefaultRestSeconds(): number {
 export function cycleDefaultRest(): void {
   const i = REST_CHOICES.indexOf(defaultRest);
   defaultRest = REST_CHOICES[(i + 1) % REST_CHOICES.length];
+  write(REST_KEY, defaultRest);
+  notify();
+}
+
+/** Granular control (typed via the number pad); clamped to the DB's cap. */
+export function setDefaultRestSeconds(seconds: number): void {
+  defaultRest = Math.min(3600, Math.max(0, Math.round(seconds)));
   write(REST_KEY, defaultRest);
   notify();
 }

@@ -500,6 +500,34 @@ export async function getSessionMeta(
   });
 }
 
+// ---- per-set notes ---------------------------------------------------------
+
+/** Notes for a list of set ids, set_id -> note. Online; callers cache. */
+export async function getSetNotesByIds(
+  ids: string[],
+): Promise<Record<string, string>> {
+  if (ids.length === 0) return {};
+  const { data, error } = await supabase
+    .from("set_notes")
+    .select("set_id,note")
+    .in("set_id", ids);
+  throwIf(error);
+  return Object.fromEntries(
+    ((data ?? []) as { set_id: string; note: string }[]).map((r) => [
+      r.set_id,
+      r.note,
+    ]),
+  );
+}
+
+/** History variant, cached under `setNotes:<exerciseId>` for offline. */
+export async function getSetNotesForExercise(
+  exerciseId: string,
+  ids: string[],
+): Promise<{ data: Record<string, string>; fromCache: boolean }> {
+  return fetchWithCache(`setNotes:${exerciseId}`, () => getSetNotesByIds(ids));
+}
+
 // ---- session sets (server + cache; caller merges outbox pending) -----------
 
 export async function getServerSessionSets(

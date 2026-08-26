@@ -39,10 +39,11 @@ export interface TransportError {
 
 /** The Supabase calls the outbox needs, abstracted for tests. */
 export interface OutboxTransport {
-  /** upsert with { onConflict: <pk>, ignoreDuplicates: true }; null on success.
-   *  pk is 'set_id' for set_voids, 'id' everywhere else. */
+  /** upsert on the table's pk ('set_id' for set_voids/set_notes, 'id'
+   *  elsewhere); null on success. set_notes MERGES on conflict (note edits
+   *  are last-write-wins); every other table ignores duplicates. */
   insert(
-    table: "sessions" | "sets" | "set_voids",
+    table: "sessions" | "sets" | "set_voids" | "set_notes",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(

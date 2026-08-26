@@ -5,6 +5,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
 } from "react-router-dom";
 import { useAuth } from "./hooks/useAuth";
 import { Login } from "./screens/Login";
@@ -20,6 +21,7 @@ import { Toasts } from "./components/Toasts";
 function Shell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   // Session runs its own footer + rest strip; End keeps its own buttons.
   // The tab bar exists only on the two tab routes.
   const inSession = location.pathname === "/session";
@@ -28,7 +30,14 @@ function Shell() {
   return (
     <div className="shell">
       <header className="topbar">
-        <span className="topbar-title">Strength Log</span>
+        <button
+          type="button"
+          className="topbar-title"
+          aria-label="go to Today"
+          onClick={() => navigate("/")}
+        >
+          Strength Log
+        </button>
         <div className="topbar-right">
           <SyncStatus />
           <button

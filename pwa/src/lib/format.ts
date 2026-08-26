@@ -92,6 +92,29 @@ export function formatPlannedDate(iso: string): string {
     .toUpperCase();
 }
 
+/** Mon–Sun ISO dates (YYYY-MM-DD, local) for the week containing d. */
+export function getWeekDates(d: Date = new Date()): string[] {
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate() + mondayOffset,
+  );
+  return Array.from({ length: 7 }, (_, i) =>
+    todayLocalIso(
+      new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i),
+    ),
+  );
+}
+
+/** "M" / "T" / "W" — narrow weekday letter for the week strip. */
+export function formatWeekdayLetter(iso: string): string {
+  return parseLocalDate(iso)
+    .toLocaleDateString("en-GB", { weekday: "narrow" })
+    .toUpperCase();
+}
+
 /** "JUN" — month tick labels under the e1RM chart. */
 export function formatMonth(d: string | Date): string {
   const dd = typeof d === "string" ? new Date(d) : d;

@@ -323,3 +323,38 @@ same symptom. `docs/flows.md` (new) is now the canonical flow map.
   started the rest clock cancels the clock; session-scoped caches are
   deleted when the session closes; rest alerts get a Settings row that
   requests notification permission (the strip itself never prompts).
+
+## 2026-08-26 design round: calendar week, accordion logging, supersets, set notes
+
+Owner-driven refinement pass, informed by a best-practice sweep of Strong /
+Hevy / Fitbod / Boostcamp adapted to the index-card idiom.
+
+- **Today is a calendar.** A Mon–Sun strip (weekday letter + date + state
+  glyph: accent underline today, dot done, struck skipped, red missed, dim
+  rest) with the selected day previewing inline below — the week context
+  never leaves the screen. Out-of-week and undated days live in LATER.
+  Undated programs keep the ruled list (a calendar needs dates). Month grids
+  and streak badges rejected as motivational-app noise.
+- **The session is an accordion.** One exercise open at a time, logging
+  surface inside it: warmup/working toggle (backoff dropped from the UI —
+  the enum value stays legal for history), reps above load, load steps ±5
+  display units only + tap-to-type, "LOG SET n OF m" counts WORKING sets
+  against the prescription (warmups don't consume it). Completing an
+  exercise surfaces a NEXT ▸ hint; deliberate tap, never auto-advance.
+  Skip/remove live on closed rows only.
+- **Supersets are display, not enforcement.** prescriptions.superset_group
+  (1=A…26=Z) set by the MCP parse or the plan editor; consecutive group
+  members get A1/A2 mono tags and a hairline bracket rail. Logging order
+  stays free — append-only capture doesn't care.
+- **Per-set notes are a separate mutable row.** set_notes (set_id pk,
+  editable, last-write-wins — the sessions.notes mutability class), so sets
+  stay append-only. The outbox's one MERGING upsert. Collapsed "+ NOTE"
+  affordance; existing notes preview inline and in History under the exact
+  set.
+- **The bar is a property of the exercise.** Per-exercise bar choice
+  (NO BAR / catalog) persisted device-locally; defaults barbell→global bar,
+  everything else→none. Fixes the leg-press-with-a-45 miscount for any
+  plate-loaded machine.
+- Smaller: default rest is typed (number pad) with any 0–3600 s value
+  surviving reload (the preset-only init was silently resetting custom
+  values); the top-left title navigates home; History renders set notes.

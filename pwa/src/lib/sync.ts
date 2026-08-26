@@ -24,11 +24,13 @@ function toTransportError(
 
 const transport: OutboxTransport = {
   async insert(table, payload) {
+    const keyed = table === "set_voids" || table === "set_notes";
     const { error, status } = await supabase
       .from(table)
       .upsert(payload as Record<string, unknown>, {
-        onConflict: table === "set_voids" ? "set_id" : "id",
-        ignoreDuplicates: true,
+        onConflict: keyed ? "set_id" : "id",
+        // note edits overwrite; everything else is insert-if-absent
+        ignoreDuplicates: table !== "set_notes",
       });
     return toTransportError(error, status ?? null);
   },

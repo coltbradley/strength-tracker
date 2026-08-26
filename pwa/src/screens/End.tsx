@@ -144,6 +144,7 @@ export function End() {
       cacheKeys.sessionVoids(id),
       cacheKeys.sessionSkips(id),
       cacheKeys.sessionRest(id),
+      cacheKeys.sessionSetNotes(id),
     ]) {
       await cacheDelete(key).catch(() => undefined);
     }
@@ -168,6 +169,7 @@ export function End() {
         "volume:",
         "goal:",
         "sessionMeta:",
+        "setNotes:",
         "lastActuals:",
         "doneWorkouts:",
       ]);

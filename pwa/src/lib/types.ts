@@ -64,6 +64,7 @@ export interface PrescriptionPatch {
   load_pct_tm?: number | null;
   rest_seconds?: number | null;
   position?: number;
+  superset_group?: number | null;
 }
 
 export interface ResolvedPrescriptionRow {
@@ -82,6 +83,8 @@ export interface ResolvedPrescriptionRow {
   tm_kg: number | null;
   resolved_load_kg: number | null;
   plate_load_kg: number | null;
+  /** exercises sharing a group in the same workout are a superset (1=A, 2=B) */
+  superset_group: number | null;
 }
 
 // Insert shape; user_id is filled by the DB default (auth.uid()).
@@ -108,6 +111,12 @@ export type SessionPatch = SessionEndPatch | SessionDiscardPatch;
 /** Append-only correction: hides one set from every view. */
 export interface SetVoidInsert {
   set_id: string;
+}
+
+/** User annotation on one logged set; editable (last write wins). */
+export interface SetNoteUpsert {
+  set_id: string;
+  note: string;
 }
 
 export interface SetInsert {

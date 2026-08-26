@@ -1494,3 +1494,246 @@ button {
   color: var(--accent-dim);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- week strip (Today calendar) ---- */
+
+.week-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.week-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 0 8px;
+  min-height: var(--tap);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+}
+
+.week-cell-selected {
+  border-color: rgba(42, 45, 50, 0.22);
+}
+
+.week-cell-letter {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.week-cell-num {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 2px solid transparent;
+  padding-bottom: 2px;
+}
+
+.week-cell-num-upcoming {
+  border-bottom-color: rgba(42, 45, 50, 0.22);
+}
+
+.week-cell-num-missed {
+  color: var(--danger);
+}
+
+.week-cell-num-skipped {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+.week-cell-num-rest {
+  color: rgba(42, 45, 50, 0.35);
+  font-weight: 500;
+}
+
+.week-cell-today .week-cell-num {
+  color: var(--accent-dim);
+  border-bottom-color: var(--accent);
+}
+
+.week-cell-mark {
+  height: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.week-cell-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+}
+
+.selected-day-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.selected-day-label {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/* ---- session accordion ---- */
+
+.wk-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.wk-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.wk-item-on .wk-row {
+  padding-left: 11px;
+}
+
+.wk-item-on .wk-open {
+  padding-left: 11px;
+}
+
+.wk-header-open {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--tap);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.wk-open {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0 16px;
+}
+
+.wk-next-hint {
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent-dim);
+  padding: 6px 0;
+  min-height: 40px;
+}
+
+/* superset bracket in the row's left gutter */
+.wk-superset-rail {
+  flex: none;
+  width: 18px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wk-superset-rail::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  background: rgba(42, 45, 50, 0.28);
+  transform: translateX(-50%);
+}
+
+.wk-superset-rail-start::before {
+  top: 50%;
+}
+
+.wk-superset-rail-end::before {
+  bottom: 50%;
+}
+
+.wk-superset-rail-start.wk-superset-rail-end::before {
+  display: none;
+}
+
+.wk-superset-tag {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  background: var(--bg);
+  padding: 2px 0;
+}
+
+/* ---- per-set notes ---- */
+
+.logged-set-wrap {
+  display: flex;
+  flex-direction: column;
+  border-bottom: var(--rule-hair);
+}
+
+.logged-set-wrap .logged-set {
+  border-bottom: none;
+}
+
+.set-note-add {
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(42, 45, 50, 0.4);
+  padding: 2px 0 8px;
+  min-height: 30px;
+}
+
+.set-note-preview {
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  padding: 0 0 8px;
+  border-left: 2px solid rgba(42, 45, 50, 0.18);
+  padding-left: 10px;
+  margin-bottom: 8px;
+}
+
+.set-note-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 0 10px;
+}
+
+.set-note-input {
+  min-height: 52px;
+  margin-top: 0;
+}
+
+.set-note-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.set-note-actions .btn {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 10.5px;
+}

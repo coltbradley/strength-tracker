@@ -7,11 +7,14 @@ offline/empty/error edges.
 
 ## Weekly planning
 
-- **View week** — Today tab (default). Confirmed program's days as a ruled
-  list, chronological when dated; states DONE / SKIPPED / TODAY / MISSED /
-  NO DATE / TO COME. Tap to expand: prescriptions, plan note, coach note.
-  Today's row auto-expands once. Offline: cached plan + note; no cache:
-  warning; no program: empty state + Start empty session.
+- **View week** — Today tab (default). A Mon–Sun strip: each day cell shows
+  the weekday letter, date, and state (accent underline = today, dot = done,
+  faint underline = planned, struck = skipped, red = missed, dim = rest).
+  Tapping a cell previews that day inline below the strip (prescriptions,
+  notes, actions) without losing the week. Today is selected by default.
+  Days outside this week or undated live in a compact LATER list. Programs
+  with no dates at all keep the original ruled list. Offline: cached plan +
+  note; no cache: warning; no program: empty state + Start empty session.
 - **Edit a day** — Today → expand → Edit → `/plan/:id`. Date (commits on
   close), plan note (auto-saves on blur), per-exercise sets/reps/load
   (kg / %TM / by feel)/rest, add/remove exercise, delete day. Every action
@@ -47,23 +50,34 @@ offline/empty/error edges.
 
 ## In-session work
 
-- **See the whole workout** — the WORKOUT section lives inside the session
-  scroll (no modal): every exercise with name, target, logged count, skip
-  state, and the current one marked. The footer's Workout n/n button shows
-  progress at a glance and jumps to the section.
-- **Switch exercise** — tap any row in the WORKOUT section; the screen
-  returns to the steppers, prefilled (prescription → this session → last
-  session).
-- **Log a set** — big steppers + LOG SET. Append-only, offline-first, rest
-  clock starts (prescribed rest or default), auto-unskips.
+- **See the whole workout** — the session screen IS the workout: one
+  accordion list, every exercise visible (name, target, working-set count,
+  skip state, superset A1/A2 tags with a bracket rail), exactly one open at
+  a time with the orange inset accent. The first incomplete exercise opens
+  on entry.
+- **Switch exercise** — tap any closed row; it opens (previous closes) and
+  scrolls into view, prefilled (prescription → this session → last session).
+  Tapping the open header collapses it.
+- **Log a set** — inside the open item: WARMUP | WORKING toggle, REPS
+  stepper (above load), LOAD stepper (±5 display units + tap-to-type +
+  plate hint), then "LOG SET n OF m" (working sets vs prescription; warmups
+  don't consume the count). Append-only, offline-first, rest clock starts,
+  auto-unskips. When the exercise completes, a NEXT ▸ hint offers the next
+  incomplete one (never auto-advances).
+- **Note a set** — "+ NOTE" under any logged set expands a small editor;
+  notes save to the database (editable, last-write-wins) and read back in
+  History under the exact set.
 - **Fix a wrong set** — ✕ on the logged row → VOID? (append-only void +
-  relog; the record keeps both).
-- **Skip / unskip an exercise** — WORKOUT section row action. Session-local;
-  the analytical record is simply which sets exist.
-- **Add an exercise** — WORKOUT section → Add exercise → search sheet.
-  Extras with no sets can be removed; prescribed entries only skip.
+  relog; the record keeps both). Voiding the set that started the rest
+  clock cancels the clock.
+- **Skip / unskip / remove** — the action on each closed row (collapse the
+  open one first). Session-local; the analytical record is the sets.
+- **Add an exercise** — bottom of the list → search sheet.
 - **Rest** — strip counts down then over; adjust, type, or dismiss; the
-  clock keeps running for rest stamping. Survives leaving the screen.
+  clock keeps running for rest stamping. Survives leaving the screen. Rest
+  alerts opt in via Settings (notification permission).
+- **Plates** — per-exercise bar choice in the plate sheet (NO BAR for
+  plate-loaded machines like the leg press); persists per exercise.
 - **Read the day's notes** — plan note and coach note render at the top of
   the session screen.
 - **Leave mid-session** — footer Home. Today/History fully usable; RESUME +

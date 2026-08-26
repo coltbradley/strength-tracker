@@ -67,6 +67,17 @@ const prescriptionSchema = z
       .optional()
       .describe("Prescribed rest between sets, in seconds."),
     notes: z.string().optional().describe("Coach notes for this prescription."),
+    superset_group: z
+      .number()
+      .int()
+      .min(1)
+      .max(26)
+      .optional()
+      .describe(
+        "Superset marker: prescriptions in the same workout sharing a group " +
+          "number are performed as a superset (1 = A, 2 = B, ...). Use when " +
+          "the coach pairs exercises ('A1/A2', 'superset with', arrows).",
+      ),
   })
   .refine((p) => !(p.load_kg != null && p.load_pct_tm != null), {
     message: "load_kg and load_pct_tm are mutually exclusive",
@@ -320,6 +331,7 @@ export function registerUpsertProgram(
               load_pct_tm: p.load_pct_tm ?? null,
               rest_seconds: p.rest_seconds ?? null,
               notes: p.notes ?? null,
+              superset_group: p.superset_group ?? null,
             })),
           );
           const { error: rxError } = await db.client

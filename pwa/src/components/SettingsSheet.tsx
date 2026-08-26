@@ -2,12 +2,13 @@
 // (per-unit catalog, pairs), manual sync, sign out.
 
 import { useState } from "react";
+import { NumberPad, type PadRequest } from "./NumberPad";
 import {
   BAR_CATALOG,
   PLATE_CATALOG,
-  cycleDefaultRest,
   getBarKg,
   setBarKg,
+  setDefaultRestSeconds,
   setUnit,
   togglePlate,
 } from "../lib/settings";
@@ -37,7 +38,23 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   const [notifState, setNotifState] = useState(
     notifSupported ? Notification.permission : "unsupported",
   );
+  const [restPad, setRestPad] = useState(false);
   if (!open) return null;
+
+  const restPadReq: PadRequest | null = restPad
+    ? {
+        label: "DEFAULT REST · SECONDS",
+        action: "SET REST",
+        initial: String(restDefault),
+        allowDecimal: false,
+        onCommit: (v) => {
+          setDefaultRestSeconds(v);
+          setRestPad(false);
+          toast(`Default rest ${formatClock(Math.min(3600, Math.max(0, Math.round(v))))}`);
+        },
+        onCancel: () => setRestPad(false),
+      }
+    : null;
 
   // the rest strip fires a "Rest over" notification only if permission was
   // granted somewhere — this row is that somewhere (never prompted mid-set)
@@ -99,9 +116,11 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
         <button
           type="button"
           className="sheet-row sheet-row-btn"
-          onClick={cycleDefaultRest}
+          onClick={() => setRestPad(true)}
         >
-          <span>Default rest</span>
+          <span>
+            Default rest <span className="muted-mono">· tap to type</span>
+          </span>
           <span className="sheet-row-value">{formatClock(restDefault)}</span>
         </button>
 
@@ -177,6 +196,8 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
         >
           Sign out
         </button>
+
+        {restPadReq && <NumberPad req={restPadReq} />}
       </div>
     </div>
   );

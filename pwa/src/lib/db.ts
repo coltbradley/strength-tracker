@@ -7,6 +7,7 @@ import type {
   SessionInsert,
   SessionPatch,
   SetInsert,
+  SetNoteUpsert,
   SetVoidInsert,
 } from "./types";
 
@@ -14,6 +15,9 @@ export type OutboxOp =
   | { kind: "insert"; table: "sessions"; payload: SessionInsert }
   | { kind: "insert"; table: "sets"; payload: SetInsert }
   | { kind: "insert"; table: "set_voids"; payload: SetVoidInsert }
+  // set_notes is the one MERGING insert: replaying overwrites (a note edit
+  // is last-write-wins), unlike the do-nothing semantics everywhere else
+  | { kind: "insert"; table: "set_notes"; payload: SetNoteUpsert }
   | { kind: "update"; table: "sessions"; id: string; patch: SessionPatch };
 
 export interface OutboxItem {
@@ -102,6 +106,8 @@ export const cacheKeys = {
   sessionSkips: (sessionId: string) => `sessionSkips:${sessionId}`,
   /** live rest-timer state, so Home round-trips / reloads don't lose it */
   sessionRest: (sessionId: string) => `sessionRest:${sessionId}`,
+  /** per-set notes for the in-flight session, set_id -> note */
+  sessionSetNotes: (sessionId: string) => `sessionSetNotes:${sessionId}`,
   doneWorkouts: (programId: string) => `doneWorkouts:${programId}`,
   e1rm: (exerciseId: string) => `e1rm:${exerciseId}`,
   volume: (exerciseId: string) => `volume:${exerciseId}`,

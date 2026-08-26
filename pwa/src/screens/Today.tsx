@@ -1,8 +1,10 @@
-// Today: the confirmed program's week as a ruled list, chronological when
-// workouts carry scheduled dates (DONE / SKIPPED / TODAY / MISSED / date),
-// expandable to prescriptions + notes. Start is gated to today's workout;
-// everything else is editable via the plan editor. Programs without dates
-// fall back to the original inference: first unfinished day is TODAY.
+// Today: the week as a calendar. A Mon–Sun strip shows which days carry
+// work and their state (done / skipped / missed / today / rest); tapping a
+// day previews it inline below without losing the week. Start is gated to
+// today's workout; everything else is editable via the plan editor.
+// Anything scheduled outside this week (or undated) lives in a compact
+// LATER list. Programs with no dates at all keep the original ruled list —
+// a calendar needs dates.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -28,6 +30,9 @@ import {
   formatPlannedDate,
   formatRxTarget,
   formatTodayHeading,
+  formatWeekdayLetter,
+  getWeekDates,
+  parseLocalDate,
   rxHasNoTm,
   todayLocalIso,
 } from "../lib/format";
@@ -39,7 +44,12 @@ import type {
 } from "../lib/types";
 
 type WorkoutState =
-  "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE";
+  | "DONE"
+  | "SKIPPED"
+  | "TODAY"
+  | "MISSED"
+  | "UPCOMING"
+  | "NO DATE";
 
 export function Today() {
   const navigate = useNavigate();
@@ -48,16 +58,20 @@ export function Today() {
   const [fromCache, setFromCache] = useState(false);
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
   const [active, setActive] = useState<ActiveSession | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
   const [loadError, setLoadError] = useState(false);
+  // week strip selection + LATER-list accordion
+  const [selectedDate, setSelectedDate] = useState<string>(todayLocalIso());
+  const [laterExpanded, setLaterExpanded] = useState<string | null>(null);
+  // undated-program fallback keeps the old expandable ruled list
+  const [expanded, setExpanded] = useState<string | null>(null);
   // a same-day open session this device has no cache for
   const [orphan, setOrphan] = useState<OpenSessionRow | null>(null);
   const [orphanArm, setOrphanArm] = useArmed();
   // bumped when reconciliation closes sessions, so DONE states refresh
   const [doneTick, setDoneTick] = useState(0);
 
-  // most recent confirmed program drives the THIS WEEK section
+  // most recent confirmed program drives the week
   const program = list?.programs[0] ?? null;
   const workouts = useMemo(
     () =>
@@ -139,6 +153,7 @@ export function Today() {
 
   const today = todayLocalIso();
   const anyDates = workouts.some((w) => w.scheduled_date !== null);
+  const weekDates = useMemo(() => getWeekDates(), []);
 
   const states = useMemo(() => {
     const map = new Map<string, WorkoutState>();
@@ -168,6 +183,27 @@ export function Today() {
     (w) => states.get(w.id) === "SKIPPED",
   ).length;
 
+  // calendar derivations
+  const byDate = useMemo(() => {
+    const m = new Map<string, PlannedWorkoutRow>();
+    // weekOrder sorts chronologically; first workout on a date wins the cell
+    for (const w of workouts)
+      if (w.scheduled_date && !m.has(w.scheduled_date))
+        m.set(w.scheduled_date, w);
+    return m;
+  }, [workouts]);
+  const laterWorkouts = useMemo(
+    () =>
+      workouts.filter(
+        (w) =>
+          !w.scheduled_date ||
+          !weekDates.includes(w.scheduled_date) ||
+          byDate.get(w.scheduled_date)?.id !== w.id, // same-day overflow
+      ),
+    [workouts, weekDates, byDate],
+  );
+  const selectedWorkout = anyDates ? (byDate.get(selectedDate) ?? null) : null;
+
   const loadRx = useCallback(
     (workoutId: string) => {
       if (workoutId in rx) return;
@@ -178,22 +214,20 @@ export function Today() {
     [rx],
   );
 
-  const expand = (w: PlannedWorkoutRow) => {
-    setExpanded(expanded === w.id ? null : w.id);
-    loadRx(w.id);
-  };
+  useEffect(() => {
+    if (selectedWorkout) loadRx(selectedWorkout.id);
+  }, [selectedWorkout, loadRx]);
 
-  // Today's workout opens itself once, so the right Start button is the one
-  // in view (not the empty-session fallback at the bottom).
+  // undated fallback: today's row auto-expands once
   const autoExpanded = useRef(false);
   useEffect(() => {
-    if (autoExpanded.current || expanded !== null) return;
+    if (anyDates || autoExpanded.current || expanded !== null) return;
     const todayId = workouts.find((w) => states.get(w.id) === "TODAY")?.id;
     if (!todayId) return;
     autoExpanded.current = true;
     setExpanded(todayId);
     loadRx(todayId);
-  }, [states, workouts, expanded, loadRx]);
+  }, [anyDates, states, workouts, expanded, loadRx]);
 
   const setSkipped = async (w: PlannedWorkoutRow, skipped: boolean) => {
     try {
@@ -248,8 +282,6 @@ export function Today() {
         },
       });
       // Best-effort prefetch so the session screen works fully offline.
-      // getLastActuals is keyed by excludeSessionId — warm the exact key the
-      // session screen will read.
       void getExercises().catch(() => undefined);
       void getLastActuals(sessionId).catch(() => undefined);
       navigate("/session");
@@ -273,6 +305,7 @@ export function Today() {
       try {
         await updatePlannedWorkout(w.id, { scheduled_date: todayLocalIso() });
         toast("Moved to today");
+        setSelectedDate(todayLocalIso());
         reload();
       } catch (e) {
         reportError(e, "move workout to today");
@@ -343,6 +376,7 @@ export function Today() {
         "volume:",
         "goal:",
         "sessionMeta:",
+        "setNotes:",
         "lastActuals:",
       ]);
       setOrphan(null);
@@ -351,6 +385,87 @@ export function Today() {
     } catch (e) {
       reportError(e, "discard open session");
     }
+  };
+
+  /** shared expanded-day content: notes, prescriptions, actions */
+  const dayDetail = (w: PlannedWorkoutRow) => {
+    const state = states.get(w.id) ?? "UPCOMING";
+    return (
+      <>
+        {w.plan_note && (
+          <div className="detail-note">
+            <span className="detail-note-label">PLAN NOTE</span>
+            {w.plan_note}
+          </div>
+        )}
+        {w.notes && (
+          <div className="detail-note">
+            <span className="detail-note-label">COACH</span>
+            {w.notes}
+          </div>
+        )}
+        {(rx[w.id] ?? []).map((r) => (
+          <div key={r.id} className="rx-row">
+            <span className="rx-name">{r.exercise_name}</span>
+            <span className="rx-spec">{formatRxTarget(r, unit)}</span>
+            {rxHasNoTm(r) && <span className="warn-badge">no TM set</span>}
+          </div>
+        ))}
+        {!active && state === "TODAY" && (
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            onClick={() => void start(w)}
+          >
+            Start session
+          </button>
+        )}
+        {!active &&
+          (state === "MISSED" ||
+            state === "NO DATE" ||
+            (state === "UPCOMING" && anyDates)) && (
+            <button
+              type="button"
+              className="btn btn-outline-ink btn-block"
+              onClick={() => moveToToday(w)}
+            >
+              Move to today
+            </button>
+          )}
+        {state === "NO DATE" && (
+          <div className="microcopy">
+            No date set — move it to today, or pick a day in Edit.
+          </div>
+        )}
+        <div className="detail-actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => navigate(`/plan/${w.id}`)}
+          >
+            Edit
+          </button>
+          {state !== "DONE" && state !== "SKIPPED" && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => void setSkipped(w, true)}
+            >
+              Skip
+            </button>
+          )}
+          {state === "SKIPPED" && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => void setSkipped(w, false)}
+            >
+              Unskip
+            </button>
+          )}
+        </div>
+      </>
+    );
   };
 
   return (
@@ -389,8 +504,8 @@ export function Today() {
               .toUpperCase()}
           </div>
           <div className="microcopy">
-            Started earlier today but this phone lost track of it. Pick it
-            back up, finish it, or discard it.
+            Started earlier today but this phone lost track of it. Pick it back
+            up, finish it, or discard it.
           </div>
           <div className="detail-actions">
             <button
@@ -439,24 +554,150 @@ export function Today() {
         </div>
       )}
 
-      {program && (
+      {program && anyDates && (
         <section className="rule-section">
           <div className="section-head">
             <span className="field-label">THIS WEEK</span>
             <span className="section-meta">
-              {doneCount} DONE · {workouts.length - doneCount - skippedCount} TO
-              GO
+              {doneCount} DONE · {workouts.length - doneCount - skippedCount}{" "}
+              TO GO
               {skippedCount > 0 ? ` · ${skippedCount} SKIPPED` : ""}
             </span>
           </div>
-          {anyDates &&
-            !workouts.some((w) => states.get(w.id) === "TODAY") &&
-            doneCount + skippedCount < workouts.length && (
+
+          <div className="week-strip" role="tablist" aria-label="this week">
+            {weekDates.map((iso) => {
+              const w = byDate.get(iso) ?? null;
+              const cellState: WorkoutState | "REST" = w
+                ? (states.get(w.id) ?? "UPCOMING")
+                : "REST";
+              const isToday = iso === today;
+              const isSelected = iso === selectedDate;
+              return (
+                <button
+                  key={iso}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSelected}
+                  aria-label={`${parseLocalDate(iso).toLocaleDateString(
+                    "en-GB",
+                    { weekday: "long" },
+                  )} ${parseLocalDate(iso).getDate()}${
+                    w
+                      ? `, ${
+                          cellState === "REST"
+                            ? "rest day"
+                            : stateLabel(cellState as WorkoutState).toLowerCase()
+                        }`
+                      : ", rest day"
+                  }`}
+                  className={`week-cell ${isToday ? "week-cell-today" : ""} ${isSelected ? "week-cell-selected" : ""}`}
+                  onClick={() => {
+                    setSelectedDate(iso);
+                    if (w) loadRx(w.id);
+                  }}
+                >
+                  <span className="week-cell-letter">
+                    {formatWeekdayLetter(iso)}
+                  </span>
+                  <span
+                    className={`week-cell-num ${
+                      cellState === "MISSED"
+                        ? "week-cell-num-missed"
+                        : cellState === "SKIPPED"
+                          ? "week-cell-num-skipped"
+                          : cellState === "REST"
+                            ? "week-cell-num-rest"
+                            : cellState === "UPCOMING"
+                              ? "week-cell-num-upcoming"
+                              : ""
+                    }`}
+                  >
+                    {parseLocalDate(iso).getDate()}
+                  </span>
+                  <span className="week-cell-mark">
+                    {cellState === "DONE" && (
+                      <span className="week-cell-dot" />
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="week-detail">
+            {selectedWorkout ? (
+              <>
+                <div className="selected-day-head">
+                  <span className="selected-day-label">
+                    {selectedWorkout.label ??
+                      `Workout ${selectedWorkout.day_index + 1}`}
+                  </span>
+                  <span className="section-meta">
+                    {stateLabel(states.get(selectedWorkout.id) ?? "UPCOMING")}
+                  </span>
+                </div>
+                {dayDetail(selectedWorkout)}
+              </>
+            ) : (
               <div className="microcopy">
-                Nothing scheduled today — rest day. Move a workout here to train
-                anyway.
+                {selectedDate === today
+                  ? "Nothing scheduled today — rest day. Move a workout here to train anyway."
+                  : "Rest day — nothing scheduled."}
               </div>
             )}
+          </div>
+        </section>
+      )}
+
+      {program && anyDates && laterWorkouts.length > 0 && (
+        <section className="rule-section">
+          <div className="section-head">
+            <span className="field-label">LATER</span>
+            <span className="section-meta">{laterWorkouts.length}</span>
+          </div>
+          {laterWorkouts.map((w) => {
+            const state = states.get(w.id) ?? "UPCOMING";
+            const open = laterExpanded === w.id;
+            return (
+              <div key={w.id} className="week-item">
+                <button
+                  type="button"
+                  className="week-row"
+                  onClick={() => {
+                    setLaterExpanded(open ? null : w.id);
+                    loadRx(w.id);
+                  }}
+                >
+                  <span className="week-day">{dayLabel(w)}</span>
+                  <span className="week-label">
+                    {w.label ?? `Workout ${w.day_index + 1}`}
+                    {w.plan_note ? <span className="note-dot"> ·</span> : ""}
+                  </span>
+                  <span
+                    className={`week-state ${state === "MISSED" ? "week-state-missed" : ""} ${state === "NO DATE" ? "week-state-nodate" : ""}`}
+                  >
+                    {stateLabel(state)}
+                  </span>
+                  <span className="chev">{open ? "▾" : "▸"}</span>
+                </button>
+                {open && <div className="week-detail">{dayDetail(w)}</div>}
+              </div>
+            );
+          })}
+        </section>
+      )}
+
+      {program && !anyDates && (
+        <section className="rule-section">
+          <div className="section-head">
+            <span className="field-label">THIS WEEK</span>
+            <span className="section-meta">
+              {doneCount} DONE · {workouts.length - doneCount - skippedCount}{" "}
+              TO GO
+              {skippedCount > 0 ? ` · ${skippedCount} SKIPPED` : ""}
+            </span>
+          </div>
           {workouts.map((w) => {
             const state = states.get(w.id) ?? "UPCOMING";
             const open = expanded === w.id;
@@ -466,7 +707,10 @@ export function Today() {
                 <button
                   type="button"
                   className="week-row"
-                  onClick={() => expand(w)}
+                  onClick={() => {
+                    setExpanded(open ? null : w.id);
+                    loadRx(w.id);
+                  }}
                 >
                   <span
                     className={`week-day ${state === "TODAY" ? "week-day-today" : ""}`}
@@ -480,95 +724,13 @@ export function Today() {
                     {w.plan_note ? <span className="note-dot"> ·</span> : ""}
                   </span>
                   <span
-                    className={`week-state ${state === "TODAY" ? "week-state-today" : ""} ${state === "MISSED" ? "week-state-missed" : ""} ${state === "NO DATE" ? "week-state-nodate" : ""}`}
+                    className={`week-state ${state === "TODAY" ? "week-state-today" : ""}`}
                   >
                     {stateLabel(state)}
                   </span>
                   <span className="chev">{open ? "▾" : "▸"}</span>
                 </button>
-                {open && (
-                  <div className="week-detail">
-                    {w.plan_note && (
-                      <div className="detail-note">
-                        <span className="detail-note-label">PLAN NOTE</span>
-                        {w.plan_note}
-                      </div>
-                    )}
-                    {w.notes && (
-                      <div className="detail-note">
-                        <span className="detail-note-label">COACH</span>
-                        {w.notes}
-                      </div>
-                    )}
-                    {(rx[w.id] ?? []).map((r) => (
-                      <div key={r.id} className="rx-row">
-                        <span className="rx-name">{r.exercise_name}</span>
-                        <span className="rx-spec">
-                          {formatRxTarget(r, unit)}
-                        </span>
-                        {rxHasNoTm(r) && (
-                          <span className="warn-badge">no TM set</span>
-                        )}
-                      </div>
-                    ))}
-                    {!active && state === "TODAY" && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-block"
-                        onClick={() => void start(w)}
-                      >
-                        Start session
-                      </button>
-                    )}
-                    {!active &&
-                      (state === "MISSED" ||
-                        state === "NO DATE" ||
-                        // in a dateless program every day is UPCOMING —
-                        // stamping one with a date would flip the whole
-                        // program into date mode uninvited
-                        (state === "UPCOMING" && anyDates)) && (
-                      <button
-                        type="button"
-                        className="btn btn-outline-ink btn-block"
-                        onClick={() => moveToToday(w)}
-                      >
-                        Move to today
-                      </button>
-                    )}
-                    {state === "NO DATE" && (
-                      <div className="microcopy">
-                        No date set — move it to today, or pick a day in Edit.
-                      </div>
-                    )}
-                    <div className="detail-actions">
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => navigate(`/plan/${w.id}`)}
-                      >
-                        Edit
-                      </button>
-                      {state !== "DONE" && state !== "SKIPPED" && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => void setSkipped(w, true)}
-                        >
-                          Skip
-                        </button>
-                      )}
-                      {state === "SKIPPED" && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => void setSkipped(w, false)}
-                        >
-                          Unskip
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
+                {open && <div className="week-detail">{dayDetail(w)}</div>}
               </div>
             );
           })}

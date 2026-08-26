@@ -386,6 +386,34 @@ await check("owner can edit planning fields on planned_workouts", async () => {
   assertEq(upd.affectedRows ?? 0, 1, "planning update allowed");
 });
 
+await check("set_notes: upsert own, reject cross-user, view exposes superset", async () => {
+  await asUser(
+    OWNER,
+    `insert into set_notes (set_id, user_id, note) values ('55555555-0000-4000-8000-000000000002', '${OWNER}', 'felt heavy')
+     on conflict (set_id) do update set note = excluded.note, updated_at = now()`,
+  );
+  const upd = await asUser(
+    OWNER,
+    `update set_notes set note = 'bar speed fine actually' where set_id = '55555555-0000-4000-8000-000000000002'`,
+  );
+  assertEq(upd.affectedRows ?? 0, 1, "note editable");
+  let rejected = false;
+  try {
+    await asUser(
+      OTHER,
+      `insert into set_notes (set_id, user_id, note) values ('55555555-0000-4000-8000-000000000003', '${OTHER}', 'x')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("cross-user set note insert succeeded");
+  const col = await db.query(
+    `select superset_group from v_resolved_prescriptions limit 1`,
+  );
+  if (!("superset_group" in col.rows[0]))
+    throw new Error("superset_group missing from v_resolved_prescriptions");
+});
+
 await check("auth.uid() default stamps user_id on insert", async () => {
   await asUser(
     OWNER,
