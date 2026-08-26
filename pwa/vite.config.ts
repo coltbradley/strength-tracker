@@ -5,7 +5,13 @@ import { VitePWA } from "vite-plugin-pwa";
 // Service worker precaches the app shell only. Supabase REST responses are
 // deliberately NOT cached by the SW — the app does its own IndexedDB caching
 // and we never want authed API responses in the Cache API.
+// Subpath hosting (e.g. GitHub Pages at /strength-tracker/): build with
+// PAGES_BASE=/strength-tracker/ — base, router basename (via BASE_URL), and
+// the manifest all follow.
+const base = process.env.PAGES_BASE || "/";
+
 export default defineConfig({
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -16,7 +22,8 @@ export default defineConfig({
         short_name: "Strength",
         description: "Offline-first strength training log",
         display: "standalone",
-        start_url: "/",
+        start_url: base,
+        scope: base,
         background_color: "#f4eede",
         theme_color: "#f4eede",
         icons: [

@@ -13,7 +13,10 @@ export function Login() {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: window.location.origin },
+        options: {
+          // origin + base path so it works when hosted under a subpath
+          emailRedirectTo: window.location.origin + import.meta.env.BASE_URL,
+        },
       });
       if (error) throw new Error(error.message);
       setSent(true);
@@ -26,17 +29,36 @@ export function Login() {
 
   // Fallback for installed iOS PWAs: the magic link opens in Safari, whose
   // storage is partitioned away from the installed app, so the session never
-  // reaches the PWA. The same email carries a 6-digit code when the Supabase
-  // email template includes {{ .Token }} — verifying it here signs in inside
-  // the app itself.
+  // reaches the PWA. Two in-app paths work instead:
+  //   * the 6-digit code, when the Supabase email template includes
+  //     {{ .Token }} (needs custom SMTP on free tier), or
+  //   * pasting the magic link itself — its `token` query param is a token
+  //     hash that verifyOtp accepts, so long-press > Copy Link in Mail and
+  //     paste here. Works with the stock email template.
   const verifyCode = async () => {
     setBusy(true);
     try {
-      const { error } = await supabase.auth.verifyOtp({
-        email,
-        token: code.trim(),
-        type: "email",
-      });
+      const raw = code.trim();
+      let error;
+      if (/^\d{6}$/.test(raw)) {
+        ({ error } = await supabase.auth.verifyOtp({
+          email,
+          token: raw,
+          type: "email",
+        }));
+      } else {
+        let tokenHash = "";
+        try {
+          tokenHash = new URL(raw).searchParams.get("token") ?? "";
+        } catch {
+          // not a URL; fall through to the error below
+        }
+        if (!tokenHash) throw new Error("Paste the full link from the email");
+        ({ error } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: "email",
+        }));
+      }
       if (error) throw new Error(error.message);
       // success: onAuthStateChange in useAuth re-renders the app
     } catch (e) {
@@ -58,8 +80,9 @@ export function Login() {
       {sent ? (
         <div className="login-form">
           <p className="login-sent">
-            Magic link sent to {email}. Open it on this device — or, if you’re
-            in the installed app, enter the 6-digit code from the email:
+            Magic link sent to {email}. In the browser, just tap it. In the
+            installed app, long-press the link in the email, Copy Link, and
+            paste it below (or enter the 6-digit code if your email shows one):
           </p>
           <form
             className="login-form"
@@ -68,14 +91,11 @@ export function Login() {
               void verifyCode();
             }}
           >
-            <div className="field-label">CODE FROM THE EMAIL</div>
+            <div className="field-label">CODE OR PASTED LINK</div>
             <input
               className="input"
-              inputMode="numeric"
               autoComplete="one-time-code"
-              pattern="[0-9]*"
-              maxLength={6}
-              placeholder="6-digit code"
+              placeholder="6-digit code or pasted link"
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
@@ -84,7 +104,7 @@ export function Login() {
               className="btn btn-primary"
               disabled={busy || code.trim().length < 6}
             >
-              {busy ? "Verifying…" : "Verify code"}
+              {busy ? "Verifying…" : "Sign in"}
             </button>
           </form>
           <button

@@ -6,15 +6,19 @@ enabled = true
 sql_paths = ["./seed/exercises.generated.sql"]
 
 [auth]
-site_url = "http://localhost:5173"
-additional_redirect_urls = ["http://localhost:5173"]
+site_url = "https://coltbradley.github.io/strength-tracker/"
+additional_redirect_urls = [
+  "https://coltbradley.github.io/strength-tracker/",
+  "http://localhost:5173",
+]
 
 # Magic-link email carries the 6-digit {{ .Token }} too: on an installed iOS
 # PWA the link opens in Safari (partitioned storage), so the code is the
 # reliable sign-in path. Synced to the project with `supabase config push`.
-[auth.email.template.magic_link]
-subject = "Sign in to Strength Log"
-content_path = "./supabase/templates/magic_link.html"
+# temporarily disabled for free-tier config push (re-enable with SMTP):
+# [auth.email.template.magic_link]
+# subject = "Sign in to Strength Log"
+# content_path = "./supabase/templates/magic_link.html"
 
 # MCP server does its own bearer-token auth; the gateway must not demand a
 # Supabase JWT. Deploy with --no-verify-jwt as well.
