@@ -1,7 +1,9 @@
 // Big tappable value + stepper buttons. The value opens the number pad
 // (when onTapValue is given); the buttons bump by fixed deltas, clamped to
-// [min, max]. Layouts: inline (value with square buttons beside it — reps,
-// bodyweight) or stacked (full-width button row under the value — load).
+// [min, max]. Layouts: inline (value with square buttons beside it — reps),
+// stacked (full-width button row under the value — load), or field (a
+// labeled row: TITLE · − value + — the plan editor, where every number
+// needs its name next to it or "8 sets" and "8 reps" read the same).
 
 export interface StepDef {
   label: string;
@@ -22,6 +24,11 @@ interface StepperProps {
   onChange: (next: number) => void;
   steps: StepDef[];
   inline?: boolean;
+  /** labeled field row (requires title); steps[0] renders before the value,
+   *  the rest after, so a [−, +] pair brackets the number */
+  field?: boolean;
+  /** visible label for the field layout, e.g. "SETS" */
+  title?: string;
   /** aria label base, e.g. "load" */
   label: string;
 }
@@ -37,6 +44,8 @@ export function Stepper({
   onChange,
   steps,
   inline = false,
+  field = false,
+  title,
   label,
 }: StepperProps) {
   const bump = (delta: number) => {
@@ -47,7 +56,7 @@ export function Stepper({
   const valueEl = (
     <button
       type="button"
-      className={`stepper-value ${accent ? "stepper-value-accent" : ""}`}
+      className={`stepper-value ${accent ? "stepper-value-accent" : ""} ${field ? "stepper-value-field" : ""}`}
       onClick={onTapValue}
       aria-label={`${label} value — tap to type`}
       disabled={!onTapValue}
@@ -67,6 +76,26 @@ export function Stepper({
       {s.label}
     </button>
   ));
+
+  if (field) {
+    return (
+      <div className="stepper-field">
+        <div className="stepper-field-row">
+          <span className="field-label stepper-field-title">
+            {title ?? label}
+          </span>
+          <div className="stepper-field-ctrl">
+            {buttons[0]}
+            {valueEl}
+            {buttons.slice(1)}
+          </div>
+        </div>
+        {subText !== undefined && (
+          <div className="stepper-field-sub">{subText}</div>
+        )}
+      </div>
+    );
+  }
 
   if (inline) {
     return (

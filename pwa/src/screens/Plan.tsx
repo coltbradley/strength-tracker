@@ -24,6 +24,7 @@ import {
 } from "../lib/data";
 import { reportError, toast } from "../lib/errors";
 import {
+  formatClock,
   formatPlannedDate,
   formatRepRange,
   todayLocalIso,
@@ -271,13 +272,6 @@ export function Plan() {
   const idx = siblings.findIndex((w) => w.id === workout.id);
   const isToday = workout.scheduled_date === todayLocalIso();
 
-  const loadDraftLabel =
-    draft?.mode === "pct"
-      ? `${draft.load_pct}% TM`
-      : draft
-        ? `${toDisplay(draft.load_kg, unit)} ${unit}`
-        : "";
-
   return (
     <div className="screen">
       <button type="button" className="back-link" onClick={() => navigate("/")}>
@@ -300,7 +294,7 @@ export function Plan() {
             <div key={r.id} className="week-item">
               <button
                 type="button"
-                className="week-row"
+                className="week-row rx-edit-row"
                 onClick={() => {
                   if (editingRx === r.id) {
                     setEditingRx(null);
@@ -324,14 +318,17 @@ export function Plan() {
                       ? ` · ${r.load_pct_tm}%`
                       : ""}
                 </span>
-                <span className="chev">{editingRx === r.id ? "▾" : "▸"}</span>
+                <span className="row-edit">
+                  {editingRx === r.id ? "▾" : "EDIT"}
+                </span>
               </button>
               {editing && draft && (
                 <div className="week-detail">
                   <Stepper
                     label="sets"
-                    inline
-                    display={`${draft.sets} sets`}
+                    field
+                    title="SETS"
+                    display={String(draft.sets)}
                     value={draft.sets}
                     min={1}
                     max={20}
@@ -345,8 +342,9 @@ export function Plan() {
                   />
                   <Stepper
                     label="reps min"
-                    inline
-                    display={`${draft.reps_min} reps min`}
+                    field
+                    title="REPS · MIN"
+                    display={String(draft.reps_min)}
                     value={draft.reps_min}
                     min={1}
                     max={100}
@@ -360,8 +358,9 @@ export function Plan() {
                   />
                   <Stepper
                     label="reps max"
-                    inline
-                    display={`${Math.max(draft.reps_min, draft.reps_max)} reps max`}
+                    field
+                    title="REPS · MAX"
+                    display={String(Math.max(draft.reps_min, draft.reps_max))}
                     value={Math.max(draft.reps_min, draft.reps_max)}
                     min={draft.reps_min}
                     max={100}
@@ -374,6 +373,9 @@ export function Plan() {
                     ]}
                   />
 
+                  <div className="section-head">
+                    <span className="field-label">LOAD</span>
+                  </div>
                   <div className="seg seg-types">
                     {(
                       [
@@ -395,8 +397,9 @@ export function Plan() {
                   {draft.mode === "kg" && (
                     <Stepper
                       label="load"
-                      inline
-                      display={loadDraftLabel}
+                      field
+                      title={`LOAD · ${unit.toUpperCase()}`}
+                      display={String(toDisplay(draft.load_kg, unit))}
                       subText={
                         unit === "lb"
                           ? `${Math.round(draft.load_kg * 10) / 10} kg stored`
@@ -415,8 +418,9 @@ export function Plan() {
                   {draft.mode === "pct" && (
                     <Stepper
                       label="percent of training max"
-                      inline
-                      display={loadDraftLabel}
+                      field
+                      title="LOAD · % TM"
+                      display={`${draft.load_pct}%`}
                       value={draft.load_pct}
                       min={2.5}
                       max={200}
@@ -445,6 +449,9 @@ export function Plan() {
                     ))}
                   </div>
 
+                  <div className="section-head">
+                    <span className="field-label">REST</span>
+                  </div>
                   <div className="seg seg-types">
                     <button
                       type="button"
@@ -464,8 +471,9 @@ export function Plan() {
                   {draft.hasRest && (
                     <Stepper
                       label="rest seconds"
-                      inline
-                      display={`${draft.rest_seconds}s rest`}
+                      field
+                      title="REST · MIN:SEC"
+                      display={formatClock(draft.rest_seconds)}
                       value={draft.rest_seconds}
                       min={0}
                       max={3600}

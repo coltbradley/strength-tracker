@@ -177,7 +177,7 @@ body {
 
 .stepper-value {
   flex: 0 0 auto;
-  font-size: 52px;
+  font-size: clamp(38px, 13vw, 52px); /* shrinks before it can overflow */
   font-weight: 700;
   text-align: left;
   cursor: pointer; /* tap to type — see notes.md, conflict 01 */

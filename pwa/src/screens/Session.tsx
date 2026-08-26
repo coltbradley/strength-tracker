@@ -1,9 +1,15 @@
 // Set entry — the core screen. The workout is ONE accordion list: every
-// exercise visible, exactly one open at a time, the logging surface lives
-// inside the open item. Everything the screen needs is served from the
-// IndexedDB cache written at session start (with a best-effort refresh when
-// the prescription snapshot is empty), so it works fully offline mid-gym.
-// Sets are append-only: a mistake is corrected by voiding and relogging.
+// exercise visible, exactly one open at a time. The open exercise is a SET
+// GRID: every set is a row — logged sets show what happened and open an
+// inline editor on tap, the next set is the active row with the steppers,
+// future sets show their targets dimmed. Everything the screen needs is
+// served from the IndexedDB cache written at session start (with a
+// best-effort refresh when the prescription snapshot is empty), so it works
+// fully offline mid-gym.
+// Sets are append-only: "editing" a logged set compiles to a void of the
+// original plus a fresh insert with the corrected numbers at the SAME
+// set_index / performed_at (set_index has no uniqueness constraint), so the
+// UX is edit-in-place while the data model stays untouched.
 //
 // State notes (preserved from the review rounds):
 // - Entries are keyed by prescription id (or `extra:<exercise_id>`), so the
@@ -27,7 +33,6 @@ import { useNavigate } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
 import { Note } from "../components/Note";
 import { RestTimer } from "../components/RestTimer";
-import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
 import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
@@ -44,12 +49,7 @@ import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { prefillSet } from "../lib/prefill";
 import { split } from "../lib/plates";
-import {
-  formatClock,
-  formatRepRange,
-  rxHasNoTm,
-  rxLoadKg,
-} from "../lib/format";
+import { formatRepRange, rxHasNoTm, rxLoadKg } from "../lib/format";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
@@ -121,9 +121,6 @@ interface PadSpec {
   fromPlates?: boolean;
 }
 
-// backoff stays a legal DB value (legacy sets render fine); it's just no
-// longer offered — warmup or working covers how the coach programs
-const SET_TYPES: SetType[] = ["warmup", "working"];
 const LOG_LOCK_MS = 400;
 // DB checks: reps between 0 and 100; rest_seconds_actual <= 3600
 const MAX_REPS = 100;
@@ -151,6 +148,12 @@ export function Session() {
   const [reps, setReps] = useState(8);
   const [setType, setSetType] = useState<SetType>("working");
   const [logLocked, setLogLocked] = useState(false);
+
+  // set-grid interaction: which logged set is being corrected (steppers bind
+  // to it instead of the next slot), and whether the past-the-plan extra-set
+  // editor is open
+  const [editingSetId, setEditingSetId] = useState<string | null>(null);
+  const [extraOpen, setExtraOpen] = useState(false);
 
   const [rest, setRest] = useState<RestState | null>(null);
   // survives DONE so the next log can still record elapsed rest
@@ -523,6 +526,14 @@ export function Session() {
     setOpenKey((prev) => (prev === key ? null : key));
   };
 
+  // switching exercises drops any in-progress correction / extra-set editor
+  useEffect(() => {
+    setEditingSetId(null);
+    setExtraOpen(false);
+    setVoidArm(null);
+    setNoteEditingId(null);
+  }, [openKey, setVoidArm]);
+
   useEffect(() => {
     if (openKey)
       itemRefs.current
@@ -541,13 +552,9 @@ export function Session() {
     ? `${openEntry.key}:${currentBracket?.id ?? "free"}`
     : null;
 
-  const prefilledFor = useRef<string | null>(null);
-  useEffect(() => {
-    // wait for the sets merge: a mid-workout reload otherwise prefills from
-    // the wrong bracket and can clobber staged values while a sheet is open
-    if (!setsLoaded || !openEntry || prefillKey === null) return;
-    if (prefilledFor.current === prefillKey) return;
-    prefilledFor.current = prefillKey;
+  /** stage the next-slot values: rx target, else last set, else history */
+  const applyPrefill = useCallback(() => {
+    if (!openEntry) return;
     const logged = setsForExercise(openEntry.exercise_id);
     const lastThis = logged[logged.length - 1];
     const p = prefillSet({
@@ -567,14 +574,18 @@ export function Session() {
     setLoadKg(p.loadKg);
     setReps(p.reps);
     setSetType("working");
-  }, [
-    setsLoaded,
-    openEntry,
-    prefillKey,
-    currentBracket,
-    setsForExercise,
-    lastActuals,
-  ]);
+  }, [openEntry, currentBracket, setsForExercise, lastActuals]);
+
+  const prefilledFor = useRef<string | null>(null);
+  useEffect(() => {
+    // wait for the sets merge: a mid-workout reload otherwise prefills from
+    // the wrong bracket and can clobber staged values while a sheet is open
+    if (!setsLoaded || !openEntry || prefillKey === null) return;
+    if (editingSetId !== null) return; // steppers are bound to a logged set
+    if (prefilledFor.current === prefillKey) return;
+    prefilledFor.current = prefillKey;
+    applyPrefill();
+  }, [setsLoaded, openEntry, prefillKey, editingSetId, applyPrefill]);
 
   // ---- rest helpers --------------------------------------------------------
 
@@ -700,6 +711,89 @@ export function Session() {
     toast(`Set ${s.set_index + 1} voided`);
   };
 
+  // ---- in-place correction (void + relog under the hood) -------------------
+
+  const startEdit = (s: SetInsert) => {
+    setVoidArm(null);
+    setNoteEditingId(null);
+    setEditingSetId(s.id);
+    setLoadKg(s.load_kg);
+    setReps(s.reps);
+  };
+
+  const cancelEdit = () => {
+    setEditingSetId(null);
+    setVoidArm(null);
+    setNoteEditingId(null);
+    applyPrefill();
+  };
+
+  /** Save corrected numbers for a logged set. Sets are append-only, so this
+   *  is a composite: void the original (append-only hide) and insert a
+   *  replacement with the same set_index / performed_at / rest — the UI
+   *  reads as edit-in-place, the data model stays untouched. */
+  const saveEdit = (orig: SetInsert) => {
+    if (!sessionId) return;
+    if (orig.load_kg === loadKg && orig.reps === reps) {
+      cancelEdit();
+      return;
+    }
+    const replacement: SetInsert = {
+      ...orig,
+      id: uuid(),
+      load_kg: loadKg,
+      reps,
+    };
+    const nextVoids = new Set(voids);
+    nextVoids.add(orig.id);
+    setVoids(nextVoids);
+    cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
+      (e: unknown) => reportError(e, "cache voids"),
+    );
+    const next = applySets((prev) =>
+      prev.map((x) => (x.id === orig.id ? replacement : x)),
+    );
+    cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
+      reportError(e, "cache session sets"),
+    );
+    outbox
+      .enqueue({
+        kind: "insert",
+        table: "set_voids",
+        payload: { set_id: orig.id },
+      })
+      .catch((e: unknown) => reportError(e, "void set"));
+    outbox
+      .enqueue({ kind: "insert", table: "sets", payload: replacement })
+      .catch((e: unknown) => reportError(e, "relog set"));
+    // the note follows the set (the sets insert is queued first, so the FK
+    // target exists by the time the note replays)
+    const note = setNotes[orig.id];
+    if (note) {
+      const nextNotes = { ...setNotes, [replacement.id]: note };
+      setSetNotes(nextNotes);
+      cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
+        () => undefined,
+      );
+      outbox
+        .enqueue({
+          kind: "insert",
+          table: "set_notes",
+          payload: { set_id: replacement.id, note },
+        })
+        .catch((e: unknown) => reportError(e, "carry set note"));
+    }
+    setEditingSetId(null);
+    applyPrefill();
+    toast("Set updated");
+  };
+
+  const voidFromEdit = (s: SetInsert) => {
+    voidSet(s);
+    setEditingSetId(null);
+    applyPrefill();
+  };
+
   const persistSkips = (next: Set<string>) => {
     setSkips(next);
     if (sessionId)
@@ -818,7 +912,6 @@ export function Session() {
   if (!active) return null;
 
   const entrySets = openEntry ? setsForEntry(openEntry) : [];
-  const exerciseSets = openEntry ? setsForExercise(openEntry.exercise_id) : [];
 
   const filtered = allExercises
     .filter((e) => e.name.toLowerCase().includes(search.toLowerCase()))
@@ -845,22 +938,6 @@ export function Session() {
       ? `${Math.round(loadKg * 10) / 10} kg stored`
       : `${Math.round(kgToLb(loadKg) * 10) / 10} lb`;
 
-  /** rest AFTER a given set: next exercise-set's stored value, or live timer */
-  const restAfter = (s: SetInsert): string | null => {
-    const nextSet = exerciseSets.find((x) => x.set_index === s.set_index + 1);
-    if (nextSet)
-      return nextSet.rest_seconds_actual !== null
-        ? `rest ${formatClock(nextSet.rest_seconds_actual)}`
-        : null;
-    const isLast = exerciseSets.every((x) => x.set_index <= s.set_index);
-    if (isLast && restRef.current) {
-      const el = restElapsedSeconds();
-      if (el !== null && el <= MAX_REST_SECONDS)
-        return `rest ${formatClock(el)}`;
-    }
-    return null;
-  };
-
   /** "1×8-15 @ 90 · 3×3-5" — an entry's full prescribed scheme */
   const bracketSpec = (b: ResolvedPrescriptionRow): string => {
     const load = rxLoadKg(b);
@@ -870,16 +947,77 @@ export function Session() {
   const scheme = (entry: ExerciseEntry): string =>
     entry.brackets.map(bracketSpec).join(" · ");
 
-  /** "LOG WARMUP SET", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan */
-  const logLabel = (entry: ExerciseEntry): string => {
-    if (!setsLoaded) return "LOADING…";
-    if (setType === "warmup") return "LOG WARMUP SET";
-    const n = workingCount(entry) + 1;
-    if (entry.brackets.length === 0) return `LOG SET ${n}`;
-    return n > totalSets(entry)
-      ? "LOG EXTRA SET"
-      : `LOG SET ${n} OF ${totalSets(entry)}`;
+  /** target row text, same shape as a logged row: "50 × 8-12" */
+  const targetLabel = (b: ResolvedPrescriptionRow | null): string => {
+    if (!b) return "BY FEEL";
+    const load = rxLoadKg(b);
+    const range = formatRepRange(b.reps_min, b.reps_max);
+    return load !== null
+      ? `${toDisplay(load, unit)} × ${range}`
+      : `${range} reps`;
   };
+
+  // steppers bind to loadKg/reps whether the target is the next slot or a
+  // logged set being corrected — one editor, rendered at the active row
+  const editorControls = (
+    <>
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">REPS</span>
+        </div>
+        <Stepper
+          label="reps"
+          inline
+          display={String(reps)}
+          onTapValue={() => openPad("reps")}
+          value={reps}
+          min={0}
+          max={MAX_REPS}
+          onChange={(v) => setReps(Math.round(v))}
+          steps={[
+            { label: "−", delta: -1 },
+            { label: "+", delta: 1 },
+          ]}
+        />
+      </section>
+
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">LOAD · {unit.toUpperCase()}</span>
+          {hint !== null && (
+            <button
+              type="button"
+              className="plate-hint"
+              onClick={() => openSheet("plates")}
+            >
+              {hint} ›
+            </button>
+          )}
+        </div>
+        <Stepper
+          label="load"
+          accent
+          display={String(toDisplay(loadKg, unit))}
+          subText={loadSub}
+          onTapValue={() => openPad("load")}
+          value={loadKg}
+          min={0}
+          max={MAX_LOAD_KG}
+          onChange={setLoadKg}
+          steps={[
+            {
+              label: `− ${unit === "lb" ? 5 : 2.5}`,
+              delta: -stepKg(unit, false),
+            },
+            {
+              label: `+ ${unit === "lb" ? 5 : 2.5}`,
+              delta: stepKg(unit, false),
+            },
+          ]}
+        />
+      </section>
+    </>
+  );
 
   const req = padRequest();
   const sheetOpen = sheet !== null || pad !== null;
@@ -966,7 +1104,7 @@ export function Session() {
                           ? "SKIPPED"
                           : prescribed
                             ? scheme(entry).toUpperCase()
-                            : "NO TARGET · BY FEEL"}
+                            : "BY FEEL"}
                       </span>
                       <span
                         className={`wk-count ${total !== null && done >= total ? "wk-count-done" : ""}`}
@@ -989,195 +1127,239 @@ export function Session() {
                   )}
                 </div>
 
-                {isOpen && (
-                  <div className="wk-open">
-                    <span className="rx-context">
-                      {prescribed ? (
-                        <>
-                          TARGET {scheme(entry).toUpperCase()}
-                          {entry.brackets.length > 1 && currentBracket
-                            ? ` · NOW ${formatRepRange(currentBracket.reps_min, currentBracket.reps_max)} REPS`
-                            : ""}
-                          {currentBracket?.rest_seconds != null
-                            ? ` · REST ${formatClock(currentBracket.rest_seconds)}`
-                            : ""}
-                          {entry.brackets.some(rxHasNoTm) ? " · NO TM SET" : ""}
-                        </>
-                      ) : (
-                        `NO TARGET · BY FEEL${equipment ? ` · ${equipment.toUpperCase()}` : ""}`
-                      )}
-                    </span>
+                {isOpen &&
+                  (() => {
+                    const ordered = entrySets
+                      .slice()
+                      .sort((a, b) => a.set_index - b.set_index);
+                    const remaining = prescribed
+                      ? Math.max(0, (total ?? 0) - done)
+                      : 0;
+                    const planDone = prescribed && remaining === 0;
+                    const showNextEditor = !planDone || extraOpen;
+                    const nextTarget = !prescribed
+                      ? "BY FEEL"
+                      : remaining > 0
+                        ? targetLabel(currentBracket)
+                        : "EXTRA";
+                    return (
+                      <div className="wk-open">
+                        {prescribed && entry.brackets.some(rxHasNoTm) && (
+                          <span className="warn-badge">no TM set</span>
+                        )}
 
-                    <div className="seg seg-types">
-                      {SET_TYPES.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          className={`seg-btn ${setType === t ? "seg-on" : ""}`}
-                          onClick={() => setSetType(t)}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
+                        <div className="set-grid">
+                          {ordered.map((s, i) => (
+                            <div key={s.id} className="sg-item">
+                              <button
+                                type="button"
+                                className={`sg-row ${editingSetId === s.id ? "sg-row-on" : ""}`}
+                                aria-expanded={editingSetId === s.id}
+                                aria-label={`set ${i + 1}: ${toDisplay(s.load_kg, unit)} ${unit} × ${s.reps} — tap to edit`}
+                                onClick={() =>
+                                  editingSetId === s.id
+                                    ? cancelEdit()
+                                    : startEdit(s)
+                                }
+                              >
+                                <span className="sg-num">{i + 1}</span>
+                                <span className="sg-val">
+                                  {toDisplay(s.load_kg, unit)} × {s.reps}
+                                </span>
+                                {s.set_type === "warmup" && (
+                                  <span className="sg-tag">WARM-UP</span>
+                                )}
+                                {setNotes[s.id] && (
+                                  <span className="note-dot">·</span>
+                                )}
+                                <span className="sg-done">✓</span>
+                              </button>
+                              {editingSetId === s.id && (
+                                <div className="sg-editor">
+                                  {editorControls}
+                                  <div className="detail-actions">
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary"
+                                      disabled={!setsLoaded}
+                                      onClick={() => saveEdit(s)}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost"
+                                      onClick={cancelEdit}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`btn ${voidArm === s.id ? "btn-danger" : "btn-ghost"}`}
+                                      onClick={() =>
+                                        voidArm === s.id
+                                          ? voidFromEdit(s)
+                                          : setVoidArm(s.id)
+                                      }
+                                    >
+                                      {voidArm === s.id ? "Void?" : "Void"}
+                                    </button>
+                                  </div>
+                                  {noteEditingId === s.id ? (
+                                    <div className="set-note-editor">
+                                      <textarea
+                                        className="input note-input set-note-input"
+                                        rows={2}
+                                        autoFocus
+                                        value={noteDraft}
+                                        onChange={(e) =>
+                                          setNoteDraft(e.target.value)
+                                        }
+                                        placeholder="Note on this set…"
+                                      />
+                                      <div className="set-note-actions">
+                                        <button
+                                          type="button"
+                                          className="btn btn-ghost"
+                                          onClick={() =>
+                                            setNoteEditingId(null)
+                                          }
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="btn btn-secondary"
+                                          onClick={() => saveNote(s.id)}
+                                        >
+                                          Save
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : setNotes[s.id] ? (
+                                    <button
+                                      type="button"
+                                      className="set-note-preview"
+                                      onClick={() => openNote(s.id)}
+                                    >
+                                      {setNotes[s.id]}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="set-note-add"
+                                      onClick={() => openNote(s.id)}
+                                    >
+                                      + NOTE
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
 
-                    <section className="rule-section">
-                      <div className="section-head">
-                        <span className="field-label">REPS</span>
-                      </div>
-                      <Stepper
-                        label="reps"
-                        inline
-                        display={String(reps)}
-                        onTapValue={() => openPad("reps")}
-                        value={reps}
-                        min={0}
-                        max={MAX_REPS}
-                        onChange={(v) => setReps(Math.round(v))}
-                        steps={[
-                          { label: "−", delta: -1 },
-                          { label: "+", delta: 1 },
-                        ]}
-                      />
-                    </section>
+                          {showNextEditor ? (
+                            editingSetId !== null ? (
+                              <button
+                                type="button"
+                                className="sg-row sg-row-future"
+                                aria-label="back to logging the next set"
+                                onClick={cancelEdit}
+                              >
+                                <span className="sg-num">
+                                  {ordered.length + 1}
+                                </span>
+                                <span className="sg-val sg-target">
+                                  {nextTarget}
+                                </span>
+                              </button>
+                            ) : (
+                              <div className="sg-item sg-item-next">
+                                <div className="sg-row sg-row-next">
+                                  <span className="sg-num">
+                                    {ordered.length + 1}
+                                  </span>
+                                  <span className="sg-val sg-target">
+                                    {nextTarget}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className={`chip chip-sm ${setType === "warmup" ? "chip-on" : ""}`}
+                                    onClick={() =>
+                                      setSetType((t) =>
+                                        t === "warmup" ? "working" : "warmup",
+                                      )
+                                    }
+                                  >
+                                    WARM-UP
+                                  </button>
+                                </div>
+                                <div className="sg-editor">
+                                  {editorControls}
+                                  <button
+                                    type="button"
+                                    className={`btn ${planDone ? "btn-outline-ink" : "btn-primary"} btn-log`}
+                                    disabled={logLocked || !setsLoaded}
+                                    onClick={logSet}
+                                  >
+                                    {!setsLoaded
+                                      ? "LOADING…"
+                                      : setType === "warmup"
+                                        ? "LOG WARM-UP"
+                                        : planDone
+                                          ? "LOG EXTRA SET"
+                                          : "LOG SET"}
+                                  </button>
+                                </div>
+                              </div>
+                            )
+                          ) : (
+                            <button
+                              type="button"
+                              className="sg-row sg-row-add"
+                              onClick={() => {
+                                setExtraOpen(true);
+                                if (editingSetId !== null) cancelEdit();
+                              }}
+                            >
+                              <span className="sg-num">+</span>
+                              <span className="sg-val sg-target">
+                                EXTRA SET
+                              </span>
+                            </button>
+                          )}
 
-                    <section className="rule-section">
-                      <div className="section-head">
-                        <span className="field-label">
-                          LOAD · {unit.toUpperCase()}
-                        </span>
-                        {hint !== null && (
+                          {remaining > 1 &&
+                            Array.from({ length: remaining - 1 }, (_, k) => {
+                              const b = bracketFor(entry, done + 1 + k);
+                              return (
+                                <div
+                                  key={`future-${k}`}
+                                  className="sg-row sg-row-future"
+                                >
+                                  <span className="sg-num">
+                                    {ordered.length + 2 + k}
+                                  </span>
+                                  <span className="sg-val sg-target">
+                                    {targetLabel(b)}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                        </div>
+
+                        {nextEntry && (
                           <button
                             type="button"
-                            className="plate-hint"
-                            onClick={() => openSheet("plates")}
+                            className="btn btn-primary btn-block"
+                            onClick={() => setOpenKey(nextEntry.key)}
                           >
-                            {hint} ›
+                            Next · {nextEntry.name}
                           </button>
                         )}
                       </div>
-                      <Stepper
-                        label="load"
-                        accent
-                        display={String(toDisplay(loadKg, unit))}
-                        subText={loadSub}
-                        onTapValue={() => openPad("load")}
-                        value={loadKg}
-                        min={0}
-                        max={MAX_LOAD_KG}
-                        onChange={setLoadKg}
-                        steps={[
-                          {
-                            label: `− ${unit === "lb" ? 5 : 2.5}`,
-                            delta: -stepKg(unit, false),
-                          },
-                          {
-                            label: `+ ${unit === "lb" ? 5 : 2.5}`,
-                            delta: stepKg(unit, false),
-                          },
-                        ]}
-                      />
-                    </section>
-
-                    {/* once the plan is met, NEXT leads and extra sets recede */}
-                    <button
-                      type="button"
-                      className={`btn ${total !== null && done >= total ? "btn-outline-ink" : "btn-primary"} btn-log`}
-                      disabled={logLocked || !setsLoaded}
-                      onClick={logSet}
-                    >
-                      {logLabel(entry)}
-                    </button>
-
-                    {nextEntry && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-block"
-                        onClick={() => setOpenKey(nextEntry.key)}
-                      >
-                        Next · {nextEntry.name}
-                      </button>
-                    )}
-
-                    {entrySets.length > 0 && (
-                      <section className="rule-section">
-                        <div className="section-head">
-                          <span className="field-label">LOGGED</span>
-                          <span className="section-meta">
-                            {done}
-                            {total !== null ? ` OF ${total}` : ""}
-                          </span>
-                        </div>
-                        <div className="logged-sets">
-                          {entrySets
-                            .slice()
-                            .sort((a, b) => b.set_index - a.set_index)
-                            .map((s) => (
-                              <div key={s.id} className="logged-set-wrap">
-                                <SetRow
-                                  set={s}
-                                  unit={unit}
-                                  restLabel={restAfter(s)}
-                                  onVoid={() => voidSet(s)}
-                                  voidArmed={voidArm === s.id}
-                                  onArmVoid={() => setVoidArm(s.id)}
-                                />
-                                {noteEditingId === s.id ? (
-                                  <div className="set-note-editor">
-                                    <textarea
-                                      className="input note-input set-note-input"
-                                      rows={2}
-                                      autoFocus
-                                      value={noteDraft}
-                                      onChange={(e) =>
-                                        setNoteDraft(e.target.value)
-                                      }
-                                      placeholder="Note on this set…"
-                                    />
-                                    <div className="set-note-actions">
-                                      <button
-                                        type="button"
-                                        className="btn btn-ghost"
-                                        onClick={() => setNoteEditingId(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        onClick={() => saveNote(s.id)}
-                                      >
-                                        Save
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : setNotes[s.id] ? (
-                                  <button
-                                    type="button"
-                                    className="set-note-preview"
-                                    onClick={() => openNote(s.id)}
-                                  >
-                                    {setNotes[s.id]}
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="set-note-add"
-                                    onClick={() => openNote(s.id)}
-                                  >
-                                    + NOTE
-                                  </button>
-                                )}
-                              </div>
-                            ))}
-                        </div>
-                        <div className="microcopy">
-                          Wrong number? Void the set (✕) and log the right one.
-                        </div>
-                      </section>
-                    )}
-                  </div>
-                )}
+                    );
+                  })()}
               </div>
             );
           })}

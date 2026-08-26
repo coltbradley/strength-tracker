@@ -41,6 +41,8 @@ body {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
+  /* the page never scrolls sideways — anything wide wraps or shrinks */
+  overflow-x: hidden;
 }
 
 #root {
@@ -84,6 +86,32 @@ button {
   height: 100%;
   max-width: 480px;
   margin: 0 auto;
+}
+
+/* tablet / desktop: same single column, just wider and roomier — the app
+ * is one-handed phone-first, so nothing reflows, it only breathes */
+@media (min-width: 700px) {
+  .shell,
+  .sheet {
+    max-width: 640px;
+  }
+  .content {
+    padding: 24px 32px 32px;
+  }
+  .session-scroll {
+    padding: 24px 32px 24px;
+  }
+  .session-footer {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+  .rest-timer {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+  .toasts {
+    width: min(92vw, 560px);
+  }
 }
 
 .topbar {
@@ -619,12 +647,13 @@ button {
 .stepper-inline {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 14px;
 }
 
 .stepper-value {
   font-family: var(--font-mono);
-  font-size: 52px;
+  font-size: clamp(38px, 13vw, 52px);
   line-height: 1;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -689,6 +718,7 @@ button {
 
 .seg {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -713,6 +743,7 @@ button {
 /* joined set-type row: one outer rule, no gaps */
 .seg-types {
   gap: 0;
+  flex-wrap: nowrap;
   border: 1px solid rgba(42, 45, 50, 0.22);
 }
 
@@ -721,6 +752,8 @@ button {
   border: 0;
   border-radius: 0;
   min-height: 44px;
+  min-width: 0;
+  padding: 0 8px;
 }
 
 .rpe-grid {
@@ -1768,4 +1801,199 @@ button {
 /* sign out sits apart from the utility rows */
 .signout-btn {
   margin-top: 10px;
+}
+
+/* ---- no-sideways-scroll guards (responsive round) ---- */
+
+/* grid/flex text cells must be allowed to shrink and wrap */
+.week-row {
+  grid-template-columns: 84px minmax(0, 1fr) minmax(0, auto) 14px;
+}
+
+.week-label,
+.week-state,
+.wk-name,
+.wk-target,
+.rx-spec,
+.rx-name,
+.sheet-title,
+.drawer-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.week-state {
+  text-align: right;
+}
+
+.detail-actions {
+  flex-wrap: wrap;
+}
+
+/* Plan's exercise rows: name + scheme + EDIT, no day column */
+.rx-edit-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
+}
+
+.row-edit {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent-dim);
+  justify-self: end;
+}
+
+/* ---- labeled stepper field (plan editor) ----
+ * TITLE · − value +  — every number carries its name, so "8 sets" and
+ * "8 reps" can never be mistaken for each other, and nothing is 52px wide */
+
+.stepper-field {
+  border-bottom: var(--rule-hair);
+}
+
+.stepper-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: var(--tap);
+}
+
+.stepper-field-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.stepper-field-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepper-field-ctrl .stepper-btn {
+  flex: 0 0 48px;
+  min-width: 48px;
+  min-height: 44px;
+  padding: 0;
+}
+
+.stepper-value.stepper-value-field {
+  font-size: 22px;
+  border-bottom-width: 1px;
+  min-width: 64px;
+  text-align: center;
+  padding-bottom: 3px;
+}
+
+.stepper-field-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(42, 45, 50, 0.45);
+  text-align: right;
+  padding: 0 0 8px;
+}
+
+/* ---- session set grid ----
+ * Every set is a row: logged rows open an inline editor on tap (void +
+ * relog under the hood), the next row carries the steppers, future rows
+ * show their targets dimmed. */
+
+.set-grid {
+  display: flex;
+  flex-direction: column;
+}
+
+.sg-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.sg-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 0;
+  border-bottom: var(--rule-hair);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.sg-num {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: rgba(42, 45, 50, 0.42);
+  min-width: 18px;
+}
+
+.sg-val {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sg-target {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.sg-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent-dim);
+}
+
+.sg-done {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-dim);
+}
+
+/* the row whose numbers the steppers currently hold */
+.sg-row-next {
+  border-bottom: none;
+}
+
+.sg-row-next .sg-num {
+  color: var(--accent-dim);
+  font-weight: 700;
+}
+
+.sg-row-on {
+  border-bottom: none;
+}
+
+.sg-row-on .sg-num {
+  color: var(--accent-dim);
+  font-weight: 700;
+}
+
+.sg-row-future {
+  opacity: 0.75;
+}
+
+.sg-row-add {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+.sg-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 0 16px;
+  border-bottom: var(--rule-hair);
+}
+
+.chip-sm {
+  min-height: 32px;
+  padding: 5px 10px;
+  font-size: 10px;
 }

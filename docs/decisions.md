@@ -405,3 +405,25 @@ collapses until asked for; parse artifacts never dominate.
 - **CI gained workflow_dispatch**: GitHub silently dropped push events for
   two consecutive pushes (64c9705, d8821c0 — commits landed, zero workflow
   runs); manual dispatch is the recovery path for both workflows now.
+- **Session set grid** (responsive/hierarchy round): the open exercise now
+  renders EVERY set as a row — logged sets ("50 × 8 ✓") open an inline
+  editor on tap, the next set is the active row holding the steppers, and
+  future sets show their targets dimmed. "Editing" a logged set compiles to
+  a void of the original plus a fresh insert at the same set_index /
+  performed_at / rest (set_index carries no uniqueness constraint), so the
+  UX is edit-in-place while sets stay append-only — the hard rule is
+  untouched. The TARGET/NOW/REST context line, the WARMUP|WORKING segment,
+  the LOGGED section, and "LOG SET n OF m" are gone; targets live on the
+  rows, warmup is a small chip on the next row, the button is just LOG SET.
+  Per-row rest labels dropped in-session (the rest strip is the live clock;
+  stored rest stays in History/analytics).
+- **Plan editor fields are labeled** (same round): the 52px "8 reps min"
+  inline steppers became labeled field rows (SETS / REPS · MIN / LOAD · LB /
+  REST · MIN:SEC with − value +), and each exercise row shows an explicit
+  EDIT affordance instead of a bare chevron — "8 sets" vs "8 reps"
+  ambiguity was the trigger.
+- **Responsive pass** (same round): the page can never scroll sideways
+  (body overflow-x hidden as a guard, plus real fixes: stepper values clamp
+  with the viewport, seg rows wrap, grid text cells got minmax(0)/wrap);
+  ≥700px keeps the single column but widens shell and sheets to 640px —
+  phone-first, tablets just breathe.
