@@ -45,6 +45,7 @@ export function History() {
   const [meta, setMeta] = useState<Record<string, SessionMetaRow>>({});
   const [fromCache, setFromCache] = useState(false);
   const [discardArm, setDiscardArm] = useArmed();
+  const [voidArm, setVoidArm] = useArmed();
   const [activeId, setActiveId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -80,11 +81,12 @@ export function History() {
         setGoal(g.data);
         setRecent(rec.data);
         setFromCache(e1.fromCache || vol.fromCache || rec.fromCache);
-        // post-workout notes + sRPE for the visible sessions; best-effort
+        // post-workout notes + sRPE for the visible sessions; cached so
+        // notes read back offline too
         const ids = [...new Set(rec.data.map((s) => s.session_id))];
-        getSessionMeta(ids)
+        getSessionMeta(selected, ids)
           .then((m) => {
-            if (!cancelled) setMeta(m);
+            if (!cancelled) setMeta(m.data);
           })
           .catch(() => undefined);
       } catch (e) {
@@ -111,6 +113,30 @@ export function History() {
     return exercises.filter(matches).slice(0, 30);
   }, [exercises, withData, search]);
 
+  /** Late correction: void a set noticed after the session ended. Same
+   *  append-only mechanism as in-session voiding. */
+  const voidPastSet = async (s: SetInsert) => {
+    try {
+      await outbox.enqueue({
+        kind: "insert",
+        table: "set_voids",
+        payload: { set_id: s.id },
+      });
+      setRecent((prev) => prev.filter((x) => x.id !== s.id));
+      setVoidArm(null);
+      await cacheDeleteByPrefix([
+        "recent:",
+        "e1rm:",
+        "volume:",
+        "goal:",
+        "lastActuals:",
+      ]);
+      toast("Set voided");
+    } catch (e) {
+      reportError(e, "void set");
+    }
+  };
+
   /** Soft delete a past session: it and ALL its sets (every exercise, not
    *  just the one on screen) leave history and charts. */
   const discardSession = async (sessionId: string) => {
@@ -131,6 +157,7 @@ export function History() {
         "e1rm:",
         "volume:",
         "goal:",
+        "sessionMeta:",
         "lastActuals:",
         "doneWorkouts:",
       ]);
@@ -232,7 +259,18 @@ export function History() {
                   .slice()
                   .sort((a, b) => a.set_index - b.set_index)
                   .map((s) => (
-                    <SetRow key={s.id} set={s} unit={unit} />
+                    <SetRow
+                      key={s.id}
+                      set={s}
+                      unit={unit}
+                      onVoid={
+                        sessionId !== activeId
+                          ? () => void voidPastSet(s)
+                          : undefined
+                      }
+                      voidArmed={voidArm === s.id}
+                      onArmVoid={() => setVoidArm(s.id)}
+                    />
                   ))}
               </div>
             ))}

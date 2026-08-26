@@ -93,11 +93,17 @@ export function Today() {
       // Reconcile open sessions with the calendar: yesterday's open session
       // auto-completes (or auto-discards if empty), a stale local pointer is
       // cleared, and a same-day session with no local cache is surfaced.
+      // Flush first so a finish/discard queued offline isn't misread as an
+      // abandoned open session; anything still queued after the flush is
+      // excluded outright.
       try {
+        await outbox.flush();
+        const pendingUpdates = await outbox.pendingSessionUpdateIds();
         const r = await syncOpenSessions(
           a?.id ?? null,
           (iso) => todayLocalIso(new Date(iso)),
           todayLocalIso(),
+          pendingUpdates,
         );
         if (cancelled) return;
         if (r.clearedActive) setActive(null);
@@ -201,17 +207,25 @@ export function Today() {
     }
   };
 
+  const startingRef = useRef(false);
   const start = async (workout: PlannedWorkoutRow | null) => {
+    if (startingRef.current) return; // double-tap = one session
+    startingRef.current = true;
     try {
       const sessionId = uuid();
       const startedAt = new Date().toISOString();
       let prescriptions: ResolvedPrescriptionRow[] = [];
       if (workout) {
         try {
-          prescriptions =
-            rx[workout.id] ?? (await getResolvedPrescriptions(workout.id)).data;
+          // always fetch fresh: in-memory rx can be hours old on a PWA
+          // resumed from the background (plan edited elsewhere meanwhile)
+          prescriptions = (await getResolvedPrescriptions(workout.id)).data;
         } catch {
-          prescriptions = []; // offline with no cache: start empty-ish
+          prescriptions = rx[workout.id] ?? [];
+          if (prescriptions.length === 0)
+            toast(
+              "Targets unavailable offline — logging by feel; history still prefills",
+            );
         }
       }
       await cacheSet(cacheKeys.sessionRx(sessionId), prescriptions);
@@ -220,6 +234,8 @@ export function Today() {
         planned_workout_id: workout?.id ?? null,
         started_at: startedAt,
         workout_label: workout?.label ?? null,
+        plan_note: workout?.plan_note ?? null,
+        coach_note: workout?.notes ?? null,
       };
       await cacheSet(cacheKeys.activeSession, activeSession);
       await outbox.enqueue({
@@ -239,6 +255,8 @@ export function Today() {
       navigate("/session");
     } catch (e) {
       reportError(e, "start session");
+    } finally {
+      startingRef.current = false;
     }
   };
 
@@ -267,10 +285,11 @@ export function Today() {
     try {
       let label: string | null = null;
       let rxRows: ResolvedPrescriptionRow[] = [];
+      const plannedWorkout = s.planned_workout_id
+        ? (list?.workouts.find((w) => w.id === s.planned_workout_id) ?? null)
+        : null;
       if (s.planned_workout_id) {
-        label =
-          list?.workouts.find((w) => w.id === s.planned_workout_id)?.label ??
-          null;
+        label = plannedWorkout?.label ?? null;
         try {
           rxRows = (await getResolvedPrescriptions(s.planned_workout_id)).data;
         } catch {
@@ -298,6 +317,8 @@ export function Today() {
         planned_workout_id: s.planned_workout_id,
         started_at: s.started_at,
         workout_label: label,
+        plan_note: plannedWorkout?.plan_note ?? null,
+        coach_note: plannedWorkout?.notes ?? null,
       };
       await cacheSet(cacheKeys.activeSession, adopted);
       setOrphan(null);
@@ -321,6 +342,7 @@ export function Today() {
         "e1rm:",
         "volume:",
         "goal:",
+        "sessionMeta:",
         "lastActuals:",
       ]);
       setOrphan(null);
@@ -498,7 +520,13 @@ export function Today() {
                         Start session
                       </button>
                     )}
-                    {!active && (state === "MISSED" || state === "NO DATE") && (
+                    {!active &&
+                      (state === "MISSED" ||
+                        state === "NO DATE" ||
+                        // in a dateless program every day is UPCOMING —
+                        // stamping one with a date would flip the whole
+                        // program into date mode uninvited
+                        (state === "UPCOMING" && anyDates)) && (
                       <button
                         type="button"
                         className="btn btn-outline-ink btn-block"

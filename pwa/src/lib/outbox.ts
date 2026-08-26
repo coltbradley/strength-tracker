@@ -64,6 +64,9 @@ export interface Outbox {
   /** Queued (unsynced) set inserts for a session — dead ones included, the
    *  user logged them and the UI must reflect them. */
   pendingSets(sessionId: string): Promise<SetInsert[]>;
+  /** Session ids with a queued (unsynced) sessions update — e.g. an ended_at
+   *  or discarded_at patch that hasn't reached the server yet. */
+  pendingSessionUpdateIds(): Promise<Set<string>>;
   /** Wire up app-start + 'online' triggers. */
   start(): void;
 }
@@ -81,7 +84,10 @@ function classify(op: OutboxOp, err: TransportError): ErrorClass {
     err.code === "23503" &&
     op.kind === "insert" &&
     op.table === "sets" &&
-    op.payload.prescription_id !== null
+    op.payload.prescription_id !== null &&
+    // only the PRESCRIPTION FK justifies stripping the link — a 23503 on
+    // session_id (session insert died earlier) must not destroy it
+    /prescription/i.test(err.message)
   ) {
     return "fk-prescription";
   }
@@ -324,6 +330,22 @@ export function createOutbox({ getDb, transport, isOnline }: Deps): Outbox {
         )
         .map((op) => op.payload)
         .filter((s) => s.session_id === sessionId);
+    },
+
+    async pendingSessionUpdateIds() {
+      const db = await getDb();
+      const rows = await readAll(db);
+      return new Set(
+        rows
+          .map((r) => r.item.op)
+          .filter(
+            (
+              op,
+            ): op is Extract<OutboxOp, { kind: "update"; table: "sessions" }> =>
+              op.kind === "update" && op.table === "sessions",
+          )
+          .map((op) => op.id),
+      );
     },
 
     start() {

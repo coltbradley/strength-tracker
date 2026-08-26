@@ -122,6 +122,7 @@ export function End() {
       });
       if (bwOpen) await cacheSet(LAST_BW_KEY, bwKg);
       await cacheDelete(cacheKeys.activeSession);
+      await clearSessionCaches(active.id);
       toast(
         `Session done — ${setCount} set${setCount === 1 ? "" : "s"} logged${
           rpe !== null ? `, sRPE ${rpe}` : ""
@@ -130,6 +131,21 @@ export function End() {
       navigate("/", { replace: true });
     } catch (e) {
       reportError(e, "end session");
+    }
+  };
+
+  /** Session-scoped kv entries have no reader once the session is closed —
+   *  drop them so the cache doesn't grow forever. */
+  const clearSessionCaches = async (id: string) => {
+    for (const key of [
+      cacheKeys.sessionRx(id),
+      cacheKeys.sessionExtras(id),
+      cacheKeys.sessionSets(id),
+      cacheKeys.sessionVoids(id),
+      cacheKeys.sessionSkips(id),
+      cacheKeys.sessionRest(id),
+    ]) {
+      await cacheDelete(key).catch(() => undefined);
     }
   };
 
@@ -144,12 +160,14 @@ export function End() {
         patch: { discarded_at: new Date().toISOString() },
       });
       await cacheDelete(cacheKeys.activeSession);
+      await clearSessionCaches(active.id);
       // history caches and week DONE state all reference this session
       await cacheDeleteByPrefix([
         "recent:",
         "e1rm:",
         "volume:",
         "goal:",
+        "sessionMeta:",
         "lastActuals:",
         "doneWorkouts:",
       ]);
@@ -266,13 +284,34 @@ export function End() {
         </div>
       </section>
 
-      <button
-        type="button"
-        className="btn btn-primary btn-block"
-        onClick={() => void end()}
-      >
-        End session
-      </button>
+      {setCount === 0 ? (
+        <>
+          {/* an accidental start must not mark the planned day DONE — with
+              nothing logged, discard is the honest default */}
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            onClick={() => void discard()}
+          >
+            Discard empty session
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-block"
+            onClick={() => void end()}
+          >
+            End anyway (counts as done)
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-primary btn-block"
+          onClick={() => void end()}
+        >
+          End session
+        </button>
+      )}
       <button
         type="button"
         className="btn btn-ghost btn-block"

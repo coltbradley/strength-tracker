@@ -1407,3 +1407,90 @@ button {
   letter-spacing: 0.12em;
   color: var(--accent-dim);
 }
+
+/* ---- in-session workout list (replaces the modal drawer) ---- */
+
+.workout-section {
+  scroll-margin-top: 8px;
+}
+
+.session-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 8px;
+}
+
+.wk-item {
+  display: flex;
+  align-items: stretch;
+  border-bottom: var(--rule-hair);
+}
+
+/* current entry: inset accent rule, index-card margin-note style */
+.wk-item-on {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.wk-item-on .wk-main {
+  padding-left: 11px;
+}
+
+.wk-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 11px 0;
+  min-height: var(--tap);
+  text-align: left;
+}
+
+.wk-name {
+  grid-column: 1;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.wk-item-on .wk-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.wk-name-skipped {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.wk-target {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.wk-count {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  min-width: 40px;
+  text-align: right;
+}
+
+.wk-count-done {
+  color: var(--accent-dim);
+}
+
+.btn-workout-count {
+  color: var(--accent-dim);
+  font-variant-numeric: tabular-nums;
+}

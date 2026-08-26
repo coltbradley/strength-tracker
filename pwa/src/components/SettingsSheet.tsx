@@ -1,6 +1,7 @@
-// Settings sheet: unit toggle, default rest, plates on hand (per-unit
-// catalog, pairs), manual sync, sign out.
+// Settings sheet: unit toggle, default rest, rest alerts, plates on hand
+// (per-unit catalog, pairs), manual sync, sign out.
 
+import { useState } from "react";
 import {
   BAR_CATALOG,
   PLATE_CATALOG,
@@ -32,7 +33,27 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   const enabled = usePlatesOnHand(unit);
   const barKg = useBarKg(unit);
   const restDefault = useDefaultRestSeconds();
+  const notifSupported = typeof Notification !== "undefined";
+  const [notifState, setNotifState] = useState(
+    notifSupported ? Notification.permission : "unsupported",
+  );
   if (!open) return null;
+
+  // the rest strip fires a "Rest over" notification only if permission was
+  // granted somewhere — this row is that somewhere (never prompted mid-set)
+  const askNotif = () => {
+    if (!notifSupported) return;
+    Notification.requestPermission()
+      .then((p) => {
+        setNotifState(p);
+        toast(
+          p === "granted"
+            ? "Rest alerts on"
+            : "Rest alerts stay off (browser permission not granted)",
+        );
+      })
+      .catch(() => undefined);
+  };
 
   const isOn = (p: number) => enabled.some((e) => Math.abs(e - p) < 1e-6);
   const smallest = enabled.length > 0 ? Math.min(...enabled) : null;
@@ -83,6 +104,24 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
           <span>Default rest</span>
           <span className="sheet-row-value">{formatClock(restDefault)}</span>
         </button>
+
+        {notifSupported && (
+          <button
+            type="button"
+            className="sheet-row sheet-row-btn"
+            onClick={askNotif}
+            disabled={notifState === "granted"}
+          >
+            <span>Rest alerts</span>
+            <span className="sheet-row-value">
+              {notifState === "granted"
+                ? "ON"
+                : notifState === "denied"
+                  ? "BLOCKED IN BROWSER"
+                  : "TAP TO ENABLE"}
+            </span>
+          </button>
+        )}
 
         <div className="sheet-row sheet-row-stack">
           <span>

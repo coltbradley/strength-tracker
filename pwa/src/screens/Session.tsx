@@ -1,20 +1,26 @@
 // Set entry — the core screen. Everything the screen needs is served from
-// the IndexedDB cache written at session start, so it works fully offline
-// mid-gym. Sets are append-only: a mistake is corrected by logging another
-// set, never edited.
+// the IndexedDB cache written at session start (with a best-effort refresh
+// when the prescription snapshot is empty), so it works fully offline
+// mid-gym. Sets are append-only: a mistake is corrected by voiding and
+// logging another set, never edited.
 //
-// State notes (preserved from the review round):
+// State notes (preserved from the review rounds):
 // - Entries are keyed by prescription id (or `extra:<exercise_id>`), so the
 //   same exercise under two prescriptions stays two distinct entries.
 //   set_index stays scoped per EXERCISE across entries.
+// - Every logged set must be visible somewhere: sets whose prescription_id
+//   is null or dangling (prescription deleted mid-session, outbox FK-null
+//   repair, lost extras cache, cross-device logs) are claimed by the first
+//   rx entry for their exercise, or get a synthesized fallback entry.
 // - `setsRef` is the synchronous source of truth for logged sets: log taps
 //   compute set_index from it atomically; bootstrap merges INTO it by id.
 // - Rest: the timer starts when a set is logged; when the NEXT set is logged
 //   the elapsed rest is stamped onto it as rest_seconds_actual (append-only —
 //   never an update to a prior row). DONE hides the strip but keeps the
-//   clock running for recording; > 3600 s elapsed records null.
-// - Sheets (drawer / search / pad / plates) are mutually exclusive and the
-//   rest strip hides while one is open.
+//   clock running for recording; > 3600 s elapsed records null. Voiding the
+//   set that started the clock cancels it.
+// - The whole workout is an inline WORKOUT section in the session scroll —
+//   never a modal. The footer's Workout n/n button jumps to it.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -23,10 +29,11 @@ import { RestTimer } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
-import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
+import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import {
   getExercises,
   getLastActuals,
+  getResolvedPrescriptions,
   getServerSessionSets,
   mergeSets,
   type LastActuals,
@@ -125,13 +132,14 @@ export function Session() {
   const [skips, setSkips] = useState<Set<string>>(new Set());
   const [voidArm, setVoidArm] = useArmed();
 
-  const [sheet, setSheet] = useState<"drawer" | "search" | "plates" | null>(
-    null,
-  );
+  const [sheet, setSheet] = useState<"search" | "plates" | null>(null);
   const [pad, setPad] = useState<PadSpec | null>(null);
   const [search, setSearch] = useState("");
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const workoutRef = useRef<HTMLElement>(null);
 
   // The bootstrap load can come up empty (first run, offline, cold cache);
   // opening the search sheet retries rather than showing a lying spinner.
@@ -173,7 +181,14 @@ export function Session() {
     let cancelled = false;
     void (async () => {
       try {
-        const a = await cacheGet<ActiveSession>(cacheKeys.activeSession);
+        let a: ActiveSession | null | undefined;
+        try {
+          a = await cacheGet<ActiveSession>(cacheKeys.activeSession);
+        } catch (e) {
+          // a broken cache read must not strand the screen on "Loading…"
+          reportError(e, "read active session");
+          a = null;
+        }
         if (cancelled) return;
         if (!a) {
           setActive(null);
@@ -181,7 +196,7 @@ export function Session() {
         }
         setActive(a);
         const [
-          rxCached,
+          rxCachedRaw,
           extrasCached,
           voidsCached,
           skipsCached,
@@ -198,6 +213,22 @@ export function Session() {
           getExercises().catch(() => ({ data: [] as ExerciseRow[] })),
         ]);
         if (cancelled) return;
+        // An empty prescription snapshot is usually an offline/cold start
+        // that failed silently — retry now that we may be online, and heal
+        // the cache so the session isn't permanently target-less.
+        let rxCached = rxCachedRaw ?? [];
+        if (rxCached.length === 0 && a.planned_workout_id) {
+          try {
+            const fresh = await getResolvedPrescriptions(a.planned_workout_id);
+            if (fresh.data.length > 0) {
+              rxCached = fresh.data;
+              await cacheSet(cacheKeys.sessionRx(a.id), fresh.data);
+            }
+          } catch {
+            // still offline: by-feel logging, prefill from history
+          }
+        }
+        if (cancelled) return;
         // rehydrate the rest clock (lost otherwise on Home round-trips and
         // page evictions); a clock past the recordable window is dropped
         if (
@@ -213,7 +244,7 @@ export function Session() {
             });
           }
         }
-        setRx(rxCached ?? []);
+        setRx(rxCached);
         setExtras(extrasCached ?? []);
         const voided = new Set(voidsCached ?? []);
         setVoids(voided);
@@ -264,6 +295,16 @@ export function Session() {
 
   // ---- exercise entries ----------------------------------------------------
 
+  const knownRxIds = useMemo(() => new Set(rx.map((r) => r.id)), [rx]);
+
+  /** a set whose prescription link points at nothing in this session's
+   *  snapshot (null, or a prescription since deleted) */
+  const isOrphanSet = useCallback(
+    (s: SetInsert) =>
+      s.prescription_id === null || !knownRxIds.has(s.prescription_id),
+    [knownRxIds],
+  );
+
   const entries: ExerciseEntry[] = useMemo(() => {
     const fromRx = rx.map((r) => ({
       key: r.id,
@@ -271,16 +312,35 @@ export function Session() {
       name: r.exercise_name,
       rx: r,
     }));
+    const covered = new Set(fromRx.map((f) => f.exercise_id));
     const extraEntries = extras
-      .filter((e) => !fromRx.some((f) => f.exercise_id === e.exercise_id))
+      .filter((e) => !covered.has(e.exercise_id))
       .map((e) => ({
         key: `extra:${e.exercise_id}`,
         exercise_id: e.exercise_id,
         name: e.name,
         rx: null,
       }));
-    return [...fromRx, ...extraEntries];
-  }, [rx, extras]);
+    for (const e of extraEntries) covered.add(e.exercise_id);
+    // No logged set may be invisible: synthesize entries for exercises that
+    // have sets but no rx/extra entry (lost extras cache, plan edited
+    // mid-session, sets logged on another device).
+    const orphanIds = [
+      ...new Set(
+        sets
+          .filter((s) => !covered.has(s.exercise_id) && isOrphanSet(s))
+          .map((s) => s.exercise_id),
+      ),
+    ];
+    const fallback = orphanIds.map((id) => ({
+      key: `extra:${id}`,
+      exercise_id: id,
+      name:
+        allExercises.find((e) => e.id === id)?.name ?? id.replace(/_/g, " "),
+      rx: null,
+    }));
+    return [...fromRx, ...extraEntries, ...fallback];
+  }, [rx, extras, sets, allExercises, isOrphanSet]);
 
   const current = useMemo(
     () => entries.find((e) => e.key === currentEntryId) ?? entries[0] ?? null,
@@ -293,19 +353,51 @@ export function Session() {
   );
 
   const setsForEntry = useCallback(
-    (entry: ExerciseEntry) =>
-      entry.rx
-        ? sets.filter((s) => s.prescription_id === entry.rx?.id)
-        : sets.filter(
-            (s) =>
-              s.exercise_id === entry.exercise_id && s.prescription_id === null,
-          ),
-    [sets],
+    (entry: ExerciseEntry) => {
+      if (entry.rx) {
+        const rxId = entry.rx.id;
+        // the FIRST rx entry for an exercise also claims that exercise's
+        // orphan sets, so nothing logged can disappear from the UI
+        const claimsOrphans =
+          rx.find((r) => r.exercise_id === entry.exercise_id)?.id === rxId;
+        return sets.filter(
+          (s) =>
+            s.prescription_id === rxId ||
+            (claimsOrphans &&
+              s.exercise_id === entry.exercise_id &&
+              isOrphanSet(s)),
+        );
+      }
+      return sets.filter(
+        (s) => s.exercise_id === entry.exercise_id && isOrphanSet(s),
+      );
+    },
+    [sets, rx, isOrphanSet],
   );
+
+  const entryDone = useCallback(
+    (e: ExerciseEntry): boolean =>
+      skips.has(e.key) ||
+      (e.rx
+        ? setsForEntry(e).length >= e.rx.sets
+        : setsForEntry(e).length > 0),
+    [skips, setsForEntry],
+  );
+  const doneEntries = entries.filter(entryDone).length;
 
   const equipment = current ? (equipMap[current.exercise_id] ?? null) : null;
   const plateable = equipment === "barbell" || equipment === "machine";
   const machine = equipment === "machine";
+
+  // ---- navigation within the screen ---------------------------------------
+
+  const scrollToWorkout = () =>
+    workoutRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const selectEntry = (key: string) => {
+    setCurrentEntryId(key);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   // ---- prefill on entry switch ---------------------------------------------
 
@@ -395,7 +487,7 @@ export function Session() {
     setSetType("working");
   };
 
-  const openSheet = (kind: "drawer" | "search" | "plates") => {
+  const openSheet = (kind: "search" | "plates") => {
     setSheet(kind);
     setPad(null);
     setSearch("");
@@ -410,14 +502,14 @@ export function Session() {
     if (!sessionId) return;
     const existing = entries.find((e) => e.exercise_id === ex.id);
     if (existing) {
-      setCurrentEntryId(existing.key);
+      selectEntry(existing.key);
       setSheet(null);
       return;
     }
     const nextExtras = [...extras, { exercise_id: ex.id, name: ex.name }];
     setExtras(nextExtras);
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
-    setCurrentEntryId(`extra:${ex.id}`);
+    selectEntry(`extra:${ex.id}`);
     setSheet(null);
   };
 
@@ -426,6 +518,16 @@ export function Session() {
   const voidSet = (s: SetInsert) => {
     if (!sessionId) return;
     setVoidArm(null);
+    // voiding the set that started the current rest cancels the clock —
+    // the rest was being measured from a set that no longer counts
+    const startedClock = setsRef.current.every(
+      (x) => x.id === s.id || x.performed_at <= s.performed_at,
+    );
+    if (startedClock && restRef.current) {
+      restRef.current = null;
+      setRest(null);
+      cacheDelete(cacheKeys.sessionRest(sessionId)).catch(() => undefined);
+    }
     const nextVoids = new Set(voids);
     nextVoids.add(s.id);
     setVoids(nextVoids);
@@ -602,13 +704,14 @@ export function Session() {
 
   return (
     <div className="session-shell">
-      <div className="session-scroll">
-        {current ? (
+      <div className="session-scroll" ref={scrollRef}>
+        {current && (
           <>
             <button
               type="button"
               className="session-head"
-              onClick={() => openSheet("drawer")}
+              aria-label="jump to workout list"
+              onClick={scrollToWorkout}
             >
               <span className="session-exercise">
                 {current.name} <span className="chev">▾</span>
@@ -752,18 +855,98 @@ export function Session() {
               </section>
             )}
           </>
-        ) : (
-          <div className="session-empty">
-            <p className="muted">No exercises yet.</p>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => openSheet("search")}
-            >
-              Add exercise
-            </button>
-          </div>
         )}
+
+        <section className="rule-section workout-section" ref={workoutRef}>
+          <div className="section-head">
+            <span className="field-label">
+              WORKOUT
+              {active.workout_label
+                ? ` · ${active.workout_label.toUpperCase()}`
+                : ""}
+            </span>
+            {entries.length > 0 && (
+              <span className="section-meta">
+                {doneEntries} OF {entries.length} DONE
+              </span>
+            )}
+          </div>
+          {(active.plan_note || active.coach_note) && (
+            <div className="session-notes">
+              {active.plan_note && (
+                <div className="detail-note">
+                  <span className="detail-note-label">PLAN NOTE</span>
+                  {active.plan_note}
+                </div>
+              )}
+              {active.coach_note && (
+                <div className="detail-note">
+                  <span className="detail-note-label">COACH</span>
+                  {active.coach_note}
+                </div>
+              )}
+            </div>
+          )}
+          {entries.map((e) => {
+            const done = setsForEntry(e).length;
+            const skipped = skips.has(e.key);
+            const isCurrent = current?.key === e.key;
+            const removable = !e.rx && done === 0;
+            return (
+              <div
+                key={e.key}
+                className={`wk-item ${isCurrent ? "wk-item-on" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="wk-main"
+                  onClick={() => selectEntry(e.key)}
+                >
+                  <span
+                    className={`wk-name ${skipped ? "wk-name-skipped" : ""}`}
+                  >
+                    {e.name}
+                  </span>
+                  <span className="wk-target">
+                    {skipped
+                      ? "SKIPPED"
+                      : e.rx
+                        ? formatRxTarget(e.rx, unit).toUpperCase()
+                        : "NO TARGET · BY FEEL"}
+                  </span>
+                  <span
+                    className={`wk-count ${e.rx && done >= e.rx.sets ? "wk-count-done" : ""}`}
+                  >
+                    {done}
+                    {e.rx ? `/${e.rx.sets}` : ""}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="drawer-action"
+                  onClick={() =>
+                    removable ? void removeExtra(e) : toggleSkip(e)
+                  }
+                >
+                  {removable ? "REMOVE" : skipped ? "UNSKIP" : "SKIP"}
+                </button>
+              </div>
+            );
+          })}
+          {entries.length === 0 && (
+            <div className="microcopy">
+              Nothing planned for this session. Add an exercise to start
+              logging — load and reps prefill from your last time.
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => openSheet("search")}
+          >
+            Add exercise
+          </button>
+        </section>
       </div>
 
       {!sheetOpen && (
@@ -790,10 +973,13 @@ export function Session() {
         </button>
         <button
           type="button"
-          className="btn btn-secondary"
-          onClick={() => openSheet("drawer")}
+          className="btn btn-secondary btn-workout"
+          onClick={scrollToWorkout}
         >
-          Exercises
+          Workout{" "}
+          <span className="btn-workout-count">
+            {doneEntries}/{entries.length}
+          </span>
         </button>
         <button
           type="button"
@@ -803,80 +989,6 @@ export function Session() {
           Finish
         </button>
       </div>
-
-      {sheet === "drawer" && (
-        <div className="sheet-backdrop" onClick={() => setSheet(null)}>
-          <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="sheet-head">
-              <span className="sheet-title">
-                EXERCISES
-                {active.workout_label
-                  ? ` · ${active.workout_label.toUpperCase()}`
-                  : ""}
-              </span>
-              <button
-                type="button"
-                className="sheet-close"
-                onClick={() => setSheet(null)}
-              >
-                CLOSE
-              </button>
-            </div>
-            {entries.map((e) => {
-              const done = setsForEntry(e).length;
-              const eq = equipMap[e.exercise_id];
-              const skipped = skips.has(e.key);
-              const removable = !e.rx && done === 0;
-              return (
-                <div
-                  key={e.key}
-                  className={`drawer-item ${current?.key === e.key ? "drawer-on" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="drawer-row drawer-row-main"
-                    onClick={() => {
-                      setCurrentEntryId(e.key);
-                      setSheet(null);
-                    }}
-                  >
-                    <span
-                      className={`drawer-name ${skipped ? "drawer-name-skipped" : ""}`}
-                    >
-                      {e.name}
-                    </span>
-                    <span className="drawer-tag">
-                      {skipped ? "SKIPPED" : eq ? eq.toUpperCase() : ""}
-                    </span>
-                    <span
-                      className={`drawer-count ${e.rx && done >= e.rx.sets ? "drawer-count-done" : ""}`}
-                    >
-                      {done}
-                      {e.rx ? `/${e.rx.sets}` : ""}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="drawer-action"
-                    onClick={() =>
-                      removable ? void removeExtra(e) : toggleSkip(e)
-                    }
-                  >
-                    {removable ? "REMOVE" : skipped ? "UNSKIP" : "SKIP"}
-                  </button>
-                </div>
-              );
-            })}
-            <button
-              type="button"
-              className="btn btn-outline-ink"
-              onClick={() => openSheet("search")}
-            >
-              Add exercise
-            </button>
-          </div>
-        </div>
-      )}
 
       {sheet === "search" && (
         <div className="sheet-backdrop" onClick={() => setSheet(null)}>

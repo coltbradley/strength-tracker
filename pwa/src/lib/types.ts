@@ -156,4 +156,8 @@ export interface ActiveSession {
   planned_workout_id: string | null;
   started_at: string;
   workout_label: string | null;
+  /** snapshot of the day's notes so they're readable mid-workout, offline
+   *  (optional: sessions cached before this field simply omit them) */
+  plan_note?: string | null;
+  coach_note?: string | null;
 }

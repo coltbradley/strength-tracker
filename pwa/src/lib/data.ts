@@ -390,6 +390,9 @@ export async function syncOpenSessions(
   activeId: string | null,
   localDayOf: (iso: string) => string,
   today: string,
+  /** session ids with a QUEUED update (ended/discarded offline) — the server
+   *  hasn't heard yet, so they must be neither auto-closed nor surfaced */
+  pendingUpdateIds: Set<string> = new Set(),
 ): Promise<OpenSessionSync> {
   const { data, error } = await supabase
     .from("sessions")
@@ -398,7 +401,9 @@ export async function syncOpenSessions(
     .is("discarded_at", null)
     .order("started_at");
   throwIf(error);
-  const open = (data ?? []) as OpenSessionRow[];
+  const open = ((data ?? []) as OpenSessionRow[]).filter(
+    (s) => !pendingUpdateIds.has(s.id),
+  );
 
   let autoCompleted = 0;
   let autoDiscarded = 0;
@@ -476,20 +481,23 @@ export interface SessionMetaRow {
   notes: string | null;
 }
 
-/** Notes/sRPE for a set of sessions. Online-only; callers degrade silently
- *  (the sets themselves still render offline). */
+/** Notes/sRPE for the sessions behind one exercise's history, cached under
+ *  `sessionMeta:<exerciseId>` so notes read back offline too. */
 export async function getSessionMeta(
+  exerciseId: string,
   ids: string[],
-): Promise<Record<string, SessionMetaRow>> {
-  if (ids.length === 0) return {};
-  const { data, error } = await supabase
-    .from("sessions")
-    .select("id,session_rpe,notes")
-    .in("id", ids);
-  throwIf(error);
-  return Object.fromEntries(
-    ((data ?? []) as SessionMetaRow[]).map((r) => [r.id, r]),
-  );
+): Promise<{ data: Record<string, SessionMetaRow>; fromCache: boolean }> {
+  return fetchWithCache(`sessionMeta:${exerciseId}`, async () => {
+    if (ids.length === 0) return {};
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("id,session_rpe,notes")
+      .in("id", ids);
+    throwIf(error);
+    return Object.fromEntries(
+      ((data ?? []) as SessionMetaRow[]).map((r) => [r.id, r]),
+    );
+  });
 }
 
 // ---- session sets (server + cache; caller merges outbox pending) -----------

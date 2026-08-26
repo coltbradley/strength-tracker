@@ -285,3 +285,41 @@ client-side (no schema change):
   requires going through the set-entry screen.
 - "Pause" is deliberately not a feature: leaving a session open IS the pause,
   and the end-of-day sweep bounds how long it can dangle.
+
+## 2026-08-26 in-session flow round ("I can't see all the exercises")
+
+Real gym use exposed both a design problem and two state bugs behind the
+same symptom. `docs/flows.md` (new) is now the canonical flow map.
+
+- **The workout is a section, not a modal.** The exercise drawer is gone.
+  A WORKOUT section lives inside the session scroll: every exercise with
+  target, logged count, skip state, the current one marked with an inset
+  accent rule; day-level plan/coach notes render at its top. The footer's
+  "Workout n/n" button is the always-visible progress glance and jumps to
+  the section. Rejected: horizontal pill rails (hide off-screen exercises —
+  the complaint restated) and the Strong/Hevy full-list inversion (dethrones
+  the big-stepper logging surface).
+- **No logged set may be invisible.** Sets whose prescription link is null
+  or dangling (prescription deleted mid-session, outbox FK repair, lost
+  extras cache, cross-device logs) are claimed by the first rx entry for
+  their exercise, or get a synthesized fallback entry. Previously they
+  counted toward set numbering while appearing nowhere.
+- **An empty prescription snapshot heals itself.** Start writes the rx
+  snapshot once; if it's empty (offline/cold start) the session bootstrap
+  refetches when connectivity returns and repairs the cache. Start also
+  always fetches fresh (a backgrounded PWA's in-memory rx can be hours old)
+  and warns when starting fully offline with no targets.
+- **Ending an empty session defaults to discard** — an accidental start must
+  not mark the planned day DONE. "End anyway" remains as a ghost action.
+- **Late corrections in History.** Sets can be voided after the session
+  ended (same append-only mechanism); session meta (notes/sRPE) is cached
+  for offline read-back.
+- **Orphan reconciliation trusts the outbox first.** The open-session sweep
+  flushes and excludes sessions with queued updates, so a finish/discard
+  done offline is never misread as an abandoned session (which Discard
+  would then have soft-deleted). The outbox FK repair now also checks the
+  constraint is actually the prescription one before stripping the link.
+- Smaller: double-tap Start can't create two sessions; voiding the set that
+  started the rest clock cancels the clock; session-scoped caches are
+  deleted when the session closes; rest alerts get a Settings row that
+  requests notification permission (the strip itself never prompts).
