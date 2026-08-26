@@ -47,6 +47,7 @@ export function End() {
   const [bwKg, setBwKg] = useState(80);
   const [bwPad, setBwPad] = useState(false);
   const [note, setNote] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
   const [setCount, setSetCount] = useState(0);
   const [liftsDone, setLiftsDone] = useState(0);
   const [liftsTotal, setLiftsTotal] = useState(0);
@@ -87,9 +88,14 @@ export function End() {
         const skipped = new Set(
           (await cacheGet<string[]>(cacheKeys.sessionSkips(a.id))) ?? [],
         );
+        // skip keys are the exercise's FIRST bracket id (grouped entries),
+        // so resolve skips to exercise ids before counting
+        const skippedExercises = new Set(
+          rxCached.filter((r) => skipped.has(r.id)).map((r) => r.exercise_id),
+        );
         const planned = new Set<string>();
         for (const r of rxCached)
-          if (!skipped.has(r.id)) planned.add(r.exercise_id);
+          if (!skippedExercises.has(r.exercise_id)) planned.add(r.exercise_id);
         for (const e of extras)
           if (!skipped.has(`extra:${e.exercise_id}`))
             planned.add(e.exercise_id);
@@ -265,25 +271,39 @@ export function End() {
         <div className="section-head">
           <span className="field-label">NOTE · OPTIONAL</span>
         </div>
-        <textarea
-          className="input note-input"
-          placeholder="How did it go?"
-          rows={3}
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-        />
-        <div className="chip-row">
-          {NOTE_CHIPS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              className="chip"
-              onClick={() => addChip(c)}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
+        {noteOpen ? (
+          <>
+            <textarea
+              className="input note-input"
+              placeholder="How did it go?"
+              rows={3}
+              autoFocus
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+            <div className="chip-row">
+              {NOTE_CHIPS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className="chip"
+                  onClick={() => addChip(c)}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          // collapsed like Bodyweight above — the primary action stays in view
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setNoteOpen(true)}
+          >
+            Add note
+          </button>
+        )}
       </section>
 
       {setCount === 0 ? (
@@ -322,21 +342,26 @@ export function End() {
         Back to session
       </button>
 
-      <section className="rule-section">
-        <button
-          type="button"
-          className={`btn btn-block ${discardArmed ? "btn-danger" : "btn-ghost"}`}
-          onClick={() => (discardArmed ? void discard() : setArmed("discard"))}
-        >
-          {discardArmed ? "Discard session?" : "Discard session"}
-        </button>
-        {discardArmed && (
-          <div className="microcopy">
-            Removes this session and its {setCount}{" "}
-            {setCount === 1 ? "set" : "sets"} from history and charts.
-          </div>
-        )}
-      </section>
+      {/* the empty-session variant already leads with discard — no duplicate */}
+      {setCount > 0 && (
+        <section className="rule-section">
+          <button
+            type="button"
+            className={`btn btn-block ${discardArmed ? "btn-danger" : "btn-ghost"}`}
+            onClick={() =>
+              discardArmed ? void discard() : setArmed("discard")
+            }
+          >
+            {discardArmed ? "Discard session?" : "Discard session"}
+          </button>
+          {discardArmed && (
+            <div className="microcopy">
+              Removes this session and its {setCount}{" "}
+              {setCount === 1 ? "set" : "sets"} from history and charts.
+            </div>
+          )}
+        </section>
+      )}
 
       {bwPadReq && <NumberPad req={bwPadReq} />}
     </div>

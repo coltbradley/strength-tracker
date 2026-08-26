@@ -93,7 +93,16 @@ const workoutSchema = z.object({
     .min(0)
     .describe("Day within the program, 0-based. Unique per program."),
   label: z.string().optional().describe("Human label, e.g. 'Day 1 - Squat'."),
-  notes: z.string().optional().describe("Coach notes for the day."),
+  notes: z
+    .string()
+    .max(300)
+    .optional()
+    .describe(
+      "The coach's OWN words for the day, brief (cues, intent). This renders " +
+        "prominently on the user's phone mid-workout — do NOT store parse " +
+        "caveats, omission lists, or assumptions here; report those in chat " +
+        "instead.",
+    ),
   scheduled_date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -114,8 +123,12 @@ const programSchema = z.object({
   name: z.string().min(1).describe("Program name, e.g. 'Block 3 - Strength'."),
   source_note: z
     .string()
+    .max(120)
     .optional()
-    .describe("Where this came from, e.g. 'coach screenshot 2026-08-25'."),
+    .describe(
+      "Provenance in a few words, e.g. 'coach screenshot 2026-08-25'. Not " +
+        "shown in the app's main flow — keep parse commentary out of it.",
+    ),
   workouts: z
     .array(workoutSchema)
     .min(1)

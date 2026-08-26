@@ -14,6 +14,7 @@ import {
 } from "../lib/settings";
 import { formatClock } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
+import { useArmed } from "../hooks/useArmed";
 import {
   useBarKg,
   useDefaultRestSeconds,
@@ -39,6 +40,8 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
     notifSupported ? Notification.permission : "unsupported",
   );
   const [restPad, setRestPad] = useState(false);
+  const [armed, setArmed] = useArmed();
+  const signOutArmed = armed === "signout";
   if (!open) return null;
 
   const restPadReq: PadRequest | null = restPad
@@ -178,7 +181,7 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
           className="btn btn-secondary"
           onClick={() => {
             void outbox.flush();
-            toast("sync triggered");
+            toast("Sync started");
           }}
         >
           Sync now
@@ -186,15 +189,19 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
 
         <button
           type="button"
-          className="btn btn-secondary"
+          className={`btn signout-btn ${signOutArmed ? "btn-danger" : "btn-ghost"}`}
           onClick={() => {
+            if (!signOutArmed) {
+              setArmed("signout");
+              return;
+            }
             supabase.auth
               .signOut()
               .then(() => onClose())
               .catch((e: unknown) => reportError(e, "sign out"));
           }}
         >
-          Sign out
+          {signOutArmed ? "Sign out?" : "Sign out"}
         </button>
 
         {restPadReq && <NumberPad req={restPadReq} />}

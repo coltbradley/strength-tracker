@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
+import { Note } from "../components/Note";
 import {
   addPrescription,
   deletePlannedWorkout,
@@ -285,88 +286,7 @@ export function Plan() {
       <h2 className="screen-title">
         {workout.label ?? `Workout ${workout.day_index + 1}`}
       </h2>
-      {workout.notes && (
-        <div className="detail-note">
-          <span className="detail-note-label">COACH</span>
-          {workout.notes}
-        </div>
-      )}
-
-      <section className="rule-section">
-        <div className="section-head">
-          <span className="field-label">SCHEDULED DAY</span>
-          {isToday && <span className="section-meta">TODAY</span>}
-        </div>
-        <div className="date-row">
-          <input
-            className="input date-input"
-            type="date"
-            value={dateValue}
-            onChange={(e) => {
-              setDateValue(e.target.value);
-              setDateDirty(true);
-            }}
-            onBlur={() => dateDirty && saveDate(dateValue)}
-          />
-          {!isToday && (
-            <button
-              type="button"
-              className="chip"
-              disabled={busy}
-              onClick={() => {
-                setDateValue(todayLocalIso());
-                saveDate(todayLocalIso());
-              }}
-            >
-              Today
-            </button>
-          )}
-        </div>
-        <div className="microcopy">
-          Start is only available on the scheduled day. Move the date to train
-          it another day.
-        </div>
-        <div className="detail-actions">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={idx <= 0 || busy}
-            onClick={() => move(-1)}
-          >
-            ↑ Earlier in week
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={idx < 0 || idx >= siblings.length - 1 || busy}
-            onClick={() => move(1)}
-          >
-            ↓ Later in week
-          </button>
-        </div>
-      </section>
-
-      <section className="rule-section">
-        <div className="section-head">
-          <span className="field-label">PLAN NOTE</span>
-          {noteDirty && <span className="section-meta">UNSAVED</span>}
-        </div>
-        <textarea
-          className="input note-input"
-          placeholder="What's the intent for this one? Cues, targets, context…"
-          rows={3}
-          value={planNote}
-          onChange={(e) => {
-            setPlanNote(e.target.value);
-            setNoteDirty(true);
-          }}
-          onBlur={() => noteDirty && saveNote()}
-        />
-        <div className="microcopy">
-          Saved automatically. Your post-workout note lives on the finished
-          session (End screen).
-        </div>
-      </section>
+      {workout.notes && <Note label="COACH" text={workout.notes} />}
 
       <section className="rule-section">
         <div className="section-head">
@@ -508,7 +428,10 @@ export function Plan() {
                     />
                   )}
 
-  {/* superset: exercises sharing a letter run together (A1/A2) */}
+  {/* exercises sharing a letter run together as a superset (A1/A2) */}
+                  <div className="section-head">
+                    <span className="field-label">SUPERSET</span>
+                  </div>
                   <div className="seg seg-types">
                     {SUPERSET_CHOICES.map(([value, label]) => (
                       <button
@@ -517,7 +440,7 @@ export function Plan() {
                         className={`seg-btn ${draft.superset === value ? "seg-on" : ""}`}
                         onClick={() => setDraft({ ...draft, superset: value })}
                       >
-                        {label === "NONE" ? "NO SS" : `SS ${label}`}
+                        {label === "NONE" ? "None" : label}
                       </button>
                     ))}
                   </div>
@@ -600,6 +523,76 @@ export function Plan() {
         >
           Add exercise
         </button>
+      </section>
+
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">SCHEDULED DAY</span>
+          {isToday && <span className="section-meta">TODAY</span>}
+        </div>
+        <div className="date-row">
+          <input
+            className="input date-input"
+            type="date"
+            value={dateValue}
+            onChange={(e) => {
+              setDateValue(e.target.value);
+              setDateDirty(true);
+            }}
+            onBlur={() => dateDirty && saveDate(dateValue)}
+          />
+          {!isToday && (
+            <button
+              type="button"
+              className="chip"
+              disabled={busy}
+              onClick={() => {
+                setDateValue(todayLocalIso());
+                saveDate(todayLocalIso());
+              }}
+            >
+              Today
+            </button>
+          )}
+        </div>
+        <div className="microcopy">Start unlocks on the scheduled day.</div>
+        <div className="chip-row">
+          <button
+            type="button"
+            className="chip"
+            disabled={idx <= 0 || busy}
+            onClick={() => move(-1)}
+          >
+            ↑ Earlier
+          </button>
+          <button
+            type="button"
+            className="chip"
+            disabled={idx < 0 || idx >= siblings.length - 1 || busy}
+            onClick={() => move(1)}
+          >
+            ↓ Later
+          </button>
+        </div>
+      </section>
+
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">PLAN NOTE</span>
+          {noteDirty && <span className="section-meta">UNSAVED</span>}
+        </div>
+        <textarea
+          className="input note-input"
+          placeholder="What's the intent for this one? Cues, targets, context…"
+          rows={3}
+          value={planNote}
+          onChange={(e) => {
+            setPlanNote(e.target.value);
+            setNoteDirty(true);
+          }}
+          onBlur={() => noteDirty && saveNote()}
+        />
+        <div className="microcopy">Saved automatically.</div>
       </section>
 
       <section className="rule-section">

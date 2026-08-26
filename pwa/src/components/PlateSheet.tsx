@@ -117,6 +117,7 @@ export function PlateSheet({
         </div>
         <div className="plate-note">{note}</div>
 
+        {/* CLOSE in the head is the exit, matching every other sheet */}
         <div className="plate-actions">
           <button
             type="button"
@@ -124,13 +125,6 @@ export function PlateSheet({
             onClick={onTypeTarget}
           >
             Type a target
-          </button>
-          <button
-            type="button"
-            className="btn btn-outline-ink"
-            onClick={onClose}
-          >
-            Back to set
           </button>
         </div>
       </div>

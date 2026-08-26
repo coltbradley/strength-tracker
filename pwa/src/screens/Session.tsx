@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
+import { Note } from "../components/Note";
 import { RestTimer } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
@@ -43,7 +44,12 @@ import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { prefillSet } from "../lib/prefill";
 import { split } from "../lib/plates";
-import { formatClock, formatRxTarget, rxHasNoTm } from "../lib/format";
+import {
+  formatClock,
+  formatRepRange,
+  rxHasNoTm,
+  rxLoadKg,
+} from "../lib/format";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
@@ -67,11 +73,32 @@ interface ExtraExercise {
 }
 
 interface ExerciseEntry {
-  /** prescription id, or `extra:<exercise_id>` for unprescribed additions */
+  /** first bracket's prescription id, or `extra:<exercise_id>` */
   key: string;
   exercise_id: string;
   name: string;
-  rx: ResolvedPrescriptionRow | null;
+  /** consecutive prescriptions for this exercise (a coach's ramp brackets,
+   *  e.g. 1×8-15, 1×6-8, 3×3-5) — ONE entry, walked through in order.
+   *  Empty = unprescribed. */
+  brackets: ResolvedPrescriptionRow[];
+}
+
+/** total prescribed working sets across an entry's brackets */
+function totalSets(entry: ExerciseEntry): number {
+  return entry.brackets.reduce((n, b) => n + b.sets, 0);
+}
+
+/** the bracket the (n+1)th working set falls into */
+function bracketFor(
+  entry: ExerciseEntry,
+  n: number,
+): ResolvedPrescriptionRow | null {
+  let acc = 0;
+  for (const b of entry.brackets) {
+    acc += b.sets;
+    if (n < acc) return b;
+  }
+  return entry.brackets[entry.brackets.length - 1] ?? null;
 }
 
 interface RestState {
@@ -328,20 +355,34 @@ export function Session() {
   );
 
   const entries: ExerciseEntry[] = useMemo(() => {
-    const fromRx = rx.map((r) => ({
-      key: r.id,
-      exercise_id: r.exercise_id,
-      name: r.exercise_name,
-      rx: r,
-    }));
+    // consecutive same-exercise prescriptions collapse into one entry with
+    // bracket structure (a ramp reads as one exercise, not three rows);
+    // NON-consecutive repeats (squat early + squat finisher) stay distinct
+    const fromRx: ExerciseEntry[] = [];
+    for (const r of rx) {
+      const last = fromRx[fromRx.length - 1];
+      if (
+        last &&
+        last.exercise_id === r.exercise_id &&
+        last.brackets[0].superset_group === r.superset_group
+      )
+        last.brackets.push(r);
+      else
+        fromRx.push({
+          key: r.id,
+          exercise_id: r.exercise_id,
+          name: r.exercise_name,
+          brackets: [r],
+        });
+    }
     const covered = new Set(fromRx.map((f) => f.exercise_id));
-    const extraEntries = extras
+    const extraEntries: ExerciseEntry[] = extras
       .filter((e) => !covered.has(e.exercise_id))
       .map((e) => ({
         key: `extra:${e.exercise_id}`,
         exercise_id: e.exercise_id,
         name: e.name,
-        rx: null,
+        brackets: [],
       }));
     for (const e of extraEntries) covered.add(e.exercise_id);
     // No logged set may be invisible: synthesize entries for exercises that
@@ -354,12 +395,12 @@ export function Session() {
           .map((s) => s.exercise_id),
       ),
     ];
-    const fallback = orphanIds.map((id) => ({
+    const fallback: ExerciseEntry[] = orphanIds.map((id) => ({
       key: `extra:${id}`,
       exercise_id: id,
       name:
         allExercises.find((e) => e.id === id)?.name ?? id.replace(/_/g, " "),
-      rx: null,
+      brackets: [],
     }));
     return [...fromRx, ...extraEntries, ...fallback];
   }, [rx, extras, sets, allExercises, isOrphanSet]);
@@ -376,15 +417,16 @@ export function Session() {
 
   const setsForEntry = useCallback(
     (entry: ExerciseEntry) => {
-      if (entry.rx) {
-        const rxId = entry.rx.id;
+      if (entry.brackets.length > 0) {
+        const ids = new Set(entry.brackets.map((b) => b.id));
         // the FIRST rx entry for an exercise also claims that exercise's
         // orphan sets, so nothing logged can disappear from the UI
         const claimsOrphans =
-          rx.find((r) => r.exercise_id === entry.exercise_id)?.id === rxId;
+          rx.find((r) => r.exercise_id === entry.exercise_id)?.id ===
+          entry.key;
         return sets.filter(
           (s) =>
-            s.prescription_id === rxId ||
+            (s.prescription_id !== null && ids.has(s.prescription_id)) ||
             (claimsOrphans &&
               s.exercise_id === entry.exercise_id &&
               isOrphanSet(s)),
@@ -398,7 +440,7 @@ export function Session() {
   );
 
   /** working sets logged against an entry — the number that answers
-   *  "am I done with this exercise" (warmups don't count toward rx.sets) */
+   *  "am I done with this exercise" (warmups don't count toward the plan) */
   const workingCount = useCallback(
     (entry: ExerciseEntry) =>
       setsForEntry(entry).filter((s) => s.set_type === "working").length,
@@ -408,7 +450,9 @@ export function Session() {
   const entryDone = useCallback(
     (e: ExerciseEntry): boolean =>
       skips.has(e.key) ||
-      (e.rx ? workingCount(e) >= e.rx.sets : setsForEntry(e).length > 0),
+      (e.brackets.length > 0
+        ? workingCount(e) >= totalSets(e)
+        : setsForEntry(e).length > 0),
     [skips, workingCount, setsForEntry],
   );
   const doneEntries = entries.filter(entryDone).length;
@@ -429,7 +473,7 @@ export function Session() {
     const map = new Map<string, { tag: string; first: boolean; last: boolean }>();
     let i = 0;
     while (i < entries.length) {
-      const group = entries[i].rx?.superset_group ?? null;
+      const group = entries[i].brackets[0]?.superset_group ?? null;
       if (group === null) {
         i++;
         continue;
@@ -437,7 +481,7 @@ export function Session() {
       let j = i;
       while (
         j < entries.length &&
-        (entries[j].rx?.superset_group ?? null) === group
+        (entries[j].brackets[0]?.superset_group ?? null) === group
       )
         j++;
       if (j - i > 1) {
@@ -486,21 +530,33 @@ export function Session() {
         ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [openKey]);
 
-  // ---- prefill on entry open -----------------------------------------------
+  // ---- prefill on entry open / bracket advance -----------------------------
+
+  // the bracket the NEXT working set falls into; walking into a new bracket
+  // re-prefills (its rep range, its load if set) mid-exercise
+  const currentBracket = openEntry
+    ? bracketFor(openEntry, workingCount(openEntry))
+    : null;
+  const prefillKey = openEntry
+    ? `${openEntry.key}:${currentBracket?.id ?? "free"}`
+    : null;
 
   const prefilledFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!openEntry || prefilledFor.current === openEntry.key) return;
-    prefilledFor.current = openEntry.key;
+    // wait for the sets merge: a mid-workout reload otherwise prefills from
+    // the wrong bracket and can clobber staged values while a sheet is open
+    if (!setsLoaded || !openEntry || prefillKey === null) return;
+    if (prefilledFor.current === prefillKey) return;
+    prefilledFor.current = prefillKey;
     const logged = setsForExercise(openEntry.exercise_id);
     const lastThis = logged[logged.length - 1];
     const p = prefillSet({
-      prescription: openEntry.rx
+      prescription: currentBracket
         ? {
-            resolved_load_kg: openEntry.rx.resolved_load_kg,
-            plate_load_kg: openEntry.rx.plate_load_kg,
-            reps_min: openEntry.rx.reps_min,
-            reps_max: openEntry.rx.reps_max,
+            resolved_load_kg: currentBracket.resolved_load_kg,
+            plate_load_kg: currentBracket.plate_load_kg,
+            reps_min: currentBracket.reps_min,
+            reps_max: currentBracket.reps_max,
           }
         : null,
       lastThisSession: lastThis
@@ -511,7 +567,14 @@ export function Session() {
     setLoadKg(p.loadKg);
     setReps(p.reps);
     setSetType("working");
-  }, [openEntry, setsForExercise, lastActuals]);
+  }, [
+    setsLoaded,
+    openEntry,
+    prefillKey,
+    currentBracket,
+    setsForExercise,
+    lastActuals,
+  ]);
 
   // ---- rest helpers --------------------------------------------------------
 
@@ -548,7 +611,9 @@ export function Session() {
       id: uuid(),
       session_id: sessionId,
       exercise_id: openEntry.exercise_id,
-      prescription_id: openEntry.rx?.id ?? null,
+      // the set links to the BRACKET it fulfills, so adherence analytics see
+      // the coach's actual scheme (warmups link to the upcoming bracket)
+      prescription_id: currentBracket?.id ?? null,
       set_index: nextIndex,
       set_type: setType,
       load_kg: loadKg,
@@ -568,7 +633,7 @@ export function Session() {
     restRef.current = { startedAt: now };
     setRest({
       startedAt: now,
-      targetSeconds: openEntry.rx?.rest_seconds ?? defaultRest,
+      targetSeconds: currentBracket?.rest_seconds ?? defaultRest,
       forLabel: `${openEntry.name} set ${nextIndex + 1}`,
     });
     setSetType("working");
@@ -652,7 +717,7 @@ export function Session() {
 
   /** Extras with no logged sets can be removed outright (session-local). */
   const removeExtra = async (entry: ExerciseEntry) => {
-    if (!sessionId || entry.rx) return;
+    if (!sessionId || entry.brackets.length > 0) return;
     const nextExtras = extras.filter(
       (e) => e.exercise_id !== entry.exercise_id,
     );
@@ -796,12 +861,24 @@ export function Session() {
     return null;
   };
 
-  /** "LOG WARMUP SET" or "LOG SET 2 OF 3" (working sets vs prescription) */
+  /** "1×8-15 @ 90 · 3×3-5" — an entry's full prescribed scheme */
+  const bracketSpec = (b: ResolvedPrescriptionRow): string => {
+    const load = rxLoadKg(b);
+    const base = `${b.sets}×${formatRepRange(b.reps_min, b.reps_max)}`;
+    return load !== null ? `${base} @ ${toDisplay(load, unit)} ${unit}` : base;
+  };
+  const scheme = (entry: ExerciseEntry): string =>
+    entry.brackets.map(bracketSpec).join(" · ");
+
+  /** "LOG WARMUP SET", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan */
   const logLabel = (entry: ExerciseEntry): string => {
     if (!setsLoaded) return "LOADING…";
     if (setType === "warmup") return "LOG WARMUP SET";
     const n = workingCount(entry) + 1;
-    return entry.rx ? `LOG SET ${n} OF ${entry.rx.sets}` : `LOG SET ${n}`;
+    if (entry.brackets.length === 0) return `LOG SET ${n}`;
+    return n > totalSets(entry)
+      ? "LOG EXTRA SET"
+      : `LOG SET ${n} OF ${totalSets(entry)}`;
   };
 
   const req = padRequest();
@@ -813,16 +890,10 @@ export function Session() {
         {(active.plan_note || active.coach_note) && (
           <div className="session-notes">
             {active.plan_note && (
-              <div className="detail-note">
-                <span className="detail-note-label">PLAN NOTE</span>
-                {active.plan_note}
-              </div>
+              <Note label="PLAN NOTE" text={active.plan_note} />
             )}
             {active.coach_note && (
-              <div className="detail-note">
-                <span className="detail-note-label">COACH</span>
-                {active.coach_note}
-              </div>
+              <Note label="COACH" text={active.coach_note} />
             )}
           </div>
         )}
@@ -843,11 +914,13 @@ export function Session() {
 
           {entries.map((entry) => {
             const isOpen = entry.key === openKey;
-            const done = entry.rx
+            const prescribed = entry.brackets.length > 0;
+            const done = prescribed
               ? workingCount(entry)
               : setsForEntry(entry).length;
+            const total = prescribed ? totalSets(entry) : null;
             const skipped = skips.has(entry.key);
-            const removable = !entry.rx && setsForEntry(entry).length === 0;
+            const removable = !prescribed && setsForEntry(entry).length === 0;
             const superset = supersetInfo.get(entry.key);
             return (
               <div
@@ -891,15 +964,15 @@ export function Session() {
                       <span className="wk-target">
                         {skipped
                           ? "SKIPPED"
-                          : entry.rx
-                            ? formatRxTarget(entry.rx, unit).toUpperCase()
+                          : prescribed
+                            ? scheme(entry).toUpperCase()
                             : "NO TARGET · BY FEEL"}
                       </span>
                       <span
-                        className={`wk-count ${entry.rx && done >= entry.rx.sets ? "wk-count-done" : ""}`}
+                        className={`wk-count ${total !== null && done >= total ? "wk-count-done" : ""}`}
                       >
                         {done}
-                        {entry.rx ? `/${entry.rx.sets}` : ""}
+                        {total !== null ? `/${total}` : ""}
                       </span>
                     </button>
                   )}
@@ -919,13 +992,16 @@ export function Session() {
                 {isOpen && (
                   <div className="wk-open">
                     <span className="rx-context">
-                      {entry.rx ? (
+                      {prescribed ? (
                         <>
-                          TARGET {formatRxTarget(entry.rx, unit).toUpperCase()}
-                          {entry.rx.rest_seconds !== null
-                            ? ` · REST ${formatClock(entry.rx.rest_seconds)}`
+                          TARGET {scheme(entry).toUpperCase()}
+                          {entry.brackets.length > 1 && currentBracket
+                            ? ` · NOW ${formatRepRange(currentBracket.reps_min, currentBracket.reps_max)} REPS`
                             : ""}
-                          {rxHasNoTm(entry.rx) ? " · NO TM SET" : ""}
+                          {currentBracket?.rest_seconds != null
+                            ? ` · REST ${formatClock(currentBracket.rest_seconds)}`
+                            : ""}
+                          {entry.brackets.some(rxHasNoTm) ? " · NO TM SET" : ""}
                         </>
                       ) : (
                         `NO TARGET · BY FEEL${equipment ? ` · ${equipment.toUpperCase()}` : ""}`
@@ -1003,9 +1079,10 @@ export function Session() {
                       />
                     </section>
 
+                    {/* once the plan is met, NEXT leads and extra sets recede */}
                     <button
                       type="button"
-                      className="btn btn-primary btn-log"
+                      className={`btn ${total !== null && done >= total ? "btn-outline-ink" : "btn-primary"} btn-log`}
                       disabled={logLocked || !setsLoaded}
                       onClick={logSet}
                     >
@@ -1015,22 +1092,20 @@ export function Session() {
                     {nextEntry && (
                       <button
                         type="button"
-                        className="wk-next-hint"
+                        className="btn btn-primary btn-block"
                         onClick={() => setOpenKey(nextEntry.key)}
                       >
-                        NEXT ▸ {nextEntry.name}
+                        Next · {nextEntry.name}
                       </button>
                     )}
 
                     {entrySets.length > 0 && (
                       <section className="rule-section">
                         <div className="section-head">
-                          <span className="field-label">
-                            LOGGED · APPEND ONLY
-                          </span>
+                          <span className="field-label">LOGGED</span>
                           <span className="section-meta">
                             {done}
-                            {entry.rx ? ` OF ${entry.rx.sets}` : ""}
+                            {total !== null ? ` OF ${total}` : ""}
                           </span>
                         </div>
                         <div className="logged-sets">

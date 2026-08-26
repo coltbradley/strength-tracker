@@ -206,6 +206,12 @@ export function History() {
         <div className="cache-note">offline — showing cached data</div>
       )}
 
+      {!selected && (
+        <p className="muted">
+          Nothing logged yet — finish a session and it shows up here.
+        </p>
+      )}
+
       {selected && (
         <>
           <section className="rule-section">
@@ -236,10 +242,12 @@ export function History() {
               <div key={sessionId} className="history-session">
                 <div className="history-date">
                   {formatSessionDate(ss[0].performed_at)}
+                  {/* the word, not ✕ — ✕ is reserved for single-set voids;
+                      discarding takes the whole day with it */}
                   {sessionId !== activeId && (
                     <button
                       type="button"
-                      className={`set-void ${discardArm === sessionId ? "set-void-armed" : ""}`}
+                      className={`drawer-action ${discardArm === sessionId ? "set-void-armed" : ""}`}
                       aria-label={
                         discardArm === sessionId
                           ? "confirm discard session"
@@ -251,7 +259,7 @@ export function History() {
                           : setDiscardArm(sessionId)
                       }
                     >
-                      {discardArm === sessionId ? "DISCARD SESSION?" : "✕"}
+                      {discardArm === sessionId ? "DISCARD?" : "DISCARD"}
                     </button>
                   )}
                 </div>

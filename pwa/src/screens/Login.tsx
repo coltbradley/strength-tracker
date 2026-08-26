@@ -80,9 +80,7 @@ export function Login() {
       {sent ? (
         <div className="login-form">
           <p className="login-sent">
-            Magic link sent to {email}. In the browser, just tap it. In the
-            installed app, long-press the link in the email, Copy Link, and
-            paste it below (or enter the 6-digit code if your email shows one):
+            Magic link sent to {email}. Tap it in your email and you’re in.
           </p>
           <form
             className="login-form"
@@ -99,6 +97,11 @@ export function Login() {
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
+            <div className="microcopy">
+              Installed app: the link opens in Safari instead — enter the
+              6-digit code from the email, or long-press the link, Copy Link,
+              and paste it here.
+            </div>
             <button
               type="submit"
               className="btn btn-primary"

@@ -358,3 +358,41 @@ Hevy / Fitbod / Boostcamp adapted to the index-card idiom.
 - Smaller: default rest is typed (number pad) with any 0–3600 s value
   surviving reload (the preset-only init was silently resetting custom
   values); the top-left title navigates home; History renders set notes.
+
+## 2026-08-26 hierarchy round (first real-data screenshot)
+
+Live use with a real coach parse exposed hierarchy failures. Governing rule
+adopted: every screen has ONE obvious primary action; reference text
+collapses until asked for; parse artifacts never dominate.
+
+- **The primary action always exists and leads.** The selected day's card
+  puts Start (or "Start again" for an already-done today, or Move-to-today)
+  ABOVE the exercise list. DONE no longer strands the day with no action —
+  losing the Start button to a state label was the round's trigger.
+- **Notes are reference, not headline.** New Note component clamps anything
+  over ~120 chars to two lines with MORE/LESS; used for coach + plan notes
+  on Today and Session. Program source_note no longer renders on Today at
+  all (provenance belongs to the parse conversation).
+- **Ramp brackets are one exercise.** Coach schemes like 1×8-15 / 1×6-8 /
+  3×3-5 parse as separate prescriptions (correct data) but now render as ONE
+  row ("1×8-15 · 1×6-8 · 3×3-5") on Today and ONE accordion entry in the
+  session, which walks the brackets: LOG SET n OF total counts across them,
+  each set links to the bracket it fulfills (adherence stays per-bracket),
+  crossing a bracket re-prefills its reps/load, and the context line shows
+  "NOW 3-5 REPS". Non-consecutive repeats of an exercise stay separate
+  entries.
+- **upsert_program now constrains notes** (coach's own words, ≤300 chars;
+  source_note ≤120) and instructs the parser to keep caveats in chat — the
+  screenshot's wall of parse commentary came from the tool being too
+  permissive.
+- **Board-wide hierarchy audit applied** (same round): completed exercises
+  demote the log button ("LOG EXTRA SET", outline) and promote NEXT to the
+  primary; History's session discard is the word DISCARD, never ✕ (✕ =
+  single-set void, app-wide); End collapses the note behind "Add note" so
+  End session sits above the fold, and the empty-session variant no longer
+  duplicates discard; Plan leads with EXERCISES (schedule/note/duplicate/
+  delete follow), reorder shrinks to chips, coach note collapses; Login
+  leads with "tap the link" and tucks the installed-app fallback into
+  microcopy; Sign out is two-tap like every destructive action; "LOGGED ·
+  APPEND ONLY" is just "LOGGED"; History has a first-run empty state;
+  PlateSheet has one exit. One accent element per screen holds everywhere.

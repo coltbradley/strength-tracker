@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Note } from "../components/Note";
 import {
   getDoneWorkoutIds,
   getExercises,
@@ -28,14 +29,16 @@ import { useArmed } from "../hooks/useArmed";
 import { reportError, toast } from "../lib/errors";
 import {
   formatPlannedDate,
-  formatRxTarget,
+  formatRepRange,
   formatTodayHeading,
   formatWeekdayLetter,
   getWeekDates,
   parseLocalDate,
   rxHasNoTm,
+  rxLoadKg,
   todayLocalIso,
 } from "../lib/format";
+import { toDisplay } from "../lib/units";
 import { useUnit } from "../hooks/useUnit";
 import type {
   ActiveSession,
@@ -387,30 +390,40 @@ export function Today() {
     }
   };
 
-  /** shared expanded-day content: notes, prescriptions, actions */
+  /** One preview row per exercise: consecutive same-exercise prescriptions
+   *  (a coach's ramp brackets) collapse into a single joined scheme, e.g.
+   *  "1×8-15 · 1×6-8 · 3×3-5". */
+  const groupedRx = (workoutId: string) => {
+    const rows = rx[workoutId] ?? [];
+    const groups: ResolvedPrescriptionRow[][] = [];
+    for (const r of rows) {
+      const last = groups[groups.length - 1];
+      if (
+        last &&
+        last[0].exercise_id === r.exercise_id &&
+        last[0].superset_group === r.superset_group
+      )
+        last.push(r);
+      else groups.push([r]);
+    }
+    return groups;
+  };
+
+  const bracketSpec = (r: ResolvedPrescriptionRow): string => {
+    const load = rxLoadKg(r);
+    const base = `${r.sets}×${formatRepRange(r.reps_min, r.reps_max)}`;
+    return load !== null ? `${base} @ ${toDisplay(load, unit)} ${unit}` : base;
+  };
+
+  /** shared expanded-day content, hierarchy: primary action → exercises →
+   *  collapsed notes → secondary actions */
   const dayDetail = (w: PlannedWorkoutRow) => {
     const state = states.get(w.id) ?? "UPCOMING";
+    // undated programs have no calendar gate at all, so any done workout can
+    // be re-run there; dated programs restart only from today's card
+    const isTodaysCard = w.scheduled_date === today || !anyDates;
     return (
       <>
-        {w.plan_note && (
-          <div className="detail-note">
-            <span className="detail-note-label">PLAN NOTE</span>
-            {w.plan_note}
-          </div>
-        )}
-        {w.notes && (
-          <div className="detail-note">
-            <span className="detail-note-label">COACH</span>
-            {w.notes}
-          </div>
-        )}
-        {(rx[w.id] ?? []).map((r) => (
-          <div key={r.id} className="rx-row">
-            <span className="rx-name">{r.exercise_name}</span>
-            <span className="rx-spec">{formatRxTarget(r, unit)}</span>
-            {rxHasNoTm(r) && <span className="warn-badge">no TM set</span>}
-          </div>
-        ))}
         {!active && state === "TODAY" && (
           <button
             type="button"
@@ -418,6 +431,15 @@ export function Today() {
             onClick={() => void start(w)}
           >
             Start session
+          </button>
+        )}
+        {!active && state === "DONE" && isTodaysCard && (
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => void start(w)}
+          >
+            Start again
           </button>
         )}
         {!active &&
@@ -437,6 +459,39 @@ export function Today() {
             No date set — move it to today, or pick a day in Edit.
           </div>
         )}
+        {(() => {
+          const groups = groupedRx(w.id);
+          // a superset letter only means something with a partner
+          const ssMembers = new Map<number, number>();
+          for (const g of groups) {
+            const sg = g[0].superset_group;
+            if (sg !== null) ssMembers.set(sg, (ssMembers.get(sg) ?? 0) + 1);
+          }
+          return groups.map((group) => {
+            const first = group[0];
+            const letter =
+              first.superset_group !== null &&
+              (ssMembers.get(first.superset_group) ?? 0) >= 2
+                ? String.fromCharCode(64 + first.superset_group)
+                : null;
+            return (
+            <div key={first.id} className="rx-row">
+              <span className="rx-name">
+                {letter && <span className="rx-ss">{letter} </span>}
+                {first.exercise_name}
+              </span>
+              <span className="rx-spec">
+                {group.map(bracketSpec).join(" · ")}
+              </span>
+              {group.some(rxHasNoTm) && (
+                <span className="warn-badge">no TM set</span>
+              )}
+            </div>
+            );
+          });
+        })()}
+        {w.plan_note && <Note label="PLAN NOTE" text={w.plan_note} />}
+        {w.notes && <Note label="COACH" text={w.notes} />}
         <div className="detail-actions">
           <button
             type="button"
@@ -538,12 +593,9 @@ export function Today() {
       )}
 
       <div className="today-heading">{formatTodayHeading()}</div>
-      {program && (
-        <div className="today-context">
-          {program.name}
-          {program.source_note ? ` — ${program.source_note}` : ""}
-        </div>
-      )}
+      {/* provenance (source_note) deliberately not shown here — the week is
+          the subject; where a program came from lives with Claude/the coach */}
+      {program && <div className="today-context">{program.name}</div>}
 
       {fromCache && (
         <div className="cache-note">offline — showing cached plan</div>
