@@ -422,8 +422,7 @@ export function Session() {
         // the FIRST rx entry for an exercise also claims that exercise's
         // orphan sets, so nothing logged can disappear from the UI
         const claimsOrphans =
-          rx.find((r) => r.exercise_id === entry.exercise_id)?.id ===
-          entry.key;
+          rx.find((r) => r.exercise_id === entry.exercise_id)?.id === entry.key;
         return sets.filter(
           (s) =>
             (s.prescription_id !== null && ids.has(s.prescription_id)) ||
@@ -470,7 +469,10 @@ export function Session() {
   // superset grouping: consecutive entries sharing a non-null group get
   // A1/A2 tags and a bracket rail
   const supersetInfo = useMemo(() => {
-    const map = new Map<string, { tag: string; first: boolean; last: boolean }>();
+    const map = new Map<
+      string,
+      { tag: string; first: boolean; last: boolean }
+    >();
     let i = 0;
     while (i < entries.length) {
       const group = entries[i].brackets[0]?.superset_group ?? null;
@@ -836,7 +838,7 @@ export function Session() {
               .join("·")
           : exerciseBarKg > 0
             ? "BAR ONLY"
-            : "EMPTY"
+            : "EMPTY";
       })()
     : null;
 
@@ -1184,8 +1186,8 @@ export function Session() {
 
           {entries.length === 0 && (
             <p className="microcopy">
-              Nothing planned for this session. Add an exercise to start
-              logging — load and reps prefill from your last time.
+              Nothing planned for this session. Add an exercise to start logging
+              — load and reps prefill from your last time.
             </p>
           )}
           <button

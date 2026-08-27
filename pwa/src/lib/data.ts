@@ -187,7 +187,7 @@ export async function duplicatePlannedWorkout(
   const { data: rx, error: rErr } = await supabase
     .from("prescriptions")
     .select(
-      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes",
+      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,superset_group",
     )
     .eq("planned_workout_id", workout.id);
   throwIf(rErr);
@@ -259,8 +259,12 @@ export async function addPrescription(
 // ---- workout completion ----------------------------------------------------
 
 /**
- * planned_workout_ids (of the given set) that already have a session.
+ * planned_workout_ids (of the given set) that have a FINISHED session.
  * Drives DONE / TODAY / TO COME on the Today screen.
+ *
+ * `ended_at IS NOT NULL` is load-bearing: an open session must not mark its
+ * day done. Without it the week reads as finished while you are still
+ * lifting, and the day offers "Start again" next to the RESUME banner.
  */
 export async function getDoneWorkoutIds(
   programId: string,
@@ -272,6 +276,7 @@ export async function getDoneWorkoutIds(
       .from("sessions")
       .select("planned_workout_id")
       .is("discarded_at", null)
+      .not("ended_at", "is", null)
       .in("planned_workout_id", workoutIds);
     throwIf(error);
     const rows = (data ?? []) as Array<{ planned_workout_id: string | null }>;
@@ -322,30 +327,42 @@ export async function getExercises(): Promise<{
 
 export type LastActuals = Record<string, { load_kg: number; reps: number }>;
 
+/** One row of the last-actuals scan. */
+export interface ActualsRow {
+  exercise_id: string;
+  load_kg: number;
+  reps: number;
+  set_type: string;
+  performed_at: string;
+  session_id: string;
+}
+
+/** Rows per request. Also the signal for "there may be more". */
+export const ACTUALS_PAGE = 1000;
+/** Safety stop: ~1M sets is far past any human training history. */
+const ACTUALS_MAX_PAGES = 20;
+
 /**
- * Most recent working set per exercise across past sessions (fallback: most
- * recent set of any type). Used to prefill when there is no prescription.
+ * Fold time-descending pages of live sets into "the latest working set per
+ * exercise, falling back to the latest set of any type".
+ *
+ * Paging is keyset (each page asks for rows strictly older than the last row
+ * of the previous page), NOT a single capped `limit`. The old single
+ * 1000-row read silently truncated at roughly 35 sessions: past that, lifts
+ * stopped prefilling and vanished from History's exercise index with no
+ * error anywhere. `fetchPage` is injected so the walk is testable without a
+ * database.
  */
-export async function getLastActuals(excludeSessionId?: string): Promise<{
-  data: LastActuals;
-  fromCache: boolean;
-}> {
-  return fetchWithCache(cacheKeys.lastActuals(excludeSessionId), async () => {
-    const { data, error } = await supabase
-      .from("v_live_sets")
-      .select("exercise_id,load_kg,reps,set_type,performed_at,session_id")
-      .order("performed_at", { ascending: false })
-      .limit(1000);
-    throwIf(error);
-    const rows = (data ?? []) as Array<{
-      exercise_id: string;
-      load_kg: number;
-      reps: number;
-      set_type: string;
-      session_id: string;
-    }>;
-    const best: LastActuals = {};
-    const anyType: LastActuals = {};
+export async function scanLastActuals(
+  fetchPage: (cursor: string | null) => Promise<ActualsRow[]>,
+  excludeSessionId?: string,
+): Promise<LastActuals> {
+  const best: LastActuals = {};
+  const anyType: LastActuals = {};
+  let cursor: string | null = null;
+  for (let page = 0; page < ACTUALS_MAX_PAGES; page++) {
+    const rows = await fetchPage(cursor);
+    if (rows.length === 0) break;
     for (const r of rows) {
       if (excludeSessionId && r.session_id === excludeSessionId) continue;
       if (!(r.exercise_id in anyType))
@@ -353,8 +370,39 @@ export async function getLastActuals(excludeSessionId?: string): Promise<{
       if (r.set_type === "working" && !(r.exercise_id in best))
         best[r.exercise_id] = { load_kg: r.load_kg, reps: r.reps };
     }
-    return { ...anyType, ...best };
-  });
+    if (rows.length < ACTUALS_PAGE) break;
+    const next = rows[rows.length - 1].performed_at;
+    // a page that cannot advance the cursor would loop forever
+    if (next === cursor) break;
+    cursor = next;
+  }
+  return { ...anyType, ...best };
+}
+
+/**
+ * Most recent working set per exercise across past sessions (fallback: most
+ * recent set of any type). Used to prefill when there is no prescription,
+ * and as History's "which exercises have data" index.
+ */
+export async function getLastActuals(excludeSessionId?: string): Promise<{
+  data: LastActuals;
+  fromCache: boolean;
+}> {
+  return fetchWithCache(cacheKeys.lastActuals(excludeSessionId), () =>
+    scanLastActuals(async (cursor) => {
+      let q = supabase
+        .from("v_live_sets")
+        .select("exercise_id,load_kg,reps,set_type,performed_at,session_id")
+        .order("performed_at", { ascending: false })
+        .limit(ACTUALS_PAGE);
+      // strict `lt` can skip rows sharing the boundary timestamp to the
+      // millisecond; `lte` would re-read the boundary row forever instead
+      if (cursor !== null) q = q.lt("performed_at", cursor);
+      const { data, error } = await q;
+      throwIf(error);
+      return (data ?? []) as ActualsRow[];
+    }, excludeSessionId),
+  );
 }
 
 // ---- open-session lifecycle ------------------------------------------------
@@ -529,6 +577,50 @@ export async function getSetNotesForExercise(
 }
 
 // ---- session sets (server + cache; caller merges outbox pending) -----------
+
+/** No session has this many sets; the cap only bounds a pathological read. */
+const SESSION_SET_CAP = 500;
+
+/**
+ * Authoritative count of a session's live (non-voided) sets, straight from
+ * the server. THROWS when the server cannot be reached — a caller must treat
+ * that as "unknown", never as zero: End offers "Discard empty session" as
+ * its primary action off this number, and a wrong zero discards real work.
+ */
+export async function countServerSessionSets(
+  sessionId: string,
+): Promise<number> {
+  const { data, error } = await supabase
+    .from("v_live_sets")
+    .select("id")
+    .eq("session_id", sessionId)
+    .limit(SESSION_SET_CAP);
+  throwIf(error);
+  return (data ?? []).length;
+}
+
+/**
+ * How many sets a finishing session has, and whether we actually know.
+ *
+ * A local count above zero is proof of work on its own. A local ZERO is not
+ * proof of an empty session: the device cache is empty in exactly the case
+ * that matters (an adopted orphan whose best-effort server fetch failed), so
+ * only a server that answers can confirm emptiness.
+ */
+export interface SessionSetCount {
+  count: number;
+  /** false = the emptiness could not be confirmed; do not offer Discard */
+  authoritative: boolean;
+}
+
+export function resolveSessionSetCount(
+  local: number,
+  server: number | null,
+): SessionSetCount {
+  if (local > 0) return { count: local, authoritative: true };
+  if (server === null) return { count: 0, authoritative: false };
+  return { count: server, authoritative: true };
+}
 
 export async function getServerSessionSets(
   sessionId: string,

@@ -6,7 +6,14 @@
 // LATER list. Programs with no dates at all keep the original ruled list —
 // a calendar needs dates.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { Note } from "../components/Note";
 import {
@@ -29,16 +36,14 @@ import { useArmed } from "../hooks/useArmed";
 import { reportError, toast } from "../lib/errors";
 import {
   formatPlannedDate,
-  formatRepRange,
+  formatRxTarget,
   formatTodayHeading,
   formatWeekdayLetter,
   getWeekDates,
   parseLocalDate,
   rxHasNoTm,
-  rxLoadKg,
   todayLocalIso,
 } from "../lib/format";
-import { toDisplay } from "../lib/units";
 import { useUnit } from "../hooks/useUnit";
 import type {
   ActiveSession,
@@ -46,13 +51,11 @@ import type {
   ResolvedPrescriptionRow,
 } from "../lib/types";
 
+/** How long the Start buttons wait on the open-session check (see below). */
+const GATE_TIMEOUT_MS = 2500;
+
 type WorkoutState =
-  | "DONE"
-  | "SKIPPED"
-  | "TODAY"
-  | "MISSED"
-  | "UPCOMING"
-  | "NO DATE";
+  "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE";
 
 export function Today() {
   const navigate = useNavigate();
@@ -73,6 +76,9 @@ export function Today() {
   const [orphanArm, setOrphanArm] = useArmed();
   // bumped when reconciliation closes sessions, so DONE states refresh
   const [doneTick, setDoneTick] = useState(0);
+  // false until we know whether a session is already open (locally or on the
+  // server), so no Start button is live while that is still an open question
+  const [startGateOpen, setStartGateOpen] = useState(false);
 
   // most recent confirmed program drives the week
   const program = list?.programs[0] ?? null;
@@ -101,6 +107,12 @@ export function Today() {
 
   useEffect(() => {
     let cancelled = false;
+    // A slow network must not hold the gym hostage: if reconciliation has
+    // not answered by then, starting is allowed again and a double start
+    // still lands in the orphan card rather than being lost.
+    const gateTimer = window.setTimeout(() => {
+      if (!cancelled) setStartGateOpen(true);
+    }, GATE_TIMEOUT_MS);
     void (async () => {
       const a =
         (await cacheGet<ActiveSession>(cacheKeys.activeSession)) ?? null;
@@ -132,15 +144,20 @@ export function Today() {
           );
         if (r.autoDiscarded > 0)
           toast("An empty unfinished session was cleaned up");
-        if (r.autoCompleted + r.autoDiscarded > 0 || r.clearedActive)
-          setDoneTick((t) => t + 1);
+        // Unconditional: the flush above may have just landed a queued
+        // end/discard, and the week state read races it otherwise.
+        setDoneTick((t) => t + 1);
         setOrphan(r.orphan);
       } catch {
         // offline: reconcile on the next online launch
+      } finally {
+        window.clearTimeout(gateTimer);
+        if (!cancelled) setStartGateOpen(true);
       }
     })();
     return () => {
       cancelled = true;
+      window.clearTimeout(gateTimer);
     };
   }, [reload]);
 
@@ -285,8 +302,14 @@ export function Today() {
         },
       });
       // Best-effort prefetch so the session screen works fully offline.
-      void getExercises().catch(() => undefined);
-      void getLastActuals(sessionId).catch(() => undefined);
+      // Both read through the IndexedDB cache, so these only reject when
+      // there is no cache at all — worth reporting, never worth swallowing.
+      void getExercises().catch((e: unknown) =>
+        reportError(e, "prefetch exercise list"),
+      );
+      void getLastActuals(sessionId).catch((e: unknown) =>
+        reportError(e, "prefetch last actuals"),
+      );
       navigate("/session");
     } catch (e) {
       reportError(e, "start session");
@@ -409,11 +432,12 @@ export function Today() {
     return groups;
   };
 
-  const bracketSpec = (r: ResolvedPrescriptionRow): string => {
-    const load = rxLoadKg(r);
-    const base = `${r.sets}×${formatRepRange(r.reps_min, r.reps_max)}`;
-    return load !== null ? `${base} @ ${toDisplay(load, unit)} ${unit}` : base;
-  };
+  /** Exactly one start affordance may be live at a time. An active session
+   *  owns the screen (the RESUME banner is the primary); an unrecovered
+   *  orphan owns it next (its card asks resume/finish/discard) — starting a
+   *  second concurrent session from underneath either is not recoverable
+   *  from the UI. */
+  const canStart = startGateOpen && !active && !orphan;
 
   /** shared expanded-day content, hierarchy: primary action → exercises →
    *  collapsed notes → secondary actions */
@@ -424,7 +448,7 @@ export function Today() {
     const isTodaysCard = w.scheduled_date === today || !anyDates;
     return (
       <>
-        {!active && state === "TODAY" && (
+        {canStart && state === "TODAY" && (
           <button
             type="button"
             className="btn btn-primary btn-block"
@@ -433,7 +457,13 @@ export function Today() {
             Start session
           </button>
         )}
-        {!active && state === "DONE" && isTodaysCard && (
+        {/* this day IS the session in progress — the banner is its action */}
+        {active && active.planned_workout_id === w.id && (
+          <div className="microcopy">
+            In progress — pick it back up from the RESUME banner above.
+          </div>
+        )}
+        {canStart && state === "DONE" && isTodaysCard && (
           <button
             type="button"
             className="btn btn-outline-ink btn-block"
@@ -442,7 +472,7 @@ export function Today() {
             Start again
           </button>
         )}
-        {!active &&
+        {canStart &&
           (state === "MISSED" ||
             state === "NO DATE" ||
             (state === "UPCOMING" && anyDates)) && (
@@ -474,19 +504,27 @@ export function Today() {
               (ssMembers.get(first.superset_group) ?? 0) >= 2
                 ? String.fromCharCode(64 + first.superset_group)
                 : null;
+            // coach cues from the program parse — reference text, so the
+            // same clamped Note treatment as the plan and coach notes
+            const rxNote =
+              group.map((r) => r.notes).find((n) => n && n.trim() !== "") ??
+              null;
             return (
-            <div key={first.id} className="rx-row">
-              <span className="rx-name">
-                {letter && <span className="rx-ss">{letter} </span>}
-                {first.exercise_name}
-              </span>
-              <span className="rx-spec">
-                {group.map(bracketSpec).join(" · ")}
-              </span>
-              {group.some(rxHasNoTm) && (
-                <span className="warn-badge">no TM set</span>
-              )}
-            </div>
+              <Fragment key={first.id}>
+                <div className="rx-row">
+                  <span className="rx-name">
+                    {letter && <span className="rx-ss">{letter} </span>}
+                    {first.exercise_name}
+                  </span>
+                  <span className="rx-spec">
+                    {group.map((r) => formatRxTarget(r, unit)).join(" · ")}
+                  </span>
+                  {group.some(rxHasNoTm) && (
+                    <span className="warn-badge">no TM set</span>
+                  )}
+                </div>
+                {rxNote && <Note label="NOTE" text={rxNote} />}
+              </Fragment>
             );
           });
         })()}
@@ -611,8 +649,8 @@ export function Today() {
           <div className="section-head">
             <span className="field-label">THIS WEEK</span>
             <span className="section-meta">
-              {doneCount} DONE · {workouts.length - doneCount - skippedCount}{" "}
-              TO GO
+              {doneCount} DONE · {workouts.length - doneCount - skippedCount} TO
+              GO
               {skippedCount > 0 ? ` · ${skippedCount} SKIPPED` : ""}
             </span>
           </div>
@@ -639,7 +677,9 @@ export function Today() {
                       ? `, ${
                           cellState === "REST"
                             ? "rest day"
-                            : stateLabel(cellState as WorkoutState).toLowerCase()
+                            : stateLabel(
+                                cellState as WorkoutState,
+                              ).toLowerCase()
                         }`
                       : ", rest day"
                   }`}
@@ -668,9 +708,7 @@ export function Today() {
                     {parseLocalDate(iso).getDate()}
                   </span>
                   <span className="week-cell-mark">
-                    {cellState === "DONE" && (
-                      <span className="week-cell-dot" />
-                    )}
+                    {cellState === "DONE" && <span className="week-cell-dot" />}
                   </span>
                 </button>
               );
@@ -745,8 +783,8 @@ export function Today() {
           <div className="section-head">
             <span className="field-label">THIS WEEK</span>
             <span className="section-meta">
-              {doneCount} DONE · {workouts.length - doneCount - skippedCount}{" "}
-              TO GO
+              {doneCount} DONE · {workouts.length - doneCount - skippedCount} TO
+              GO
               {skippedCount > 0 ? ` · ${skippedCount} SKIPPED` : ""}
             </span>
           </div>
@@ -789,9 +827,11 @@ export function Today() {
         </section>
       )}
 
+      {/* the empty state is a claim about the data; it must wait for it */}
+      {!list && !loadError && <p className="muted">Loading…</p>}
       {list && !program && <p className="muted">No confirmed programs yet.</p>}
 
-      {!active && (
+      {canStart && (
         <button
           type="button"
           className="btn btn-secondary btn-block"

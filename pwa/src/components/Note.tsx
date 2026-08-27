@@ -33,7 +33,8 @@ export function Note({ label, text }: NoteProps) {
       onClick={() => setOpen(!open)}
     >
       <span className="detail-note-label">
-        {label} <span className="detail-note-more">{open ? "LESS ▴" : "MORE ▾"}</span>
+        {label}{" "}
+        <span className="detail-note-more">{open ? "LESS ▴" : "MORE ▾"}</span>
       </span>
       <span className={open ? "" : "detail-note-clamped"}>{text}</span>
     </button>

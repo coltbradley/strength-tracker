@@ -428,7 +428,7 @@ export function Plan() {
                     />
                   )}
 
-  {/* exercises sharing a letter run together as a superset (A1/A2) */}
+                  {/* exercises sharing a letter run together as a superset (A1/A2) */}
                   <div className="section-head">
                     <span className="field-label">SUPERSET</span>
                   </div>

@@ -24,6 +24,8 @@ export default defineConfig({
         display: "standalone",
         start_url: base,
         scope: base,
+        // keep in sync with --paper in src/styles.css and the theme-color
+        // meta in index.html
         background_color: "#f4eede",
         theme_color: "#f4eede",
         icons: [
@@ -48,6 +50,8 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // woff2 covers the self-hosted Chivo faces in public/fonts, so a cold
+        // offline launch still paints in the real typeface.
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         navigateFallback: "index.html",
         // Never let the SW intercept cross-origin (Supabase) requests.

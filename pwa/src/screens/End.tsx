@@ -2,7 +2,7 @@
 // note — the one allowed OS-keyboard field. The end write is an update,
 // queued like everything else.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
@@ -12,7 +12,9 @@ import {
   cacheDelete,
   cacheDeleteByPrefix,
   cacheKeys,
+  cacheKeysWithPrefix,
 } from "../lib/db";
+import { countServerSessionSets, resolveSessionSetCount } from "../lib/data";
 import { outbox } from "../lib/sync";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
@@ -36,6 +38,29 @@ const NOTE_CHIPS = [
 ];
 const MAX_BW_KG = 400;
 
+/** Everything derived from this session's sets or its closed/open state.
+ *  Ending and discarding invalidate the SAME families — an asymmetry here
+ *  is why a finished session used to leave the planned day looking unfinished
+ *  and the next session prefilling from pre-session actuals. */
+const DERIVED_PREFIXES = [
+  "recent:",
+  "e1rm:",
+  "volume:",
+  "goal:",
+  "sessionMeta:",
+  "setNotes:",
+  "lastActuals:",
+];
+
+/** Staged End-screen input, kept across a "Back to session" round trip. */
+interface EndDraft {
+  rpe: number | null;
+  bwOpen: boolean;
+  bwKg: number;
+  note: string;
+  noteOpen: boolean;
+}
+
 export function End() {
   const navigate = useNavigate();
   const unit = useUnit();
@@ -49,16 +74,51 @@ export function End() {
   const [note, setNote] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
   const [setCount, setSetCount] = useState(0);
+  /** false until the count is known to be right; gates Discard-as-primary */
+  const [countKnown, setCountKnown] = useState(false);
   const [liftsDone, setLiftsDone] = useState(0);
   const [liftsTotal, setLiftsTotal] = useState(0);
   const [armed, setArmed] = useArmed();
   const discardArmed = armed === "discard";
+  // the draft is persisted on unmount, but not once the session is closed
+  const closedRef = useRef(false);
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = active?.id ?? null;
+  const draftRef = useRef<EndDraft | null>(null);
+  draftRef.current = { rpe, bwOpen, bwKg, note, noteOpen };
 
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
-      const a = await cacheGet<ActiveSession>(cacheKeys.activeSession);
+      // EVERY read here is guarded. `active === undefined` renders nothing
+      // but a spinner, so an unguarded throw used to leave the finish screen
+      // permanently blank with an open session and no way out of it.
+      let a: ActiveSession | null | undefined;
+      try {
+        a = await cacheGet<ActiveSession>(cacheKeys.activeSession);
+      } catch (e) {
+        reportError(e, "read active session");
+        a = null;
+      }
+      if (cancelled) return;
       setActive(a ?? null);
-      if (a) {
+      if (!a) return;
+
+      try {
+        const draft = await cacheGet<EndDraft>(cacheKeys.sessionEndDraft(a.id));
+        if (!cancelled && draft) {
+          setRpe(draft.rpe);
+          setBwOpen(draft.bwOpen);
+          setBwKg(draft.bwKg);
+          setNote(draft.note);
+          setNoteOpen(draft.noteOpen);
+        }
+      } catch (e) {
+        reportError(e, "restore end-of-session draft");
+      }
+
+      let localCount = 0;
+      try {
         const cached =
           (await cacheGet<SetInsert[]>(cacheKeys.sessionSets(a.id))) ?? [];
         const pending = await outbox.pendingSets(a.id);
@@ -72,11 +132,11 @@ export function End() {
             .filter((s) => !voided.has(s.id))
             .map((s) => [s.id, s]),
         );
-        setSetCount(all.size);
+        localCount = all.size;
         const exercisesLogged = new Set(
           [...all.values()].map((s) => s.exercise_id),
         );
-        setLiftsDone(exercisesLogged.size);
+        if (!cancelled) setLiftsDone(exercisesLogged.size);
         const rxCached =
           (await cacheGet<ResolvedPrescriptionRow[]>(
             cacheKeys.sessionRx(a.id),
@@ -100,18 +160,74 @@ export function End() {
           if (!skipped.has(`extra:${e.exercise_id}`))
             planned.add(e.exercise_id);
         for (const id of exercisesLogged) planned.add(id);
-        setLiftsTotal(planned.size);
+        if (!cancelled) setLiftsTotal(planned.size);
+      } catch (e) {
+        reportError(e, "read session summary");
       }
-      const lastBw = await cacheGet<number>(LAST_BW_KEY);
-      if (lastBw) setBwKg(lastBw);
+
+      // A local zero is NOT proof of an empty session — an adopted orphan
+      // whose server fetch failed looks exactly like one. Only the server
+      // can confirm emptiness, and only then may Discard lead.
+      let server: number | null = null;
+      if (localCount === 0) {
+        try {
+          server = await countServerSessionSets(a.id);
+        } catch (e) {
+          reportError(e, "confirm session is empty");
+        }
+      }
+      if (cancelled) return;
+      const verdict = resolveSessionSetCount(localCount, server);
+      setSetCount(verdict.count);
+      setCountKnown(verdict.authoritative);
+
+      try {
+        const lastBw = await cacheGet<number>(LAST_BW_KEY);
+        if (!cancelled && lastBw) setBwKg(lastBw);
+      } catch (e) {
+        reportError(e, "read last bodyweight");
+      }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     if (active === null) navigate("/", { replace: true });
   }, [active, navigate]);
 
-  if (!active) return null;
+  // sRPE / bodyweight / note survive a "Back to session" round trip
+  useEffect(
+    () => () => {
+      const id = activeIdRef.current;
+      const d = draftRef.current;
+      if (closedRef.current || id === null || d === null) return;
+      // nothing staged, nothing to keep
+      if (d.rpe === null && !d.bwOpen && !d.noteOpen && d.note === "") return;
+      void cacheSet(cacheKeys.sessionEndDraft(id), d).catch((e: unknown) =>
+        reportError(e, "save end-of-session draft"),
+      );
+    },
+    [],
+  );
+
+  if (active === undefined) return <div className="screen muted">Loading…</div>;
+  if (active === null) return null;
+
+  /** Mark this session's planned day done in the CACHED week state.
+   *  Dropping the cache instead would be a no-op offline — the refetch that
+   *  would rebuild it is exactly what cannot run — and the day would keep
+   *  reading as unfinished until the phone found signal again. */
+  const markPlannedDayDone = async (plannedWorkoutId: string | null) => {
+    if (!plannedWorkoutId) return;
+    const keys = await cacheKeysWithPrefix(["doneWorkouts:"]);
+    for (const key of keys) {
+      const ids = (await cacheGet<string[]>(key)) ?? [];
+      if (!ids.includes(plannedWorkoutId))
+        await cacheSet(key, [...ids, plannedWorkoutId]);
+    }
+  };
 
   const end = async () => {
     try {
@@ -126,9 +242,14 @@ export function End() {
           notes: note.trim() === "" ? null : note.trim(),
         },
       });
+      closedRef.current = true;
       if (bwOpen) await cacheSet(LAST_BW_KEY, bwKg);
       await cacheDelete(cacheKeys.activeSession);
       await clearSessionCaches(active.id);
+      // symmetric with discard(): every derived read now returns something
+      // different, and the planned day is done
+      await cacheDeleteByPrefix(DERIVED_PREFIXES);
+      await markPlannedDayDone(active.planned_workout_id);
       toast(
         `Session done — ${setCount} set${setCount === 1 ? "" : "s"} logged${
           rpe !== null ? `, sRPE ${rpe}` : ""
@@ -151,6 +272,7 @@ export function End() {
       cacheKeys.sessionSkips(id),
       cacheKeys.sessionRest(id),
       cacheKeys.sessionSetNotes(id),
+      cacheKeys.sessionEndDraft(id),
     ]) {
       await cacheDelete(key).catch(() => undefined);
     }
@@ -166,19 +288,11 @@ export function End() {
         id: active.id,
         patch: { discarded_at: new Date().toISOString() },
       });
+      closedRef.current = true;
       await cacheDelete(cacheKeys.activeSession);
       await clearSessionCaches(active.id);
       // history caches and week DONE state all reference this session
-      await cacheDeleteByPrefix([
-        "recent:",
-        "e1rm:",
-        "volume:",
-        "goal:",
-        "sessionMeta:",
-        "setNotes:",
-        "lastActuals:",
-        "doneWorkouts:",
-      ]);
+      await cacheDeleteByPrefix([...DERIVED_PREFIXES, "doneWorkouts:"]);
       toast("Session discarded");
       navigate("/", { replace: true });
     } catch (e) {
@@ -189,6 +303,9 @@ export function End() {
   const addChip = (chip: string) => {
     setNote((n) => (n.trim() === "" ? chip : `${n.trimEnd()}. ${chip}`));
   };
+
+  // ONLY a server-confirmed zero may lead with Discard
+  const confirmedEmpty = countKnown && setCount === 0;
 
   const bwSub =
     unit === "lb"
@@ -213,9 +330,15 @@ export function End() {
   return (
     <div className="screen">
       <h2 className="screen-title">End session</h2>
+      {/* the lifts breakdown is device-local; when the set count came from
+          the server instead (cold cache) there is no breakdown to show, and
+          "0 OF 7 LIFTS" next to "3 SETS LOGGED" would just be wrong */}
       <p className="end-summary">
-        {setCount} {setCount === 1 ? "SET" : "SETS"} LOGGED · {liftsDone} OF{" "}
-        {Math.max(liftsTotal, liftsDone)} LIFTS
+        {countKnown
+          ? `${setCount} ${setCount === 1 ? "SET" : "SETS"} LOGGED`
+          : "SET COUNT UNKNOWN OFFLINE"}
+        {liftsDone > 0 &&
+          ` · ${liftsDone} OF ${Math.max(liftsTotal, liftsDone)} LIFTS`}
       </p>
 
       <section className="rule-section">
@@ -306,10 +429,11 @@ export function End() {
         )}
       </section>
 
-      {setCount === 0 ? (
+      {confirmedEmpty ? (
         <>
           {/* an accidental start must not mark the planned day DONE — with
-              nothing logged, discard is the honest default */}
+              nothing logged AND the server agreeing, discard is the honest
+              default. An UNCONFIRMED zero never gets here. */}
           <button
             type="button"
             className="btn btn-primary btn-block"
@@ -334,6 +458,12 @@ export function End() {
           End session
         </button>
       )}
+      {!countKnown && (
+        <div className="microcopy">
+          Couldn’t reach the server to check this session’s sets, so nothing
+          here is offered as empty. Ending is safe — discard stays below.
+        </div>
+      )}
       <button
         type="button"
         className="btn btn-ghost btn-block"
@@ -342,8 +472,8 @@ export function End() {
         Back to session
       </button>
 
-      {/* the empty-session variant already leads with discard — no duplicate */}
-      {setCount > 0 && (
+      {/* the confirmed-empty variant already leads with discard — no duplicate */}
+      {!confirmedEmpty && (
         <section className="rule-section">
           <button
             type="button"
@@ -356,8 +486,11 @@ export function End() {
           </button>
           {discardArmed && (
             <div className="microcopy">
-              Removes this session and its {setCount}{" "}
-              {setCount === 1 ? "set" : "sets"} from history and charts.
+              {countKnown
+                ? `Removes this session and its ${setCount} ${
+                    setCount === 1 ? "set" : "sets"
+                  } from history and charts.`
+                : "Removes this session and everything logged in it from history and charts. This device could not confirm how much that is."}
             </div>
           )}
         </section>

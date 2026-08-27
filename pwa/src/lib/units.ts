@@ -1,14 +1,15 @@
 // kg is the storage unit everywhere. lb exists only at the display edge.
+//
+// This module imports from settings.ts and settings.ts imports `lbToKg` back.
+// The cycle is safe because neither side evaluates the other at module-init
+// time — see the MODULE CYCLE note in settings.ts before adding a top-level
+// call here.
+
+import { getExerciseStepKg, getLoadStepKg } from "./settings";
 
 export type Unit = "kg" | "lb";
 
 export const KG_PER_LB = 0.45359237;
-
-// Plate rounding increment in kg. Mirror of the SQL:
-// v_resolved_prescriptions.plate_load_kg rounds to the nearest 2.5 kg in
-// supabase/migrations/20260825120003_views.sql — keep the two in sync.
-export const PLATE_KG = 2.5;
-const PLATE_LB = 5;
 
 export function kgToLb(kg: number): number {
   return kg / KG_PER_LB;
@@ -30,21 +31,22 @@ export function fromDisplay(value: number, unit: Unit): number {
 }
 
 /**
- * Round a kg load to the nearest achievable plate load in the display unit:
- * nearest 2.5 kg in kg mode, nearest 5 lb in lb mode (result still in kg).
+ * Stepper increment, in kg, for the active display unit. Settings-driven:
+ * `loadStepCoarse` / `loadStepFine` (defaults 2.5 kg / 5 lb and 0.5 kg / 1 lb).
  */
-export function roundToPlate(kg: number, unit: Unit): number {
-  if (unit === "kg") return Math.round(kg / PLATE_KG) * PLATE_KG;
-  const lb = Math.round(kgToLb(kg) / PLATE_LB) * PLATE_LB;
-  return lbToKg(lb);
-}
-
-/** Stepper increments, expressed in kg, for the active display unit. */
 export function stepKg(unit: Unit, fine: boolean): number {
-  if (unit === "kg") return fine ? 0.5 : PLATE_KG;
-  return fine ? lbToKg(1) : lbToKg(PLATE_LB);
+  return getLoadStepKg(unit, fine);
 }
 
-export function formatLoad(kg: number, unit: Unit): string {
-  return `${toDisplay(kg, unit)} ${unit}`;
+/**
+ * Same, honouring a per-exercise coarse override — dumbbells jump 5 lb per
+ * hand, a cable stack jumps whatever the stack says. Pass null for exercise-
+ * agnostic screens (the plan editor, bodyweight).
+ */
+export function stepKgFor(
+  exerciseId: string | null,
+  unit: Unit,
+  fine: boolean,
+): number {
+  return getExerciseStepKg(exerciseId, unit, fine);
 }

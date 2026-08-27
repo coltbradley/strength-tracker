@@ -50,6 +50,8 @@ export function VolumeChart({ weeks }: VolumeChartProps) {
           })}
         </svg>
       </div>
+      {/* week_start is a DATE-ONLY string; formatShortDate parses those as
+          local midnight, otherwise every label reads a day early in PDT */}
       <div className="chart-ticks">
         <span>{formatShortDate(shown[0].week_start)}</span>
         <span>{formatShortDate(shown[shown.length - 1].week_start)}</span>

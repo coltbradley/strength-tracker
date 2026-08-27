@@ -89,8 +89,21 @@ export async function cacheDeleteByPrefix(prefixes: string[]): Promise<void> {
   }
 }
 
+/** Every stored kv key under one of the prefixes. Lets a caller PATCH a
+ *  cache family instead of dropping it — dropping is wrong offline, where
+ *  the refetch that would rebuild it cannot run. */
+export async function cacheKeysWithPrefix(
+  prefixes: string[],
+): Promise<string[]> {
+  const db = await getDb();
+  const keys = await db.getAllKeys("kv");
+  return keys.filter(
+    (k): k is string =>
+      typeof k === "string" && prefixes.some((p) => k.startsWith(p)),
+  );
+}
+
 export const cacheKeys = {
-  programs: "programs",
   plannedWorkouts: "plannedWorkouts",
   exercises: "exercises",
   activeSession: "activeSession",
@@ -108,6 +121,9 @@ export const cacheKeys = {
   sessionRest: (sessionId: string) => `sessionRest:${sessionId}`,
   /** per-set notes for the in-flight session, set_id -> note */
   sessionSetNotes: (sessionId: string) => `sessionSetNotes:${sessionId}`,
+  /** staged End-screen input (sRPE / bodyweight / note), so a trip back to
+   *  the session and forward again does not lose what was typed */
+  sessionEndDraft: (sessionId: string) => `sessionEndDraft:${sessionId}`,
   doneWorkouts: (programId: string) => `doneWorkouts:${programId}`,
   e1rm: (exerciseId: string) => `e1rm:${exerciseId}`,
   volume: (exerciseId: string) => `volume:${exerciseId}`,

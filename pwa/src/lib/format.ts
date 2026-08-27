@@ -18,14 +18,24 @@ export function rxLoadKg(rx: ResolvedPrescriptionRow): number | null {
   return rx.plate_load_kg ?? rx.resolved_load_kg;
 }
 
-/** "5 × 5 · 115 lb" (load part omitted when unresolvable). */
+/**
+ * THE prescription-target formatter. Every screen that renders a target
+ * (Today's day preview, the session accordion, the plan editor) must use
+ * this one — three hand-rolled variants had drifted apart (`×`/`@` vs
+ * `×`/`·`) and read as three different apps.
+ *
+ * "3×5", "3×5 @ 115 lb", or "3×5 @ 80% TM" when only a percentage of an
+ * (unset) training max is known — that last case pairs with `rxHasNoTm`.
+ */
 export function formatRxTarget(
   rx: ResolvedPrescriptionRow,
   unit: Unit,
 ): string {
+  const base = `${rx.sets}×${formatRepRange(rx.reps_min, rx.reps_max)}`;
   const load = rxLoadKg(rx);
-  const base = `${rx.sets} × ${formatRepRange(rx.reps_min, rx.reps_max)}`;
-  return load !== null ? `${base} · ${toDisplay(load, unit)} ${unit}` : base;
+  if (load !== null) return `${base} @ ${toDisplay(load, unit)} ${unit}`;
+  if (rx.load_pct_tm !== null) return `${base} @ ${rx.load_pct_tm}% TM`;
+  return base;
 }
 
 /** "2:30" — clocks and rest figures. */
@@ -34,16 +44,27 @@ export function formatClock(totalSeconds: number): string {
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
 }
 
+/** Date-only strings ("2026-08-24", e.g. v_weekly_volume.week_start or
+ *  planned_workouts.scheduled_date) are parsed by `new Date()` as UTC
+ *  midnight, which renders a day early anywhere west of Greenwich. Every
+ *  formatter below routes through here so a bare date always means the
+ *  device's local calendar day. Full timestamps keep native parsing. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function toDate(d: string | Date): Date {
+  if (typeof d !== "string") return d;
+  return DATE_ONLY.test(d) ? parseLocalDate(d) : new Date(d);
+}
+
 /** "8/25" — compact axis fallback. */
 export function formatShortDate(d: string | Date): string {
-  const dd = typeof d === "string" ? new Date(d) : d;
+  const dd = toDate(d);
   return `${dd.getMonth() + 1}/${dd.getDate()}`;
 }
 
 /** "MON 24 AUG" — session group headers. */
 export function formatSessionDate(d: string | Date): string {
-  const dd = typeof d === "string" ? new Date(d) : d;
-  return dd
+  return toDate(d)
     .toLocaleDateString("en-GB", {
       weekday: "short",
       day: "numeric",
@@ -117,6 +138,7 @@ export function formatWeekdayLetter(iso: string): string {
 
 /** "JUN" — month tick labels under the e1RM chart. */
 export function formatMonth(d: string | Date): string {
-  const dd = typeof d === "string" ? new Date(d) : d;
-  return dd.toLocaleDateString("en-GB", { month: "short" }).toUpperCase();
+  return toDate(d)
+    .toLocaleDateString("en-GB", { month: "short" })
+    .toUpperCase();
 }

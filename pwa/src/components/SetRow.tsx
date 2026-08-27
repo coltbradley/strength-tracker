@@ -30,8 +30,10 @@ export function SetRow({
       className={`logged-set ${restLabel !== undefined ? "logged-set-rest" : ""} ${onVoid ? "logged-set-voidable" : ""}`}
     >
       <span className="set-no">{set.set_index + 1}</span>
+      {/* the unit is not optional: "100 × 5" is a different set in kg and
+          in lb, and this row is the record of what was actually lifted */}
       <span className="set-load">
-        {toDisplay(set.load_kg, unit)} × {set.reps}
+        {toDisplay(set.load_kg, unit)} {unit} × {set.reps}
       </span>
       <span
         className={`set-type ${set.set_type !== "working" ? "set-type-accent" : ""}`}

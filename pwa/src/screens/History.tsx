@@ -1,7 +1,7 @@
 // History: per-exercise e1RM chart (goal % in teal), weekly working-set bars,
 // recent sets grouped by session date. Exactly two charts.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { E1rmChart } from "../components/charts/E1rmChart";
 import { VolumeChart } from "../components/charts/VolumeChart";
 import { SetRow } from "../components/SetRow";
@@ -49,11 +49,18 @@ export function History() {
   const [discardArm, setDiscardArm] = useArmed();
   const [voidArm, setVoidArm] = useArmed();
   const [activeId, setActiveId] = useState<string | null>(null);
+  // distinct from "empty": a first-run user must not read "nothing logged
+  // yet" while the first fetch is still in the air
+  const [indexLoading, setIndexLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  /** bumped by a void or a discard: the charts are derived from the sets
+   *  that just changed, so they have to be refetched, not just repainted */
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
-    void cacheGet<ActiveSession>(cacheKeys.activeSession).then((a) =>
-      setActiveId(a?.id ?? null),
-    );
+    void cacheGet<ActiveSession>(cacheKeys.activeSession)
+      .then((a) => setActiveId(a?.id ?? null))
+      .catch((e: unknown) => reportError(e, "read active session"));
     getExercises()
       .then((r) => setExercises(r.data))
       .catch((e: unknown) => reportError(e, "load exercises"));
@@ -63,12 +70,29 @@ export function History() {
         setWithData(ids);
         setSelected((cur) => cur ?? [...ids][0] ?? null);
       })
-      .catch((e: unknown) => reportError(e, "load history index"));
-  }, []);
+      .catch((e: unknown) => reportError(e, "load history index"))
+      .finally(() => setIndexLoading(false));
+  }, [reloadTick]);
+
+  // which exercise the charts on screen belong to
+  const shownFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (!selected) return;
     let cancelled = false;
+    // switching exercise: drop the previous lift's data rather than leaving
+    // it on screen under the new lift's name. A reloadTick refetch keeps it,
+    // so a void offline degrades to stale-but-labelled-correctly.
+    if (shownFor.current !== null && shownFor.current !== selected) {
+      setSeries([]);
+      setVolume([]);
+      setGoal(null);
+      setRecent([]);
+      setMeta({});
+      setNotes({});
+    }
+    shownFor.current = selected;
+    setDetailLoading(true);
     void (async () => {
       try {
         const [e1, vol, g, rec] = await Promise.all([
@@ -90,7 +114,10 @@ export function History() {
           .then((m) => {
             if (!cancelled) setMeta(m.data);
           })
-          .catch(() => undefined);
+          .catch((e: unknown) => {
+            // a swallowed failure here silently loses the post-workout note
+            if (!cancelled) reportError(e, "load session notes");
+          });
         getSetNotesForExercise(
           selected,
           rec.data.map((s) => s.id),
@@ -98,15 +125,21 @@ export function History() {
           .then((n) => {
             if (!cancelled) setNotes(n.data);
           })
-          .catch(() => undefined);
+          .catch((e: unknown) => {
+            if (!cancelled) reportError(e, "load set notes");
+          });
       } catch (e) {
+        // state is left untouched on failure, so a refetch that cannot reach
+        // the server keeps showing what was already on screen
         if (!cancelled) reportError(e, "load history");
+      } finally {
+        if (!cancelled) setDetailLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [selected, reloadTick]);
 
   const selectedName = useMemo(
     () => exercises.find((e) => e.id === selected)?.name ?? selected ?? "",
@@ -141,6 +174,7 @@ export function History() {
         "goal:",
         "lastActuals:",
       ]);
+      setReloadTick((t) => t + 1);
       toast("Set voided");
     } catch (e) {
       reportError(e, "void set");
@@ -172,6 +206,7 @@ export function History() {
         "lastActuals:",
         "doneWorkouts:",
       ]);
+      setReloadTick((t) => t + 1);
       toast("Session discarded — every exercise from that day");
     } catch (e) {
       reportError(e, "discard session");
@@ -206,7 +241,9 @@ export function History() {
         <div className="cache-note">offline — showing cached data</div>
       )}
 
-      {!selected && (
+      {indexLoading && !selected && <p className="muted">Loading…</p>}
+
+      {!indexLoading && !selected && (
         <p className="muted">
           Nothing logged yet — finish a session and it shows up here.
         </p>
@@ -221,14 +258,25 @@ export function History() {
                 <span className="goal-pct">{goal.pct_of_target}% OF GOAL</span>
               )}
             </div>
-            <E1rmChart series={series} goalKg={goal?.target_e1rm_kg ?? null} />
+            {detailLoading && series.length === 0 ? (
+              <div className="chart-empty">Loading…</div>
+            ) : (
+              <E1rmChart
+                series={series}
+                goalKg={goal?.target_e1rm_kg ?? null}
+              />
+            )}
           </section>
 
           <section className="rule-section">
             <div className="section-head">
               <span className="field-label">WEEKLY WORKING SETS</span>
             </div>
-            <VolumeChart weeks={volume} />
+            {detailLoading && volume.length === 0 ? (
+              <div className="chart-empty">Loading…</div>
+            ) : (
+              <VolumeChart weeks={volume} />
+            )}
           </section>
 
           <section className="rule-section">
@@ -236,7 +284,9 @@ export function History() {
               <span className="field-label">RECENT SETS</span>
             </div>
             {bySession.length === 0 && (
-              <p className="muted">Nothing logged yet.</p>
+              <p className="muted">
+                {detailLoading ? "Loading…" : "Nothing logged yet."}
+              </p>
             )}
             {bySession.map(([sessionId, ss]) => (
               <div key={sessionId} className="history-session">

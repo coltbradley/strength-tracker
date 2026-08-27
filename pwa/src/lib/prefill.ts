@@ -1,6 +1,12 @@
 // Pure prefill logic for the set-entry steppers.
 // Fallback order (spec): prescription resolved load -> last logged set this
 // session (same exercise) -> last session's actual for that exercise.
+//
+// The last-resort fallback (an empty bar, 8 reps) is a SETTING, and this is
+// the one place it is read. Session.tsx must seed its steppers from
+// `getPrefillFallback()` rather than repeating the literals.
+
+import { getSetting } from "./settings";
 
 export interface PrefillPrescription {
   resolved_load_kg: number | null;
@@ -25,10 +31,18 @@ export interface PrefillResult {
   reps: number;
 }
 
-const DEFAULT_LOAD_KG = 20; // empty barbell
-const DEFAULT_REPS = 8;
+/** Last-resort values when a movement has no prescription and no history. */
+export function getPrefillFallback(): PrefillResult {
+  return {
+    loadKg: getSetting("fallbackLoadKg"),
+    reps: getSetting("fallbackReps"),
+  };
+}
 
-export function prefillSet(input: PrefillInput): PrefillResult {
+export function prefillSet(
+  input: PrefillInput,
+  fallback: PrefillResult = getPrefillFallback(),
+): PrefillResult {
   const { prescription, lastThisSession, lastSession } = input;
 
   const rxLoad = prescription
@@ -39,13 +53,13 @@ export function prefillSet(input: PrefillInput): PrefillResult {
     rxLoad ??
     lastThisSession?.load_kg ??
     lastSession?.load_kg ??
-    DEFAULT_LOAD_KG;
+    fallback.loadKg;
 
   const reps =
     prescription?.reps_max ??
     lastThisSession?.reps ??
     lastSession?.reps ??
-    DEFAULT_REPS;
+    fallback.reps;
 
   return { loadKg, reps };
 }
