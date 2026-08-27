@@ -30,6 +30,8 @@ import { RestTimer } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
+import { ExercisePicker } from "../components/ExercisePicker";
+import { prefersReducedMotion, useKeyboardInset } from "../components/Sheet";
 import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import {
   getExercises,
@@ -166,9 +168,12 @@ export function Session() {
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
 
+  const [dropArm, setDropArm] = useArmed();
+  // the one keyboard-covered surface that is not a sheet: the per-set note
+  // editor sits deep in the scroller with its Save/Cancel row underneath
+  const kbInset = useKeyboardInset();
   const [sheet, setSheet] = useState<"search" | "plates" | null>(null);
   const [pad, setPad] = useState<PadSpec | null>(null);
-  const [search, setSearch] = useState("");
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
 
@@ -526,10 +531,12 @@ export function Session() {
   };
 
   useEffect(() => {
-    if (openKey)
-      itemRefs.current
-        .get(openKey)
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!openKey) return;
+    // the CSS prefers-reduced-motion block cannot reach the scroll APIs
+    itemRefs.current.get(openKey)?.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "start",
+    });
   }, [openKey]);
 
   // ---- prefill on entry open / bracket advance -----------------------------
@@ -644,7 +651,6 @@ export function Session() {
   const openSheet = (kind: "search" | "plates") => {
     setSheet(kind);
     setPad(null);
-    setSearch("");
   };
 
   const openPad = (kind: PadKind, fromPlates = false) => {
@@ -822,10 +828,6 @@ export function Session() {
   const entrySets = openEntry ? setsForEntry(openEntry) : [];
   const exerciseSets = openEntry ? setsForExercise(openEntry.exercise_id) : [];
 
-  const filtered = allExercises
-    .filter((e) => e.name.toLowerCase().includes(search.toLowerCase()))
-    .slice(0, 30);
-
   const hint = plateable
     ? (() => {
         const r = split(loadKg, exerciseBarKg, inventory);
@@ -888,7 +890,12 @@ export function Session() {
 
   return (
     <div className="session-shell">
-      <div className="session-scroll">
+      <div
+        className="session-scroll"
+        style={
+          noteEditingId && kbInset > 0 ? { paddingBottom: kbInset } : undefined
+        }
+      >
         {(active.plan_note || active.coach_note) && (
           <div className="session-notes">
             {active.plan_note && (
@@ -902,11 +909,12 @@ export function Session() {
 
         <section className="rule-section">
           <div className="section-head">
-            <span className="field-label">
+            {/* the screen's h1: the workout being logged */}
+            <h1 className="field-label">
               {active.workout_label
                 ? active.workout_label.toUpperCase()
                 : "WORKOUT"}
-            </span>
+            </h1>
             {entries.length > 0 && (
               <span className="section-meta">
                 {doneEntries} OF {entries.length} DONE
@@ -945,17 +953,20 @@ export function Session() {
                     <button
                       type="button"
                       className="wk-header-open"
-                      aria-expanded="true"
+                      aria-expanded={isOpen}
                       aria-label={`collapse ${entry.name}`}
                       onClick={() => toggleOpen(entry.key)}
                     >
-                      {entry.name} <span className="chev">▾</span>
+                      {entry.name}{" "}
+                      <span className="chev" aria-hidden="true">
+                        ▾
+                      </span>
                     </button>
                   ) : (
                     <button
                       type="button"
                       className="wk-main"
-                      aria-expanded="false"
+                      aria-expanded={isOpen}
                       onClick={() => toggleOpen(entry.key)}
                     >
                       <span
@@ -979,14 +990,36 @@ export function Session() {
                     </button>
                   )}
                   {!isOpen && (
+                    /* UNDO ADD, not REMOVE: this only ever drops an extra you
+                       added this session and have not logged into. Two taps
+                       like every destructive action. */
                     <button
                       type="button"
-                      className="drawer-action"
-                      onClick={() =>
-                        removable ? void removeExtra(entry) : toggleSkip(entry)
-                      }
+                      className={`drawer-action ${
+                        removable && dropArm === entry.key
+                          ? "drawer-action-armed"
+                          : ""
+                      }`}
+                      onClick={() => {
+                        if (!removable) {
+                          toggleSkip(entry);
+                          return;
+                        }
+                        if (dropArm === entry.key) {
+                          setDropArm(null);
+                          void removeExtra(entry);
+                        } else {
+                          setDropArm(entry.key);
+                        }
+                      }}
                     >
-                      {removable ? "REMOVE" : skipped ? "UNSKIP" : "SKIP"}
+                      {removable
+                        ? dropArm === entry.key
+                          ? "UNDO ADD?"
+                          : "UNDO ADD"
+                        : skipped
+                          ? "UNSKIP"
+                          : "SKIP"}
                     </button>
                   )}
                 </div>
@@ -1130,10 +1163,26 @@ export function Session() {
                                       className="input note-input set-note-input"
                                       rows={2}
                                       autoFocus
+                                      enterKeyHint="done"
                                       value={noteDraft}
                                       onChange={(e) =>
                                         setNoteDraft(e.target.value)
                                       }
+                                      /* the keyboard animates in over ~250ms;
+                                         scroll once it has settled so Save and
+                                         Cancel land above it */
+                                      onFocus={(e) => {
+                                        const el = e.currentTarget
+                                          .parentElement as HTMLElement | null;
+                                        window.setTimeout(() => {
+                                          el?.scrollIntoView({
+                                            block: "center",
+                                            behavior: prefersReducedMotion()
+                                              ? "auto"
+                                              : "smooth",
+                                          });
+                                        }, 300);
+                                      }}
                                       placeholder="Note on this set…"
                                     />
                                     <div className="set-note-actions">
@@ -1232,63 +1281,13 @@ export function Session() {
       </div>
 
       {sheet === "search" && (
-        <div className="sheet-backdrop" onClick={() => setSheet(null)}>
-          <div
-            className="sheet sheet-tall"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="sheet-head">
-              <span className="sheet-title">
-                ADD EXERCISE
-                {allExercises.length > 0
-                  ? ` · ${allExercises.length} IN LIBRARY`
-                  : ""}
-              </span>
-              <button
-                type="button"
-                className="sheet-close"
-                onClick={() => setSheet(null)}
-              >
-                CANCEL
-              </button>
-            </div>
-            <input
-              className="input"
-              placeholder="Search exercises…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-            />
-            <div className="search-results">
-              {filtered.map((ex) => (
-                <button
-                  key={ex.id}
-                  type="button"
-                  className="drawer-row"
-                  onClick={() => void addExercise(ex)}
-                >
-                  <span className="drawer-name">{ex.name}</span>
-                  <span
-                    className={`drawer-tag ${
-                      ex.equipment === "barbell" || ex.equipment === "machine"
-                        ? "drawer-tag-accent"
-                        : ""
-                    }`}
-                  >
-                    {ex.equipment ? ex.equipment.toUpperCase() : ""}
-                  </span>
-                </button>
-              ))}
-              {allExercises.length === 0 && (
-                <p className="muted">
-                  {exercisesFailed
-                    ? "Exercise list unavailable offline — it caches after the first online load."
-                    : "Loading exercise list…"}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
+        <ExercisePicker
+          title="ADD EXERCISE"
+          exercises={allExercises}
+          failed={exercisesFailed}
+          onPick={(ex) => void addExercise(ex)}
+          onClose={() => setSheet(null)}
+        />
       )}
 
       {sheet === "plates" && openEntry && (

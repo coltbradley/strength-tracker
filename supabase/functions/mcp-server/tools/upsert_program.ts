@@ -59,6 +59,20 @@ const prescriptionSchema = z
           "load_kg. Requires a current training max for the exercise. Omit both " +
           "load fields when the coach said 'by feel'.",
       ),
+    load_entry: z
+      .enum(["total", "per_side"])
+      .optional()
+      .describe(
+        "How the load is EXPRESSED. load_kg (and any %TM it resolves to) is " +
+          "ALWAYS the TOTAL system load — the whole weight moved in one rep. " +
+          "When the coach writes a per-hand number ('DB bench 3x10 @ 30', " +
+          "'30s', '30 each'), DOUBLE it into load_kg and set " +
+          "load_entry: 'per_side' so the app shows the lifter 30 x 2. Use " +
+          "'total' for a barbell, a machine stack, or single-arm work where " +
+          "one implement IS the whole system (a one-arm row at 30 kg is " +
+          "total 30, not 60). Omit only when the coach's programming genuinely " +
+          "does not say — omitted means UNKNOWN, not total.",
+      ),
     rest_seconds: z
       .number()
       .int()
@@ -84,7 +98,16 @@ const prescriptionSchema = z
   })
   .refine((p) => p.reps_max >= p.reps_min, {
     message: "reps_max must be >= reps_min",
-  });
+  })
+  .refine(
+    (p) =>
+      p.load_entry !== "per_side" || p.load_kg != null || p.load_pct_tm != null,
+    {
+      message:
+        "load_entry 'per_side' needs a load; a 'by feel' prescription has no " +
+        "side to halve",
+    },
+  );
 
 const workoutSchema = z.object({
   day_index: z
@@ -137,16 +160,26 @@ const programSchema = z.object({
 
 type Program = z.infer<typeof programSchema>;
 
+// Loads are stored as totals; the summary echoes the per-side number too, so
+// the user reviewing the parse sees the figure their coach actually wrote.
+function kgLabel(
+  totalKg: number,
+  entry: "total" | "per_side" | undefined,
+): string {
+  if (entry !== "per_side") return `${totalKg} kg`;
+  return `${Math.round((totalKg / 2) * 10) / 10} kg x 2 (${totalKg} kg total)`;
+}
+
 function loadLabel(
   rx: Program["workouts"][number]["prescriptions"][number],
   tms: Map<string, number>,
 ): string {
-  if (rx.load_kg != null) return `${rx.load_kg} kg`;
+  if (rx.load_kg != null) return kgLabel(rx.load_kg, rx.load_entry);
   if (rx.load_pct_tm != null) {
     const tm = tms.get(rx.exercise_id);
     const resolved =
       tm != null
-        ? ` (~${Math.round((rx.load_pct_tm / 100) * tm * 10) / 10} kg)`
+        ? ` (~${kgLabel(Math.round((rx.load_pct_tm / 100) * tm * 10) / 10, rx.load_entry)})`
         : "";
     return `${rx.load_pct_tm}% TM${resolved}`;
   }
@@ -164,7 +197,9 @@ export function registerUpsertProgram(
       title: "Upsert program",
       description:
         "Write a training program (workouts + prescriptions) parsed from coach " +
-        "programming. All loads are kg. The program lands UNCONFIRMED and is not " +
+        "programming. All loads are kg and are TOTAL system loads: a per-hand " +
+        "dumbbell number must be doubled into load_kg with load_entry " +
+        "'per_side' (see that field). The program lands UNCONFIRMED and is not " +
         "used by the app until confirm_program is called after the user approves " +
         "it in chat. If an unconfirmed program with the same name already exists " +
         "it is replaced (safe to iterate on a parse); confirmed programs are " +
@@ -345,6 +380,7 @@ export function registerUpsertProgram(
               rest_seconds: p.rest_seconds ?? null,
               notes: p.notes ?? null,
               superset_group: p.superset_group ?? null,
+              load_entry: p.load_entry ?? null,
             })),
           );
           const { error: rxError } = await db.client

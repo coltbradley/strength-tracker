@@ -52,9 +52,35 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   as 'custom' so re-seeds can't revert them. delete_exercise removes ONLY
   custom exercises that nothing references (FKs enforce it); seeded or
   referenced exercises are never deleted — history is never orphaned.
+  `exercises` never grows a per-user column, and never a column the generated
+  seed cannot populate: 873 rows would sit null forever and each re-seed
+  would write it back. Movement hints (unilateral, bar type) are derived
+  client-side from `equipment` and the name; overrides live in device-local
+  per-exercise settings.
 - All client writes carry client-generated UUIDs; replay is idempotent
   (`on conflict do nothing`). Do not break this.
+- A planned day is DONE only when its session has `ended_at`. An open session
+  must never mark its day done — that showed RESUME and "Start again" at
+  once and let an abandoned start count as training.
+- "Empty session" is a SERVER-confirmed zero. A local set count of zero can
+  simply mean this device never had the cache; never lead with a destructive
+  default on an unconfirmed count.
 - Units are kg in the database everywhere. Display conversion is client-side.
+- `load_kg` is ALWAYS the TOTAL system load — the whole weight moved in one
+  rep. A pair of 30 kg dumbbells is stored as 60. Never store a per-hand
+  value in `load_kg`; every view, chart and MCP read assumes totals and would
+  be silently wrong. `sets.load_entry` / `prescriptions.load_entry`
+  (`'total'` | `'per_side'` | NULL) record how the number was ENTERED, so the
+  UI can show "30 × 2" and Claude can quote it back honestly. NULL means
+  UNKNOWN, never "confirmed total": those rows predate the convention and
+  `sets` is append-only, so they can never be corrected. Single-arm work is
+  `'total'` (one dumbbell IS the whole system for that rep); what is per side
+  there is the reps, which are deliberately not modelled.
+- Settings are DEVICE-LOCAL, in a typed registry (`pwa/src/lib/settings.ts`)
+  behind a versioned envelope; migrations there are additive too. There is no
+  `user_settings` or `exercise_prefs` table and adding one needs a decision
+  entry: it would create a third write-ownership class for data no view and
+  no MCP tool reads. Accepted: settings do not sync across devices.
 - App updates must never lose device data: the IndexedDB database
   ("strength-log") holds unsynced sets in the outbox. Version bumps must be
   strictly additive (see the comment in `pwa/src/lib/db.ts`); never rename
@@ -64,8 +90,12 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 ## Commands
 
 ```bash
-# db: start local stack, apply migrations + seed
+# db: start local stack, apply migrations + seed (needs Docker)
 supabase start && supabase db reset
+
+# db without Docker: run the whole migration chain + views + RLS in PGlite.
+# This is the validation path this project actually uses — see decisions.md.
+npm --prefix scripts install && node scripts/validate-db.mjs
 
 # mcp server: serve locally
 supabase functions serve mcp-server --env-file supabase/functions/.env
@@ -87,3 +117,12 @@ node scripts/build-exercise-seed.mjs
   (console + optional Sentry via env). Edge function logs structured JSON.
 - Keep modules small and swappable; the spec expects the set-entry UX to be
   rebuilt at least once.
+- One stylesheet (`pwa/src/styles.css`), layered tokens → base → components →
+  utilities. The theme boundary is the token layer, not a second file: a
+  colour must be changeable in exactly one place. Do not re-inline colour
+  literals, and do not reintroduce a theme.css.
+- Text colours must clear WCAG AA. The accent (#bd5410) is 4.08:1, which is
+  AA for large text and UI, not for small prose — never set body copy in it.
+- Fonts are self-hosted in `pwa/public/fonts` and precached. The service
+  worker caches nothing cross-origin, so a webfont `@import` silently breaks
+  the offline promise.

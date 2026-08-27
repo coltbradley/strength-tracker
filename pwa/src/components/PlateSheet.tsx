@@ -3,6 +3,7 @@
 // chosen PER EXERCISE (a leg press has none, a squat has 20 kg) and the
 // choice persists — see settings.getExerciseBarKg.
 
+import { Sheet } from "./Sheet";
 import { split } from "../lib/plates";
 import { BAR_CATALOG, setExerciseBarKg } from "../lib/settings";
 import { useExerciseBarKg, usePlatesOnHand } from "../hooks/useSettings";
@@ -43,91 +44,80 @@ export function PlateSheet({
     : `Closest build is ${disp(result.achievedKg)} ${unit}. Rounded down.`;
 
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="sheet-head">
-          <span className="sheet-title">
-            {exerciseName.toUpperCase()} · PLATES
-          </span>
-          <button type="button" className="sheet-close" onClick={onClose}>
-            CLOSE
-          </button>
-        </div>
-
-        <div className="plate-target-row">
+    <Sheet title={`${exerciseName.toUpperCase()} · PLATES`} onClose={onClose}>
+      <div className="plate-target-row">
+        <button
+          type="button"
+          className="plate-target"
+          onClick={onTypeTarget}
+          aria-label="type a target load"
+        >
+          {disp(targetKg)}
+        </button>
+        <span className="plate-bars">
           <button
             type="button"
-            className="plate-target"
-            onClick={onTypeTarget}
-            aria-label="type a target load"
+            className={`chip ${barKg === 0 ? "chip-on" : ""}`}
+            onClick={() => setExerciseBarKg(exerciseId, 0)}
           >
-            {disp(targetKg)}
+            NO BAR
           </button>
-          <span className="plate-bars">
+          {BAR_CATALOG[unit].map((b) => (
             <button
+              key={b}
               type="button"
-              className={`chip ${barKg === 0 ? "chip-on" : ""}`}
-              onClick={() => setExerciseBarKg(exerciseId, 0)}
+              className={`chip ${Math.abs(b - barKg) < 1e-6 ? "chip-on" : ""}`}
+              onClick={() => setExerciseBarKg(exerciseId, b)}
             >
-              NO BAR
+              BAR {disp(b)}
             </button>
-            {BAR_CATALOG[unit].map((b) => (
-              <button
-                key={b}
-                type="button"
-                className={`chip ${Math.abs(b - barKg) < 1e-6 ? "chip-on" : ""}`}
-                onClick={() => setExerciseBarKg(exerciseId, b)}
-              >
-                BAR {disp(b)}
-              </button>
-            ))}
-          </span>
-        </div>
-
-        <div className="plate-diagram" aria-hidden="true">
-          <span className="plate-bar" />
-          {result.plates.flatMap((p) =>
-            Array.from({ length: p.count }, (_, i) => (
-              <span
-                key={`${p.plate}-${i}`}
-                className="plate"
-                style={{
-                  width: `${Math.round(9 + (p.plate / maxPlate) * 6)}px`,
-                  height: `${Math.round(30 + (p.plate / maxPlate) * 70)}px`,
-                }}
-              />
-            )),
-          )}
-          <span className="plate-collar" />
-        </div>
-
-        {result.plates.map((p) => (
-          <div key={p.plate} className="plate-row">
-            <span className="muted">
-              {disp(p.plate)} {unit.toUpperCase()}
-            </span>
-            <span className="plate-count">× {p.count}</span>
-          </div>
-        ))}
-        <div className="plate-row plate-total">
-          <span className="muted">PER SIDE</span>
-          <span>
-            {disp(result.perSideKg)} {unit.toUpperCase()}
-          </span>
-        </div>
-        <div className="plate-note">{note}</div>
-
-        {/* CLOSE in the head is the exit, matching every other sheet */}
-        <div className="plate-actions">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={onTypeTarget}
-          >
-            Type a target
-          </button>
-        </div>
+          ))}
+        </span>
       </div>
-    </div>
+
+      <div className="plate-diagram" aria-hidden="true">
+        <span className="plate-bar" />
+        {result.plates.flatMap((p) =>
+          Array.from({ length: p.count }, (_, i) => (
+            <span
+              key={`${p.plate}-${i}`}
+              className="plate"
+              style={{
+                width: `${Math.round(9 + (p.plate / maxPlate) * 6)}px`,
+                height: `${Math.round(30 + (p.plate / maxPlate) * 70)}px`,
+              }}
+            />
+          )),
+        )}
+        <span className="plate-collar" />
+      </div>
+
+      {result.plates.map((p) => (
+        <div key={p.plate} className="plate-row">
+          <span className="muted">
+            {disp(p.plate)} {unit.toUpperCase()}
+          </span>
+          <span className="plate-count">× {p.count}</span>
+        </div>
+      ))}
+      <div className="plate-row plate-total">
+        <span className="muted">PER SIDE</span>
+        <span>
+          {disp(result.perSideKg)} {unit.toUpperCase()}
+        </span>
+      </div>
+      <div className="plate-note">{note}</div>
+
+      {/* CLOSE in the head is the exit, matching every other sheet */}
+      <div className="plate-actions">
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={onTypeTarget}
+        >
+          Type a target
+        </button>
+      </div>
+    </Sheet>
   );
 }

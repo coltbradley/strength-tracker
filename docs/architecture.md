@@ -38,7 +38,12 @@ so by RLS — corrections are append-only void rows, sessions soft-delete via
 discards excluded). `sets.prescription_id` joins actual to planned, which is
 the analytical core: prescribed vs achieved, measured not self-reported.
 `training_maxes` and `goals` make %TM prescriptions resolvable and progress
-measurable. User-flow detail lives in [flows.md](flows.md).
+measurable. `load_kg` is always the TOTAL system load on both sides of that
+join (a pair of 30 kg dumbbells is 60); `load_entry` on `sets` and
+`prescriptions` records whether the number was entered per side or as a
+total, with NULL meaning "not asserted" rather than "total". Settings are
+device-local and have no table. User-flow detail lives in
+[flows.md](flows.md).
 
 ## Derived metrics
 
@@ -53,15 +58,19 @@ Read (`readOnlyHint: true`):
 
 - `search_exercises(query, equipment?, muscle?)`
 - `get_lift_history(exercise_id, since?)`: live sets, e1RM series,
-  adherence, rest times (capped per section, with truncation flags)
+  adherence, rest times (capped per section, with truncation flags); loads
+  are totals and carry `load_entry` so per-side work is reported the way
+  the lifter entered it
 - `get_recent_sessions(n?)`: sessions with sRPE, notes, and set counts
 - `get_goal_progress(exercise_id?)`
 
 Write:
 
 - `upsert_program(program_json)`: always lands `confirmed_at = NULL`;
-  per-workout `scheduled_date` and per-prescription `superset_group`;
-  notes are the coach's own brief words (parse caveats go in chat)
+  per-workout `scheduled_date`, per-prescription `superset_group` and
+  `load_entry` (a per-hand coach number is doubled into `load_kg` and
+  marked `per_side`); notes are the coach's own brief words (parse caveats
+  go in chat)
 - `confirm_program(program_id)`: separate call, only after explicit user
   approval in chat
 - `delete_program(program_id, confirm_delete_confirmed?)`: unconfirmed
@@ -85,6 +94,10 @@ the PWA logs training.
 3. History: per exercise set list, e1RM chart with goal line, weekly
    working-set bars. Two charts total.
 4. End session: sRPE (0-10), optional bodyweight and note.
+
+Settings (a sheet, not a screen) is a typed device-local registry: units,
+plate and bar inventories, load steps, per-exercise overrides, rest, export.
+Nothing there is stored server-side.
 
 Offline is a hard requirement. Writes go to an IndexedDB outbox and flush on
 reconnect; client-generated UUIDs + `on conflict do nothing` make replay

@@ -3,6 +3,7 @@
 // handoff-notes conflict 01). Steppers stay available underneath.
 
 import { useState } from "react";
+import { Sheet } from "./Sheet";
 
 export interface PadRequest {
   /** header label, e.g. "OVERHEAD PRESS · LOAD IN LB" */
@@ -41,35 +42,36 @@ export function NumberPad({ req }: { req: PadRequest }) {
   };
 
   return (
-    <div className="sheet-backdrop" onClick={req.onCancel}>
-      <div className="sheet pad-sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="pad-head">
-          <span className="sheet-title">{req.label}</span>
-          <span className="pad-value">
-            {typed === "" ? req.initial : typed}
-          </span>
-        </div>
-        <div className="pad-grid">
-          {KEYS.map((k) => (
-            <button
-              key={k}
-              type="button"
-              className={`pad-key ${k === "." && !req.allowDecimal ? "pad-key-off" : ""}`}
-              onClick={() => press(k)}
-            >
-              {k === "DEL" ? "⌫" : k}
-            </button>
-          ))}
-        </div>
-        <div className="pad-actions">
-          <button type="button" className="pad-cancel" onClick={req.onCancel}>
-            CANCEL
+    <Sheet
+      title={req.label}
+      onClose={req.onCancel}
+      className="pad-sheet"
+      /* CANCEL in the action row IS this sheet's dismissal, so the head
+         carries the live value instead of a second exit. */
+      headRight={
+        <span className="pad-value">{typed === "" ? req.initial : typed}</span>
+      }
+    >
+      <div className="pad-grid">
+        {KEYS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={`pad-key ${k === "." && !req.allowDecimal ? "pad-key-off" : ""}`}
+            onClick={() => press(k)}
+          >
+            {k === "DEL" ? "⌫" : k}
           </button>
-          <button type="button" className="pad-done" onClick={commit}>
-            {req.action}
-          </button>
-        </div>
+        ))}
       </div>
-    </div>
+      <div className="pad-actions">
+        <button type="button" className="pad-cancel" onClick={req.onCancel}>
+          CANCEL
+        </button>
+        <button type="button" className="pad-done" onClick={commit}>
+          {req.action}
+        </button>
+      </div>
+    </Sheet>
   );
 }

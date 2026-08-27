@@ -53,7 +53,20 @@ export function registerGetLiftHistory(
         "rows: sets 500, e1rm_series 365, adherence 500, rest 500; each " +
         "section has a truncated flag that is true when its cap was hit " +
         "(narrow the window with since to see older data). All loads are kg, " +
-        "dates ISO 8601.",
+        "dates ISO 8601.\n\n" +
+        "LOADS ARE ALWAYS THE TOTAL SYSTEM LOAD — the whole weight moved in " +
+        "one rep. A pair of 30 kg dumbbells is load_kg 60. Tonnage, e1RM and " +
+        "adherence are therefore directly comparable across every exercise. " +
+        "load_entry says how the lifter EXPRESSED that number, and you should " +
+        "quote it back the way they said it: 'per_side' means they entered " +
+        "one side and both sides moved together, so report 60 kg as " +
+        "'30 x 2'; 'total' means the number is already what they said. " +
+        "load_entry NULL means UNKNOWN, not total: the set was logged before " +
+        "this convention existed and `sets` is append-only, so it can never " +
+        "be corrected. For a NULL-mode dumbbell or unilateral movement, say " +
+        "the figure is ambiguous rather than reporting it as fact — and note " +
+        "that a run of NULL-mode sets may mix both conventions, so trends " +
+        "across that boundary can be an artefact.",
       inputSchema: {
         exercise_id: z
           .string()
@@ -95,7 +108,7 @@ export function registerGetLiftHistory(
             const rows = must(
               await base(
                 "v_live_sets",
-                "id, session_id, prescription_id, set_index, set_type, load_kg, reps, performed_at",
+                "id, session_id, prescription_id, set_index, set_type, load_kg, load_entry, reps, performed_at",
               )
                 .order("performed_at", { ascending: false })
                 .limit(500),
@@ -116,7 +129,7 @@ export function registerGetLiftHistory(
               "v_adherence",
               "set_id, session_id, prescription_id, set_index, performed_at, " +
                 "actual_load_kg, actual_reps, reps_min, reps_max, prescribed_load_kg, " +
-                "load_delta_kg, rep_outcome",
+                "load_delta_kg, rep_outcome, actual_load_entry, prescribed_load_entry",
             ),
             500,
             "adherence",

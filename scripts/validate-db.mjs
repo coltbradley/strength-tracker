@@ -425,5 +425,188 @@ await check("auth.uid() default stamps user_id on insert", async () => {
   assertEq(r.rows[0].user_id, OWNER, "default auth.uid()");
 });
 
+// --- per-side load convention ----------------------------------------------
+// Runs last, and brings its own fixtures: the checks above assert exact set
+// counts, and adding these rows to the shared fixture block would move those
+// numbers for reasons unrelated to what they test.
+console.log("\nper-side load convention (load_entry):");
+
+await db.exec(`
+  -- Dumbbell_Bench_Press is in the generated seed; the row is inserted anyway
+  -- so this section also runs when the seed is missing.
+  insert into exercises (id, name, equipment, primary_muscles, source) values
+    ('Dumbbell_Bench_Press', 'Dumbbell Bench Press', 'dumbbell', array['chest'], 'custom'),
+    ('One_Arm_Dumbbell_Row', 'One-Arm Dumbbell Row', 'dumbbell', array['lats'], 'custom')
+    on conflict (id) do nothing;
+
+  insert into planned_workouts (id, user_id, program_id, day_index, label) values
+    ('22222222-0000-4000-8000-000000000002', '${OWNER}', '11111111-0000-4000-8000-000000000001', 1, 'Day B');
+
+  -- the coach wrote "DB bench 3x6-10 @ 30 per hand": stored as the 60 kg TOTAL
+  insert into prescriptions (id, user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_kg, load_entry) values
+    ('33333333-0000-4000-8000-000000000011', '${OWNER}', '22222222-0000-4000-8000-000000000002', 'Dumbbell_Bench_Press', 0, 3, 6, 10, 60, 'per_side');
+  -- pre-convention shape: a load, with no assertion about how it was expressed
+  insert into prescriptions (id, user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_kg) values
+    ('33333333-0000-4000-8000-000000000012', '${OWNER}', '22222222-0000-4000-8000-000000000002', 'One_Arm_Dumbbell_Row', 1, 3, 8, 12, 30);
+
+  insert into sessions (id, user_id, planned_workout_id, started_at) values
+    ('44444444-0000-4000-8000-000000000003', '${OWNER}', '22222222-0000-4000-8000-000000000002', now() - interval '2 hours');
+  insert into sets (id, user_id, session_id, exercise_id, prescription_id, set_index, set_type, load_kg, reps, load_entry, performed_at) values
+    -- 30 per hand -> 60 total, exactly what the prescription asks for
+    ('55555555-0000-4000-8000-000000000020', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'Dumbbell_Bench_Press', '33333333-0000-4000-8000-000000000011', 0, 'working', 60, 10, 'per_side', now() - interval '110 minutes'),
+    ('55555555-0000-4000-8000-000000000021', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'Dumbbell_Bench_Press', '33333333-0000-4000-8000-000000000011', 1, 'working', 60, 6, 'per_side', now() - interval '105 minutes'),
+    -- a bar on the same day, explicitly whole-system
+    ('55555555-0000-4000-8000-000000000022', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'Barbell_Squat', null, 2, 'working', 100, 5, 'total', now() - interval '100 minutes'),
+    -- logged before the convention existed: permanently ambiguous
+    ('55555555-0000-4000-8000-000000000023', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'One_Arm_Dumbbell_Row', '33333333-0000-4000-8000-000000000012', 3, 'working', 30, 10, null, now() - interval '95 minutes');
+`);
+
+await check("load_entry: total, per_side and unknown are three distinct states", async () => {
+  // NULL must never collapse into "confirmed total": sets is append-only, so
+  // rows logged before the convention can never be corrected, and analysis
+  // has to be able to tell "not asserted" from "asserted whole-system".
+  const r = await db.query(
+    `select count(*) filter (where load_entry is null)::int as unknown,
+            count(*) filter (where load_entry = 'total')::int as total,
+            count(*) filter (where load_entry = 'per_side')::int as per_side
+       from sets where session_id = '44444444-0000-4000-8000-000000000003'`,
+  );
+  assertEq([r.rows[0].unknown, r.rows[0].total, r.rows[0].per_side], [1, 1, 2], "three states");
+});
+
+await check("v_live_sets exposes load_entry (select s.* re-expanded)", async () => {
+  // `select s.*` is expanded when the view is created, so adding a column to
+  // `sets` does NOT reach the view — the migration has to replace it. Without
+  // this, load_entry is invisible to every reader that goes through v_live_sets.
+  const r = await db.query(
+    `select load_entry from v_live_sets
+      where session_id = '44444444-0000-4000-8000-000000000003' order by set_index`,
+  );
+  assertEq(
+    r.rows.map((x) => x.load_entry),
+    ["per_side", "per_side", "total", null],
+    "passthrough",
+  );
+});
+
+await check("per-side sets count their TOTAL load toward volume", async () => {
+  // Summed across weeks: the fixtures are relative to now(), which can straddle
+  // an ISO week boundary depending on when this runs.
+  const r = await db.query(
+    `select sum(tonnage_kg)::float as t from v_weekly_volume
+      where user_id = $1 and exercise_id = 'Dumbbell_Bench_Press'`,
+    [OWNER],
+  );
+  assertEq(r.rows[0].t, 960, "60x10 + 60x6; the per-hand reading would be 480");
+});
+
+await check("v_e1rm estimates from the total, not the per-hand number", async () => {
+  const r = await db.query(
+    `select max(e1rm_kg)::float as best from v_e1rm
+      where user_id = $1 and exercise_id = 'Dumbbell_Bench_Press'`,
+    [OWNER],
+  );
+  assertEq(r.rows[0].best, 72, "60*(1+6/30); per-hand would read 36");
+});
+
+await check("v_adherence: per-side prescription and per-side set agree exactly", async () => {
+  // Both sides of the join are totals, so the delta is zero. Storing the typed
+  // per-hand number on either side alone would show a phantom +30 kg overshoot.
+  const r = await db.query(
+    `select actual_load_kg::float as a, prescribed_load_kg::float as p,
+            load_delta_kg::float as d, rep_outcome,
+            actual_load_entry, prescribed_load_entry
+       from v_adherence where set_id = '55555555-0000-4000-8000-000000000020'`,
+  );
+  assertEq([r.rows[0].a, r.rows[0].p, r.rows[0].d], [60, 60, 0], "totals vs totals");
+  assertEq(r.rows[0].rep_outcome, "hit", "10 reps in 6-10");
+  assertEq(
+    [r.rows[0].actual_load_entry, r.rows[0].prescribed_load_entry],
+    ["per_side", "per_side"], "both modes surfaced",
+  );
+  // and an unasserted row stays unasserted rather than being coalesced
+  const legacy = await db.query(
+    `select actual_load_entry, prescribed_load_entry from v_adherence
+      where set_id = '55555555-0000-4000-8000-000000000023'`,
+  );
+  assertEq(
+    [legacy.rows[0].actual_load_entry, legacy.rows[0].prescribed_load_entry],
+    [null, null], "unknown stays unknown",
+  );
+});
+
+await check("v_resolved_prescriptions exposes load_entry; %TM resolves to a total", async () => {
+  // Training maxes are whole-system values, so a %TM prescription resolves to a
+  // total; load_entry then says only how to express that total to the lifter.
+  await db.exec(`
+    insert into training_maxes (user_id, exercise_id, value_kg, effective_date)
+      values ('${OWNER}', 'Dumbbell_Bench_Press', 70, current_date - 1);
+    insert into prescriptions (id, user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_pct_tm, load_entry)
+      values ('33333333-0000-4000-8000-000000000013', '${OWNER}', '22222222-0000-4000-8000-000000000002', 'Dumbbell_Bench_Press', 2, 3, 8, 8, 80, 'per_side');
+  `);
+  const r = await db.query(
+    `select resolved_load_kg::float as r, load_entry from v_resolved_prescriptions
+      where id = '33333333-0000-4000-8000-000000000013'`,
+  );
+  assertEq([r.rows[0].r, r.rows[0].load_entry], [56, "per_side"], "80% of a 70 kg total");
+});
+
+await check("per_side is rejected on a bodyweight set, allowed with a load", async () => {
+  // load_kg = 0 means bodyweight; half of nothing is still nothing.
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps, load_entry)
+       values ('55555555-0000-4000-8000-000000000024', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'Pullups', 4, 'working', 0, 5, 'per_side')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("per_side bodyweight set accepted");
+  // the constraint must not be over-broad: bodyweight itself is still legal
+  await db.exec(
+    `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps, load_entry) values
+      ('55555555-0000-4000-8000-000000000025', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'Pullups', 4, 'working', 0, 5, 'total'),
+      ('55555555-0000-4000-8000-000000000026', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'Pullups', 5, 'working', 0, 5, null)`,
+  );
+});
+
+await check("per_side prescriptions need a load ('by feel' has no side to halve)", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into prescriptions (id, user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_entry)
+       values ('33333333-0000-4000-8000-000000000014', '${OWNER}', '22222222-0000-4000-8000-000000000002', 'Pullups', 3, 3, 8, 12, 'per_side')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("by-feel per_side prescription accepted");
+});
+
+await check("load_entry has no default: writing nothing asserts nothing", async () => {
+  // The mistake this guards against is `add column load_entry ... default 'total'`,
+  // which would silently backdate a claim onto every row already logged and
+  // onto every client that has not been taught the convention yet. Inserting
+  // without naming the column is exactly what a legacy writer does.
+  await db.exec(
+    `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps)
+     values ('55555555-0000-4000-8000-000000000027', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'Barbell_Squat', 6, 'working', 100, 5)`,
+  );
+  const r = await db.query(
+    `select load_entry from sets where id = '55555555-0000-4000-8000-000000000027'`,
+  );
+  assertEq(r.rows[0].load_entry, null, "unmentioned load_entry stays null");
+});
+
+await check("load_entry can never be backfilled on an existing set", async () => {
+  // The reason NULL is permanent, and therefore the reason it must not be read
+  // as "total": there is no update policy on sets, so nothing can revise it.
+  const r = await asUser(OWNER, `update sets set load_entry = 'total' where load_entry is null`);
+  assertEq(r.affectedRows ?? 0, 0, "no update policy");
+  const still = await db.query(`select count(*)::int as n from sets where load_entry is null`);
+  if (still.rows[0].n === 0) throw new Error("unasserted rows disappeared");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

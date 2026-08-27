@@ -5,112 +5,205 @@ each of these walkable end to end; a new feature that breaks one of these is
 a regression regardless of what it adds. Format: entry → steps → exit, with
 offline/empty/error edges.
 
+Screens are `Login`, `Today` (`/`), `Session` (`/session`), `End` (`/end`),
+`History` (`/history`) and the plan editor (`/plan/:id`). The tab bar shows
+Today and History only, and only outside `/session` and `/end`; the top bar
+title is a link home, and the gear opens Settings from anywhere.
+
+## Sign in
+
+- **Magic link** — email → "tap the link in your email". Opens the app
+  signed in when the browser that opens the link is the browser running the
+  app.
+- **Installed-app fallback** — on an installed iOS PWA the link opens in
+  Safari, whose storage the installed app cannot see, so the same screen
+  accepts either the email's 6-digit code or the pasted magic link itself
+  (its `token` query param is a token hash `verifyOtp` accepts). The code
+  path needs a Supabase email template carrying `{{ .Token }}`, which needs
+  custom SMTP; pasting the link works with the stock template. Kept as
+  microcopy under the primary instruction, not as a second headline.
+
 ## Weekly planning
 
-- **View week** — Today tab (default). A Mon–Sun strip: each day cell shows
-  the weekday letter, date, and state (accent underline = today, dot = done,
-  faint underline = planned, struck = skipped, red = missed, dim = rest).
-  Tapping a cell previews that day inline below the strip without losing the
-  week; the preview leads with its ONE action (Start / Start again /
-  Move to today), then the exercise list (ramp brackets grouped into one row
-  per exercise, superset letters when paired), then collapsed notes. Today
-  is selected by default.
-  Days outside this week or undated live in a compact LATER list. Programs
-  with no dates at all keep the original ruled list. Offline: cached plan +
-  note; no cache: warning; no program: empty state + Start empty session.
+- **View week** — Today tab (default). A Mon–Sun strip: each cell shows the
+  weekday letter and date, and carries its state as a glyph — accent
+  underline on today, a dot under a DONE day, struck-through for SKIPPED,
+  red for MISSED, a hairline underline for an upcoming planned day, dim for
+  a rest day. The selected cell takes a border. Tapping a cell previews that
+  day inline below the strip without losing the week; the preview leads with
+  its ONE action (Start session / Start again / Move to today), then the
+  exercise list (ramp brackets grouped into one row per exercise, superset
+  letters when a group actually has a partner, coach cues per exercise as a
+  clamped note, a "no TM set" badge where a %TM target can't resolve), then
+  the plan note and coach note, then Edit / Skip. Today is selected by
+  default. State labels as the user sees them: DONE, SKIPPED, TODAY, MISSED,
+  TO COME, NO DATE.
+  Days scheduled outside this week, and undated days, live in a compact
+  LATER list. Programs with no dates at all keep the original ruled list.
+  Offline: cached plan + note; no cache: warning; no program: empty state +
+  Start empty session. The empty state waits for the data — a loading list
+  never claims there are no programs.
 - **Edit a day** — Today → expand → Edit → `/plan/:id`. EXERCISES lead
-  (sets/reps/load/rest/superset per exercise, add/remove); then schedule
-  (date, reorder chips), plan note, duplicate, delete day. Every action
-  saves immediately with a toast. Plan writes are online-only by design.
+  (sets/reps/load mode kg | %TM | by feel/superset letter/rest per exercise,
+  add/remove); then the scheduled day (date picker, Today chip, ↑ Earlier /
+  ↓ Later chips), plan note, duplicate, delete day. Every action saves
+  immediately with a toast. Plan writes are online-only by design.
 - **Reorder the week** — Plan editor ↑/↓ swaps position AND date with the
-  neighbor as displayed. Non-atomic (documented accepted risk).
-- **Duplicate a day** — Plan editor → pick date → Duplicate (or unscheduled).
+  neighbour as displayed. Non-atomic (documented accepted risk).
+- **Duplicate a day** — Plan editor → pick date → Duplicate (or leave the
+  date empty for unscheduled). Carries the exercises, including superset
+  pairings.
 - **Skip / unskip a day** — Today expanded row. DB-backed (`skipped_at`),
   visible to Claude for honest adherence.
 - **Move any non-done day to today** — Today expanded row, for MISSED,
-  NO DATE, and UPCOMING days. One tap; the row becomes TODAY and startable.
+  NO DATE, and TO COME days. One tap; the row becomes TODAY and startable.
 
 ## Session lifecycle
 
-- **Start today's workout** — Today → TODAY row → Start. Prescriptions
-  snapshot to the session cache, session queued offline-first. Offline with
-  a cold prescription cache: starts by feel with an explanatory toast.
-- **Start empty** — Today bottom button (hidden while a session is active).
+- **Start today's workout** — Today → selected TODAY card → Start session.
+  Prescriptions are fetched fresh (a backgrounded PWA's in-memory copy can be
+  hours old), snapshot to the session cache, session queued offline-first.
+  Offline with a cold prescription cache: starts by feel with an explanatory
+  toast.
+- **Exactly one Start affordance is ever live.** Every Start button — the
+  day card, Start again, Move to today, Start empty session — is gated on
+  the same check: no active session locally, no unrecovered open session on
+  the server, and that check having answered. It answers within 2.5 s or
+  gives up and unblocks, because a slow network must not hold the gym
+  hostage. While a session is running, the day that owns it says so and
+  points at the RESUME banner instead of offering a button.
+- **Start empty** — Today bottom button, under the same gate.
 - **Resume** — RESUME banner. All state (sets, extras, voids, skips, rest
   clock) restores from device cache + server merge.
 - **Finish** — Session footer Finish, or the banner's Finish shortcut →
-  End screen: sRPE up top, bodyweight and note both collapsed behind Add
-  buttons so End session stays in view. A session with ZERO sets defaults
-  to discard (an accidental start must not mark the day done).
-- **Discard active** — End screen, two-tap.
+  End screen: set count up top, sRPE, then bodyweight and note both
+  collapsed behind Add buttons so End session stays in view. Staged sRPE,
+  bodyweight and note survive a "Back to session" round trip.
+  A session with a SERVER-CONFIRMED zero sets defaults to discard (an
+  accidental start must not mark the day done), with "End anyway (counts as
+  done)" as a ghost action. A count this device could not confirm is never
+  treated as empty: the screen says so and offers only End, with the
+  ordinary two-tap discard below.
+- **Discard active** — End screen, two-tap. Soft delete.
 - **Recover an orphan** — a same-day open session this device has no cache
   for (other device, restored phone) surfaces as a card on Today:
-  Resume / Finish / Discard. Adoption rebuilds the session caches.
+  Resume / Finish / Discard (two-tap). Adoption rebuilds the session caches:
+  prescriptions from the plan, already-logged non-prescribed exercises back
+  into extras.
 - **Overnight auto-complete** — on app open, open sessions from a previous
   local day complete at their last set's time; empty ones auto-discard; a
-  stale local pointer to a session closed elsewhere is cleared. "Pause" is
-  deliberately not a feature: leaving a session open is the pause, and this
-  sweep bounds it.
+  stale local pointer to a session closed elsewhere is cleared. Sessions
+  with queued outbox writes are excluded, so a finish or discard done
+  offline is never misread as abandonment. "Pause" is deliberately not a
+  feature: leaving a session open is the pause, and this sweep bounds it.
+- **A day reads DONE only once its session has ended.** An open session
+  leaves its day unfinished, so the same day can never show RESUME and
+  "Start again" at once.
 
 ## In-session work
 
 - **See the whole workout** — the session screen IS the workout: one
-  accordion list, every exercise visible (name, target, working-set count,
-  skip state, superset A1/A2 tags with a bracket rail), exactly one open at
-  a time with the orange inset accent. The first incomplete exercise opens
-  on entry.
+  accordion list under the workout's name and an "n OF m DONE" count. Every
+  exercise is visible (name, target scheme, logged/total count, skip state,
+  superset A1/A2 tags with a bracket rail), exactly one open at a time with
+  the accent inset. The first incomplete exercise opens on entry.
 - **Switch exercise** — tap any closed row; it opens (previous closes) and
-  scrolls into view, prefilled (prescription → this session → last session).
-  Tapping the open header collapses it.
-- **Log a set** — inside the open item: WARMUP | WORKING toggle, REPS
-  stepper (above load), LOAD stepper (±5 display units + tap-to-type +
-  plate hint), then "LOG SET n OF m" (working sets vs the plan; warmups
-  don't consume the count). Ramp brackets (consecutive same-exercise
-  prescriptions) are ONE entry walked in order: each set links to its
-  bracket, crossing a bracket re-prefills its targets, the context line
-  shows "NOW x-y REPS". Append-only, offline-first, rest clock starts,
-  auto-unskips. When the plan is met the log button demotes to LOG EXTRA
-  SET and "Next · [exercise]" becomes the primary (never auto-advances).
+  scrolls into view, prefilled (prescription → this session → last session →
+  configured fallback). Tapping the open header collapses it.
+- **Log a set** — inside the open item: a context line (TARGET, NOW x–y REPS
+  on a ramp, REST, NO TM SET), a WARMUP | WORKING toggle (backoff is not
+  offered; the enum value stays legal for history), REPS stepper above LOAD
+  stepper, both tap-to-type via the in-app pad, load with a plate hint that
+  opens the plate sheet, then "LOG SET n OF m" — working sets against the
+  plan; warmups don't consume the count. Step sizes come from settings
+  (coarse and fine, per unit, with an optional per-exercise override). Ramp
+  brackets (consecutive same-exercise prescriptions) are ONE entry walked in
+  order: each set links to its bracket, crossing a bracket re-prefills its
+  targets. Append-only, offline-first, rest clock starts, auto-unskips.
+  When the plan is met the log button demotes to LOG EXTRA SET (outline) and
+  "Next · [exercise]" becomes the primary — a deliberate tap, never an
+  auto-advance.
 - **Note a set** — "+ NOTE" under any logged set expands a small editor;
   notes save to the database (editable, last-write-wins) and read back in
   History under the exact set.
 - **Fix a wrong set** — ✕ on the logged row → VOID? (append-only void +
   relog; the record keeps both). Voiding the set that started the rest
   clock cancels the clock.
-- **Skip / unskip / remove** — the action on each closed row (collapse the
-  open one first). Session-local; the analytical record is the sets.
+- **Skip / unskip an exercise** — the action on each closed row (collapse
+  the open one first). Session-local; the analytical record is the sets.
+- **Undo adding an exercise** — the same slot reads UNDO ADD, two-tap, but
+  only for an extra added this session with nothing logged into it. A
+  prescribed exercise, or one with sets, can only be skipped.
 - **Add an exercise** — bottom of the list → search sheet.
 - **Rest** — strip counts down then over; adjust, type, or dismiss; the
   clock keeps running for rest stamping. Survives leaving the screen. Rest
-  alerts opt in via Settings (notification permission).
+  alerts opt in via Settings (notification permission). The strip hides
+  while a sheet or the number pad is open.
 - **Plates** — per-exercise bar choice in the plate sheet (NO BAR for
   plate-loaded machines like the leg press); persists per exercise.
 - **Read the day's notes** — plan note and coach note render at the top of
-  the session screen.
-- **Leave mid-session** — footer Home. Today/History fully usable; RESUME +
-  Finish in the banner.
+  the session screen, clamped with MORE/LESS.
+- **Leave mid-session** — footer Home (the session keeps running). Today and
+  History stay fully usable; RESUME + Finish sit in the banner. The footer
+  is Home and Finish only.
 
 ## Notes
 
 - **Before** — plan note on the planned day (Today expand or Plan editor).
-- **After** — session note + sRPE on the End screen.
+- **Per exercise** — coach cues from the program parse, rendered on the
+  Today day card and in the session context.
+- **Per set** — set notes, editable, in-session and read back in History.
+- **After** — session note + sRPE on the End screen, with quick chips.
 - **Reading back** — History shows sRPE and the session note under each
   session's date group (cached for offline).
 
 ## History and corrections
 
+- **Pick an exercise** — a picker sheet at the top of the screen, LOGGED
+  tags on exercises that have data, first one with data selected on entry.
+  (Selection is component state: switching tabs and back resets it.)
 - **Charts** — per-exercise e1RM (with goal %) and weekly working sets.
-- **Recent sets** — grouped by session date with notes; void control on each
-  set for late corrections (same append-only void as in-session).
+  Both show a loading state while fetching rather than their empty copy, and
+  both refetch after a void or a discard so a correction is visible
+  immediately.
+- **Recent sets** — grouped by session date, with sRPE, session note, and
+  per-set notes; void control (✕) on each set for late corrections (same
+  append-only void as in-session).
 - **Discard a past session** — the DISCARD word on the date row, two-tap;
-  soft delete. (✕ always means a single-set void, never more.)
+  soft delete, and it takes every exercise trained that day, not just the
+  one on screen. (✕ always means a single-set void, never more.) The
+  in-progress session is never offered either control.
 - **Un-void / un-discard** — not in-app by design (append-only; relog is the
   correction). Recoverable in the database.
+
+## Settings and data
+
+Gear icon, top right, from any screen. All of it is device-local: there is
+no settings table in Postgres (see decisions.md). Sections:
+
+- **UNITS / GYM / LOGGING / TIMING / DISPLAY** — a typed registry renders
+  itself, so every setting carries its own validation, migration and
+  control: unit; plate and bar inventories and the default bar; coarse and
+  fine load steps; per-exercise overrides (bar, rest, increment); fallback
+  load and reps; default rest; auto-start-rest; week start day. Rest alerts
+  sit alongside them as a bespoke row, because the value is a browser
+  notification permission rather than a stored preference — and the rest
+  strip itself never prompts.
+- **DATA** — Sync now; Export JSON; Export CSV; app version and build mode.
+- **DANGER** — Reset settings to defaults (two-tap; preferences only, never
+  training data), and Sign out (two-tap). Sign out consults the outbox
+  first: unsynced sets are the only copy, so it names how many would be lost
+  and points at Sync now, or at the sync pill when items are permanently
+  failed.
 
 ## Known non-flows (deliberate)
 
 - No from-scratch program authoring in-app (Claude/coach owns programming;
   duplicate-then-edit covers one-off days).
 - No mid-session exercise reorder (tap any order instead).
+- No post-session summary screen: the End screen's count is shown before the
+  commit, and a toast is the confirmation after it.
 - No session-level history browse yet (per-exercise only) — revisit when
   real use asks "what did I do Tuesday".
+- No settings sync across devices, and no per-set RPE, duration or
+  bodyweight-plus-load logging (see decisions.md for each).

@@ -30,6 +30,7 @@ import {
 } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
+import { ExercisePicker } from "../components/ExercisePicker";
 import { kgToLb, stepKg, toDisplay } from "../lib/units";
 import type {
   ExerciseRow,
@@ -104,8 +105,8 @@ export function Plan() {
   const [draft, setDraft] = useState<RxDraft | null>(null);
   const [confirming, setConfirming] = useArmed(); // destructive action key
   const [searchOpen, setSearchOpen] = useState(false);
-  const [search, setSearch] = useState("");
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
+  const [exercisesFailed, setExercisesFailed] = useState(false);
   const [duplicateDate, setDuplicateDate] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
@@ -143,9 +144,14 @@ export function Plan() {
 
   useEffect(() => {
     if (!searchOpen || allExercises.length > 0) return;
+    setExercisesFailed(false);
     getExercises()
       .then((r) => setAllExercises(r.data))
-      .catch((e: unknown) => reportError(e, "load exercises"));
+      .catch((e: unknown) => {
+        // the picker says so itself now instead of spinning forever
+        setExercisesFailed(true);
+        reportError(e, "load exercises");
+      });
   }, [searchOpen, allExercises.length]);
 
   if (!id) return null;
@@ -259,14 +265,9 @@ export function Plan() {
     void run("add exercise", async () => {
       await addPrescription(workout.id, ex.id, rx ?? []);
       setSearchOpen(false);
-      setSearch("");
       toast(`${ex.name} added`);
       reload();
     });
-
-  const filtered = allExercises
-    .filter((e) => e.name.toLowerCase().includes(search.toLowerCase()))
-    .slice(0, 30);
 
   const idx = siblings.findIndex((w) => w.id === workout.id);
   const isToday = workout.scheduled_date === todayLocalIso();
@@ -283,9 +284,9 @@ export function Plan() {
       <button type="button" className="back-link" onClick={() => navigate("/")}>
         ‹ TODAY
       </button>
-      <h2 className="screen-title">
+      <h1 className="screen-title">
         {workout.label ?? `Workout ${workout.day_index + 1}`}
-      </h2>
+      </h1>
       {workout.notes && <Note label="COACH" text={workout.notes} />}
 
       <section className="rule-section">
@@ -498,6 +499,8 @@ export function Plan() {
                     >
                       Cancel
                     </button>
+                    {/* DELETE, not Remove: this drops the prescription from
+                        the database. Session's UNDO ADD is the reversible one. */}
                     <button
                       type="button"
                       className={`btn ${confirming === `rx:${r.id}` ? "btn-danger" : "btn-ghost"}`}
@@ -508,9 +511,17 @@ export function Plan() {
                           : setConfirming(`rx:${r.id}`)
                       }
                     >
-                      {confirming === `rx:${r.id}` ? "Remove?" : "Remove"}
+                      {confirming === `rx:${r.id}`
+                        ? "Delete exercise?"
+                        : "Delete exercise"}
                     </button>
                   </div>
+                  {confirming === `rx:${r.id}` && (
+                    <div className="microcopy">
+                      Removes this exercise from the planned day. Sets you have
+                      already logged against it are not touched.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -643,53 +654,13 @@ export function Plan() {
       </section>
 
       {searchOpen && (
-        <div className="sheet-backdrop" onClick={() => setSearchOpen(false)}>
-          <div
-            className="sheet sheet-tall"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="sheet-head">
-              <span className="sheet-title">
-                ADD EXERCISE
-                {allExercises.length > 0
-                  ? ` · ${allExercises.length} IN LIBRARY`
-                  : ""}
-              </span>
-              <button
-                type="button"
-                className="sheet-close"
-                onClick={() => setSearchOpen(false)}
-              >
-                CANCEL
-              </button>
-            </div>
-            <input
-              className="input"
-              placeholder="Search exercises…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-            />
-            <div className="search-results">
-              {filtered.map((ex) => (
-                <button
-                  key={ex.id}
-                  type="button"
-                  className="drawer-row"
-                  onClick={() => addExercise(ex)}
-                >
-                  <span className="drawer-name">{ex.name}</span>
-                  <span className="drawer-tag">
-                    {ex.equipment ? ex.equipment.toUpperCase() : ""}
-                  </span>
-                </button>
-              ))}
-              {allExercises.length === 0 && (
-                <p className="muted">Loading exercise list…</p>
-              )}
-            </div>
-          </div>
-        </div>
+        <ExercisePicker
+          title="ADD EXERCISE"
+          exercises={allExercises}
+          failed={exercisesFailed}
+          onPick={(ex) => addExercise(ex)}
+          onClose={() => setSearchOpen(false)}
+        />
       )}
     </div>
   );

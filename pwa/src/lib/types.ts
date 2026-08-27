@@ -3,6 +3,24 @@
 
 export type SetType = "warmup" | "working" | "backoff";
 
+/**
+ * How a load was ENTERED. `load_kg` is always the TOTAL system load — the
+ * whole weight moved in one rep — so every view, chart and MCP read stays
+ * correct without asking "per hand or total?".
+ *
+ * - `"total"`    the value is the whole system: barbell, machine stack, or one
+ *                implement on its own (a single-arm row IS total — one 30 kg
+ *                dumbbell is the whole system for that rep).
+ * - `"per_side"` the value was one side and both sides move together (a pair
+ *                of dumbbells). `load_kg` = 2 x what the user typed; display
+ *                and prefill divide by 2.
+ * - `null`       not asserted: logged before the convention existed, or by a
+ *                client that does not set it. NEVER treat null as "total" —
+ *                `sets` is append-only, so those rows can never be corrected
+ *                and their ambiguity is permanent.
+ */
+export type LoadEntry = "total" | "per_side";
+
 export interface ExerciseRow {
   id: string;
   name: string;
@@ -54,6 +72,8 @@ export interface PrescriptionInsert {
   load_pct_tm: number | null;
   rest_seconds: number | null;
   notes: string | null;
+  /** total-vs-per-side convention for load_kg; omit when not asserted */
+  load_entry?: LoadEntry | null;
 }
 
 export interface PrescriptionPatch {
@@ -65,6 +85,7 @@ export interface PrescriptionPatch {
   rest_seconds?: number | null;
   position?: number;
   superset_group?: number | null;
+  load_entry?: LoadEntry | null;
 }
 
 export interface ResolvedPrescriptionRow {
@@ -85,6 +106,11 @@ export interface ResolvedPrescriptionRow {
   plate_load_kg: number | null;
   /** exercises sharing a group in the same workout are a superset (1=A, 2=B) */
   superset_group: number | null;
+  /** how load_kg / resolved_load_kg is expressed to the lifter; both are
+   *  totals either way. null = the parse or editor did not assert it.
+   *  Optional because prescriptions cached offline before this field, and
+   *  select lists that predate it, simply omit it. */
+  load_entry?: LoadEntry | null;
 }
 
 // Insert shape; user_id is filled by the DB default (auth.uid()).
@@ -132,6 +158,10 @@ export interface SetInsert {
   /** rest taken BEFORE this set, seconds (null on the first set of an
    *  exercise or when the timer state was lost); DB caps at 3600 */
   rest_seconds_actual: number | null;
+  /** how load_kg was entered. Optional: rows written before the convention
+   *  (and reads whose column list predates it) simply carry no assertion.
+   *  DB rejects "per_side" on a 0 kg bodyweight set. */
+  load_entry?: LoadEntry | null;
 }
 
 export interface SessionBestE1rmRow {

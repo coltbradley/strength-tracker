@@ -405,3 +405,124 @@ collapses until asked for; parse artifacts never dominate.
 - **CI gained workflow_dispatch**: GitHub silently dropped push events for
   two consecutive pushes (64c9705, d8821c0 — commits landed, zero workflow
   runs); manual dispatch is the recovery path for both workflows now.
+
+## 2026-08-27 polish round phase A: one stylesheet, real contrast, a settings registry
+
+Five audit reports (`.audit/`) drove a pass over the presentation layer, a
+batch of correctness bugs, and settings. What changed structurally, and why:
+
+- **theme.css folded into styles.css; the seam is tokens, not selectors.**
+  The two files re-declared the same `:root` block byte for byte, so every
+  colour change needed two edits and drifted between them; and 19 of
+  theme.css's selectors were load-bearing base rules, not a skin, so the split
+  never actually separated "theme" from "structure". A skin/base split only
+  works when the skin is a closed set of values. The replacement is one file
+  with `@layer tokens / base / components / utilities`: the theme boundary is
+  the token layer, which IS a closed set, and swapping it can't take layout
+  with it. `--ink-rgb` became six ink roles (58 hand-inlined
+  `rgba(42,45,50,a)` literals across 17 alphas, now zero), 20 ad-hoc sizes
+  became a 9-step scale, and composite rule tokens expose their colour
+  separately so nothing has to re-inline. ~185 lines of dead CSS went, each
+  re-verified against the TSX including template-literal class construction.
+- **Contrast, and the accent moved to #bd5410.** Every text token now clears
+  WCAG AA. The old `--accent` #e7792e was 2.53:1 on paper and 2.79:1 for
+  button text — decorative, not readable, on a phone held at arm's length in
+  a bright gym. #bd5410 is 4.08:1 on paper and 4.51:1 for #fff9eb text on it.
+  `--text-dim` 3.24 → 4.89, `--warn` 4.24 → 5.22, and the ten "faint" greys
+  (2.0–2.5:1) collapsed into `--text-dim` rather than being nudged one by one.
+  Accepted: 4.08:1 is AA for large text and UI components, not for accent-
+  coloured body copy, so the accent is never used for small prose.
+- **Fonts are self-hosted.** Chivo and Chivo Mono came in through a Google
+  Fonts `@import` while the service worker deliberately caches nothing
+  cross-origin. The offline promise was therefore already broken on the one
+  axis nobody checks: a cold offline launch rendered in system fonts with
+  letter-spacing tuned for Chivo. Four variable woff2 (94 KB) now ship in the
+  bundle and are precached. Self-hosting also removes a third-party request
+  from a single-user app that otherwise talks only to Supabase.
+- **Settings became a typed registry, and got no database table.** One
+  declaration per setting carries storage, validation, migration, hook,
+  export and its rendered control; adding a setting was four files and is now
+  about seven lines, behind a versioned envelope with a tested v0→v1
+  migration that preserves existing plate/bar/rest/unit choices. Deliberately
+  NOT added: `user_settings` or `exercise_prefs` tables. Every one of these
+  values is a property of the phone and the gym it walks into (which plates
+  are on the rack, which bar, which increment), not of the training record;
+  putting them in Postgres would create a third write-ownership class beside
+  "PWA writes actuals" and "both write plans", for data no view and no MCP
+  tool reads. Accepted cost: settings do not sync across devices, and a
+  cleared browser storage loses them. Export exists; training data is never
+  in there.
+- **Two correctness fixes changed semantics, not just behaviour.** A planned
+  day now reads DONE only when its session has `ended_at` — an open session
+  used to mark its day done, so mid-workout the same day showed RESUME and
+  "Start again" at once, and an abandoned start silently counted as training.
+  And "discard empty session" now requires a SERVER-confirmed zero: the local
+  set count can be empty simply because this device never had the cache, and
+  the old code led with Discard on that, verified against a case that would
+  have offered to discard three logged sets. An unconfirmed count now says so
+  and offers only End.
+- Also fixed, without ceremony: End could render permanently blank (no
+  try/catch around its bootstrap); finishing a session did not invalidate the
+  derived caches that discarding did, so offline the day never showed DONE
+  and the next session prefilled stale; orphan-recovery and Start could both
+  render, opening two concurrent sessions (one gate now governs every Start);
+  volume-chart week labels were a day early in PDT (`new Date` on a date-only
+  string parses as UTC); `getLastActuals` scanned at most 1000 sets and then
+  silently decayed, now keyset-paginated; duplicating a planned day dropped
+  `superset_group`; sign out now consults the outbox instead of discarding
+  unsynced sets in silence. Tests 33 → 82.
+
+## 2026-08-27 per-side load: load_kg is always the TOTAL system load
+
+`sets` and `prescriptions` had no unilateral convention at all, so a dumbbell
+row logged as "30" was ambiguous between 30 per hand and 60 total. Nothing in
+the schema recorded which, and every day of use accumulated more mixed data.
+This was the round's one approved schema change; time-based sets, bodyweight
++ added load and per-set RPE were considered and declined.
+
+- **`load_kg` is the total system load, everywhere, always.** A pair of 30 kg
+  dumbbells is 60. `v_e1rm`, `v_weekly_volume`, `v_adherence` and every future
+  query keep working untouched and keep being right. The alternative — store
+  the number the user typed and make readers multiply — pushes the ambiguity
+  into every reader that will ever exist, including Claude's MCP reads, and
+  guarantees that one of them eventually forgets.
+- **`load_entry` records how the number was EXPRESSED**, so the UI can still
+  show and prefill "30 × 2" and Claude can quote back what the lifter
+  actually said. `'per_side'` means one side was entered and both sides moved
+  together; `'total'` means the number is already the whole system.
+- **NULL is not 'total'.** `sets` is append-only and RLS has no update path,
+  so pre-convention rows can never be corrected: their ambiguity is permanent
+  and has to stay visible. The column is nullable with no default —
+  defaulting to `'total'` would have backdated an assertion nobody made
+  across every row already logged. `get_lift_history` says so in its
+  description and tells Claude to call NULL-mode dumbbell numbers ambiguous
+  rather than reporting them as fact. Accepted risk: a trend line that
+  crosses the NULL/asserted boundary can be an artefact of the convention
+  rather than of training, and no migration can fix that.
+- **The plan side carries the same column.** Without it, a coach's "DB row
+  3×10 @ 30" would sit in `prescriptions.load_kg` as a per-hand number while
+  sets stored totals, and `v_adherence` would report a phantom +30 kg
+  overshoot on every dumbbell set it ever compared. `upsert_program` now
+  instructs the parser to double per-hand numbers into `load_kg` and mark
+  them `per_side`, and echoes both figures in its review table.
+- **Single-arm work is `'total'`, not `'per_side'`.** One 30 kg dumbbell in a
+  one-arm row IS the whole system for that rep. What is per side there is the
+  REPS, and reps-per-side is deliberately not modelled — log each side as its
+  own set. Calling that case `per_side` would have doubled its tonnage, which
+  is exactly the corruption the column exists to prevent.
+- **No hint column on `exercises`.** It is a shared library seeded from two
+  sources: free-exercise-db carries no unilateral field, so 873 generated
+  rows could never be populated and every re-seed would write the column back
+  to null. The UI derives its default from `equipment` and the movement name
+  (dumbbell, and not single-/one-arm/alternating → per_side) and persists any
+  override in the device-local per-exercise settings, next to bar and
+  increment. A wrong default costs one tap; `load_entry` on the row is what
+  makes the record honest.
+- A check constraint refuses `'per_side'` on a 0 kg bodyweight set, and on a
+  "by feel" prescription with no load: half of nothing is still nothing.
+- Validated in PGlite (the 2026-08-25 precedent): full migration chain from
+  scratch, all 29 existing view and RLS checks still green, plus 15 new
+  assertions covering the enum, the three-state NULL/total/per_side
+  distinction, unchanged tonnage and e1RM math on totals, `v_adherence`
+  surfacing both entry modes, and the append-only guarantee that NULL rows
+  can never be backfilled.

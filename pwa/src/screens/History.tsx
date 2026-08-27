@@ -22,6 +22,7 @@ import { cacheDeleteByPrefix, cacheGet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
+import { ExercisePicker } from "../components/ExercisePicker";
 import type {
   ActiveSession,
   ExerciseRow,
@@ -36,7 +37,6 @@ export function History() {
   const [exercises, setExercises] = useState<ExerciseRow[]>([]);
   const [withData, setWithData] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const [series, setSeries] = useState<SessionBestE1rmRow[]>([]);
@@ -146,16 +146,6 @@ export function History() {
     [exercises, selected],
   );
 
-  const pickerList = useMemo(() => {
-    const q = search.toLowerCase();
-    const matches = (e: ExerciseRow) => e.name.toLowerCase().includes(q);
-    if (q === "") {
-      const dataFirst = exercises.filter((e) => withData.has(e.id));
-      return dataFirst.length > 0 ? dataFirst : exercises.slice(0, 30);
-    }
-    return exercises.filter(matches).slice(0, 30);
-  }, [exercises, withData, search]);
-
   /** Late correction: void a set noticed after the session ended. Same
    *  append-only mechanism as in-session voiding. */
   const voidPastSet = async (s: SetInsert) => {
@@ -225,17 +215,19 @@ export function History() {
 
   return (
     <div className="screen">
-      <button
-        type="button"
-        className="hist-picker"
-        onClick={() => {
-          setPickerOpen(true);
-          setSearch("");
-        }}
-      >
-        <span>{(selectedName || "Pick exercise").toUpperCase()}</span>
-        <span className="chev">▾</span>
-      </button>
+      {/* the screen's h1 is the exercise on show; the button is the control */}
+      <h1>
+        <button
+          type="button"
+          className="hist-picker"
+          onClick={() => setPickerOpen(true)}
+        >
+          <span>{(selectedName || "Pick exercise").toUpperCase()}</span>
+          <span className="chev" aria-hidden="true">
+            ▾
+          </span>
+        </button>
+      </h1>
 
       {fromCache && (
         <div className="cache-note">offline — showing cached data</div>
@@ -297,7 +289,7 @@ export function History() {
                   {sessionId !== activeId && (
                     <button
                       type="button"
-                      className={`drawer-action ${discardArm === sessionId ? "set-void-armed" : ""}`}
+                      className={`drawer-action ${discardArm === sessionId ? "drawer-action-armed" : ""}`}
                       aria-label={
                         discardArm === sessionId
                           ? "confirm discard session"
@@ -352,48 +344,17 @@ export function History() {
       )}
 
       {pickerOpen && (
-        <div className="sheet-backdrop" onClick={() => setPickerOpen(false)}>
-          <div
-            className="sheet sheet-tall"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="sheet-head">
-              <span className="sheet-title">EXERCISE</span>
-              <button
-                type="button"
-                className="sheet-close"
-                onClick={() => setPickerOpen(false)}
-              >
-                CANCEL
-              </button>
-            </div>
-            <input
-              className="input"
-              placeholder="Search exercises…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-            />
-            <div className="search-results">
-              {pickerList.map((ex) => (
-                <button
-                  key={ex.id}
-                  type="button"
-                  className="drawer-row"
-                  onClick={() => {
-                    setSelected(ex.id);
-                    setPickerOpen(false);
-                  }}
-                >
-                  <span className="drawer-name">{ex.name}</span>
-                  {withData.has(ex.id) && (
-                    <span className="drawer-tag">LOGGED</span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <ExercisePicker
+          title="EXERCISE"
+          exercises={exercises}
+          badge={(ex) => (withData.has(ex.id) ? "LOGGED" : null)}
+          preferBadged
+          onPick={(ex) => {
+            setSelected(ex.id);
+            setPickerOpen(false);
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
       )}
     </div>
   );

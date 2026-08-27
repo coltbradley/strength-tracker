@@ -3,12 +3,14 @@
 // resettable row here, so this file needs no edit when a preference is added.
 // Only new *control kinds* land in `SettingControl`.
 //
-// Markup is kept accessible-ready (labelled groups, real buttons) but does NOT
-// implement role=dialog / focus trap / ESC — Phase B is building one shared
-// Sheet primitive that all six sheets adopt.
+// The dialog contract (role=dialog, focus trap, ESC, keyboard inset, scroll)
+// belongs to <Sheet>; this file only supplies the title and the rows. The
+// number pad opens as a second sheet ON TOP of this one — nested by design,
+// and <Sheet> hands key handling to whichever is innermost.
 
 import { useEffect, useState } from "react";
 import { NumberPad, type PadRequest } from "./NumberPad";
+import { Sheet } from "./Sheet";
 import {
   GROUP_LABEL,
   GROUP_ORDER,
@@ -186,155 +188,146 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   };
 
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="sheet-head">
-          <span className="sheet-title">SETTINGS</span>
-          <button type="button" className="sheet-close" onClick={onClose}>
-            CLOSE
-          </button>
+    <Sheet title="SETTINGS" onClose={onClose}>
+      {GROUP_ORDER.map((group) => {
+        const keys = settingsInGroup(group);
+        if (keys.length === 0) return null;
+        return (
+          <section key={group} className="settings-group">
+            <div className="field-label">{GROUP_LABEL[group]}</div>
+            {keys.map((key) => (
+              <SettingControl
+                key={key}
+                settingKey={key}
+                unit={unit}
+                openPad={openPad}
+              />
+            ))}
+            {group === "gym" && (
+              <ExerciseOverrides names={exerciseNames} unit={unit} />
+            )}
+            {group === "timing" && notifSupported && (
+              <button
+                type="button"
+                className="sheet-row sheet-row-btn"
+                onClick={askNotif}
+                disabled={notifState === "granted"}
+              >
+                <span>Rest alerts</span>
+                <span className="sheet-row-value">
+                  {notifState === "granted"
+                    ? "ON"
+                    : notifState === "denied"
+                      ? "BLOCKED IN BROWSER"
+                      : "TAP TO ENABLE"}
+                </span>
+              </button>
+            )}
+          </section>
+        );
+      })}
+
+      <section className="settings-group">
+        <div className="field-label">DATA</div>
+
+        <button
+          type="button"
+          className="sheet-row sheet-row-btn"
+          onClick={() => {
+            void outbox.flush();
+            toast("Sync started");
+          }}
+        >
+          <span>Sync now</span>
+          <span className="sheet-row-value">
+            {queued > 0 ? `${queued} QUEUED` : "UP TO DATE"}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className="sheet-row sheet-row-btn"
+          onClick={() => runExport("json")}
+          disabled={busy}
+        >
+          <span>Export JSON</span>
+          <span className="sheet-row-value">
+            {busy ? "WORKING…" : "SESSIONS + SETS"}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className="sheet-row sheet-row-btn"
+          onClick={() => runExport("csv")}
+          disabled={busy}
+        >
+          <span>Export CSV</span>
+          <span className="sheet-row-value">
+            {busy ? "WORKING…" : "ONE ROW PER SET"}
+          </span>
+        </button>
+
+        <div className="sheet-row">
+          <span>Version</span>
+          <span className="sheet-row-value">
+            {APP_VERSION}
+            {BUILD_SHA ? ` · ${BUILD_SHA.slice(0, 7)}` : ""}
+          </span>
+        </div>
+        <div className="microcopy">
+          {BUILD_TIME ? `Built ${BUILD_TIME}. ` : ""}
+          {import.meta.env.MODE} build. The app updates itself in the
+          background, so this number can change without asking.
+        </div>
+      </section>
+
+      <section className="settings-group settings-danger">
+        <div className="field-label">DANGER</div>
+
+        <button
+          type="button"
+          className={`btn ${armed === "reset" ? "btn-danger" : "btn-ghost"}`}
+          onClick={() => {
+            if (armed !== "reset") {
+              setArmed("reset");
+              return;
+            }
+            resetAllSettings();
+            setArmed(null);
+            toast("Settings back to defaults");
+          }}
+        >
+          {armed === "reset"
+            ? "Reset every setting?"
+            : "Reset settings to defaults"}
+        </button>
+        <div className="microcopy">
+          Preferences only. Logged sessions and sets are never touched.
         </div>
 
-        {GROUP_ORDER.map((group) => {
-          const keys = settingsInGroup(group);
-          if (keys.length === 0) return null;
-          return (
-            <section key={group} className="settings-group">
-              <div className="field-label">{GROUP_LABEL[group]}</div>
-              {keys.map((key) => (
-                <SettingControl
-                  key={key}
-                  settingKey={key}
-                  unit={unit}
-                  openPad={openPad}
-                />
-              ))}
-              {group === "gym" && (
-                <ExerciseOverrides names={exerciseNames} unit={unit} />
-              )}
-              {group === "timing" && notifSupported && (
-                <button
-                  type="button"
-                  className="sheet-row sheet-row-btn"
-                  onClick={askNotif}
-                  disabled={notifState === "granted"}
-                >
-                  <span>Rest alerts</span>
-                  <span className="sheet-row-value">
-                    {notifState === "granted"
-                      ? "ON"
-                      : notifState === "denied"
-                        ? "BLOCKED IN BROWSER"
-                        : "TAP TO ENABLE"}
-                  </span>
-                </button>
-              )}
-            </section>
-          );
-        })}
-
-        <section className="settings-group">
-          <div className="field-label">DATA</div>
-
-          <button
-            type="button"
-            className="sheet-row sheet-row-btn"
-            onClick={() => {
-              void outbox.flush();
-              toast("Sync started");
-            }}
-          >
-            <span>Sync now</span>
-            <span className="sheet-row-value">
-              {queued > 0 ? `${queued} QUEUED` : "UP TO DATE"}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className="sheet-row sheet-row-btn"
-            onClick={() => runExport("json")}
-            disabled={busy}
-          >
-            <span>Export JSON</span>
-            <span className="sheet-row-value">
-              {busy ? "WORKING…" : "SESSIONS + SETS"}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className="sheet-row sheet-row-btn"
-            onClick={() => runExport("csv")}
-            disabled={busy}
-          >
-            <span>Export CSV</span>
-            <span className="sheet-row-value">
-              {busy ? "WORKING…" : "ONE ROW PER SET"}
-            </span>
-          </button>
-
-          <div className="sheet-row">
-            <span>Version</span>
-            <span className="sheet-row-value">
-              {APP_VERSION}
-              {BUILD_SHA ? ` · ${BUILD_SHA.slice(0, 7)}` : ""}
-            </span>
+        {signOutStage > 0 && queued > 0 && (
+          <div className="microcopy settings-warn">
+            {queued === 1 ? "1 set has" : `${queued} sets have`} not reached the
+            server. Signing out discards {queued === 1 ? "it" : "them"} — this
+            is the only copy.
+            {status.dead > 0
+              ? " Some are permanently failed: retry them from the sync pill first."
+              : " Tap “Sync now” first if you have signal."}
           </div>
-          <div className="microcopy">
-            {BUILD_TIME ? `Built ${BUILD_TIME}. ` : ""}
-            {import.meta.env.MODE} build. The app updates itself in the
-            background, so this number can change without asking.
-          </div>
-        </section>
+        )}
 
-        <section className="settings-group settings-danger">
-          <div className="field-label">DANGER</div>
+        <button
+          type="button"
+          className={`btn signout-btn ${signOutStage > 0 ? "btn-danger" : "btn-ghost"}`}
+          onClick={signOut}
+        >
+          {signOutLabel}
+        </button>
+      </section>
 
-          <button
-            type="button"
-            className={`btn ${armed === "reset" ? "btn-danger" : "btn-ghost"}`}
-            onClick={() => {
-              if (armed !== "reset") {
-                setArmed("reset");
-                return;
-              }
-              resetAllSettings();
-              setArmed(null);
-              toast("Settings back to defaults");
-            }}
-          >
-            {armed === "reset"
-              ? "Reset every setting?"
-              : "Reset settings to defaults"}
-          </button>
-          <div className="microcopy">
-            Preferences only. Logged sessions and sets are never touched.
-          </div>
-
-          {signOutStage > 0 && queued > 0 && (
-            <div className="microcopy settings-warn">
-              {queued === 1 ? "1 set has" : `${queued} sets have`} not reached
-              the server. Signing out discards {queued === 1 ? "it" : "them"} —
-              this is the only copy.
-              {status.dead > 0
-                ? " Some are permanently failed: retry them from the sync pill first."
-                : " Tap “Sync now” first if you have signal."}
-            </div>
-          )}
-
-          <button
-            type="button"
-            className={`btn signout-btn ${signOutStage > 0 ? "btn-danger" : "btn-ghost"}`}
-            onClick={signOut}
-          >
-            {signOutLabel}
-          </button>
-        </section>
-
-        {pad && <NumberPad req={pad} />}
-      </div>
-    </div>
+      {pad && <NumberPad req={pad} />}
+    </Sheet>
   );
 }
 

@@ -1211,6 +1211,12 @@
   .sheet-backdrop {
     position: fixed;
     inset: 0;
+    /* --kb is the on-screen keyboard's height, published by <Sheet> from the
+       visualViewport API (0 when it is closed or unmeasurable). Neither iOS
+       nor Android shrinks the LAYOUT viewport for a fixed overlay, so the
+       backdrop has to stop short of the keyboard itself; flex-end then puts
+       the sheet — head, body and action row — directly on top of it. */
+    bottom: var(--kb, 0px);
     background: var(--scrim);
     display: flex;
     align-items: flex-end;
@@ -1231,7 +1237,7 @@
     gap: var(--s-6);
     /* dvh, not vh: iOS resolves vh against the *large* viewport, so a sheet
        sized in vh is taller than the visible area while the URL bar is up. */
-    max-height: 78dvh;
+    max-height: min(78dvh, calc(100dvh - var(--kb, 0px) - var(--s-9)));
     /* Every sheet can outgrow its cap (the settings sheet is ~1600px), and a
        clipped sheet strands whatever sits at its bottom — Sign out was
        unreachable this way. Contain the scroll so it never chains to the
@@ -1242,7 +1248,7 @@
   }
 
   .sheet-tall {
-    height: 78dvh;
+    height: min(78dvh, calc(100dvh - var(--kb, 0px) - var(--s-9)));
   }
 
   .pad-sheet {
@@ -1255,6 +1261,13 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
+    gap: var(--s-6);
+  }
+
+  /* the pad sheet has no side padding (its key grid is edge to edge), so its
+     head puts the gutter back */
+  .pad-sheet .sheet-head {
+    padding: 0 var(--gutter);
   }
 
   .sheet-close {
@@ -1368,6 +1381,13 @@
     padding: 0 var(--s-5);
     min-width: 64px;
     text-align: right;
+    white-space: nowrap;
+  }
+
+  /* armed second tap. The set-void armed state is deliberately NOT reused
+     here: ✕ means a single-set void and nothing else. */
+  .drawer-action-armed {
+    color: var(--danger);
   }
 
   .search-results {
@@ -1378,13 +1398,6 @@
   }
 
   /* ---- number pad ---- */
-
-  .pad-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    padding: 0 var(--gutter);
-  }
 
   .pad-value {
     font-family: var(--font-mono);
