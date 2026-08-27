@@ -18,11 +18,11 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/build-exercise-seed.mjs
-      - run: npm --prefix scripts install
+      - run: npm --prefix scripts ci
       - run: node scripts/validate-db.mjs
 
   mcp-server:
-    name: edge function typecheck (deno)
+    name: edge function typecheck + tests (deno)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +30,8 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno check index.ts
+        working-directory: supabase/functions/mcp-server
+      - run: deno test lib/
         working-directory: supabase/functions/mcp-server
 
   pwa:

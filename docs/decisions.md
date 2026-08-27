@@ -526,3 +526,65 @@ This was the round's one approved schema change; time-based sets, bodyweight
   distinction, unchanged tonnage and e1RM math on totals, `v_adherence`
   surfacing both entry modes, and the append-only guarantee that NULL rows
   can never be backfilled.
+
+## 2026-08-27 "today" is one date, read from `app_config.tz`
+
+Three writers had three definitions of the calendar day that
+`training_maxes.effective_date` is written and compared against:
+
+| where | definition | source |
+| --- | --- | --- |
+| SQL views | `(now() at time zone app_tz())::date` | `20260825120003_views.sql` |
+| MCP server | UTC | `lib/dates.ts` |
+| PWA | device local | `pwa/src/lib/format.ts` |
+
+With `app_config.tz = 'America/Los_Angeles'` (what `docs/setup.md` tells you to
+set), the MCP server's UTC "today" runs a day ahead of everyone else's for the
+last 7-8 hours of each local day. Reproduced against the real migrations in
+PGlite at 2026-08-27T02:30Z, which is 19:30 on the 26th in Los Angeles:
+
+1. `set_training_max` stamped `effective_date = 2026-08-27` and reported
+   success.
+2. Its own future-date warning could not fire, because `isFuture` compared the
+   stamp against the same wrong UTC today.
+3. `v_current_tm` (`effective_date <= app_tz() today`) could not see the row,
+   so the app kept showing the old TM.
+4. A follow-up `%TM` `upsert_program` failed with "no current training max",
+   and the branch that exists to explain exactly that missed too:
+   `.gt("effective_date", todayIso())` excludes a row dated exactly today.
+5. The PWA (device local) and the MCP (UTC) writing that same evening produced
+   two `training_maxes` rows for one lifter-day.
+
+Decision: the MCP server reads the same `app_config` row `app_tz()` reads.
+`todayIso(db)` is now async and formats through
+`Intl.DateTimeFormat(...).formatToParts` in that zone, which is the TypeScript
+equivalent of `(instant at time zone tz)::date`. The timezone is cached for the
+life of the isolate (it is deployment config, not per-request data), so a
+change to `app_config.tz` takes effect on the next cold start. An unreadable
+`app_config` row throws rather than falling back to UTC: silently guessing a
+timezone is the defect being fixed. A genuinely absent row still falls back to
+UTC, matching the SQL `coalesce(..., 'UTC')`.
+
+The boundary comparison in `upsert_program` became `.gte`. The database owns
+the boundary day: a TM dated exactly today is either already current (so it is
+never in the missing list) or the view has not reached it, and `.gt` dropped
+precisely that row.
+
+**The PWA's device-local today stays device-local, deliberately.** The phone is
+where the lifter is; a set logged at 21:00 belongs on the day the lifter just
+trained, whatever `app_config.tz` says. `app_config.tz` is the *home* timezone,
+the fixed reference the database needs because Postgres has no device. The two
+agree except while travelling across a date boundary, and there the phone is
+right about the workout and the home timezone is right about the weekly
+buckets. Do not "fix" the PWA to read `app_config.tz`, and do not make the MCP
+server read a device clock — it has none.
+
+Not every date has to agree. `defaultSince()` in `get_lift_history` stays UTC
+and says so in a comment: it is the far end of a rolling 90-day window, not a
+day the lifter experiences, and nothing keys off it. Only dates compared
+against `app_tz()` dates have to match.
+
+Coverage, both halves pinned to the same instant so they cannot drift apart:
+`supabase/functions/mcp-server/lib/dates.test.ts` (Deno, run in CI) for the
+TypeScript formatter, and a new check in `scripts/validate-db.mjs` for the SQL
+rule and the `.gt`/`.gte` boundary.

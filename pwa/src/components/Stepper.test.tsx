@@ -62,6 +62,25 @@ describe("Stepper", () => {
     expect(onChange).toHaveBeenLastCalledWith(100);
   });
 
+  it("renders the value as a span, not a disabled button, with no onTapValue", () => {
+    const { container } = render(
+      <Stepper
+        label="sets"
+        compact
+        display="3 sets"
+        value={3}
+        onChange={() => undefined}
+        steps={[{ label: "+", delta: 1 }]}
+      />,
+    );
+    const value = container.querySelector(".stepper-value");
+    expect(value?.tagName).toBe("SPAN");
+    // compact implies the inline layout, and marks it as the editor field
+    expect(container.querySelector(".stepper-inline.stepper-field")).not.toBe(
+      null,
+    );
+  });
+
   it("tapping the value fires onTapValue (opens the pad)", () => {
     const onTap = vi.fn();
     render(

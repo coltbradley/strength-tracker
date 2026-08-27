@@ -45,9 +45,9 @@ and [docs/security.md](docs/security.md); the short version:
 
 ```
 supabase/migrations/       schema, RLS, derived-metric views
-supabase/functions/mcp-server/   MCP server (Deno edge function, 8 tools)
+supabase/functions/mcp-server/   MCP server (Deno edge function, 12 tools)
 supabase/seed/             generated exercise seed (873 exercises)
-pwa/                       React + Vite PWA, IndexedDB outbox, 4 screens
+pwa/                       React + Vite PWA, IndexedDB outbox, 5 screens
 scripts/                   seed generator, database validation harness
 docs/                      spec, architecture, decisions, security, setup
 ```

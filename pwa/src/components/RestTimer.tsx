@@ -7,6 +7,16 @@
 import { useEffect, useRef, useState } from "react";
 import { formatClock } from "../lib/format";
 
+/** "2 min 30 sec" — "2:30" is read as a ratio or a date by most screen
+ *  readers, and this string is the only way the remaining time is spoken. */
+function spokenClock(totalSeconds: number): string {
+  const t = Math.abs(Math.round(totalSeconds));
+  const m = Math.floor(t / 60);
+  const sec = t % 60;
+  if (m === 0) return `${sec} sec`;
+  return sec === 0 ? `${m} min` : `${m} min ${sec} sec`;
+}
+
 export interface ActiveRest {
   /** epoch ms when the rest started (i.e. when the set was logged) */
   startedAt: number;
@@ -62,14 +72,25 @@ export function RestTimer({ rest, onAdjust, onEdit, onDone }: RestTimerProps) {
       );
 
   return (
-    <div className={`rest-timer ${over ? "rest-timer-done" : ""}`}>
+    /* role="timer" names the strip for a screen reader and carries an
+       implicit aria-live="off": the value is reachable on demand, and a
+       four-times-a-second countdown never interrupts anyone mid-set. */
+    <div
+      className={`rest-timer ${over ? "rest-timer-done" : ""}`}
+      role="timer"
+      aria-label="rest timer"
+    >
       <div className="rest-row">
         <span className="rest-label">{over ? "OVER" : "REST"}</span>
         <button
           type="button"
           className="rest-timer-time"
           onClick={onEdit}
-          aria-label="edit remaining rest"
+          /* the label ADDS to the visible time rather than replacing it —
+             "edit remaining rest" alone left the clock unreadable */
+          aria-label={`${
+            over ? "over by" : "rest remaining"
+          } ${spokenClock(remaining)} — tap to change`}
         >
           {over ? `+${formatClock(-remaining)}` : formatClock(remaining)}
         </button>
@@ -82,6 +103,7 @@ export function RestTimer({ rest, onAdjust, onEdit, onDone }: RestTimerProps) {
         <button
           type="button"
           className="rest-adjust"
+          aria-label="take 30 seconds off the rest target"
           onClick={() => onAdjust(-30)}
         >
           −30
@@ -89,11 +111,17 @@ export function RestTimer({ rest, onAdjust, onEdit, onDone }: RestTimerProps) {
         <button
           type="button"
           className="rest-adjust"
+          aria-label="add 30 seconds to the rest target"
           onClick={() => onAdjust(30)}
         >
           +30
         </button>
-        <button type="button" className="rest-timer-dismiss" onClick={onDone}>
+        <button
+          type="button"
+          className="rest-timer-dismiss"
+          aria-label="dismiss the rest strip — rest is still recorded"
+          onClick={onDone}
+        >
           DONE
         </button>
       </div>

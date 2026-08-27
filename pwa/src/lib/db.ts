@@ -79,7 +79,9 @@ export async function cacheDelete(key: string): Promise<void> {
 /** Drop every cache entry whose key starts with one of the prefixes.
  *  Used when a write invalidates a whole family (e.g. discarding a session
  *  touches every exercise's history caches). */
-export async function cacheDeleteByPrefix(prefixes: string[]): Promise<void> {
+export async function cacheDeleteByPrefix(
+  prefixes: readonly string[],
+): Promise<void> {
   const db = await getDb();
   const keys = await db.getAllKeys("kv");
   for (const key of keys) {
@@ -93,7 +95,7 @@ export async function cacheDeleteByPrefix(prefixes: string[]): Promise<void> {
  *  cache family instead of dropping it — dropping is wrong offline, where
  *  the refetch that would rebuild it cannot run. */
 export async function cacheKeysWithPrefix(
-  prefixes: string[],
+  prefixes: readonly string[],
 ): Promise<string[]> {
   const db = await getDb();
   const keys = await db.getAllKeys("kv");
@@ -103,14 +105,41 @@ export async function cacheKeysWithPrefix(
   );
 }
 
+/**
+ * THE prefix vocabulary. Every key builder below composes one of these, and
+ * every invalidation family is declared from the same constants — so a
+ * prefix is written exactly once and "which family does this key belong to"
+ * is answered here rather than remembered at each call site. Three screens
+ * used to carry hand-copied literal lists, and the one asymmetry between
+ * them (finish vs discard) was a real bug.
+ */
+const P = {
+  lastActuals: "lastActuals:",
+  loggedExercises: "loggedExercises",
+  prescriptions: "rx:",
+  sessionRx: "sessionRx:",
+  trainingMaxes: "trainingMaxes",
+  doneWorkouts: "doneWorkouts:",
+  e1rm: "e1rm:",
+  volume: "volume:",
+  goal: "goal:",
+  recentSets: "recent:",
+  sessionMeta: "sessionMeta:",
+  setNotes: "setNotes:",
+  adherence: "adherence:",
+} as const;
+
 export const cacheKeys = {
   plannedWorkouts: "plannedWorkouts",
   exercises: "exercises",
   activeSession: "activeSession",
   lastActuals: (excludeSessionId?: string) =>
-    `lastActuals:${excludeSessionId ?? "all"}`,
-  prescriptions: (plannedWorkoutId: string) => `rx:${plannedWorkoutId}`,
-  sessionRx: (sessionId: string) => `sessionRx:${sessionId}`,
+    `${P.lastActuals}${excludeSessionId ?? "all"}`,
+  /** exercise ids with at least one live logged set (History's index) */
+  loggedExercises: P.loggedExercises,
+  prescriptions: (plannedWorkoutId: string) =>
+    `${P.prescriptions}${plannedWorkoutId}`,
+  sessionRx: (sessionId: string) => `${P.sessionRx}${sessionId}`,
   sessionExtras: (sessionId: string) => `sessionExtras:${sessionId}`,
   sessionSets: (sessionId: string) => `sessionSets:${sessionId}`,
   /** set ids voided this session (filters merges of server+pending sets) */
@@ -124,9 +153,44 @@ export const cacheKeys = {
   /** staged End-screen input (sRPE / bodyweight / note), so a trip back to
    *  the session and forward again does not lose what was typed */
   sessionEndDraft: (sessionId: string) => `sessionEndDraft:${sessionId}`,
-  doneWorkouts: (programId: string) => `doneWorkouts:${programId}`,
-  e1rm: (exerciseId: string) => `e1rm:${exerciseId}`,
-  volume: (exerciseId: string) => `volume:${exerciseId}`,
-  goal: (exerciseId: string) => `goal:${exerciseId}`,
-  recentSets: (exerciseId: string) => `recent:${exerciseId}`,
+  doneWorkouts: (programId: string) => `${P.doneWorkouts}${programId}`,
+  e1rm: (exerciseId: string) => `${P.e1rm}${exerciseId}`,
+  volume: (exerciseId: string) => `${P.volume}${exerciseId}`,
+  goal: (exerciseId: string) => `${P.goal}${exerciseId}`,
+  recentSets: (exerciseId: string) => `${P.recentSets}${exerciseId}`,
+  /** notes/sRPE/bodyweight for the sessions behind one exercise's history */
+  sessionMeta: (exerciseId: string) => `${P.sessionMeta}${exerciseId}`,
+  /** per-set notes for one exercise's history */
+  setNotes: (exerciseId: string) => `${P.setNotes}${exerciseId}`,
+  /** prescribed-vs-achieved for one exercise's history */
+  adherence: (exerciseId: string) => `${P.adherence}${exerciseId}`,
+  /** every training max ever set */
+  trainingMaxes: P.trainingMaxes,
 };
+
+/**
+ * Invalidation families. `data.ts` exposes the verbs (`invalidateForSetChange`
+ * / `invalidateForSessionClose`); nothing outside it should name a prefix.
+ *
+ * Adding a key to `cacheKeys` means deciding which family it joins — and
+ * `db.test.ts` fails if it joins none, because it pins the exact survivors.
+ */
+export const cacheFamilies = {
+  /** derived from a session's SETS: changes whenever a set is logged,
+   *  voided, or leaves via a discard */
+  sessionDerived: [
+    P.recentSets,
+    P.e1rm,
+    P.volume,
+    P.goal,
+    P.sessionMeta,
+    P.setNotes,
+    P.adherence,
+    P.lastActuals,
+    P.loggedExercises,
+  ],
+  /** derived from whether a session is CLOSED: the week's DONE state */
+  sessionClosed: [P.doneWorkouts],
+  /** carries a resolved training max, so any TM write invalidates it */
+  planResolved: [P.prescriptions, P.sessionRx],
+} as const;

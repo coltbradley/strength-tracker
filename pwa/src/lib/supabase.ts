@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createTimeoutFetch } from "./timeoutFetch";
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -20,4 +21,8 @@ export const supabase: SupabaseClient = demoMode
   : createClient(
       url ?? "https://placeholder.supabase.co",
       anonKey ?? "placeholder-anon-key",
+      // every request carries a timeout, so a hanging network falls back to
+      // the IndexedDB cache promptly instead of blocking a screen — see
+      // lib/timeoutFetch.ts
+      { global: { fetch: createTimeoutFetch() } },
     );

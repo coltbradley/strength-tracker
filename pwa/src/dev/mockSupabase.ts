@@ -182,6 +182,71 @@ function vResolvedPrescriptions(s: DemoStore): Row[] {
         plate_load_kg:
           resolved === null ? null : Math.round(resolved / 2.5) * 2.5,
         superset_group: p.superset_group,
+        load_entry: p.load_entry ?? null,
+      },
+    ];
+  });
+}
+
+/**
+ * v_adherence (20260827160000_per_side_load.sql): every live working/backoff
+ * set that fulfilled a prescription, beside what that prescription asked for.
+ * Faithful to the SQL, including the two details that matter:
+ *
+ * - prescribed_load_kg resolves %TM against the TM effective ON THE DAY THE
+ *   SET WAS PERFORMED (the lateral join), not today's TM.
+ * - both entry modes are carried through unchanged, so a null stays a null
+ *   and a reader can tell "total" from "not asserted".
+ */
+function vAdherence(s: DemoStore): Row[] {
+  const byId = new Map(s.prescriptions.map((p) => [p.id as string, p]));
+  return vLiveSets(s).flatMap((x) => {
+    if (x.set_type !== "working" && x.set_type !== "backoff") return [];
+    const p = byId.get(x.prescription_id as string);
+    if (!p) return []; // inner join on prescriptions
+    const day = localDateIso(new Date(x.performed_at as string));
+    const tm = s.training_maxes
+      .filter(
+        (t) =>
+          t.user_id === x.user_id &&
+          t.exercise_id === x.exercise_id &&
+          (t.effective_date as string) <= day,
+      )
+      .sort((a, b) =>
+        (a.effective_date as string) < (b.effective_date as string) ? 1 : -1,
+      )[0];
+    const pct = p.load_pct_tm === null ? null : num(p.load_pct_tm);
+    const prescribed =
+      p.load_kg !== null
+        ? num(p.load_kg)
+        : pct !== null && tm
+          ? round((pct / 100) * num(tm.value_kg), 1)
+          : null;
+    const reps = num(x.reps);
+    return [
+      {
+        set_id: x.id,
+        user_id: x.user_id,
+        session_id: x.session_id,
+        exercise_id: x.exercise_id,
+        prescription_id: x.prescription_id,
+        set_index: x.set_index,
+        performed_at: x.performed_at,
+        actual_load_kg: x.load_kg,
+        actual_reps: x.reps,
+        reps_min: p.reps_min,
+        reps_max: p.reps_max,
+        prescribed_load_kg: prescribed,
+        load_delta_kg:
+          prescribed === null ? null : round(num(x.load_kg) - prescribed, 2),
+        rep_outcome:
+          reps < num(p.reps_min)
+            ? "missed"
+            : reps > num(p.reps_max)
+              ? "exceeded"
+              : "hit",
+        actual_load_entry: x.load_entry ?? null,
+        prescribed_load_entry: p.load_entry ?? null,
       },
     ];
   });
@@ -300,6 +365,7 @@ const VIEWS: Record<string, (s: DemoStore) => Row[]> = {
   v_weekly_volume: vWeeklyVolume,
   v_session_set_counts: vSessionSetCounts,
   v_goal_progress: vGoalProgress,
+  v_adherence: vAdherence,
 };
 
 // ---- filtering / ordering / projection --------------------------------------
@@ -309,6 +375,20 @@ interface Filter {
   op: string;
   val: unknown;
   negate: boolean;
+}
+
+/** Range comparison the way Postgres does it: numerically for numbers,
+ *  lexicographically for text and timestamptz. Coercing everything through
+ *  Number() made every keyset cursor (`lt(performed_at, ...)`,
+ *  `gt(exercise_id, ...)`) compare NaN and silently return nothing. */
+function ordered(a: unknown, b: unknown): number {
+  const na = num(a);
+  const nb = num(b);
+  if (!Number.isNaN(na) && !Number.isNaN(nb) && a !== "" && b !== "")
+    return na - nb;
+  const sa = String(a);
+  const sb = String(b);
+  return sa < sb ? -1 : sa > sb ? 1 : 0;
 }
 
 function matches(row: Row, f: Filter): boolean {
@@ -328,16 +408,16 @@ function matches(row: Row, f: Filter): boolean {
       hit = (f.val as unknown[]).some((x) => String(x) === String(v));
       break;
     case "gt":
-      hit = v !== null && num(v) > num(f.val);
+      hit = v !== null && ordered(v, f.val) > 0;
       break;
     case "gte":
-      hit = v !== null && num(v) >= num(f.val);
+      hit = v !== null && ordered(v, f.val) >= 0;
       break;
     case "lt":
-      hit = v !== null && num(v) < num(f.val);
+      hit = v !== null && ordered(v, f.val) < 0;
       break;
     case "lte":
-      hit = v !== null && num(v) <= num(f.val);
+      hit = v !== null && ordered(v, f.val) <= 0;
       break;
     case "like":
     case "ilike": {
@@ -453,6 +533,7 @@ const DEFAULTS: Record<string, Row> = {
     prescription_id: null,
     set_type: "working",
     rest_seconds_actual: null,
+    load_entry: null,
   },
   set_voids: {},
   set_notes: {},
@@ -469,6 +550,7 @@ const DEFAULTS: Record<string, Row> = {
     rest_seconds: null,
     notes: null,
     superset_group: null,
+    load_entry: null,
   },
   programs: { source_note: null, confirmed_at: null },
 };
@@ -479,6 +561,10 @@ function withDefaults(table: string, row: Row): Row {
     ...(DEFAULTS[table] ?? {}),
     user_id: DEMO_USER_ID,
     created_at: now,
+    // `id uuid default gen_random_uuid()`: a client that lets the database
+    // name the row (training_maxes does — its identity is the unique triple,
+    // not the id) must still come back with one
+    id: `mock-${Math.random().toString(36).slice(2, 12)}`,
     ...row,
   };
 }
@@ -557,10 +643,20 @@ function createQuery(engine: Engine, table: string): MockQuery {
         case "insert":
         case "upsert": {
           const rows = writable();
-          const key = state.op === "upsert" ? state.onConflict : "id";
+          // PostgREST's on_conflict can name a composite unique constraint
+          // (training_maxes is unique on user_id,exercise_id,effective_date),
+          // so the conflict target is a column LIST, not a single key.
+          const keys =
+            state.op === "upsert"
+              ? state.onConflict.split(",").map((k) => k.trim())
+              : ["id"];
           for (const incoming of rowsToArray(state.payload)) {
             const row = withDefaults(state.table, incoming);
-            const idx = rows.findIndex((r) => r[key] === row[key]);
+            const idx = rows.findIndex((r) =>
+              keys.every(
+                (k) => String(r[k] ?? null) === String(row[k] ?? null),
+              ),
+            );
             if (idx === -1) {
               rows.push(row);
               continue;

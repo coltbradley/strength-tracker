@@ -26,12 +26,13 @@ import { reportError, toast } from "../lib/errors";
 import {
   formatPlannedDate,
   formatRepRange,
+  formatStoredTwin,
   todayLocalIso,
 } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
 import { ExercisePicker } from "../components/ExercisePicker";
-import { kgToLb, stepKg, toDisplay } from "../lib/units";
+import { stepKg, toDisplay } from "../lib/units";
 import type {
   ExerciseRow,
   PlannedWorkoutRow,
@@ -301,7 +302,7 @@ export function Plan() {
             <div key={r.id} className="week-item">
               <button
                 type="button"
-                className="week-row"
+                className="week-row week-row-rx"
                 onClick={() => {
                   if (editingRx === r.id) {
                     setEditingRx(null);
@@ -331,8 +332,8 @@ export function Plan() {
                 <div className="week-detail">
                   <Stepper
                     label="sets"
-                    inline
-                    display={`${draft.sets} sets`}
+                    compact
+                    display={`${draft.sets} ${draft.sets === 1 ? "set" : "sets"}`}
                     value={draft.sets}
                     min={1}
                     max={20}
@@ -346,7 +347,7 @@ export function Plan() {
                   />
                   <Stepper
                     label="reps min"
-                    inline
+                    compact
                     display={`${draft.reps_min} reps min`}
                     value={draft.reps_min}
                     min={1}
@@ -361,7 +362,7 @@ export function Plan() {
                   />
                   <Stepper
                     label="reps max"
-                    inline
+                    compact
                     display={`${Math.max(draft.reps_min, draft.reps_max)} reps max`}
                     value={Math.max(draft.reps_min, draft.reps_max)}
                     min={draft.reps_min}
@@ -396,13 +397,9 @@ export function Plan() {
                   {draft.mode === "kg" && (
                     <Stepper
                       label="load"
-                      inline
+                      compact
                       display={loadDraftLabel}
-                      subText={
-                        unit === "lb"
-                          ? `${Math.round(draft.load_kg * 10) / 10} kg stored`
-                          : `${Math.round(kgToLb(draft.load_kg) * 10) / 10} lb`
-                      }
+                      subText={formatStoredTwin(draft.load_kg, unit)}
                       value={draft.load_kg}
                       min={0.5}
                       max={999}
@@ -416,7 +413,7 @@ export function Plan() {
                   {draft.mode === "pct" && (
                     <Stepper
                       label="percent of training max"
-                      inline
+                      compact
                       display={loadDraftLabel}
                       value={draft.load_pct}
                       min={2.5}
@@ -465,7 +462,7 @@ export function Plan() {
                   {draft.hasRest && (
                     <Stepper
                       label="rest seconds"
-                      inline
+                      compact
                       display={`${draft.rest_seconds}s rest`}
                       value={draft.rest_seconds}
                       min={0}

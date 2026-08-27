@@ -5,6 +5,11 @@ import { must, requireExercise } from "../lib/db.ts";
 import { assertIsoDate } from "../lib/dates.ts";
 import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
 
+// Deliberately UTC, not app_tz(): this is the start of a rolling 90-day
+// window, not a calendar day the lifter experiences. A day of slack at the far
+// end of the window changes nothing, and nothing keys off it. Only dates that
+// are compared against app_tz() dates (training_maxes.effective_date) have to
+// agree with the database -- see lib/dates.ts.
 function defaultSince(): string {
   return new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
     .toISOString()

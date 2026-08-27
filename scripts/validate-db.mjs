@@ -65,12 +65,21 @@ await db.exec(`
 
 // --- seed ------------------------------------------------------------------
 let seeded = false;
+let seedSql = null;
 try {
-  const seed = await readFile(join(root, "supabase", "seed", "exercises.generated.sql"), "utf8");
-  await db.exec(seed);
-  seeded = true;
-} catch {
+  seedSql = await readFile(join(root, "supabase", "seed", "exercises.generated.sql"), "utf8");
+} catch (e) {
+  // ENOENT only. Catching everything here (including db.exec below) meant any
+  // SQL error in the generated seed was reported as "seed file missing", the
+  // 800-exercise assertion was skipped, and CI went green on a broken seed.
+  if (e.code !== "ENOENT") throw e;
   console.log("  note  seed file missing, run scripts/build-exercise-seed.mjs (seed checks skipped)");
+}
+if (seedSql !== null) {
+  // Deliberately unguarded: a seed that exists but does not load is a failure,
+  // not a skip.
+  await db.exec(seedSql);
+  seeded = true;
 }
 // curated seed is hand-maintained and always present
 await db.exec(await readFile(join(root, "supabase", "seed", "exercises.curated.sql"), "utf8"));
@@ -235,6 +244,70 @@ await check("timezone: evening local set buckets into the local ISO week", async
   );
   assertEq(r.rows[0].w, "2026-08-10", "local Sunday stays in the prior ISO week");
   await db.exec(`update app_config set value = 'UTC' where key = 'tz'`);
+});
+
+await check("timezone: 'today' is app_tz()'s date, and a UTC stamp is not it", async () => {
+  // The SQL half of the MCP server's date rule (see
+  // supabase/functions/mcp-server/lib/dates.test.ts, which pins the same
+  // instant on the TypeScript side -- change one, change the other).
+  //
+  // The defect this guards against: the MCP server stamped
+  // training_maxes.effective_date from a UTC "today". At 2026-08-27T02:30Z the
+  // lifter in America/Los_Angeles is in the evening of 2026-08-26, so the row
+  // landed on tomorrow, v_current_tm could not see it, and %TM programs were
+  // rejected as having no current training max.
+  const NOW = "2026-08-27T02:30:00Z";
+  const utcToday = NOW.slice(0, 10); // what the old todayIso() produced
+  await db.exec(`update app_config set value = 'America/Los_Angeles' where key = 'tz'`);
+  try {
+    // 1. the two dates genuinely differ at this instant
+    const tzToday = (
+      await db.query(`select ($1::timestamptz at time zone app_tz())::date::text as d`, [NOW])
+    ).rows[0].d;
+    assertEq(tzToday, "2026-08-26", "app_tz() date for an evening-PT instant");
+    if (tzToday === utcToday) throw new Error("premise broken: UTC and app_tz agree here");
+
+    // 2. a TM stamped with the UTC date is invisible to v_current_tm's rule
+    await db.exec(`insert into training_maxes (user_id, exercise_id, value_kg, effective_date)
+                   values ('${OWNER}', 'Pullups', 90, '${utcToday}')`);
+    const visible = await db.query(
+      `select count(*)::int as n from training_maxes
+        where user_id = $1 and exercise_id = 'Pullups'
+          and effective_date <= ($2::timestamptz at time zone app_tz())::date`,
+      [OWNER, NOW],
+    );
+    assertEq(visible.rows[0].n, 0, "UTC-stamped TM is not yet current for the lifter");
+
+    // 3. the tz-aware stamp is current immediately, which is the fix
+    await db.exec(`insert into training_maxes (user_id, exercise_id, value_kg, effective_date)
+                   values ('${OWNER}', 'Pullups', 95, '${tzToday}')`);
+    const nowVisible = await db.query(
+      `select count(*)::int as n from training_maxes
+        where user_id = $1 and exercise_id = 'Pullups'
+          and effective_date <= ($2::timestamptz at time zone app_tz())::date`,
+      [OWNER, NOW],
+    );
+    assertEq(nowVisible.rows[0].n, 1, "tz-stamped TM is current on the day it is set");
+
+    // 4. upsert_program's future-TM explanation: gt() drops the boundary row,
+    //    gte() keeps it, which is the difference between "no current training
+    //    max" with an explanation and without one.
+    const gt = await db.query(
+      `select count(*)::int as n from training_maxes
+        where user_id = $1 and exercise_id = 'Pullups' and effective_date > $2`,
+      [OWNER, utcToday],
+    );
+    const gte = await db.query(
+      `select count(*)::int as n from training_maxes
+        where user_id = $1 and exercise_id = 'Pullups' and effective_date >= $2`,
+      [OWNER, utcToday],
+    );
+    assertEq(gt.rows[0].n, 0, "gt() cannot see a TM dated exactly the boundary day");
+    assertEq(gte.rows[0].n, 1, "gte() explains it");
+  } finally {
+    await db.exec(`delete from training_maxes where user_id = '${OWNER}' and exercise_id = 'Pullups'`);
+    await db.exec(`update app_config set value = 'UTC' where key = 'tz'`);
+  }
 });
 
 await check("goals: unique (user_id, exercise_id) rejects duplicates", async () => {

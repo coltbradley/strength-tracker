@@ -23,13 +23,15 @@ import {
   getPlannedWorkouts,
   getResolvedPrescriptions,
   getServerSessionSets,
+  invalidateForSessionClose,
   syncOpenSessions,
   updatePlannedWorkout,
   weekOrder,
   type OpenSessionRow,
   type WorkoutList,
 } from "../lib/data";
-import { cacheGet, cacheSet, cacheDeleteByPrefix, cacheKeys } from "../lib/db";
+import { groupRamps } from "../lib/entries";
+import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { useArmed } from "../hooks/useArmed";
@@ -395,16 +397,7 @@ export function Today() {
         id: s.id,
         patch: { discarded_at: new Date().toISOString() },
       });
-      await cacheDeleteByPrefix([
-        "doneWorkouts:",
-        "recent:",
-        "e1rm:",
-        "volume:",
-        "goal:",
-        "sessionMeta:",
-        "setNotes:",
-        "lastActuals:",
-      ]);
+      await invalidateForSessionClose();
       setOrphan(null);
       setDoneTick((t) => t + 1);
       toast("Session discarded");
@@ -415,22 +408,10 @@ export function Today() {
 
   /** One preview row per exercise: consecutive same-exercise prescriptions
    *  (a coach's ramp brackets) collapse into a single joined scheme, e.g.
-   *  "1×8-15 · 1×6-8 · 3×3-5". */
-  const groupedRx = (workoutId: string) => {
-    const rows = rx[workoutId] ?? [];
-    const groups: ResolvedPrescriptionRow[][] = [];
-    for (const r of rows) {
-      const last = groups[groups.length - 1];
-      if (
-        last &&
-        last[0].exercise_id === r.exercise_id &&
-        last[0].superset_group === r.superset_group
-      )
-        last.push(r);
-      else groups.push([r]);
-    }
-    return groups;
-  };
+   *  "1×8-15 · 1×6-8 · 3×3-5". Same rule as the session accordion — shared,
+   *  because the two screens disagreeing about how many exercises a day has
+   *  is not something anything would catch. */
+  const groupedRx = (workoutId: string) => groupRamps(rx[workoutId] ?? []);
 
   /** Exactly one start affordance may be live at a time. An active session
    *  owns the screen (the RESUME banner is the primary); an unrecovered
@@ -630,7 +611,7 @@ export function Today() {
         </div>
       )}
 
-      <div className="today-heading">{formatTodayHeading()}</div>
+      <h1 className="today-heading">{formatTodayHeading()}</h1>
       {/* provenance (source_note) deliberately not shown here — the week is
           the subject; where a program came from lives with Claude/the coach */}
       {program && <div className="today-context">{program.name}</div>}
@@ -655,7 +636,12 @@ export function Today() {
             </span>
           </div>
 
-          <div className="week-strip" role="tablist" aria-label="this week">
+          {/* a GROUP, not a tablist: these cells select a day, they do not
+              switch panels, and the half-built tab pattern that was here
+              (no tabpanel, no aria-controls, no roving tabindex, no arrow
+              keys) told a screen reader to expect all four. Each cell keeps
+              its own spoken label and marks itself with aria-current. */}
+          <div className="week-strip" role="group" aria-label="this week">
             {weekDates.map((iso) => {
               const w = byDate.get(iso) ?? null;
               const cellState: WorkoutState | "REST" = w
@@ -667,8 +653,7 @@ export function Today() {
                 <button
                   key={iso}
                   type="button"
-                  role="tab"
-                  aria-selected={isSelected}
+                  aria-current={isSelected ? "date" : undefined}
                   aria-label={`${parseLocalDate(iso).toLocaleDateString(
                     "en-GB",
                     { weekday: "long" },
@@ -719,10 +704,10 @@ export function Today() {
             {selectedWorkout ? (
               <>
                 <div className="selected-day-head">
-                  <span className="selected-day-label">
+                  <h2 className="selected-day-label">
                     {selectedWorkout.label ??
                       `Workout ${selectedWorkout.day_index + 1}`}
-                  </span>
+                  </h2>
                   <span className="section-meta">
                     {stateLabel(states.get(selectedWorkout.id) ?? "UPCOMING")}
                   </span>

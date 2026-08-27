@@ -65,6 +65,9 @@ autoUpdate). Device data survives updates (IndexedDB is untouched).
 - `alter database ... set` for custom GUCs is superuser-only on managed
   Postgres. The timezone lives in the `app_config` table instead:
   `update app_config set value = 'America/Los_Angeles' where key = 'tz';`
+  The MCP server reads that same row for its own "today" and caches it per
+  edge isolate, so after changing it, redeploy `mcp-server` rather than
+  wondering why a training max still lands on the wrong day.
 - Custom auth email templates need custom SMTP (free tier can't). SMTP creds
   come from `.env.local` via `scripts/push-auth-config.sh`.
 - Auth redirect origins must be allowlisted (dashboard → Auth → URL

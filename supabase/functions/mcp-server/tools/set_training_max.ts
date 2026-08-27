@@ -41,9 +41,14 @@ export function registerSetTrainingMax(
     },
     (args) =>
       guard(ctx, "set_training_max", async () => {
+        // One "today" for both the default stamp and the future-date check:
+        // the lifter's home timezone (app_config.tz), the same date
+        // v_current_tm compares against. Resolved once so the two cannot
+        // straddle midnight, and so an evening set cannot stamp tomorrow.
+        const today = await todayIso(db);
         const effectiveDate = args.effective_date
           ? assertIsoDate(args.effective_date, "effective_date")
-          : todayIso();
+          : today;
         const exercise = await requireExercise(db, args.exercise_id);
 
         const { data: previous, error: prevError } = await db.client
@@ -73,7 +78,7 @@ export function registerSetTrainingMax(
 
         // A future-dated TM is legal but invisible to v_current_tm (and to
         // %TM resolution) until the date arrives — make that explicit.
-        const isFuture = effectiveDate > todayIso();
+        const isFuture = effectiveDate > today;
         return jsonResult({
           exercise_id: exercise.id,
           exercise_name: exercise.name,

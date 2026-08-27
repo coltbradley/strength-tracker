@@ -10,16 +10,22 @@ import {
   cacheGet,
   cacheSet,
   cacheDelete,
-  cacheDeleteByPrefix,
+  cacheFamilies,
   cacheKeys,
   cacheKeysWithPrefix,
 } from "../lib/db";
-import { countServerSessionSets, resolveSessionSetCount } from "../lib/data";
+import {
+  countServerSessionSets,
+  invalidateForSessionClose,
+  invalidateForSetChange,
+  resolveSessionSetCount,
+} from "../lib/data";
 import { outbox } from "../lib/sync";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
-import { fromDisplay, kgToLb, stepKg, toDisplay } from "../lib/units";
+import { fromDisplay, stepKg, toDisplay } from "../lib/units";
+import { formatStoredTwin } from "../lib/format";
 import type {
   ActiveSession,
   ResolvedPrescriptionRow,
@@ -37,20 +43,17 @@ const NOTE_CHIPS = [
   "Bar speed good",
 ];
 const MAX_BW_KG = 400;
+/** the summary's elapsed figure is minute-resolution, so a minute is as
+ *  often as it can change */
+const DURATION_TICK_MS = 60_000;
 
-/** Everything derived from this session's sets or its closed/open state.
- *  Ending and discarding invalidate the SAME families — an asymmetry here
- *  is why a finished session used to leave the planned day looking unfinished
- *  and the next session prefilling from pre-session actuals. */
-const DERIVED_PREFIXES = [
-  "recent:",
-  "e1rm:",
-  "volume:",
-  "goal:",
-  "sessionMeta:",
-  "setNotes:",
-  "lastActuals:",
-];
+/** "47 MIN" / "1H 12M" — session length. formatClock would render 72 minutes
+ *  as "72:00", which reads as seventy-two seconds at a glance. */
+export function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m} MIN`;
+  return `${Math.floor(m / 60)}H ${String(m % 60).padStart(2, "0")}M`;
+}
 
 /** Staged End-screen input, kept across a "Back to session" round trip. */
 interface EndDraft {
@@ -76,8 +79,10 @@ export function End() {
   const [setCount, setSetCount] = useState(0);
   /** false until the count is known to be right; gates Discard-as-primary */
   const [countKnown, setCountKnown] = useState(false);
-  const [liftsDone, setLiftsDone] = useState(0);
-  const [liftsTotal, setLiftsTotal] = useState(0);
+  const [exercisesDone, setExercisesDone] = useState(0);
+  const [exercisesTotal, setExercisesTotal] = useState(0);
+  // ticks so a summary left open while writing a note stays honest
+  const [now, setNow] = useState(() => Date.now());
   const [armed, setArmed] = useArmed();
   const discardArmed = armed === "discard";
   // the draft is persisted on unmount, but not once the session is closed
@@ -136,7 +141,7 @@ export function End() {
         const exercisesLogged = new Set(
           [...all.values()].map((s) => s.exercise_id),
         );
-        if (!cancelled) setLiftsDone(exercisesLogged.size);
+        if (!cancelled) setExercisesDone(exercisesLogged.size);
         const rxCached =
           (await cacheGet<ResolvedPrescriptionRow[]>(
             cacheKeys.sessionRx(a.id),
@@ -160,7 +165,7 @@ export function End() {
           if (!skipped.has(`extra:${e.exercise_id}`))
             planned.add(e.exercise_id);
         for (const id of exercisesLogged) planned.add(id);
-        if (!cancelled) setLiftsTotal(planned.size);
+        if (!cancelled) setExercisesTotal(planned.size);
       } catch (e) {
         reportError(e, "read session summary");
       }
@@ -197,6 +202,11 @@ export function End() {
     if (active === null) navigate("/", { replace: true });
   }, [active, navigate]);
 
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), DURATION_TICK_MS);
+    return () => clearInterval(t);
+  }, []);
+
   // sRPE / bodyweight / note survive a "Back to session" round trip
   useEffect(
     () => () => {
@@ -221,7 +231,7 @@ export function End() {
    *  reading as unfinished until the phone found signal again. */
   const markPlannedDayDone = async (plannedWorkoutId: string | null) => {
     if (!plannedWorkoutId) return;
-    const keys = await cacheKeysWithPrefix(["doneWorkouts:"]);
+    const keys = await cacheKeysWithPrefix(cacheFamilies.sessionClosed);
     for (const key of keys) {
       const ids = (await cacheGet<string[]>(key)) ?? [];
       if (!ids.includes(plannedWorkoutId))
@@ -248,7 +258,7 @@ export function End() {
       await clearSessionCaches(active.id);
       // symmetric with discard(): every derived read now returns something
       // different, and the planned day is done
-      await cacheDeleteByPrefix(DERIVED_PREFIXES);
+      await invalidateForSetChange();
       await markPlannedDayDone(active.planned_workout_id);
       toast(
         `Session done — ${setCount} set${setCount === 1 ? "" : "s"} logged${
@@ -292,7 +302,7 @@ export function End() {
       await cacheDelete(cacheKeys.activeSession);
       await clearSessionCaches(active.id);
       // history caches and week DONE state all reference this session
-      await cacheDeleteByPrefix([...DERIVED_PREFIXES, "doneWorkouts:"]);
+      await invalidateForSessionClose();
       toast("Session discarded");
       navigate("/", { replace: true });
     } catch (e) {
@@ -307,10 +317,22 @@ export function End() {
   // ONLY a server-confirmed zero may lead with Discard
   const confirmedEmpty = countKnown && setCount === 0;
 
-  const bwSub =
-    unit === "lb"
-      ? `${Math.round(bwKg * 10) / 10} kg stored`
-      : `${Math.round(kgToLb(bwKg) * 10) / 10} lb`;
+  /** Wall-clock length of the session so far — `started_at` to now, which is
+   *  what `ended_at` is about to be. Suppressed when the arithmetic can't be
+   *  trusted (a clock change, a corrupt cache) rather than shown wrong; the
+   *  overnight sweep bounds a real session to one local day. */
+  const startedMs = Date.parse(active.started_at);
+  const elapsedSeconds = Number.isFinite(startedMs)
+    ? (now - startedMs) / 1000
+    : Number.NaN;
+  const duration =
+    Number.isFinite(elapsedSeconds) &&
+    elapsedSeconds >= 0 &&
+    elapsedSeconds < 24 * 3600
+      ? formatDuration(elapsedSeconds)
+      : null;
+
+  const bwSub = formatStoredTwin(bwKg, unit);
 
   const bwPadReq: PadRequest | null = bwPad
     ? {
@@ -329,16 +351,20 @@ export function End() {
 
   return (
     <div className="screen">
-      <h2 className="screen-title">End session</h2>
-      {/* the lifts breakdown is device-local; when the set count came from
+      <h1 className="screen-title">End session</h1>
+      {/* the exercise breakdown is device-local; when the set count came from
           the server instead (cold cache) there is no breakdown to show, and
-          "0 OF 7 LIFTS" next to "3 SETS LOGGED" would just be wrong */}
+          "0 OF 7 EXERCISES" next to "3 SETS LOGGED" would just be wrong */}
       <p className="end-summary">
+        {duration !== null && `${duration} · `}
         {countKnown
           ? `${setCount} ${setCount === 1 ? "SET" : "SETS"} LOGGED`
           : "SET COUNT UNKNOWN OFFLINE"}
-        {liftsDone > 0 &&
-          ` · ${liftsDone} OF ${Math.max(liftsTotal, liftsDone)} LIFTS`}
+        {exercisesDone > 0 &&
+          ` · ${exercisesDone} OF ${Math.max(
+            exercisesTotal,
+            exercisesDone,
+          )} EXERCISES`}
       </p>
 
       <section className="rule-section">

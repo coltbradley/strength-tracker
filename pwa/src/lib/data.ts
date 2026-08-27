@@ -9,13 +9,16 @@ import {
   cacheSet,
   cacheDelete,
   cacheDeleteByPrefix,
+  cacheFamilies,
   cacheKeys,
 } from "./db";
 import { reportError } from "./errors";
 import { uuid } from "./uuid";
 import type {
+  AdherenceRow,
   ExerciseRow,
   GoalProgressRow,
+  LoadEntry,
   PlannedWorkoutPatch,
   PlannedWorkoutRow,
   PrescriptionInsert,
@@ -24,12 +27,22 @@ import type {
   ResolvedPrescriptionRow,
   SessionBestE1rmRow,
   SetInsert,
+  TrainingMaxRow,
   WeeklyVolumeRow,
 } from "./types";
 
-/** Column list for every `sets` select — one place, matches SetInsert. */
+/** Column list for every `sets` select — one place, matches SetInsert.
+ *
+ *  `load_entry` is load-bearing, not decorative. `load_kg` is always the TOTAL
+ *  system load, so a pair of 15 kg dumbbells is stored as 30; `load_entry` is
+ *  the only thing that says to render that back as "15 kg/side". Drop it from
+ *  the projection and every reader falls through to treating the row as an
+ *  explicit total — History then claims the lifter curled 30 kg per hand, and
+ *  a prescribed-vs-achieved comparison reads a phantom overshoot, which is the
+ *  exact failure the column was added to prevent. It stays NULLABLE on
+ *  purpose: null is "not asserted", never "confirmed total". */
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry";
 
 async function fetchWithCache<T>(
   key: string,
@@ -44,6 +57,38 @@ async function fetchWithCache<T>(
     if (cached !== undefined) return { data: cached, fromCache: true };
     throw e;
   }
+}
+
+// ---- cache invalidation verbs ----------------------------------------------
+// Screens call these; they never name a prefix. The families are declared
+// once in db.ts beside the key builders that produce them, so "did I
+// invalidate the right thing" is answered by reading one place. An asymmetry
+// here already cost a bug once: a finished session left the planned day
+// looking unfinished because finish and discard dropped different families.
+
+/**
+ * A set was logged, voided, or left with a discarded session. Every read
+ * derived from a session's SETS is now stale.
+ */
+export async function invalidateForSetChange(): Promise<void> {
+  await cacheDeleteByPrefix(cacheFamilies.sessionDerived);
+}
+
+/**
+ * A session was discarded. Everything set-derived is stale AND the week's
+ * DONE state is stale.
+ *
+ * Finishing is deliberately NOT this: it calls `invalidateForSetChange` and
+ * then PATCHES the done-workout cache instead of dropping it, because
+ * dropping is a no-op offline — the refetch that would rebuild it is exactly
+ * what cannot run — and the day would keep reading as unfinished. The two
+ * paths must otherwise leave identical survivors; `db.test.ts` pins that.
+ */
+export async function invalidateForSessionClose(): Promise<void> {
+  await cacheDeleteByPrefix([
+    ...cacheFamilies.sessionDerived,
+    ...cacheFamilies.sessionClosed,
+  ]);
 }
 
 function throwIf(error: { message: string } | null): void {
@@ -306,6 +351,134 @@ export async function getResolvedPrescriptions(
   });
 }
 
+// ---- training maxes --------------------------------------------------------
+// `training_maxes` is NOT one of the four PWA-only tables (sets, sessions,
+// set_voids, set_notes) and it is not session-critical, so — exactly like the
+// plan editor above — these writes go straight to Supabase with a toast and
+// never through the offline outbox. It is the same dual-writer class as
+// programs/prescriptions: the MCP server writes it with the service role
+// (set_training_max), the PWA writes it under the owner RLS policies
+// (`tm_insert` / `tm_update` / `tm_delete`, 20260825120002_rls.sql:25-29).
+
+/**
+ * THE resolver for "which training max is in force". Mirrors `v_current_tm`
+ * (20260825120003_views.sql:8-14): the latest `effective_date` that is not in
+ * the future. Taking the newest row outright would let a value the user dated
+ * for next Monday silently become today's number, and % TM prescriptions
+ * would then resolve against a load nobody is lifting yet.
+ *
+ * `rows` may be for one exercise or many; pass a filtered list.
+ */
+export function currentTrainingMax(
+  rows: TrainingMaxRow[],
+  today: string,
+): TrainingMaxRow | null {
+  let best: TrainingMaxRow | null = null;
+  for (const r of rows) {
+    if (r.effective_date > today) continue; // scheduled, not yet in force
+    if (best === null || r.effective_date > best.effective_date) best = r;
+  }
+  return best;
+}
+
+/** exercise_id -> that exercise's rows, newest effective_date first. */
+export function groupTrainingMaxes(
+  rows: TrainingMaxRow[],
+): Map<string, TrainingMaxRow[]> {
+  const out = new Map<string, TrainingMaxRow[]>();
+  for (const r of rows) {
+    const list = out.get(r.exercise_id) ?? [];
+    list.push(r);
+    out.set(r.exercise_id, list);
+  }
+  for (const list of out.values()) {
+    list.sort((a, b) => b.effective_date.localeCompare(a.effective_date));
+  }
+  return out;
+}
+
+/** Every training max the user has ever set, newest first. */
+export async function getTrainingMaxes(): Promise<{
+  data: TrainingMaxRow[];
+  fromCache: boolean;
+}> {
+  return fetchWithCache(cacheKeys.trainingMaxes, async () => {
+    const { data, error } = await supabase
+      .from("training_maxes")
+      .select("id,exercise_id,value_kg,effective_date")
+      .order("effective_date", { ascending: false });
+    throwIf(error);
+    // numeric(6,2) can arrive as a string from PostgREST
+    return ((data ?? []) as TrainingMaxRow[]).map((r) => ({
+      ...r,
+      value_kg: Number(r.value_kg),
+    }));
+  });
+}
+
+/** Every % TM prescription the plan holds that has no TM to resolve against —
+ *  the exact lifts behind a "NO TM SET" badge. Deduped, name included. */
+export async function getUnresolvedTmExercises(): Promise<
+  { exercise_id: string; exercise_name: string }[]
+> {
+  const { data, error } = await supabase
+    .from("v_resolved_prescriptions")
+    .select("exercise_id,exercise_name")
+    .not("load_pct_tm", "is", null)
+    .is("resolved_load_kg", null);
+  throwIf(error);
+  const seen = new Map<string, string>();
+  for (const r of (data ?? []) as {
+    exercise_id: string;
+    exercise_name: string;
+  }[]) {
+    if (!seen.has(r.exercise_id)) seen.set(r.exercise_id, r.exercise_name);
+  }
+  return [...seen].map(([exercise_id, exercise_name]) => ({
+    exercise_id,
+    exercise_name,
+  }));
+}
+
+/**
+ * Set the training max for one exercise on one date. A new date is a NEW row
+ * (the progression is the point); re-setting a date the user already used
+ * replaces that row's value, which the unique constraint would otherwise
+ * reject — corrections are legitimate here, unlike on `sets`.
+ *
+ * `id` is deliberately absent: the DB default fills it on insert, and on
+ * conflict the existing row keeps its own id.
+ */
+export async function setTrainingMax(
+  exerciseId: string,
+  valueKg: number,
+  effectiveDate: string,
+): Promise<void> {
+  const { error } = await supabase.from("training_maxes").upsert(
+    {
+      exercise_id: exerciseId,
+      value_kg: valueKg,
+      effective_date: effectiveDate,
+    },
+    { onConflict: "user_id,exercise_id,effective_date" },
+  );
+  throwIf(error);
+  await invalidateTmCaches();
+}
+
+export async function deleteTrainingMax(id: string): Promise<void> {
+  const { error } = await supabase.from("training_maxes").delete().eq("id", id);
+  throwIf(error);
+  await invalidateTmCaches();
+}
+
+/** Resolved prescriptions carry `tm_kg` / `resolved_load_kg`, so any TM write
+ *  invalidates every cached prescription list as well as the TM list. */
+async function invalidateTmCaches(): Promise<void> {
+  await cacheDelete(cacheKeys.trainingMaxes);
+  await cacheDeleteByPrefix(cacheFamilies.planResolved);
+}
+
 // ---- exercises -------------------------------------------------------------
 
 export async function getExercises(): Promise<{
@@ -315,7 +488,7 @@ export async function getExercises(): Promise<{
   return fetchWithCache(cacheKeys.exercises, async () => {
     const { data, error } = await supabase
       .from("exercises")
-      .select("id,name,equipment,primary_muscles")
+      .select("id,name,equipment")
       .order("name")
       .limit(2000);
     throwIf(error);
@@ -379,10 +552,94 @@ export async function scanLastActuals(
   return { ...anyType, ...best };
 }
 
+/** Rows per page of the logged-exercise scan. Same 1000 the last-actuals
+ *  scan uses — a page size the deployment is known to actually receive, so
+ *  "a short page means the end" stays a safe stop signal. */
+const LOGGED_PAGE = ACTUALS_PAGE;
+
+/**
+ * Fold pages of exercise_id-ordered rows into the distinct ids present.
+ *
+ * The cursor is `exercise_id > last`, so each page jumps past the whole of
+ * the id it ended on instead of walking its remaining sets — the scan is
+ * bounded by how many distinct exercises exist, not by how much was lifted.
+ * `fetchPage` is injected so the walk is testable without a database.
+ */
+export async function scanLoggedExercises(
+  fetchPage: (cursor: string | null) => Promise<{ exercise_id: string }[]>,
+): Promise<string[]> {
+  const ids = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; page < ACTUALS_MAX_PAGES; page++) {
+    const rows = await fetchPage(cursor);
+    if (rows.length === 0) break;
+    for (const r of rows) ids.add(r.exercise_id);
+    if (rows.length < LOGGED_PAGE) break;
+    const next = rows[rows.length - 1].exercise_id;
+    // a page that cannot advance the cursor would loop forever
+    if (next === cursor) break;
+    cursor = next;
+  }
+  return [...ids];
+}
+
+/** Put the most recently trained exercise first, the rest behind it.
+ *  History opens on `[0]`, and the lift you just trained is the one you
+ *  want to look at — the old full-history scan gave that ordering for free
+ *  because it read in time order. */
+export function orderLoggedExercises(
+  ids: string[],
+  mostRecent: string | null,
+): string[] {
+  if (mostRecent === null || !ids.includes(mostRecent)) return ids;
+  return [mostRecent, ...ids.filter((id) => id !== mostRecent)];
+}
+
+/**
+ * Which exercises have at least one live logged set — History's index, and
+ * nothing more, most recently trained first.
+ *
+ * History used to answer this with `getLastActuals()`, which carries
+ * load/reps/type/time/session for every set ever logged and then keeps only
+ * `Object.keys()`. PostgREST has no DISTINCT and Supabase ships with
+ * aggregate functions disabled, so the cheapest exact answer is a
+ * single-column scan whose cursor skips duplicates, plus one tiny read for
+ * the default selection — issued in parallel, so it costs no extra latency.
+ */
+export async function getLoggedExerciseIds(): Promise<{
+  data: string[];
+  fromCache: boolean;
+}> {
+  return fetchWithCache(cacheKeys.loggedExercises, async () => {
+    const [ids, mostRecent] = await Promise.all([
+      scanLoggedExercises(async (cursor) => {
+        let q = supabase
+          .from("v_live_sets")
+          .select("exercise_id")
+          .order("exercise_id")
+          .limit(LOGGED_PAGE);
+        if (cursor !== null) q = q.gt("exercise_id", cursor);
+        const { data, error } = await q;
+        throwIf(error);
+        return (data ?? []) as { exercise_id: string }[];
+      }),
+      (async () => {
+        const { data, error } = await supabase
+          .from("v_live_sets")
+          .select("exercise_id")
+          .order("performed_at", { ascending: false })
+          .limit(1);
+        throwIf(error);
+        return (data?.[0]?.exercise_id as string | undefined) ?? null;
+      })(),
+    ]);
+    return orderLoggedExercises(ids, mostRecent);
+  });
+}
+
 /**
  * Most recent working set per exercise across past sessions (fallback: most
- * recent set of any type). Used to prefill when there is no prescription,
- * and as History's "which exercises have data" index.
+ * recent set of any type). Used to prefill when there is no prescription.
  */
 export async function getLastActuals(excludeSessionId?: string): Promise<{
   data: LastActuals;
@@ -429,6 +686,79 @@ export interface OpenSessionSync {
   orphan: OpenSessionRow | null;
 }
 
+/** Closed state of one session row, as the server has it. */
+export interface SessionClosedState {
+  ended_at: string | null;
+  discarded_at: string | null;
+}
+
+/**
+ * The four server operations the reconciliation needs. Injected the way
+ * `scanLastActuals` takes `fetchPage`, so the auto-complete / auto-discard /
+ * stale-pointer / orphan matrix is a table test with no database. The
+ * default binds these to Supabase and is the only thing here that knows
+ * about PostgREST.
+ */
+export interface OpenSessionPort {
+  /** open (not ended, not discarded) sessions, oldest first */
+  listOpen(): Promise<OpenSessionRow[]>;
+  /** when the session's newest live set was performed, or null if it has none */
+  lastSetAt(sessionId: string): Promise<string | null>;
+  /** close a session that is still open (no-op if it closed meanwhile) */
+  complete(sessionId: string, endedAt: string): Promise<void>;
+  discard(sessionId: string, discardedAt: string): Promise<void>;
+  /** null when the server has never seen the row — its insert may still be
+   *  queued in the outbox, which is NOT the same as "closed" */
+  closedState(sessionId: string): Promise<SessionClosedState | null>;
+}
+
+const supabaseOpenSessions: OpenSessionPort = {
+  async listOpen() {
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("id,planned_workout_id,started_at")
+      .is("ended_at", null)
+      .is("discarded_at", null)
+      .order("started_at");
+    throwIf(error);
+    return (data ?? []) as OpenSessionRow[];
+  },
+  async lastSetAt(sessionId) {
+    const { data, error } = await supabase
+      .from("v_live_sets")
+      .select("performed_at")
+      .eq("session_id", sessionId)
+      .order("performed_at", { ascending: false })
+      .limit(1);
+    throwIf(error);
+    return (data?.[0]?.performed_at as string | undefined) ?? null;
+  },
+  async complete(sessionId, endedAt) {
+    const { error } = await supabase
+      .from("sessions")
+      .update({ ended_at: endedAt })
+      .eq("id", sessionId)
+      .is("ended_at", null);
+    throwIf(error);
+  },
+  async discard(sessionId, discardedAt) {
+    const { error } = await supabase
+      .from("sessions")
+      .update({ discarded_at: discardedAt })
+      .eq("id", sessionId);
+    throwIf(error);
+  },
+  async closedState(sessionId) {
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("id,ended_at,discarded_at")
+      .eq("id", sessionId)
+      .maybeSingle();
+    throwIf(error);
+    return (data as SessionClosedState | null) ?? null;
+  },
+};
+
 /**
  * Reconcile open sessions with the calendar. Online-only; callers treat a
  * throw as "offline, retry on next launch". `localDayOf` maps a timestamptz
@@ -441,15 +771,9 @@ export async function syncOpenSessions(
   /** session ids with a QUEUED update (ended/discarded offline) — the server
    *  hasn't heard yet, so they must be neither auto-closed nor surfaced */
   pendingUpdateIds: Set<string> = new Set(),
+  port: OpenSessionPort = supabaseOpenSessions,
 ): Promise<OpenSessionSync> {
-  const { data, error } = await supabase
-    .from("sessions")
-    .select("id,planned_workout_id,started_at")
-    .is("ended_at", null)
-    .is("discarded_at", null)
-    .order("started_at");
-  throwIf(error);
-  const open = ((data ?? []) as OpenSessionRow[]).filter(
+  const open = (await port.listOpen()).filter(
     (s) => !pendingUpdateIds.has(s.id),
   );
 
@@ -459,32 +783,15 @@ export async function syncOpenSessions(
 
   for (const s of open) {
     if (localDayOf(s.started_at) >= today) continue; // still today's business
-    const { data: lastRows, error: lErr } = await supabase
-      .from("v_live_sets")
-      .select("performed_at")
-      .eq("session_id", s.id)
-      .order("performed_at", { ascending: false })
-      .limit(1);
-    throwIf(lErr);
-    const last = lastRows?.[0]?.performed_at as string | undefined;
+    const last = await port.lastSetAt(s.id);
     if (last) {
       // complete at the last logged set (clamped: the DB requires
       // ended_at >= started_at)
-      const endedAt = last > s.started_at ? last : s.started_at;
-      const { error: uErr } = await supabase
-        .from("sessions")
-        .update({ ended_at: endedAt })
-        .eq("id", s.id)
-        .is("ended_at", null);
-      throwIf(uErr);
+      await port.complete(s.id, last > s.started_at ? last : s.started_at);
       autoCompleted++;
     } else {
-      const { error: dErr } = await supabase
-        .from("sessions")
-        .update({ discarded_at: new Date().toISOString() })
-        .eq("id", s.id);
-      throwIf(dErr);
-      await cacheDeleteByPrefix(["doneWorkouts:"]);
+      await port.discard(s.id, new Date().toISOString());
+      await cacheDeleteByPrefix(cacheFamilies.sessionClosed);
       autoDiscarded++;
     }
     if (activeId === s.id) {
@@ -498,12 +805,7 @@ export async function syncOpenSessions(
   // its insert may still be queued in the outbox — so only a row that
   // exists and is closed clears the cache.
   if (activeId !== null && !clearedActive) {
-    const { data: row, error: aErr } = await supabase
-      .from("sessions")
-      .select("id,ended_at,discarded_at")
-      .eq("id", activeId)
-      .maybeSingle();
-    throwIf(aErr);
+    const row = await port.closedState(activeId);
     if (row && (row.ended_at !== null || row.discarded_at !== null)) {
       await cacheDelete(cacheKeys.activeSession);
       clearedActive = true;
@@ -527,23 +829,33 @@ export interface SessionMetaRow {
   id: string;
   session_rpe: number | null;
   notes: string | null;
+  /** Optional because sessions cached before History read it back simply
+   *  carry no bodyweight field; treat undefined as "not recorded". */
+  bodyweight_kg?: number | null;
 }
 
-/** Notes/sRPE for the sessions behind one exercise's history, cached under
- *  `sessionMeta:<exerciseId>` so notes read back offline too. */
+/** Notes/sRPE/bodyweight for the sessions behind one exercise's history,
+ *  cached under `sessionMeta:<exerciseId>` so they read back offline too. */
 export async function getSessionMeta(
   exerciseId: string,
   ids: string[],
 ): Promise<{ data: Record<string, SessionMetaRow>; fromCache: boolean }> {
-  return fetchWithCache(`sessionMeta:${exerciseId}`, async () => {
+  return fetchWithCache(cacheKeys.sessionMeta(exerciseId), async () => {
     if (ids.length === 0) return {};
     const { data, error } = await supabase
       .from("sessions")
-      .select("id,session_rpe,notes")
+      .select("id,session_rpe,notes,bodyweight_kg")
       .in("id", ids);
     throwIf(error);
     return Object.fromEntries(
-      ((data ?? []) as SessionMetaRow[]).map((r) => [r.id, r]),
+      ((data ?? []) as SessionMetaRow[]).map((r) => [
+        r.id,
+        {
+          ...r,
+          bodyweight_kg:
+            r.bodyweight_kg == null ? null : Number(r.bodyweight_kg),
+        },
+      ]),
     );
   });
 }
@@ -573,7 +885,9 @@ export async function getSetNotesForExercise(
   exerciseId: string,
   ids: string[],
 ): Promise<{ data: Record<string, string>; fromCache: boolean }> {
-  return fetchWithCache(`setNotes:${exerciseId}`, () => getSetNotesByIds(ids));
+  return fetchWithCache(cacheKeys.setNotes(exerciseId), () =>
+    getSetNotesByIds(ids),
+  );
 }
 
 // ---- session sets (server + cache; caller merges outbox pending) -----------
@@ -700,6 +1014,126 @@ export async function getGoalProgress(
     const rows = (data ?? []) as GoalProgressRow[];
     return rows[0] ?? null;
   });
+}
+
+// ---- adherence (prescribed vs achieved) ------------------------------------
+
+/** v_adherence rows plus the SET COUNT each prescription asked for, which the
+ *  view does not carry (it is one row per LOGGED set, not per planned set). */
+export interface AdherenceBundle {
+  rows: AdherenceRow[];
+  /** prescription_id -> prescriptions.sets; absent if the row is gone */
+  plannedSets: Record<string, number>;
+}
+
+/**
+ * What was prescribed for the sets already on screen. Scoped to the session
+ * ids History is showing rather than the whole training record, so the read
+ * stays proportional to what is rendered.
+ */
+export async function getAdherence(
+  exerciseId: string,
+  sessionIds: string[],
+): Promise<{ data: AdherenceBundle; fromCache: boolean }> {
+  return fetchWithCache(cacheKeys.adherence(exerciseId), async () => {
+    if (sessionIds.length === 0) return { rows: [], plannedSets: {} };
+    const { data, error } = await supabase
+      .from("v_adherence")
+      .select(
+        "set_id,session_id,exercise_id,prescription_id,set_index,performed_at,actual_load_kg,actual_reps,reps_min,reps_max,prescribed_load_kg,load_delta_kg,rep_outcome,actual_load_entry,prescribed_load_entry",
+      )
+      .eq("exercise_id", exerciseId)
+      .in("session_id", sessionIds);
+    throwIf(error);
+    const rows = ((data ?? []) as AdherenceRow[]).map((r) => ({
+      ...r,
+      actual_load_kg: Number(r.actual_load_kg),
+      prescribed_load_kg:
+        r.prescribed_load_kg == null ? null : Number(r.prescribed_load_kg),
+      load_delta_kg: r.load_delta_kg == null ? null : Number(r.load_delta_kg),
+    }));
+    const rxIds = [...new Set(rows.map((r) => r.prescription_id))];
+    const plannedSets: Record<string, number> = {};
+    if (rxIds.length > 0) {
+      const { data: rx, error: rErr } = await supabase
+        .from("prescriptions")
+        .select("id,sets")
+        .in("id", rxIds);
+      throwIf(rErr);
+      for (const p of (rx ?? []) as { id: string; sets: number }[]) {
+        plannedSets[p.id] = Number(p.sets);
+      }
+    }
+    return { rows, plannedSets };
+  });
+}
+
+/** One prescription as it played out in one session. */
+export interface RxOutcome {
+  prescriptionId: string;
+  repsMin: number;
+  repsMax: number;
+  prescribedLoadKg: number | null;
+  prescribedEntry: LoadEntry | null;
+  /** what the plan asked for; null when the prescription has since gone */
+  plannedSets: number | null;
+  loggedSets: number;
+  /** the set_index the first set against this prescription carried */
+  firstIndex: number;
+  /**
+   * One side of the comparison says "per side" and the other says nothing at
+   * all. `load_kg` is the total by convention, but a NULL entry mode is an
+   * ABSENT assertion, not a total — so those two numbers may be on different
+   * scales and the app must not imply otherwise.
+   */
+  entryAmbiguous: boolean;
+}
+
+/**
+ * Fold v_adherence into "per session, what each prescription asked for and
+ * how many sets answered it". Pure, so the honesty rules above are testable
+ * without a database.
+ */
+export function summariseAdherence(
+  bundle: AdherenceBundle,
+): Map<string, RxOutcome[]> {
+  const bySession = new Map<string, Map<string, RxOutcome>>();
+  for (const r of bundle.rows) {
+    const perRx = bySession.get(r.session_id) ?? new Map<string, RxOutcome>();
+    bySession.set(r.session_id, perRx);
+    const cur = perRx.get(r.prescription_id);
+    // an entry mode of null is UNKNOWN; only a per_side claim facing an
+    // unasserted counterpart makes the two loads incomparable
+    const ambiguous =
+      (r.prescribed_load_entry === "per_side" &&
+        r.actual_load_entry === null) ||
+      (r.prescribed_load_entry === null && r.actual_load_entry === "per_side");
+    if (cur === undefined) {
+      perRx.set(r.prescription_id, {
+        prescriptionId: r.prescription_id,
+        repsMin: r.reps_min,
+        repsMax: r.reps_max,
+        prescribedLoadKg: r.prescribed_load_kg,
+        prescribedEntry: r.prescribed_load_entry,
+        plannedSets: bundle.plannedSets[r.prescription_id] ?? null,
+        loggedSets: 1,
+        firstIndex: r.set_index,
+        entryAmbiguous: ambiguous,
+      });
+    } else {
+      cur.loggedSets += 1;
+      cur.firstIndex = Math.min(cur.firstIndex, r.set_index);
+      cur.entryAmbiguous = cur.entryAmbiguous || ambiguous;
+    }
+  }
+  const out = new Map<string, RxOutcome[]>();
+  for (const [sessionId, perRx] of bySession) {
+    out.set(
+      sessionId,
+      [...perRx.values()].sort((a, b) => a.firstIndex - b.firstIndex),
+    );
+  }
+  return out;
 }
 
 export async function getRecentSets(

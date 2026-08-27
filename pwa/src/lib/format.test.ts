@@ -4,6 +4,7 @@ import {
   formatRxTarget,
   formatSessionDate,
   formatShortDate,
+  formatStoredTwin,
 } from "./format";
 import type { ResolvedPrescriptionRow } from "./types";
 
@@ -80,5 +81,20 @@ describe("formatRxTarget is the one prescription formatter", () => {
     expect(
       formatRxTarget(rx({ resolved_load_kg: 100, plate_load_kg: 100 }), "lb"),
     ).toBe("3×5 @ 220.5 lb");
+  });
+});
+
+// The unit twin under a load field was hand-rolled on three screens. It is
+// the app's only statement of the kg-storage contract, so the three must not
+// be able to word it differently.
+describe("formatStoredTwin", () => {
+  it("names the STORED value when the user is typing lb", () => {
+    expect(formatStoredTwin(102.0583, "lb")).toBe("102.1 kg stored");
+    expect(formatStoredTwin(60, "lb")).toBe("60 kg stored");
+  });
+
+  it("gives the lb equivalent when the user is typing kg", () => {
+    expect(formatStoredTwin(100, "kg")).toBe("220.5 lb");
+    expect(formatStoredTwin(0, "kg")).toBe("0 lb");
   });
 });

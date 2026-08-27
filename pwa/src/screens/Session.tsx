@@ -21,12 +21,16 @@
 //   and a bracket rail. Suggestion only — logging order is never enforced.
 // - Per-set notes live in set_notes (editable, last-write-wins), cached per
 //   session and queued through the outbox like everything else.
+// - Load entry: `entryKg` is what the user types, which on a per-side
+//   movement is ONE side. `sets.load_kg` always stores the total, and
+//   `load_entry` records which it was — the resolution chain and the
+//   arithmetic both live in lib/loadEntry.ts.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Stepper } from "../components/Stepper";
+import { Stepper, type StepDef } from "../components/Stepper";
 import { Note } from "../components/Note";
-import { RestTimer } from "../components/RestTimer";
+import { RestTimer, type ActiveRest } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
@@ -42,72 +46,53 @@ import {
   mergeSets,
   type LastActuals,
 } from "../lib/data";
+import {
+  bracketFor,
+  buildEntries,
+  setsForEntry as setsForEntryOf,
+  supersetInfo as supersetInfoOf,
+  totalSets,
+  type ExerciseEntry,
+  type ExtraExercise,
+} from "../lib/entries";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
-import { prefillSet } from "../lib/prefill";
+import { getPrefillFallback, prefillSet } from "../lib/prefill";
 import { split } from "../lib/plates";
 import {
   formatClock,
   formatRepRange,
+  formatRxTarget,
+  formatStoredTwin,
   rxHasNoTm,
-  rxLoadKg,
 } from "../lib/format";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
 import {
-  useDefaultRestSeconds,
+  useAutoStartRest,
   useExerciseBarKg,
+  useExercisePref,
+  useExerciseRestSeconds,
   usePlatesOnHand,
 } from "../hooks/useSettings";
-import { fromDisplay, kgToLb, stepKg, toDisplay } from "../lib/units";
+import { setExerciseLoadEntry } from "../lib/settings";
+import {
+  enteredKg,
+  loadEntryForSet,
+  offersLoadEntry,
+  resolveLoadEntry,
+  totalKg,
+} from "../lib/loadEntry";
+import { fromDisplay, stepKgFor, toDisplay, type Unit } from "../lib/units";
 import type {
   ActiveSession,
   ExerciseRow,
+  LoadEntry,
   ResolvedPrescriptionRow,
   SetInsert,
   SetType,
 } from "../lib/types";
-
-interface ExtraExercise {
-  exercise_id: string;
-  name: string;
-}
-
-interface ExerciseEntry {
-  /** first bracket's prescription id, or `extra:<exercise_id>` */
-  key: string;
-  exercise_id: string;
-  name: string;
-  /** consecutive prescriptions for this exercise (a coach's ramp brackets,
-   *  e.g. 1×8-15, 1×6-8, 3×3-5) — ONE entry, walked through in order.
-   *  Empty = unprescribed. */
-  brackets: ResolvedPrescriptionRow[];
-}
-
-/** total prescribed working sets across an entry's brackets */
-function totalSets(entry: ExerciseEntry): number {
-  return entry.brackets.reduce((n, b) => n + b.sets, 0);
-}
-
-/** the bracket the (n+1)th working set falls into */
-function bracketFor(
-  entry: ExerciseEntry,
-  n: number,
-): ResolvedPrescriptionRow | null {
-  let acc = 0;
-  for (const b of entry.brackets) {
-    acc += b.sets;
-    if (n < acc) return b;
-  }
-  return entry.brackets[entry.brackets.length - 1] ?? null;
-}
-
-interface RestState {
-  startedAt: number;
-  targetSeconds: number;
-  forLabel: string;
-}
 
 /** Cached mirror of the rest clock. targetSeconds null = strip dismissed but
  *  the clock still runs for rest_seconds_actual recording. */
@@ -135,7 +120,7 @@ const MAX_REST_SECONDS = 3600;
 export function Session() {
   const navigate = useNavigate();
   const unit = useUnit();
-  const defaultRest = useDefaultRestSeconds();
+  const autoStartRest = useAutoStartRest();
   const inventory = usePlatesOnHand(unit);
 
   const [active, setActive] = useState<ActiveSession | null | undefined>(
@@ -149,12 +134,15 @@ export function Session() {
   const [equipMap, setEquipMap] = useState<Record<string, string | null>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
 
-  const [loadKg, setLoadKg] = useState(20);
-  const [reps, setReps] = useState(8);
+  // The number the USER types. On a per-side exercise it is one side; the
+  // total that reaches `sets.load_kg` is derived at the edges (see
+  // lib/loadEntry.ts). Seeded from the configured fallback, never a literal.
+  const [entryKg, setEntryKg] = useState(() => getPrefillFallback().loadKg);
+  const [reps, setReps] = useState(() => getPrefillFallback().reps);
   const [setType, setSetType] = useState<SetType>("working");
   const [logLocked, setLogLocked] = useState(false);
 
-  const [rest, setRest] = useState<RestState | null>(null);
+  const [rest, setRest] = useState<ActiveRest | null>(null);
   // survives DONE so the next log can still record elapsed rest
   const restRef = useRef<{ startedAt: number } | null>(null);
 
@@ -295,16 +283,31 @@ export function Session() {
           Object.fromEntries(exercises.data.map((e) => [e.id, e.equipment])),
         );
         setAllExercises(exercises.data);
+        // Read the local copy BEFORE the server read overwrites the cache:
+        // `load_entry` is written by this device and is not in every server
+        // column list, and an absent column must never be read back as
+        // "total" — that would silently double a per-side set's display.
+        const localSets =
+          (await cacheGet<SetInsert[]>(cacheKeys.sessionSets(a.id))) ?? [];
         const [server, pending] = await Promise.all([
           getServerSessionSets(a.id),
           outbox.pendingSets(a.id),
         ]);
         if (cancelled) return;
+        const knownEntry = new Map<string, LoadEntry>();
+        for (const s of [...localSets, ...pending])
+          if (s.load_entry != null) knownEntry.set(s.id, s.load_entry);
         const merged = applySets((prev) =>
-          mergeSets(mergeSets(server, pending), prev).filter(
-            (s) => !voided.has(s.id),
-          ),
+          mergeSets(mergeSets(server, pending), prev)
+            .filter((s) => !voided.has(s.id))
+            .map((s) =>
+              s.load_entry != null
+                ? s
+                : { ...s, load_entry: knownEntry.get(s.id) ?? null },
+            ),
         );
+        // re-cache the repaired list; the server read just clobbered it
+        cacheSet(cacheKeys.sessionSets(a.id), merged).catch(() => undefined);
         // notes may have been written on another device — best-effort merge
         getSetNotesByIds(merged.map((s) => s.id))
           .then((fresh) => {
@@ -351,64 +354,12 @@ export function Session() {
 
   const knownRxIds = useMemo(() => new Set(rx.map((r) => r.id)), [rx]);
 
-  /** a set whose prescription link points at nothing in this session's
-   *  snapshot (null, or a prescription since deleted) */
-  const isOrphanSet = useCallback(
-    (s: SetInsert) =>
-      s.prescription_id === null || !knownRxIds.has(s.prescription_id),
-    [knownRxIds],
+  // ramps collapsed, extras appended, orphan sets given a home — see
+  // lib/entries.ts, where the rules are pure and unit-tested
+  const entries: ExerciseEntry[] = useMemo(
+    () => buildEntries(rx, extras, sets, allExercises),
+    [rx, extras, sets, allExercises],
   );
-
-  const entries: ExerciseEntry[] = useMemo(() => {
-    // consecutive same-exercise prescriptions collapse into one entry with
-    // bracket structure (a ramp reads as one exercise, not three rows);
-    // NON-consecutive repeats (squat early + squat finisher) stay distinct
-    const fromRx: ExerciseEntry[] = [];
-    for (const r of rx) {
-      const last = fromRx[fromRx.length - 1];
-      if (
-        last &&
-        last.exercise_id === r.exercise_id &&
-        last.brackets[0].superset_group === r.superset_group
-      )
-        last.brackets.push(r);
-      else
-        fromRx.push({
-          key: r.id,
-          exercise_id: r.exercise_id,
-          name: r.exercise_name,
-          brackets: [r],
-        });
-    }
-    const covered = new Set(fromRx.map((f) => f.exercise_id));
-    const extraEntries: ExerciseEntry[] = extras
-      .filter((e) => !covered.has(e.exercise_id))
-      .map((e) => ({
-        key: `extra:${e.exercise_id}`,
-        exercise_id: e.exercise_id,
-        name: e.name,
-        brackets: [],
-      }));
-    for (const e of extraEntries) covered.add(e.exercise_id);
-    // No logged set may be invisible: synthesize entries for exercises that
-    // have sets but no rx/extra entry (lost extras cache, plan edited
-    // mid-session, sets logged on another device).
-    const orphanIds = [
-      ...new Set(
-        sets
-          .filter((s) => !covered.has(s.exercise_id) && isOrphanSet(s))
-          .map((s) => s.exercise_id),
-      ),
-    ];
-    const fallback: ExerciseEntry[] = orphanIds.map((id) => ({
-      key: `extra:${id}`,
-      exercise_id: id,
-      name:
-        allExercises.find((e) => e.id === id)?.name ?? id.replace(/_/g, " "),
-      brackets: [],
-    }));
-    return [...fromRx, ...extraEntries, ...fallback];
-  }, [rx, extras, sets, allExercises, isOrphanSet]);
 
   const openEntry = useMemo(
     () => entries.find((e) => e.key === openKey) ?? null,
@@ -421,26 +372,8 @@ export function Session() {
   );
 
   const setsForEntry = useCallback(
-    (entry: ExerciseEntry) => {
-      if (entry.brackets.length > 0) {
-        const ids = new Set(entry.brackets.map((b) => b.id));
-        // the FIRST rx entry for an exercise also claims that exercise's
-        // orphan sets, so nothing logged can disappear from the UI
-        const claimsOrphans =
-          rx.find((r) => r.exercise_id === entry.exercise_id)?.id === entry.key;
-        return sets.filter(
-          (s) =>
-            (s.prescription_id !== null && ids.has(s.prescription_id)) ||
-            (claimsOrphans &&
-              s.exercise_id === entry.exercise_id &&
-              isOrphanSet(s)),
-        );
-      }
-      return sets.filter(
-        (s) => s.exercise_id === entry.exercise_id && isOrphanSet(s),
-      );
-    },
-    [sets, rx, isOrphanSet],
+    (entry: ExerciseEntry) => setsForEntryOf(entry, sets, rx, knownRxIds),
+    [sets, rx, knownRxIds],
   );
 
   /** working sets logged against an entry — the number that answers
@@ -473,37 +406,7 @@ export function Session() {
 
   // superset grouping: consecutive entries sharing a non-null group get
   // A1/A2 tags and a bracket rail
-  const supersetInfo = useMemo(() => {
-    const map = new Map<
-      string,
-      { tag: string; first: boolean; last: boolean }
-    >();
-    let i = 0;
-    while (i < entries.length) {
-      const group = entries[i].brackets[0]?.superset_group ?? null;
-      if (group === null) {
-        i++;
-        continue;
-      }
-      let j = i;
-      while (
-        j < entries.length &&
-        (entries[j].brackets[0]?.superset_group ?? null) === group
-      )
-        j++;
-      if (j - i > 1) {
-        const letter = String.fromCharCode(64 + group); // 1->A, 2->B
-        for (let k = i; k < j; k++)
-          map.set(entries[k].key, {
-            tag: `${letter}${k - i + 1}`,
-            first: k === i,
-            last: k === j - 1,
-          });
-      }
-      i = j;
-    }
-    return map;
-  }, [entries]);
+  const supersetInfo = useMemo(() => supersetInfoOf(entries), [entries]);
 
   // "NEXT ▸" hint once the open exercise is complete — suggestion, not
   // auto-advance
@@ -523,6 +426,7 @@ export function Session() {
     unit,
     equipment,
   );
+  const exercisePref = useExercisePref(openEntry?.exercise_id ?? null);
 
   // ---- accordion -----------------------------------------------------------
 
@@ -550,6 +454,41 @@ export function Session() {
     ? `${openEntry.key}:${currentBracket?.id ?? "free"}`
     : null;
 
+  // ---- per-side convention -------------------------------------------------
+
+  // How this movement's load is expressed: the user's own choice, then the
+  // coach's prescription, then a guess from the equipment (lib/loadEntry.ts).
+  // `entryKg` is one side when this is "per_side"; `totalLoadKg` is what the
+  // database always stores.
+  const loadEntryInput = {
+    override: exercisePref.loadEntry,
+    prescribed: currentBracket?.load_entry ?? null,
+    equipment,
+    name: openEntry?.name ?? "",
+  };
+  const loadEntry: LoadEntry = resolveLoadEntry(loadEntryInput);
+  const perSide = loadEntry === "per_side";
+  const showLoadEntry = openEntry !== null && offersLoadEntry(loadEntryInput);
+  const totalLoadKg = totalKg(entryKg, loadEntry);
+  // the total is what the column caps, so a per-side entry caps at half
+  const maxEntryKg = perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
+
+  /** Flip the convention for this exercise, persisted device-locally beside
+   *  its bar and increment. The number on screen deliberately does NOT move:
+   *  it is what is written on the implement, and only the count of implements
+   *  changed. */
+  const toggleLoadEntry = () => {
+    if (!openEntry) return;
+    setExerciseLoadEntry(openEntry.exercise_id, perSide ? "total" : "per_side");
+  };
+
+  // rest before the next set: the coach's bracket, then this movement's own
+  // preference, then the global default
+  const restSeconds = useExerciseRestSeconds(
+    openEntry?.exercise_id ?? null,
+    currentBracket?.rest_seconds ?? null,
+  );
+
   const prefilledFor = useRef<string | null>(null);
   useEffect(() => {
     // wait for the sets merge: a mid-workout reload otherwise prefills from
@@ -563,7 +502,11 @@ export function Session() {
       prescription: currentBracket
         ? {
             resolved_load_kg: currentBracket.resolved_load_kg,
-            plate_load_kg: currentBracket.plate_load_kg,
+            // plate_load_kg rounds the TOTAL to 2.5 kg, which is the wrong
+            // granularity for a pair (2.5 kg per hand is a 5 kg step), so a
+            // per-side movement prefills from the unrounded resolved load —
+            // see the migration header.
+            plate_load_kg: perSide ? null : currentBracket.plate_load_kg,
             reps_min: currentBracket.reps_min,
             reps_max: currentBracket.reps_max,
           }
@@ -573,9 +516,13 @@ export function Session() {
         : null,
       lastSession: lastActuals[openEntry.exercise_id] ?? null,
     });
-    setLoadKg(p.loadKg);
+    // every source above is a TOTAL; the steppers hold what gets typed
+    setEntryKg(Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100);
     setReps(p.reps);
     setSetType("working");
+    // `loadEntry`/`perSide` are deliberately NOT dependencies: flipping the
+    // convention mid-entry must not re-prefill over a staged value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     setsLoaded,
     openEntry,
@@ -625,10 +572,12 @@ export function Session() {
       prescription_id: currentBracket?.id ?? null,
       set_index: nextIndex,
       set_type: setType,
-      load_kg: loadKg,
+      // ALWAYS the total system load; load_entry records how it was typed
+      load_kg: Math.round(totalLoadKg * 100) / 100,
       reps,
       performed_at: new Date().toISOString(),
       rest_seconds_actual: recordableRest(),
+      load_entry: loadEntryForSet(loadEntry, totalLoadKg),
     };
     const next = applySets((prev) => [...prev, set]);
     cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
@@ -638,13 +587,17 @@ export function Session() {
       .enqueue({ kind: "insert", table: "sets", payload: set })
       .catch((e: unknown) => reportError(e, "log set"));
 
+    // The clock always starts MEASURING (rest_seconds_actual is data, and
+    // append-only means it can never be added later); auto-start governs only
+    // whether the strip appears.
     const now = Date.now();
     restRef.current = { startedAt: now };
-    setRest({
-      startedAt: now,
-      targetSeconds: currentBracket?.rest_seconds ?? defaultRest,
-      forLabel: `${openEntry.name} set ${nextIndex + 1}`,
-    });
+    if (autoStartRest)
+      setRest({
+        startedAt: now,
+        targetSeconds: restSeconds,
+        forLabel: `${openEntry.name} set ${nextIndex + 1}`,
+      });
     setSetType("working");
   };
 
@@ -770,13 +723,15 @@ export function Session() {
     const U = unit.toUpperCase();
     if (pad.kind === "load") {
       return {
-        label: `${openEntry.name.toUpperCase()} · LOAD IN ${U}`,
+        label: `${openEntry.name.toUpperCase()} · LOAD IN ${U}${
+          perSide ? " PER SIDE" : ""
+        }`,
         action: pad.fromPlates ? "BACK TO PLATES" : "SET LOAD",
-        initial: String(toDisplay(loadKg, unit)),
+        initial: String(toDisplay(entryKg, unit)),
         allowDecimal: true,
         onCommit: (v) => {
-          const kg = Math.min(MAX_LOAD_KG, Math.max(0, fromDisplay(v, unit)));
-          setLoadKg(Math.round(kg * 100) / 100);
+          const kg = Math.min(maxEntryKg, Math.max(0, fromDisplay(v, unit)));
+          setEntryKg(Math.round(kg * 100) / 100);
           setPad(null);
           if (pad.fromPlates) setSheet("plates");
         },
@@ -828,9 +783,10 @@ export function Session() {
   const entrySets = openEntry ? setsForEntry(openEntry) : [];
   const exerciseSets = openEntry ? setsForExercise(openEntry.exercise_id) : [];
 
+  // plate maths is always about the whole loaded implement
   const hint = plateable
     ? (() => {
-        const r = split(loadKg, exerciseBarKg, inventory);
+        const r = split(totalLoadKg, exerciseBarKg, inventory);
         return r.plates.length > 0
           ? r.plates
               .map(
@@ -844,10 +800,21 @@ export function Session() {
       })()
     : null;
 
-  const loadSub =
-    unit === "lb"
-      ? `${Math.round(loadKg * 10) / 10} kg stored`
-      : `${Math.round(kgToLb(loadKg) * 10) / 10} lb`;
+  // per side, the arithmetic the app is doing on the user's behalf is the
+  // thing worth showing; otherwise the converted twin
+  const loadSub = perSide
+    ? `${toDisplay(totalLoadKg, unit)} ${unit} total`
+    : formatStoredTwin(entryKg, unit);
+
+  /** "Last time · 60 kg × 8" — the previous session's working set for this
+   *  movement, in the convention the screen is currently using. Reference
+   *  text: it never competes with the target or the log button. */
+  const lastTime = (exerciseId: string): string | null => {
+    const a = lastActuals[exerciseId];
+    if (!a) return null;
+    const shown = toDisplay(enteredKg(a.load_kg, loadEntry), unit);
+    return `Last time · ${shown} ${unit}${perSide ? "/side" : ""} × ${a.reps}`;
+  };
 
   /** rest AFTER a given set: next exercise-set's stored value, or live timer */
   const restAfter = (s: SetInsert): string | null => {
@@ -865,14 +832,30 @@ export function Session() {
     return null;
   };
 
-  /** "1×8-15 @ 90 · 3×3-5" — an entry's full prescribed scheme */
-  const bracketSpec = (b: ResolvedPrescriptionRow): string => {
-    const load = rxLoadKg(b);
-    const base = `${b.sets}×${formatRepRange(b.reps_min, b.reps_max)}`;
-    return load !== null ? `${base} @ ${toDisplay(load, unit)} ${unit}` : base;
-  };
+  /** "1×8-15 @ 90 KG · 3×3-5" — an entry's full prescribed scheme */
   const scheme = (entry: ExerciseEntry): string =>
-    entry.brackets.map(bracketSpec).join(" · ");
+    entry.brackets.map((b) => formatRxTarget(b, unit)).join(" · ");
+
+  /** The load stepper's buttons: coarse pair outside, fine pair inside. Both
+   *  the label and the delta come from `stepKgFor`, so a per-exercise or
+   *  per-unit increment can never disagree with what the button says. The
+   *  fine pair is dropped when it would duplicate the coarse one. */
+  const loadSteps = (exerciseId: string, u: Unit): StepDef[] => {
+    const coarse = stepKgFor(exerciseId, u, false);
+    const fine = stepKgFor(exerciseId, u, true);
+    const label = (kg: number) => toDisplay(kg, u);
+    const steps: StepDef[] = [
+      { label: `− ${label(coarse)}`, delta: -coarse },
+      { label: `+ ${label(coarse)}`, delta: coarse },
+    ];
+    if (label(fine) === label(coarse)) return steps;
+    return [
+      steps[0],
+      { label: `− ${label(fine)}`, delta: -fine, fine: true },
+      { label: `+ ${label(fine)}`, delta: fine, fine: true },
+      steps[1],
+    ];
+  };
 
   /** "LOG WARMUP SET", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan */
   const logLabel = (entry: ExerciseEntry): string => {
@@ -1043,6 +1026,12 @@ export function Session() {
                       )}
                     </span>
 
+                    {lastTime(entry.exercise_id) && (
+                      <div className="microcopy">
+                        {lastTime(entry.exercise_id)}
+                      </div>
+                    )}
+
                     <div className="seg seg-types">
                       {SET_TYPES.map((t) => (
                         <button
@@ -1081,6 +1070,23 @@ export function Session() {
                         <span className="field-label">
                           LOAD · {unit.toUpperCase()}
                         </span>
+                        {showLoadEntry && (
+                          /* a property of the movement, not a per-set choice:
+                             it only appears where a pair is possible, and it
+                             remembers per exercise like the bar does */
+                          <button
+                            type="button"
+                            className="plate-hint"
+                            aria-label={
+                              perSide
+                                ? "load is typed per side; switch to total load"
+                                : "load is typed as the total; switch to per side"
+                            }
+                            onClick={toggleLoadEntry}
+                          >
+                            {perSide ? "PER SIDE ×2" : "TOTAL"}
+                          </button>
+                        )}
                         {hint !== null && (
                           <button
                             type="button"
@@ -1094,23 +1100,16 @@ export function Session() {
                       <Stepper
                         label="load"
                         accent
-                        display={String(toDisplay(loadKg, unit))}
+                        display={String(toDisplay(entryKg, unit))}
                         subText={loadSub}
                         onTapValue={() => openPad("load")}
-                        value={loadKg}
+                        value={entryKg}
                         min={0}
-                        max={MAX_LOAD_KG}
-                        onChange={setLoadKg}
-                        steps={[
-                          {
-                            label: `− ${unit === "lb" ? 5 : 2.5}`,
-                            delta: -stepKg(unit, false),
-                          },
-                          {
-                            label: `+ ${unit === "lb" ? 5 : 2.5}`,
-                            delta: stepKg(unit, false),
-                          },
-                        ]}
+                        max={maxEntryKg}
+                        onChange={setEntryKg}
+                        /* labels and deltas both come from the setting, so a
+                           custom increment can never make the button lie */
+                        steps={loadSteps(entry.exercise_id, unit)}
                       />
                     </section>
 
@@ -1294,7 +1293,7 @@ export function Session() {
         <PlateSheet
           exerciseId={openEntry.exercise_id}
           exerciseName={openEntry.name}
-          targetKg={loadKg}
+          targetKg={totalLoadKg}
           unit={unit}
           equipment={equipment}
           onTypeTarget={() => openPad("load", true)}

@@ -1,7 +1,7 @@
 // Small shared display formatters (Today, Session, End, History, charts).
 
 import type { ResolvedPrescriptionRow } from "./types";
-import { toDisplay, type Unit } from "./units";
+import { kgToLb, toDisplay, type Unit } from "./units";
 
 /** "5" or "5-8" */
 export function formatRepRange(min: number, max: number): string {
@@ -36,6 +36,19 @@ export function formatRxTarget(
   if (load !== null) return `${base} @ ${toDisplay(load, unit)} ${unit}`;
   if (rx.load_pct_tm !== null) return `${base} @ ${rx.load_pct_tm}% TM`;
   return base;
+}
+
+/**
+ * The subtext under a load field: the SAME number in the other convention.
+ *
+ * kg is what the database stores everywhere, so when the user is typing lb
+ * the twin states the stored value ("102.1 kg stored") — that string is the
+ * app's only statement of the storage contract, and three screens must not
+ * be able to word it differently. In kg it is just the lb equivalent.
+ */
+export function formatStoredTwin(kg: number, unit: Unit): string {
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+  return unit === "lb" ? `${round1(kg)} kg stored` : `${round1(kgToLb(kg))} lb`;
 }
 
 /** "2:30" — clocks and rest figures. */

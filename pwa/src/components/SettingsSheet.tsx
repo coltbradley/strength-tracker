@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { NumberPad, type PadRequest } from "./NumberPad";
 import { Sheet } from "./Sheet";
+import { TrainingMaxSheet } from "./TrainingMaxSheet";
 import {
   GROUP_LABEL,
   GROUP_ORDER,
@@ -35,7 +36,7 @@ import {
   type PerUnit,
   type SettingKey,
 } from "../lib/settings";
-import { formatClock } from "../lib/format";
+import { formatClock, todayLocalIso } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
@@ -47,7 +48,11 @@ import {
   useSettingRaw,
 } from "../hooks/useSettings";
 import { fromDisplay, toDisplay, type Unit } from "../lib/units";
-import { getExercises } from "../lib/data";
+import {
+  currentTrainingMax,
+  getExercises,
+  getTrainingMaxes,
+} from "../lib/data";
 import {
   buildExport,
   downloadText,
@@ -82,6 +87,10 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
     {},
   );
   const [busy, setBusy] = useState(false);
+  const [tmOpen, setTmOpen] = useState(false);
+  // count of training maxes actually IN FORCE today (a future-dated row is
+  // scheduled, not current — same rule as v_current_tm); null = not read yet
+  const [tmCount, setTmCount] = useState<number | null>(null);
 
   const notifSupported = typeof Notification !== "undefined";
   const [notifState, setNotifState] = useState(
@@ -110,6 +119,32 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
       cancelled = true;
     };
   }, [open]);
+
+  // Training-max count for the row below. Re-read whenever the TM sheet
+  // closes, so setting one updates the number behind it.
+  useEffect(() => {
+    if (!open || tmOpen) return;
+    let cancelled = false;
+    const today = todayLocalIso();
+    getTrainingMaxes()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const ids = new Set(data.map((r) => r.exercise_id));
+        setTmCount(
+          [...ids].filter(
+            (id) =>
+              currentTrainingMax(
+                data.filter((r) => r.exercise_id === id),
+                today,
+              ) !== null,
+          ).length,
+        );
+      })
+      .catch(() => setTmCount(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [open, tmOpen]);
 
   if (!open) return null;
 
@@ -227,6 +262,32 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
         );
       })}
 
+      {/* Not a device preference like everything above: these rows live in
+          Postgres and Claude reads the same numbers. The section label says
+          so, and the microcopy repeats it, because the rest of this sheet has
+          taught the user that settings never leave the phone. */}
+      <section className="settings-group">
+        <div className="field-label">TRAINING</div>
+        <button
+          type="button"
+          className="sheet-row sheet-row-btn"
+          onClick={() => setTmOpen(true)}
+        >
+          <span>Training maxes</span>
+          <span className="sheet-row-value">
+            {tmCount === null
+              ? "OPEN"
+              : tmCount === 0
+                ? "NONE SET"
+                : `${tmCount} SET`}
+          </span>
+        </button>
+        <div className="microcopy">
+          What a “% TM” prescription resolves against. Dated values, stored on
+          the server — not on this device with the rest of these settings.
+        </div>
+      </section>
+
       <section className="settings-group">
         <div className="field-label">DATA</div>
 
@@ -326,6 +387,7 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
         </button>
       </section>
 
+      {tmOpen && <TrainingMaxSheet onClose={() => setTmOpen(false)} />}
       {pad && <NumberPad req={pad} />}
     </Sheet>
   );

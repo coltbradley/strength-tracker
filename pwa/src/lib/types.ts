@@ -21,11 +21,14 @@ export type SetType = "warmup" | "working" | "backoff";
  */
 export type LoadEntry = "total" | "per_side";
 
+/** The exercise library as the PWA reads it. `primary_muscles` exists on the
+ *  table (and the MCP server selects it) but nothing in the app renders it,
+ *  and it is a quarter of a ~110 kB response fetched on five paths — so it
+ *  is deliberately absent from both the projection and this type. */
 export interface ExerciseRow {
   id: string;
   name: string;
   equipment: string | null;
-  primary_muscles: string[];
 }
 
 export interface ProgramRow {
@@ -162,6 +165,45 @@ export interface SetInsert {
    *  (and reads whose column list predates it) simply carry no assertion.
    *  DB rejects "per_side" on a 0 kg bodyweight set. */
   load_entry?: LoadEntry | null;
+}
+
+/**
+ * One dated training-max value. The table is HISTORY-carrying:
+ * `(user_id, exercise_id, effective_date)` is unique and the row with the
+ * latest `effective_date <= today` is the one that resolves a % TM
+ * prescription (`v_current_tm`). A future-dated row is scheduled, not
+ * current — see `currentTrainingMax` in lib/data.ts.
+ */
+export interface TrainingMaxRow {
+  id: string;
+  exercise_id: string;
+  value_kg: number;
+  /** YYYY-MM-DD, the day this value took effect */
+  effective_date: string;
+}
+
+/**
+ * One logged working/backoff set beside the prescription it fulfilled
+ * (`v_adherence`). Both loads are TOTAL system load, so the numbers are
+ * directly comparable — EXCEPT where an entry mode is null, which means "not
+ * asserted", never "total" (see LoadEntry).
+ */
+export interface AdherenceRow {
+  set_id: string;
+  session_id: string;
+  exercise_id: string;
+  prescription_id: string;
+  set_index: number;
+  performed_at: string;
+  actual_load_kg: number;
+  actual_reps: number;
+  reps_min: number;
+  reps_max: number;
+  prescribed_load_kg: number | null;
+  load_delta_kg: number | null;
+  rep_outcome: "hit" | "missed" | "exceeded";
+  actual_load_entry: LoadEntry | null;
+  prescribed_load_entry: LoadEntry | null;
 }
 
 export interface SessionBestE1rmRow {

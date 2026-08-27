@@ -53,6 +53,19 @@ export default defineConfig({
         // woff2 covers the self-hosted Chivo faces in public/fonts, so a cold
         // offline launch still paints in the real typeface.
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
+        // ...except the two -latin-ext faces (34.7 kB, 12.6% of first load).
+        // Their @font-face unicode-range starts at U+0100; the -latin files
+        // cover U+0000-00FF, which is every glyph this app renders: English
+        // UI text, exercise names from free-exercise-db (ASCII), numbers.
+        // They are still BUILT and SERVED, just fetched on demand rather than
+        // downloaded by every install.
+        //
+        // Accepted tradeoff: a lifter who is fully offline AND has typed a
+        // Central-European glyph (a coach note, a custom exercise name) sees
+        // the system fallback face for those glyphs only. The surrounding
+        // text stays Chivo, because the browser resolves @font-face per
+        // character range. Online, the glyph triggers a normal font fetch.
+        globIgnores: ["**/*-latin-ext.woff2"],
         navigateFallback: "index.html",
         // Never let the SW intercept cross-origin (Supabase) requests.
         runtimeCaching: [],

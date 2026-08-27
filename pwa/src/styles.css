@@ -190,6 +190,29 @@
     --gutter: 18px; /* page and sheet side padding */
     --screen-gap: var(--s-8); /* .screen / .session-scroll section rhythm */
 
+    /* -- responsive -------------------------------------------------------
+     * A custom property cannot be used inside a media query, so the three
+     * breakpoints are written literally everywhere and THIS is their contract:
+     *
+     *   <= 359px  narrow-phone guard (iPhone SE, and any phone in Display
+     *             Zoom). 320px of viewport is 284px of content: seven 44px
+     *             week cells (308px) and six 44px RPE keys (294px) do not fit
+     *             in it, so those two grids get an explicit escape here.
+     *   >= 600px  phone -> tablet. The column stops pretending to be a phone.
+     *   >= 900px  tablet -> desktop. The column gets side rules and sheets
+     *             centre instead of sliding up from the floor of a tall window.
+     *
+     * Almost every breakpoint moves TOKENS, not rules — .shell, .content,
+     * .topbar, .tabbar, .sheet, .rest-timer and .session-footer all already
+     * read --column and --gutter, so widening the app is three declarations
+     * rather than a second stylesheet. Only two things are genuinely
+     * structural (sheet anchoring and the shell's side rules) and those sit
+     * next to the rule they modify, per the house rule at the top of the file.
+     *
+     * This stays phone-first: the 480px case is the default and nothing below
+     * 600px changes except the two grids that cannot physically comply. */
+    --column: 480px;
+
     /* -- tap targets ------------------------------------------------------
      * Every existing min-height is preserved here; sizing changes are Phase C.
      * .sheet-close (32px) and .set-note-add (30px) are still below the 44px
@@ -219,6 +242,32 @@
     --ease-sheet: cubic-bezier(0.22, 1, 0.36, 1);
     --dur-tick: 400ms;
     --dur-blink: 1.6s;
+  }
+
+  /* Tablet: a wider column and a looser gutter. Type is left alone — the
+   * micro-labels are 9.5-11px mono by design and a tablet is still held at
+   * arm's length. */
+  @media (min-width: 600px) {
+    :root {
+      --column: 600px;
+      --gutter: 28px;
+      --screen-gap: var(--s-9);
+    }
+  }
+
+  /* Desktop: a reading column, not an app. The extra width goes into the
+   * measure and into type — at 900px+ the device is a metre away and 13px
+   * body copy that was right on a phone is not right here. Nothing below
+   * --fs-base moves: the mono labels are a fixed part of the idiom. */
+  @media (min-width: 900px) {
+    :root {
+      --column: 680px;
+      --gutter: 36px;
+      --fs-sm: 14px;
+      --fs-body: 15px;
+      --fs-lg: 20px;
+      --fs-title: 30px;
+    }
   }
 }
 
@@ -273,6 +322,26 @@
     touch-action: manipulation;
   }
 
+  /* Nothing in this file sets `outline: none`, so the UA ring survives — but
+   * the UA ring is a black double ring against warm paper, and Phase B added
+   * focus trapping to six dialogs, which means keyboard focus is now a real
+   * navigation surface rather than an accident. Pin it: :focus-visible only,
+   * so a thumb tap never draws it. --accent-dim is 5.59:1 on paper, well past
+   * the 3:1 that WCAG 1.4.11 asks of a focus indicator. */
+  :where(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    summary,
+    [tabindex]
+  ):focus-visible {
+    outline: var(--bw-thick) solid var(--accent-dim);
+    outline-offset: var(--s-1);
+    border-radius: var(--radius);
+  }
+
   @keyframes rise {
     from {
       transform: translateY(101%);
@@ -317,8 +386,20 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    max-width: 480px;
+    max-width: var(--column);
     margin: 0 auto;
+  }
+
+  /* At 1400px the app was a 480px phone emulator marooned on an unbroken
+   * field of paper, with no edge to say where the page stopped. Two hairline
+   * rules give the column an edge — rules, not a slab, and not a drop shadow:
+   * the whole idiom is an index card, and a card is defined by its rule. The
+   * column itself is widened by --column above; this is only the frame. */
+  @media (min-width: 900px) {
+    .shell {
+      border-left: var(--rule-hair);
+      border-right: var(--rule-hair);
+    }
   }
 
   .topbar {
@@ -331,7 +412,11 @@
     flex: none;
   }
 
+  /* Navigates home; 13px mono measures 16px tall. Hit-extended — the topbar's
+   * height is set by the 44px gear opposite, so this costs nothing. 8px of
+   * bleed, against ~150px of clear space before .topbar-right. */
   .topbar-title {
+    --hit-bleed: 8px;
     font-family: var(--font-mono);
     font-weight: 700;
     font-size: var(--fs-sm);
@@ -355,10 +440,14 @@
     color: var(--text-dim);
   }
 
+  /* body already stops document-level pull-to-refresh; the inner scrollers
+   * have to contain their own or over-scrolling a set list bounces the whole
+   * app frame in standalone mode. */
   .content {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: var(--s-8) var(--gutter) var(--s-9);
   }
 
@@ -448,6 +537,58 @@
     color: var(--text-dim);
   }
 
+  /* ---- overflow: every 1fr text track, in one place ----
+   * A grid `1fr` track is minmax(auto, 1fr) and a flex item defaults to
+   * min-width: auto, so in both cases the floor is the content's min-content
+   * width — the longest unbreakable run. `min-width: 0` appeared nowhere in
+   * this file, which left eight `1fr` text tracks one long coach-supplied
+   * label away from pushing their row past the viewport. Exercise names come
+   * from free-exercise-db and are space-separated, but programs.name,
+   * planned_workouts.label and plan_note are free text out of a screenshot
+   * parse; a single long token is all it takes.
+   *
+   * Lifting the floor on the CONTAINER's children is one rule instead of the
+   * audit's ten selectors, and it cannot go stale when a row gains a cell.
+   * `overflow-wrap: break-word` then handles the visible half — it only
+   * breaks a word that would overflow on its own, so ordinary prose is
+   * unaffected. Where truncation is right instead of wrapping, the element
+   * says so at its own rule (.week-label, .drawer-name). */
+  .section-head > *,
+  .selected-day-head > *,
+  .history-date > *,
+  .date-row > *,
+  .detail-actions > *,
+  .banner-row > *,
+  .rest-row > *,
+  .week-row > *,
+  .wk-main > *,
+  .drawer-row > *,
+  .sheet-row > *,
+  .logged-set > *,
+  .rx-row > *,
+  .stepper-inline > *,
+  .stepper-value-row > * {
+    min-width: 0;
+  }
+
+  .screen-title,
+  .today-context,
+  .week-state,
+  .wk-target,
+  .rx-name,
+  .rx-spec,
+  .rx-context,
+  .selected-day-label,
+  .drawer-tag,
+  .set-load,
+  .detail-note,
+  .orphan-title,
+  .set-note-preview,
+  .toast,
+  .microcopy {
+    overflow-wrap: break-word;
+  }
+
   /* ---- ruled sections ---- */
 
   .rule-section {
@@ -462,7 +603,12 @@
     gap: var(--s-5);
   }
 
+  /* Always short, always mono, and never the subject: it must not take width
+   * from the label beside it (both live in a space-between flex row whose
+   * children now have min-width: 0). */
   .section-meta {
+    flex: none;
+    white-space: nowrap;
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     font-weight: 500;
@@ -504,19 +650,14 @@
     color: var(--text-dim);
   }
 
+  /* This was a second, complete button base — family, size, weight, tracking,
+   * transform, min-height, inline-flex, centring — every declaration of which
+   * .btn had already set at the same specificity. All nine call sites are
+   * `btn btn-outline-ink`, so all nine were inert. What the modifier actually
+   * means is "ruled in full-strength ink instead of --control-border-color". */
   .btn-outline-ink {
     background: transparent;
     border: var(--bw) solid var(--text);
-    border-radius: var(--radius);
-    font-family: var(--font-mono);
-    font-size: var(--fs-meta);
-    font-weight: 700;
-    letter-spacing: var(--track-3);
-    text-transform: uppercase;
-    min-height: var(--tap);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
   }
 
   .btn-ghost {
@@ -527,8 +668,9 @@
     width: 100%;
   }
 
-  /* must stay below .btn-outline-ink: the log button is always
-   * `btn btn-outline-ink btn-log` and both set min-height at equal specificity */
+  /* The log button is `btn btn-outline-ink btn-log` when the exercise is done
+   * and `btn btn-primary btn-log` when it is not; only .btn sets a competing
+   * min-height now, so this no longer depends on source order. */
   .btn-log {
     width: 100%;
     min-height: var(--tap-log);
@@ -543,6 +685,83 @@
   .btn:disabled {
     opacity: 0.55;
     cursor: default;
+  }
+
+  /* ---- micro-label controls ----
+   * Eight controls across five screens are one object: a mono micro-label
+   * that is also a tap target. CLOSE on every sheet, -30/+30/DONE on the rest
+   * strip, SKIP/REMOVE beside a row, the set void, `< TODAY`, `+ NOTE`, and
+   * the number pad's CANCEL. Each carried its own copy of the same seven
+   * declarations. This is the half of the audit's `.btn-micro` proposal that
+   * needs no TSX; the rename itself touches five screens and is deferred.
+   *
+   * The family also owns the 44px floor (WCAG 2.5.5 / Apple HIG). Several of
+   * these were 30-36px, and they are pressed with chalked hands next to a
+   * loaded bar. Two of them cannot grow their ink without wrecking the
+   * rhythm around them; those extend the HIT area instead and say so at the
+   * site. Each rule below now carries only what makes it itself. */
+  .sheet-close,
+  .rest-adjust,
+  .rest-timer-dismiss,
+  .drawer-action,
+  .set-void,
+  .back-link,
+  .set-note-add,
+  .pad-cancel {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-2);
+    color: var(--text-dim);
+    min-height: var(--tap-min);
+  }
+
+  /* ---- hit extension ----
+   * Grow the TARGET without growing the ink. Six controls in this app have to
+   * stay small: they sit in baseline-aligned heads, in the topbar beside a
+   * 44px gear, or under a logged set where "reference text recedes" is a rule
+   * of this design rather than a preference. A 44px-tall box would move the
+   * wordmark off its baseline, add 20px of dead height to every sheet head,
+   * or turn a status mark into a button. So the box stays and an invisible
+   * pseudo-element centred on it reaches the 44px floor instead.
+   *
+   * --hit-bleed is how far past the ink the target may reach on each side,
+   * declared per site and never larger than the gap to the next target. Every
+   * one of the six is checked against its neighbours; where the value is 0 the
+   * control is already wide enough and only needs the height.
+   *
+   * This is only legitimate because nothing else is tappable inside the
+   * expanded box. It is not a licence to shrink controls. */
+  .sheet-close,
+  .set-note-add,
+  .topbar-title,
+  .plate-hint,
+  .sync-pill,
+  .rest-timer-time {
+    position: relative;
+  }
+
+  .sheet-close,
+  .set-note-add {
+    min-height: 0;
+  }
+
+  .sheet-close::after,
+  .set-note-add::after,
+  .topbar-title::after,
+  .plate-hint::after,
+  .sync-pill::after,
+  .rest-timer-time::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: calc(var(--hit-bleed, 0px) * -1);
+    right: calc(var(--hit-bleed, 0px) * -1);
+    transform: translateY(-50%);
+    height: var(--tap-min);
+    min-width: var(--tap-min);
   }
 
   /* ---- forms ---- */
@@ -581,7 +800,9 @@
     font-size: var(--fs-meta);
     font-weight: 700;
     color: var(--text-dim);
-    min-height: 40px; /* Phase C: fold into the tap scale */
+    min-height: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
   }
 
   .chip-on {
@@ -668,6 +889,15 @@
     min-height: var(--tap);
   }
 
+  /* Plan's exercise rows reuse .week-row but have no date cell, so their
+   * three children landed in the first three tracks: the exercise NAME was
+   * being squeezed into the 84px column sized for "WED 27 AUG" (measured: it
+   * wrapped to two lines at 375px) while the trailing 14px chevron track sat
+   * empty. Same row, one fewer column. */
+  .week-row-rx {
+    grid-template-columns: 1fr auto var(--s-7);
+  }
+
   .week-day {
     font-family: var(--font-mono);
     font-size: var(--fs-label);
@@ -680,9 +910,16 @@
     color: var(--text);
   }
 
+  /* One line, ellipsised. Both users are a name with somewhere fuller to read
+   * it — Today's row opens the day below it, Plan's row opens the editor —
+   * so a wrapped two-line name buys nothing and costs the row its rhythm.
+   * text-overflow needs the min-width floor lifted above to do anything. */
   .week-label {
     font-size: var(--fs-sm);
     font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .week-label-today {
@@ -695,6 +932,7 @@
   }
 
   .week-state {
+    white-space: nowrap;
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     font-weight: 600;
@@ -721,19 +959,37 @@
     gap: var(--s-5);
   }
 
+  /* Wrapping flex, not `grid: 1fr auto`. A ramp bracket renders as ONE row
+   * whose spec is every bracket joined — "1x8-15 @ 60 kg · 1x6-8 @ 85 kg ·
+   * 3x3-5 @ 112.5 kg" is 47 mono characters, wider than a 375px phone on its
+   * own. In a grid the `auto` spec track takes its max-content width first
+   * and the name track is left with whatever remains, which at that length is
+   * about 35px — the exercise name then stacks one syllable per line. Flex
+   * wrap gives the pair the only honest out: when they cannot share a line,
+   * the spec takes the next one. Name first, because it is the subject. */
   .rx-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: var(--s-2) var(--s-5);
+    display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
+    gap: var(--s-2) var(--s-5);
     padding: var(--s-3) 0;
     border-top: var(--rule-hair);
     border-bottom: var(--rule-hair);
   }
 
+  .rx-name {
+    flex: 1 1 auto;
+  }
+
+  /* pinned right on a shared line, and still right on a line of its own */
+  .rx-spec {
+    flex: 0 1 auto;
+    margin-left: auto;
+  }
+
   .rx-row .warn-badge {
-    grid-column: 1 / -1;
-    justify-self: start;
+    flex: 0 0 100%;
+    margin-right: auto;
   }
 
   .rx-name {
@@ -741,6 +997,8 @@
     font-size: var(--fs-sm);
   }
 
+  /* No nowrap: the spec is bracket targets joined with " · " and it must be
+   * free to wrap at those separators on a line of its own. */
   .rx-spec {
     font-family: var(--font-mono);
     font-size: var(--fs-meta);
@@ -800,6 +1058,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: var(--s-8) var(--gutter) var(--gutter);
     display: flex;
     flex-direction: column;
@@ -826,7 +1085,11 @@
     padding: var(--s-2) 0 var(--s-4);
   }
 
+  /* Opens the plate calculator from a baseline-aligned .section-head, so it
+   * is hit-extended rather than grown. 6px of bleed; the only other item in
+   * that head is a non-interactive .field-label at the far end. */
   .plate-hint {
+    --hit-bleed: 6px;
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     font-weight: 700;
@@ -843,9 +1106,18 @@
 
   /* no border-bottom: SetRow is only ever rendered inside .logged-set-wrap,
    * which owns the hairline */
+  /* SetRow composes `rest` and `voidable` as independent booleans, so the four
+   * template rules were a 2x2 truth table typed out by hand — and 2xN the
+   * moment a third optional column appears. Each modifier now declares only
+   * its own track.
+   *
+   * The empty var() fallback is load-bearing and deliberate: `var(--x,)`
+   * substitutes to nothing at all, so an unset column produces no track AND
+   * no gap. A `0px` fallback would leave a phantom track that still eats a
+   * column-gap, which is the trap in the obvious version of this. */
   .logged-set {
     display: grid;
-    grid-template-columns: var(--s-9) 1fr auto;
+    grid-template-columns: var(--s-9) 1fr auto var(--col-rest,) var(--col-void,);
     gap: var(--s-5);
     align-items: baseline;
     padding: var(--s-5) 0;
@@ -854,16 +1126,12 @@
   }
 
   .logged-set-rest {
-    grid-template-columns: var(--s-9) 1fr auto 60px;
+    --col-rest: 60px;
   }
 
   /* void control appends one more column */
   .logged-set-voidable {
-    grid-template-columns: var(--s-9) 1fr auto var(--tap-min);
-  }
-
-  .logged-set-rest.logged-set-voidable {
-    grid-template-columns: var(--s-9) 1fr auto 60px var(--tap-min);
+    --col-void: var(--tap-min);
   }
 
   .set-no {
@@ -894,15 +1162,9 @@
 
   /* two-tap void / discard controls — full 44px targets, gym thumbs */
   .set-void {
-    font-family: var(--font-mono);
     font-size: var(--fs-label);
-    font-weight: 700;
     letter-spacing: var(--track-1);
-    color: var(--text-dim);
-    min-height: var(--tap-min);
     min-width: var(--tap-min);
-    display: inline-flex;
-    align-items: center;
     justify-content: center;
     padding: 0 var(--s-3);
     justify-self: end;
@@ -936,8 +1198,48 @@
     gap: var(--s-7);
   }
 
+  /* .stepper-field is the plan editor's row, and only the plan editor's row.
+   *
+   * `inline` alone means "value with the buttons beside it", which is right
+   * for the session's REPS (display is a bare "8" and the 52px value IS the
+   * control — that is the deliberate design and it is untouched). The plan
+   * editor reuses the same layout for a completely different job: four or
+   * five stacked rows whose display strings are sentences ("15 reps max"),
+   * none of which is the subject of the screen. At --fs-display those
+   * sentences ran to 660px and pushed the -/+ buttons to x=396..493 in a
+   * 375px viewport, and because .content only scrolls on Y the page did not
+   * scroll — the controls were clipped and permanently untappable.
+   *
+   * So the field variant reads as what it is: a labelled value with a rule
+   * under it and a stepper at the end of the row. The value takes the slack
+   * (the rule then spans the field, which is the affordance) and truncates
+   * rather than forcing the row open on a long unit string. */
+  .stepper-field .stepper-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-lg);
+    padding-bottom: var(--s-2);
+  }
+
+  .stepper-field .stepper-sub {
+    flex: none;
+    padding-bottom: 0;
+  }
+
+  .stepper-field .stepper-btn,
+  .stepper-field .stepper-btn-fine {
+    flex: 0 0 var(--tap-md);
+    min-width: var(--tap-md);
+  }
+
   .stepper-value {
-    flex: 0 0 auto;
+    /* shrinkable, not fixed: a 3-digit rep count next to two 52px buttons
+     * still fits 320px, but "cannot shrink" is not a property worth having */
+    flex: 0 1 auto;
+    min-width: 0;
     font-family: var(--font-mono);
     font-size: var(--fs-display);
     line-height: 1;
@@ -946,11 +1248,17 @@
     text-align: left;
     border-bottom: var(--bw) solid var(--control-border-color);
     padding-bottom: var(--s-1);
-    cursor: pointer; /* tap to type — see notes.md, conflict 01 */
   }
 
-  .stepper-value:disabled {
-    cursor: default;
+  /* Only the tappable form is a button; without onTapValue the Stepper renders
+   * a span, so the affordance — and the tap floor — belong on the element that
+   * has one. A single-digit rep count measured 31px wide: 52px of type is not
+   * automatically 44px of target, and this one opens the number pad. The
+   * .stepper-field override below wins on specificity, where the value already
+   * spans the row. */
+  button.stepper-value {
+    cursor: pointer; /* tap to type — see notes.md, conflict 01 */
+    min-width: var(--tap-min);
   }
 
   .stepper-value-accent {
@@ -1003,18 +1311,32 @@
   .stepper-inline .stepper-btn,
   .stepper-inline .stepper-btn-fine {
     flex: 0 0 var(--tap);
+    min-width: var(--tap);
   }
 
   /* ---- segmented ---- */
 
+  /* Wraps, because the settings registry renders segment controls of two,
+   * three and SEVEN options from this one class. Seven weekday keys at the
+   * 44px floor need 344px against the 284px of content a 320px phone has —
+   * measured, TH/FR/SA were clipped inside the sheet's own overflow with no
+   * way to reach them. A second row is the only honest answer at that width;
+   * every smaller control still sits on one line exactly as before.
+   * (A grid was the obvious alternative and is wrong here: .seg is a flex
+   * ITEM in a space-between .sheet-row, so an auto-width grid of 1fr tracks
+   * collapses to one column and stacks the unit toggle vertically.) */
   .seg {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--s-3);
   }
 
   .seg-btn {
     min-height: var(--tap-min);
-    padding: 0 var(--s-7);
+    /* square-ish floor: several of these are two-character keys (KG, MO, ON)
+     * and 9.5px mono gives them ~13px of glyph */
+    min-width: var(--tap-min);
+    padding: 0 var(--s-5);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1046,12 +1368,16 @@
     flex: 1;
     border: 0;
     border-radius: 0;
-    min-height: var(--tap-min);
   }
 
+  /* Eleven keys (0-10). `repeat(6, 1fr)` is minmax(auto, 1fr), so each track's
+   * floor was its own min-content width and the row overflowed .content at
+   * 320px; it also produced 42px-wide keys, under the 44px floor. auto-fit
+   * with a hard 44px minimum inverts that: the COLUMN COUNT gives way instead
+   * of the key, so it is six across from 360px up and five at 320px. */
   .rpe-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(var(--tap-min), 1fr));
     gap: var(--s-3);
     margin-top: var(--s-6);
   }
@@ -1107,6 +1433,10 @@
     animation: blink var(--dur-blink) steps(1, end) infinite;
   }
 
+  /* Tap to edit the remaining rest. Measured 43x23: the hairline under the
+   * digits is the affordance and dropping it 10px to the bottom of a 44px box
+   * would detach it from them, so this is hit-extended too. No bleed needed —
+   * .rest-row's 12px gaps stay clear. */
   .rest-timer-time {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -1138,25 +1468,19 @@
     background: var(--accent-dim);
   }
 
+  /* -30 / +30 / DONE: the three controls in the app most likely to be hit
+   * mid-set with a bar racked. They were 36px. Here the ink grows too — the
+   * strip gaining 8px is a fair trade for three reliable targets, and the
+   * strip is the only thing on its line. */
   .rest-adjust {
-    font-family: var(--font-mono);
-    font-size: var(--fs-micro);
-    font-weight: 700;
-    letter-spacing: var(--track-2);
-    min-height: var(--tap-sm);
-    display: inline-flex;
-    align-items: center;
+    color: var(--text);
+    justify-content: center;
+    min-width: var(--tap-min);
   }
 
   .rest-timer-dismiss {
-    font-family: var(--font-mono);
-    font-size: var(--fs-micro);
-    font-weight: 700;
-    letter-spacing: var(--track-2);
-    color: var(--text-dim);
-    min-height: var(--tap-sm);
-    display: inline-flex;
-    align-items: center;
+    justify-content: center;
+    min-width: var(--tap-min);
   }
 
   .rest-foot {
@@ -1174,7 +1498,11 @@
     gap: var(--s-3);
   }
 
+  /* Tap-to-retry when a write fails. The pill must stay small: it sits in the
+   * topbar beside a 44px gear and reads as a status mark, not a button. 3px of
+   * bleed, exactly half .sync-group's 6px gap, so two pills never overlap. */
   .sync-pill {
+    --hit-bleed: 3px;
     border-radius: var(--radius);
     padding: var(--s-2) var(--s-5);
     font-family: var(--font-mono);
@@ -1230,7 +1558,7 @@
     border-top: var(--bw-hair) solid var(--rule-heavy-color);
     border-radius: 0;
     width: 100%;
-    max-width: 480px;
+    max-width: var(--column);
     padding: var(--s-7) var(--gutter) calc(env(safe-area-inset-bottom) + 20px);
     display: flex;
     flex-direction: column;
@@ -1249,6 +1577,26 @@
 
   .sheet-tall {
     height: min(78dvh, calc(100dvh - var(--kb, 0px) - var(--s-9)));
+  }
+
+  /* A bottom sheet is a phone idiom: it starts at the thumb. On a 1400x900
+   * desktop that same rule slides the settings panel up from the floor of the
+   * window and makes the user travel the full viewport height to reach it, so
+   * past the desktop breakpoint the sheet centres and gains its own edge. */
+  @media (min-width: 900px) {
+    .sheet-backdrop {
+      align-items: center;
+    }
+
+    .sheet {
+      border: var(--rule-strong);
+      max-height: min(70dvh, calc(100dvh - var(--kb, 0px) - var(--s-10)));
+      animation: none;
+    }
+
+    .sheet-tall {
+      height: min(70dvh, calc(100dvh - var(--kb, 0px) - var(--s-10)));
+    }
   }
 
   .pad-sheet {
@@ -1270,13 +1618,10 @@
     padding: 0 var(--gutter);
   }
 
+  /* .sheet-head is baseline-aligned, so a 44px CLOSE would drag every sheet's
+   * head 20px taller. Hit-extended instead (see the micro-label family). */
   .sheet-close {
-    font-family: var(--font-mono);
-    font-size: var(--fs-micro);
-    font-weight: 700;
-    letter-spacing: var(--track-2);
-    color: var(--text-dim);
-    min-height: 32px; /* Phase C: below the 44px floor */
+    flex: none;
   }
 
   .sheet-row {
@@ -1355,9 +1700,13 @@
     border-bottom: var(--rule-hair);
   }
 
+  /* Exercise names in a search result: the list is scanned, not read. */
   .drawer-name {
     font-size: var(--fs-body);
     font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .drawer-tag {
@@ -1373,14 +1722,9 @@
 
   /* an inline skip/remove action beside a row — also used outside sheets */
   .drawer-action {
-    font-family: var(--font-mono);
-    font-size: var(--fs-micro);
-    font-weight: 700;
-    letter-spacing: var(--track-2);
-    color: var(--text-dim);
+    justify-content: flex-end;
     padding: 0 var(--s-5);
     min-width: 64px;
-    text-align: right;
     white-space: nowrap;
   }
 
@@ -1392,6 +1736,7 @@
 
   .search-results {
     overflow-y: auto;
+    overscroll-behavior: contain;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -1442,16 +1787,10 @@
 
   .pad-cancel {
     flex: 1;
-    text-align: center;
     justify-content: center;
-    display: inline-flex;
-    align-items: center;
     padding: var(--s-8) 0;
-    font-family: var(--font-mono);
     font-size: var(--fs-label);
-    font-weight: 700;
     letter-spacing: var(--track-3);
-    color: var(--text-dim);
     min-height: var(--tap-key);
   }
 
@@ -1595,14 +1934,22 @@
     margin-bottom: var(--s-2);
   }
 
-  /* ---- charts ----
-   * `.chart-volume` (VolumeChart.tsx) is a naming hook only: it carries no
-   * declarations, and the bar fills come from .chart-bar / .chart-bar-last. */
+  /* ---- charts ---- */
 
   .chart {
     width: 100%;
     height: auto;
     display: block;
+  }
+
+  /* .chart-volume was a naming hook with no declarations. Given one rather
+   * than deleted: the volume chart is a row of rectangles, and once the
+   * column can be 680px wide the viewBox scale is fractional, which is
+   * exactly when a bar chart picks up antialiased half-pixel edges. Every
+   * other boundary in this design is a hard 1px rule; the bars should match.
+   * The line chart deliberately does NOT get this — its curve wants AA. */
+  .chart-volume {
+    shape-rendering: crispEdges;
   }
 
   .chart-frame {
@@ -1622,18 +1969,27 @@
     padding: var(--s-9) 0;
   }
 
+  /* One label per distinct month, so eighteen months of training is eighteen
+   * spans in a non-wrapping row that cannot shrink below min-content. */
   .chart-ticks {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
+    gap: var(--s-2);
     margin-top: var(--s-3);
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     color: var(--text-dim);
   }
 
+  /* The charts are viewBox'd and scale with the column, and so does the
+   * stroke: at a 680px desktop column a 1.5-unit stroke on a 340-unit viewBox
+   * renders ~3 device px, heavier than the hairline rules around it, which
+   * stay at 1. non-scaling-stroke pins them to the rest of the ink. */
   .chart-line {
     stroke: var(--text);
     stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
   }
 
   .chart-dot {
@@ -1644,6 +2000,7 @@
     stroke: var(--info);
     stroke-width: 1.5;
     stroke-dasharray: 5 4;
+    vector-effect: non-scaling-stroke;
   }
 
   .chart-bar {
@@ -1666,6 +2023,10 @@
     gap: var(--s-4);
     z-index: var(--z-toast);
     width: min(92vw, 440px);
+    /* 92vw in landscape on a notched phone reaches under the sensor housing;
+     * the shell escapes this only because it is a centred 480px column. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
 
   .toast {
@@ -1712,9 +2073,13 @@
     margin-bottom: var(--s-1);
   }
 
+  /* MORE / LESS on a clamped coach note. The note itself is two lines of
+   * 13px plus a label, so the block clears 44px on its own — the floor here
+   * is a guard for a one-line note, not a layout change. */
   .detail-note-toggle {
     display: block;
     width: 100%;
+    min-height: var(--tap-min);
     text-align: left;
   }
 
@@ -1730,26 +2095,31 @@
     margin-left: var(--s-3);
   }
 
+  /* Three buttons, and the widest set of labels in the app: Today's orphan
+   * recovery is Resume / Finish / Discard? and Plan's is Save / Cancel /
+   * Delete exercise. `flex: 1` leaves min-width at auto, so each button's
+   * floor was its own min-content width — 341px of demand against 284px of
+   * content at 320px, and 339px at 375px. Wrapping is the honest answer: a
+   * button that cannot fit its own label is not a button. */
   .detail-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--s-5);
     margin-top: var(--s-3);
   }
 
   .detail-actions .btn {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     min-height: var(--tap-min);
+    padding: 0 var(--s-6);
     font-size: var(--fs-sm);
   }
 
   .back-link {
-    font-family: var(--font-mono);
+    align-self: flex-start;
     font-size: var(--fs-meta);
-    font-weight: 700;
-    letter-spacing: var(--track-2);
-    color: var(--text-dim);
-    padding: var(--s-3) 0 var(--s-6);
-    text-align: left;
+    padding: var(--s-3) var(--s-5) var(--s-3) 0;
   }
 
   .date-row {
@@ -1948,6 +2318,19 @@
     margin-top: var(--s-5);
   }
 
+  /* Seven 44px targets need 308px and a 320px phone offers 284px of content,
+   * so on the narrowest phones the strip bleeds into the page gutter and drops
+   * its gap: 320 / 7 = 45.7px per cell. The cells keep their own border, so
+   * the row still reads as seven cells rather than one bar. Above 360px the
+   * default grid already clears 44 and this does not apply. */
+  @media (max-width: 359px) {
+    .week-strip {
+      margin-left: calc(var(--gutter) * -1);
+      margin-right: calc(var(--gutter) * -1);
+      gap: 0;
+    }
+  }
+
   .week-cell {
     display: flex;
     flex-direction: column;
@@ -2037,18 +2420,19 @@
     border-bottom: var(--rule-hair);
   }
 
+  /* Recessive by design — a 44px `+ NOTE` under every logged set would
+   * compete with the set itself. Hit-extended (see the micro-label family);
+   * it is the only tappable thing in its band. */
   .set-note-add {
     align-self: flex-start;
-    font-family: var(--font-mono);
-    font-size: var(--fs-micro);
     font-weight: 600;
     letter-spacing: var(--track-1);
-    color: var(--text-dim);
-    padding: var(--s-1) 0 var(--s-4);
-    min-height: 30px; /* Phase C: below the 44px floor */
+    padding: var(--s-1) var(--s-5) var(--s-4) 0;
   }
 
+  /* Tap to edit an existing note. Computed ~25px on one line of text. */
   .set-note-preview {
+    min-height: var(--tap-min);
     text-align: left;
     font-size: var(--fs-sm);
     line-height: 1.4;
@@ -2077,8 +2461,10 @@
     justify-content: flex-end;
   }
 
+  /* Save / Cancel on a set note: 36px, and reached with the keyboard open
+   * and a thumb. No rhythm to protect here — the editor is already a block. */
   .set-note-actions .btn {
-    min-height: var(--tap-sm);
+    min-height: var(--tap-min);
     padding: 0 var(--s-6);
     font-size: var(--fs-label);
   }

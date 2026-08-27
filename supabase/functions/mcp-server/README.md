@@ -2,10 +2,18 @@
 
 MCP server for the strength tracker, running as a Supabase Edge Function.
 Streamable HTTP, stateless (every POST is independent, no session ids). Claude
-connects through `mcp-remote` with a static bearer token and gets 8 tools: 4
-read (exercises, lift history, sessions, goal progress) and 4 write (programs,
-program confirmation, training maxes, goals). It can never write `sessions` or
-`sets`: those belong to the PWA.
+connects through `mcp-remote` with a static bearer token and gets 12 tools.
+
+Read (`readOnlyHint`): `search_exercises`, `get_lift_history`,
+`get_recent_sessions`, `get_goal_progress`.
+
+Write: `upsert_program` (always unconfirmed), `confirm_program`,
+`delete_program`, `set_training_max`, `set_goal`, `add_exercise`,
+`update_exercise`, `delete_exercise`.
+
+It can never write `sessions`, `sets`, `set_voids` or `set_notes`: those belong
+to the PWA. See [docs/architecture.md](../../../docs/architecture.md) for what
+each tool does.
 
 ## Env vars
 
@@ -28,6 +36,21 @@ supabase functions deploy mcp-server --no-verify-jwt
 `--no-verify-jwt` is required: requests carry the MCP bearer token, not a
 Supabase JWT. The function does its own auth (constant-time check) before
 anything else.
+
+The function reads one piece of database config: `app_config.tz`, the lifter's
+home timezone. It is the same row the SQL views read through `app_tz()`, and it
+decides what date `set_training_max` stamps by default. Cached per isolate;
+change it and redeploy. See docs/setup.md step 5.
+
+## Local checks
+
+```bash
+deno check index.ts   # typecheck the whole graph from the entrypoint
+deno test lib/        # date rules (lib/dates.test.ts)
+```
+
+Both run in CI. The SQL half of the date rules lives in
+`scripts/validate-db.mjs`.
 
 ## Local serve
 

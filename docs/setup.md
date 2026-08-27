@@ -35,9 +35,9 @@ supabase db query < supabase/seed/exercises.curated.sql
 If `supabase db query` isn't in your CLI version, paste the files into the
 dashboard SQL editor. Each is a single idempotent statement.
 
-5. Set your home timezone for calendar bucketing in the derived-metric views
-   (dates and ISO weeks; without this, evening workouts land on the next UTC
-   day). Dashboard SQL editor:
+5. Set your home timezone for calendar bucketing (dates and ISO weeks;
+   without this, evening workouts land on the next UTC day). Dashboard SQL
+   editor:
 
 ```sql
 update app_config set value = 'America/Los_Angeles' where key = 'tz';
@@ -45,6 +45,14 @@ update app_config set value = 'America/Los_Angeles' where key = 'tz';
 
 (`alter database ... set` is superuser-only on managed Postgres — that path
 doesn't work; the config table is the supported one.)
+
+This one row is the only definition of "today" the server side has: the
+derived-metric views read it through `app_tz()`, and the MCP server reads the
+same row when it stamps `training_maxes.effective_date` (see
+docs/decisions.md). Set it before recording any training max, or an evening TM
+lands on tomorrow and stays invisible. The MCP server caches the value for the
+life of an edge isolate, so after changing it, redeploy the function (or just
+wait: idle isolates recycle within minutes).
 
 ## 2. Your user
 

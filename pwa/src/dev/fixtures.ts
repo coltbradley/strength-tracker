@@ -169,6 +169,8 @@ interface RxSpec {
   rest_seconds?: number | null;
   notes?: string | null;
   superset_group?: number | null;
+  /** how load_kg is expressed; load_kg itself is always the TOTAL */
+  load_entry?: "total" | "per_side" | null;
 }
 
 function rxRows(workoutId: string, specs: RxSpec[]): Row[] {
@@ -186,6 +188,7 @@ function rxRows(workoutId: string, specs: RxSpec[]): Row[] {
     rest_seconds: s.rest_seconds ?? null,
     notes: s.notes ?? null,
     superset_group: s.superset_group ?? null,
+    load_entry: s.load_entry ?? null,
     created_at: at(dayIso(new Date()), 8),
   }));
 }
@@ -306,12 +309,16 @@ function pullRx(workoutId: string): Row[] {
       load_kg: 65,
       rest_seconds: 90,
     },
+    // a pair of dumbbells: load_kg is the TOTAL (16 kg per hand), and
+    // load_entry says so. Sets logged against it carry no entry mode, which
+    // is the permanent ambiguity the convention exists to make visible.
     {
       exercise_id: "Hammer_Curls",
       sets: 3,
       reps_min: 10,
       reps_max: 12,
-      load_kg: 16,
+      load_kg: 32,
+      load_entry: "per_side",
       superset_group: 1,
     },
     {
@@ -440,9 +447,12 @@ function accessoryRx(workoutId: string): Row[] {
 interface SetSpec {
   exercise_id: string;
   set_type: "warmup" | "working" | "backoff";
+  /** ALWAYS the total system load: a pair of 15 kg dumbbells is 30 */
   load_kg: number;
   reps: number;
   rest?: number | null;
+  /** how that total was expressed; omit for a row that asserts nothing */
+  load_entry?: "total" | "per_side";
 }
 
 function makeSession(
@@ -464,6 +474,7 @@ function makeSession(
     load_kg: s.load_kg,
     reps: s.reps,
     rest_seconds_actual: s.rest ?? null,
+    load_entry: s.load_entry ?? null,
     performed_at: at(dateIso, hour, 6 + i * 4),
     created_at: at(dateIso, hour, 6 + i * 4),
   }));
@@ -898,6 +909,40 @@ function defaultStore(opts: { dated: boolean }): DemoStore {
         reps: 10,
         rest: 98,
       },
+      // an extra lift the plan never asked for, logged per side: 30 kg total
+      // is a 15 kg dumbbell in each hand, and History must say so
+      {
+        exercise_id: "Dumbbell_Bicep_Curl",
+        set_type: "working",
+        load_kg: 30,
+        reps: 12,
+        rest: 65,
+        load_entry: "per_side",
+      },
+      {
+        exercise_id: "Dumbbell_Bicep_Curl",
+        set_type: "working",
+        load_kg: 30,
+        reps: 10,
+        rest: 68,
+        load_entry: "per_side",
+      },
+      // dumbbells, logged with NO entry mode against a per_side prescription:
+      // the one case History must refuse to call comparable
+      {
+        exercise_id: "Hammer_Curls",
+        set_type: "working",
+        load_kg: 30,
+        reps: 12,
+        rest: 70,
+      },
+      {
+        exercise_id: "Hammer_Curls",
+        set_type: "working",
+        load_kg: 30,
+        reps: 9,
+        rest: 72,
+      },
     ],
     {
       planned_workout_id: doneWorkoutId,
@@ -907,6 +952,18 @@ function defaultStore(opts: { dated: boolean }): DemoStore {
         "Pulls felt heavy off the floor but lockout was fine. Grip went before the back did on the second set.",
     },
   );
+  // Working sets carry the prescription they fulfilled, which is what makes
+  // v_adherence (and History's PLANNED line) have anything to say. Warmups
+  // stay unlinked — the view only compares working/backoff sets.
+  const donePrescriptions = store.prescriptions.filter(
+    (p) => p.planned_workout_id === doneWorkoutId,
+  );
+  for (const s of doneSession.sets) {
+    if (s.set_type !== "working") continue;
+    s.prescription_id =
+      donePrescriptions.find((p) => p.exercise_id === s.exercise_id)?.id ??
+      null;
+  }
   store.sessions.push(doneSession.session);
   store.sets.push(...doneSession.sets);
 

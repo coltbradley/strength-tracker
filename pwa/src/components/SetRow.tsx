@@ -2,6 +2,7 @@
 // an optional void control (append-only correction — the set is hidden, not
 // edited). Used by Session (with rest + void) and History (plain).
 
+import { enteredKg } from "../lib/loadEntry";
 import { toDisplay, type Unit } from "../lib/units";
 import type { SetInsert } from "../lib/types";
 
@@ -31,9 +32,15 @@ export function SetRow({
     >
       <span className="set-no">{set.set_index + 1}</span>
       {/* the unit is not optional: "100 × 5" is a different set in kg and
-          in lb, and this row is the record of what was actually lifted */}
+          in lb, and this row is the record of what was actually lifted.
+          load_kg is always the TOTAL, so a set entered per side is shown
+          back the way it was entered — "30 kg/side × 8", never the 60 the
+          column holds. A null load_entry is not an assertion of "total",
+          but it is also not a per-side claim, so it renders plainly. */}
       <span className="set-load">
-        {toDisplay(set.load_kg, unit)} {unit} × {set.reps}
+        {toDisplay(enteredKg(set.load_kg, set.load_entry ?? "total"), unit)}{" "}
+        {unit}
+        {set.load_entry === "per_side" ? "/side" : ""} × {set.reps}
       </span>
       <span
         className={`set-type ${set.set_type !== "working" ? "set-type-accent" : ""}`}

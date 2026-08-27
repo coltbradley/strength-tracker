@@ -52,6 +52,13 @@ of "sets that count"), `v_current_tm`, `v_resolved_prescriptions`, `v_e1rm`
 (Epley, working sets, 1-8 reps), `v_session_best_e1rm`, `v_weekly_volume`,
 `v_adherence`, `v_rest`, `v_goal_progress`. Nothing derived is ever stored.
 
+Every calendar bucket (dates, ISO weeks, "today") goes through `app_tz()`,
+which reads `app_config.tz` — the lifter's home timezone, not the database's
+UTC. The MCP server reads that same row for its own "today", so a training max
+set in the evening lands on the day the lifter trained. The PWA uses the device
+clock instead, on purpose: the phone travels with the lifter. See
+[decisions.md](decisions.md).
+
 ## MCP tool surface (12 tools)
 
 Read (`readOnlyHint: true`):
@@ -85,7 +92,7 @@ Write:
 Claude cannot write `sessions`, `sets`, `set_voids`, or `set_notes`. Only
 the PWA logs training.
 
-## PWA scope (4 screens)
+## PWA scope (5 screens)
 
 1. Today: resolved prescriptions for the planned workout, start button.
 2. Set entry: prefilled from prescription, fallback to last actuals.
@@ -94,6 +101,9 @@ the PWA logs training.
 3. History: per exercise set list, e1RM chart with goal line, weekly
    working-set bars. Two charts total.
 4. End session: sRPE (0-10), optional bodyweight and note.
+5. Plan editor: the user's own edits to a parsed program — the other writer
+   of `planned_workouts`/`prescriptions` besides the MCP server. `plan_note`
+   is the user's; `notes` stays the coach's words from the parse.
 
 Settings (a sheet, not a screen) is a typed device-local registry: units,
 plate and bar inventories, load steps, per-exercise overrides, rest, export.

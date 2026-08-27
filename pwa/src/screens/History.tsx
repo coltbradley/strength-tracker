@@ -1,26 +1,41 @@
 // History: per-exercise e1RM chart (goal % in teal), weekly working-set bars,
 // recent sets grouped by session date. Exactly two charts.
+//
+// ADHERENCE (v_adherence) reads back here as ONE line above each session's
+// sets: what the plan asked for, in the plan's own words. Not a compliance
+// score — the decisions log rejected streaks and badges as motivational-app
+// noise, and a percentage with a green tick is the same thing wearing a
+// number. The set rows sit directly beneath carrying the real loads and reps,
+// so the comparison is the reader's to make. The app only says what the
+// reader cannot derive: how many sets the plan wanted, and whether the two
+// loads are even on the same scale.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { E1rmChart } from "../components/charts/E1rmChart";
 import { VolumeChart } from "../components/charts/VolumeChart";
 import { SetRow } from "../components/SetRow";
 import {
+  getAdherence,
   getE1rmSeries,
   getExercises,
   getGoalProgress,
-  getLastActuals,
+  getLoggedExerciseIds,
   getRecentSets,
   getSessionMeta,
   getSetNotesForExercise,
   getWeeklyVolume,
+  invalidateForSessionClose,
+  invalidateForSetChange,
+  summariseAdherence,
+  type RxOutcome,
   type SessionMetaRow,
 } from "../lib/data";
 import { reportError, toast } from "../lib/errors";
-import { formatSessionDate } from "../lib/format";
-import { cacheDeleteByPrefix, cacheGet, cacheKeys } from "../lib/db";
+import { formatRepRange, formatSessionDate } from "../lib/format";
+import { cacheGet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { useUnit } from "../hooks/useUnit";
+import { toDisplay, type Unit } from "../lib/units";
 import { useArmed } from "../hooks/useArmed";
 import { ExercisePicker } from "../components/ExercisePicker";
 import type {
@@ -31,6 +46,35 @@ import type {
   SetInsert,
   WeeklyVolumeRow,
 } from "../lib/types";
+
+/**
+ * One prescription in the plan's own words: "3×3-5 @ 144 KG", with the number
+ * of sets actually logged only when it fell short of (or ran past) what was
+ * asked. No verdict, no percentage — the sets are rendered directly below.
+ *
+ * A per-side prescription is quoted PER SIDE, because that is the number the
+ * lifter reads off the rack; `load_kg` in the database stays the total.
+ */
+function formatPlanned(o: RxOutcome, unit: Unit): string {
+  const sets = o.plannedSets ?? o.loggedSets;
+  const head = `${sets}×${formatRepRange(o.repsMin, o.repsMax)}`;
+  const load =
+    o.prescribedLoadKg === null
+      ? "by feel"
+      : o.prescribedEntry === "per_side"
+        ? `${toDisplay(o.prescribedLoadKg / 2, unit)} ${unit}/side`
+        : `${toDisplay(o.prescribedLoadKg, unit)} ${unit}`;
+  const short =
+    o.plannedSets !== null && o.loggedSets !== o.plannedSets
+      ? ` (${o.loggedSets} logged)`
+      : "";
+  return `${head} @ ${load}${short}`;
+}
+
+/** Tonnage of the most recent week with any volume, for the chart's head. */
+function latestTonnage(weeks: WeeklyVolumeRow[]): WeeklyVolumeRow | null {
+  return weeks.length === 0 ? null : weeks[weeks.length - 1];
+}
 
 export function History() {
   const unit = useUnit();
@@ -44,6 +88,8 @@ export function History() {
   const [goal, setGoal] = useState<GoalProgressRow | null>(null);
   const [recent, setRecent] = useState<SetInsert[]>([]);
   const [meta, setMeta] = useState<Record<string, SessionMetaRow>>({});
+  /** session_id -> what each prescription in it asked for */
+  const [planned, setPlanned] = useState<Map<string, RxOutcome[]>>(new Map());
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [fromCache, setFromCache] = useState(false);
   const [discardArm, setDiscardArm] = useArmed();
@@ -64,9 +110,10 @@ export function History() {
     getExercises()
       .then((r) => setExercises(r.data))
       .catch((e: unknown) => reportError(e, "load exercises"));
-    getLastActuals()
+    // only which exercises have data — not every set ever logged
+    getLoggedExerciseIds()
       .then((r) => {
-        const ids = new Set(Object.keys(r.data));
+        const ids = new Set(r.data);
         setWithData(ids);
         setSelected((cur) => cur ?? [...ids][0] ?? null);
       })
@@ -90,6 +137,7 @@ export function History() {
       setRecent([]);
       setMeta({});
       setNotes({});
+      setPlanned(new Map());
     }
     shownFor.current = selected;
     setDetailLoading(true);
@@ -117,6 +165,15 @@ export function History() {
           .catch((e: unknown) => {
             // a swallowed failure here silently loses the post-workout note
             if (!cancelled) reportError(e, "load session notes");
+          });
+        // prescribed-vs-achieved for the sessions on screen; best effort,
+        // because an unreachable v_adherence must not blank the set list
+        getAdherence(selected, ids)
+          .then((a) => {
+            if (!cancelled) setPlanned(summariseAdherence(a.data));
+          })
+          .catch((e: unknown) => {
+            if (!cancelled) reportError(e, "load adherence");
           });
         getSetNotesForExercise(
           selected,
@@ -157,13 +214,7 @@ export function History() {
       });
       setRecent((prev) => prev.filter((x) => x.id !== s.id));
       setVoidArm(null);
-      await cacheDeleteByPrefix([
-        "recent:",
-        "e1rm:",
-        "volume:",
-        "goal:",
-        "lastActuals:",
-      ]);
+      await invalidateForSetChange();
       setReloadTick((t) => t + 1);
       toast("Set voided");
     } catch (e) {
@@ -186,16 +237,7 @@ export function History() {
       // the discard touches EVERY exercise trained that day, not just the one
       // on screen — clear the whole per-exercise cache family so stale
       // offline reads can't resurrect it
-      await cacheDeleteByPrefix([
-        "recent:",
-        "e1rm:",
-        "volume:",
-        "goal:",
-        "sessionMeta:",
-        "setNotes:",
-        "lastActuals:",
-        "doneWorkouts:",
-      ]);
+      await invalidateForSessionClose();
       setReloadTick((t) => t + 1);
       toast("Session discarded — every exercise from that day");
     } catch (e) {
@@ -212,6 +254,8 @@ export function History() {
     }
     return [...groups.entries()];
   }, [recent]);
+
+  const tonnage = useMemo(() => latestTonnage(volume), [volume]);
 
   return (
     <div className="screen">
@@ -263,6 +307,17 @@ export function History() {
           <section className="rule-section">
             <div className="section-head">
               <span className="field-label">WEEKLY WORKING SETS</span>
+              {/* tonnage was already fetched with the bars and thrown away;
+                  it is one figure, so it rides in the head rather than
+                  earning a second chart */}
+              {tonnage !== null && (
+                <span className="section-meta">
+                  {Math.round(
+                    toDisplay(tonnage.tonnage_kg, unit),
+                  ).toLocaleString()}{" "}
+                  {unit} LAST WEEK
+                </span>
+              )}
             </div>
             {detailLoading && volume.length === 0 ? (
               <div className="chart-empty">Loading…</div>
@@ -280,65 +335,91 @@ export function History() {
                 {detailLoading ? "Loading…" : "Nothing logged yet."}
               </p>
             )}
-            {bySession.map(([sessionId, ss]) => (
-              <div key={sessionId} className="history-session">
-                <div className="history-date">
-                  {formatSessionDate(ss[0].performed_at)}
-                  {/* the word, not ✕ — ✕ is reserved for single-set voids;
+            {bySession.map(([sessionId, ss]) => {
+              const outcomes = planned.get(sessionId) ?? [];
+              const bw = meta[sessionId]?.bodyweight_kg;
+              const rpe = meta[sessionId]?.session_rpe;
+              return (
+                <div key={sessionId} className="history-session">
+                  <div className="history-date">
+                    {formatSessionDate(ss[0].performed_at)}
+                    {/* the word, not ✕ — ✕ is reserved for single-set voids;
                       discarding takes the whole day with it */}
-                  {sessionId !== activeId && (
-                    <button
-                      type="button"
-                      className={`drawer-action ${discardArm === sessionId ? "drawer-action-armed" : ""}`}
-                      aria-label={
-                        discardArm === sessionId
-                          ? "confirm discard session"
-                          : "discard session"
-                      }
-                      onClick={() =>
-                        discardArm === sessionId
-                          ? void discardSession(sessionId)
-                          : setDiscardArm(sessionId)
-                      }
-                    >
-                      {discardArm === sessionId ? "DISCARD?" : "DISCARD"}
-                    </button>
-                  )}
-                </div>
-                {meta[sessionId]?.session_rpe != null && (
-                  <div className="muted-mono">
-                    sRPE {meta[sessionId].session_rpe}
-                  </div>
-                )}
-                {meta[sessionId]?.notes && (
-                  <div className="detail-note">
-                    <span className="detail-note-label">NOTE</span>
-                    {meta[sessionId].notes}
-                  </div>
-                )}
-                {ss
-                  .slice()
-                  .sort((a, b) => a.set_index - b.set_index)
-                  .map((s) => (
-                    <div key={s.id} className="logged-set-wrap">
-                      <SetRow
-                        set={s}
-                        unit={unit}
-                        onVoid={
-                          sessionId !== activeId
-                            ? () => void voidPastSet(s)
-                            : undefined
+                    {sessionId !== activeId && (
+                      <button
+                        type="button"
+                        className={`drawer-action ${discardArm === sessionId ? "drawer-action-armed" : ""}`}
+                        aria-label={
+                          discardArm === sessionId
+                            ? "confirm discard session"
+                            : "discard session"
                         }
-                        voidArmed={voidArm === s.id}
-                        onArmVoid={() => setVoidArm(s.id)}
-                      />
-                      {notes[s.id] && (
-                        <div className="set-note-preview">{notes[s.id]}</div>
-                      )}
+                        onClick={() =>
+                          discardArm === sessionId
+                            ? void discardSession(sessionId)
+                            : setDiscardArm(sessionId)
+                        }
+                      >
+                        {discardArm === sessionId ? "DISCARD?" : "DISCARD"}
+                      </button>
+                    )}
+                  </div>
+                  {(rpe != null || bw != null) && (
+                    <div className="muted-mono">
+                      {[
+                        rpe != null ? `sRPE ${rpe}` : null,
+                        // captured on the End screen and, until now, never read
+                        // back anywhere
+                        bw != null ? `BW ${toDisplay(bw, unit)} ${unit}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </div>
-                  ))}
-              </div>
-            ))}
+                  )}
+                  {meta[sessionId]?.notes && (
+                    <div className="detail-note">
+                      <span className="detail-note-label">NOTE</span>
+                      {meta[sessionId].notes}
+                    </div>
+                  )}
+                  {/* the plan sits directly on top of the sets that answered
+                      it — nothing between them to compare across */}
+                  {outcomes.length > 0 && (
+                    <div className="muted-mono">
+                      PLANNED{" "}
+                      {outcomes.map((o) => formatPlanned(o, unit)).join(" · ")}
+                    </div>
+                  )}
+                  {outcomes.some((o) => o.entryAmbiguous) && (
+                    <div className="microcopy">
+                      Prescribed per side; these sets recorded no entry mode, so
+                      the two loads may not compare.
+                    </div>
+                  )}
+                  {ss
+                    .slice()
+                    .sort((a, b) => a.set_index - b.set_index)
+                    .map((s) => (
+                      <div key={s.id} className="logged-set-wrap">
+                        <SetRow
+                          set={s}
+                          unit={unit}
+                          onVoid={
+                            sessionId !== activeId
+                              ? () => void voidPastSet(s)
+                              : undefined
+                          }
+                          voidArmed={voidArm === s.id}
+                          onArmVoid={() => setVoidArm(s.id)}
+                        />
+                        {notes[s.id] && (
+                          <div className="set-note-preview">{notes[s.id]}</div>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              );
+            })}
           </section>
         </>
       )}

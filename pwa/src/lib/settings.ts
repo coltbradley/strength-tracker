@@ -34,6 +34,7 @@
 // top-level call to `lbToKg` (or any other units.ts value) in this file.
 
 import { reportError } from "./errors";
+import type { LoadEntry } from "./types";
 import { lbToKg, type Unit } from "./units";
 
 // ---- shape -----------------------------------------------------------------
@@ -66,6 +67,10 @@ export interface ExercisePref {
   restSeconds?: number;
   /** coarse stepper increment in kg (the fine step stays global) */
   loadStepKg?: number;
+  /** whether this movement's load is typed per side or as the whole system;
+   *  absent = fall back to the prescription, then to the equipment guess
+   *  (lib/loadEntry.ts). Storage stays kg TOTAL either way. */
+  loadEntry?: LoadEntry;
 }
 
 export type ExercisePrefs = Record<string, ExercisePref>;
@@ -192,6 +197,8 @@ function parseExercisePrefs(raw: unknown): ExercisePrefs | null {
     if (rest !== null) pref.restSeconds = rest;
     const step = num(value.loadStepKg, EPS, MAX_PLATE_KG);
     if (step !== null) pref.loadStepKg = step;
+    if (value.loadEntry === "total" || value.loadEntry === "per_side")
+      pref.loadEntry = value.loadEntry;
     if (Object.keys(pref).length === 0) continue;
     out[id] = pref;
     n += 1;
@@ -786,8 +793,17 @@ export function setLoadStepKg(u: Unit, fine: boolean, kg: number): boolean {
 
 // ---- per-exercise preferences ----------------------------------------------
 
+/**
+ * Stable "no overrides" value. `?? {}` here allocated a fresh object on every
+ * read, and useSyncExternalStore compares snapshots with Object.is — so
+ * `useExercisePref` on an exercise with no overrides re-rendered forever
+ * ("The result of getSnapshot should be cached"). Frozen because callers
+ * share it.
+ */
+const NO_PREF: ExercisePref = Object.freeze({});
+
 export function getExercisePref(exerciseId: string): ExercisePref {
-  return getSetting("exercisePrefs")[exerciseId] ?? {};
+  return getSetting("exercisePrefs")[exerciseId] ?? NO_PREF;
 }
 
 export function listExercisePrefs(): {
@@ -811,8 +827,12 @@ export function setExercisePref(
   const all = getSetting("exercisePrefs");
   const merged: ExercisePref = { ...all[exerciseId] };
   for (const [k, v] of Object.entries(patch)) {
-    if (v === undefined) delete merged[k as keyof ExercisePref];
-    else merged[k as keyof ExercisePref] = v;
+    const key = k as keyof ExercisePref;
+    if (v === undefined) delete merged[key];
+    // Object.entries has already erased which value type belongs to which
+    // key, and ExercisePref's fields are no longer all numbers; the patch
+    // parameter is what keeps this honest at every call site.
+    else (merged as Record<string, unknown>)[key] = v;
   }
   const next: ExercisePrefs = { ...all };
   if (Object.keys(merged).length === 0) delete next[exerciseId];
@@ -893,6 +913,19 @@ export function getExerciseStepKg(
     if (own !== undefined) return own;
   }
   return getLoadStepKg(u, fine);
+}
+
+/**
+ * How this movement's load is typed (per side vs the whole system). Only the
+ * user's OWN choice lives here; the prescription and the equipment default are
+ * resolved in lib/loadEntry.ts, which is the one place that chain exists.
+ * null clears the override.
+ */
+export function setExerciseLoadEntry(
+  exerciseId: string,
+  entry: LoadEntry | null,
+): void {
+  setExercisePref(exerciseId, { loadEntry: entry ?? undefined });
 }
 
 // ---- display ---------------------------------------------------------------

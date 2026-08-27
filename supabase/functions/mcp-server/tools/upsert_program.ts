@@ -10,6 +10,7 @@ import {
   type RequestContext,
 } from "../lib/errors.ts";
 import { formatRepRange } from "../lib/format.ts";
+import { log } from "../lib/log.ts";
 
 const prescriptionSchema = z
   .object({
@@ -275,13 +276,19 @@ export function registerUpsertProgram(
           if (missingTm.length > 0) {
             // A future-dated TM exists but is invisible to v_current_tm until
             // its date arrives — say so instead of just "no TM".
+            // gte, not gt: the boundary day belongs to the database, which
+            // decides currency with its own now() at app_tz(). A row dated
+            // exactly today is either already current (so it is not in
+            // missingTm and cannot be listed here) or it is one the view has
+            // not reached yet — and gt() dropped exactly that row, leaving the
+            // "no current training max" error with nothing to explain.
             const futureRows = must(
               await db.client
                 .from("training_maxes")
                 .select("exercise_id, value_kg, effective_date")
                 .eq("user_id", db.ownerId)
                 .in("exercise_id", missingTm)
-                .gt("effective_date", todayIso())
+                .gte("effective_date", await todayIso(db))
                 .order("effective_date", { ascending: true }),
               "future TM lookup",
             ) as {
@@ -389,7 +396,24 @@ export function registerUpsertProgram(
           if (rxError)
             throw new Error(`insert prescriptions: ${rxError.message}`);
         } catch (err) {
-          await db.client.from("programs").delete().eq("id", programId); // best effort
+          // Compensating delete. If it fails, a half-written program (program
+          // row, maybe workouts, no prescriptions) survives in Postgres and
+          // the caller only ever sees the original error — so log it rather
+          // than discard it. The next upsert_program with the same name
+          // retires the fragment via the unconfirmed-replacement path below.
+          const { error: rollbackError } = await db.client
+            .from("programs")
+            .delete()
+            .eq("id", programId);
+          if (rollbackError) {
+            log("error", "upsert_program_cleanup_failed", {
+              request_id: ctx.requestId,
+              tool: "upsert_program",
+              program_id: programId,
+              program_name: program.name,
+              error: rollbackError.message,
+            });
+          }
           throw err;
         }
 

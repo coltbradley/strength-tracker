@@ -1,0 +1,209 @@
+// The workout's SHAPE: how prescriptions become the list of exercises a
+// screen renders, and which logged sets belong to which of them.
+//
+// Pure functions of plain data — no React, no cache, no network — because
+// every rule in here has a permanent consequence:
+//  - `groupRamps` defines what "one exercise" means. The Session accordion
+//    and the Today preview must agree, or the day silently has a different
+//    number of exercises depending on which screen you look at.
+//  - `bracketFor` decides the `prescription_id` a set is stamped with, and
+//    `sets` is append-only: a wrong link can never be corrected, only voided.
+//  - `buildEntries`/`setsForEntry` enforce "no logged set may be invisible".
+//    A set nothing renders cannot be voided or corrected from the UI, so the
+//    lifter re-logs it and the record carries a duplicate forever.
+
+import type { ResolvedPrescriptionRow, SetInsert } from "./types";
+
+/** An exercise as the session screen lists it: one accordion item. */
+export interface ExerciseEntry {
+  /** first bracket's prescription id, or `extra:<exercise_id>` */
+  key: string;
+  exercise_id: string;
+  name: string;
+  /** consecutive prescriptions for this exercise (a coach's ramp brackets,
+   *  e.g. 1×8-15, 1×6-8, 3×3-5) — ONE entry, walked through in order.
+   *  Empty = unprescribed. */
+  brackets: ResolvedPrescriptionRow[];
+}
+
+/** An exercise added mid-session that the plan did not prescribe. */
+export interface ExtraExercise {
+  exercise_id: string;
+  name: string;
+}
+
+/**
+ * Collapse a prescription list into ramp groups.
+ *
+ * Two consecutive prescriptions are the same exercise's ramp when the
+ * exercise matches AND the superset group matches. Both clauses matter: the
+ * superset clause is what keeps `A1 bench / A1 bench` (a ramp inside a
+ * superset) separate from the same exercise programmed outside the superset,
+ * and it is the clause a rewrite is most likely to drop. NON-consecutive
+ * repeats (squat early, squat finisher) stay distinct on purpose.
+ */
+export function groupRamps(
+  rx: ResolvedPrescriptionRow[],
+): ResolvedPrescriptionRow[][] {
+  const groups: ResolvedPrescriptionRow[][] = [];
+  for (const r of rx) {
+    const last = groups[groups.length - 1];
+    if (
+      last &&
+      last[0].exercise_id === r.exercise_id &&
+      last[0].superset_group === r.superset_group
+    )
+      last.push(r);
+    else groups.push([r]);
+  }
+  return groups;
+}
+
+/** total prescribed working sets across an entry's brackets */
+export function totalSets(entry: ExerciseEntry): number {
+  return entry.brackets.reduce((n, b) => n + b.sets, 0);
+}
+
+/** the bracket the (n+1)th working set falls into */
+export function bracketFor(
+  entry: ExerciseEntry,
+  n: number,
+): ResolvedPrescriptionRow | null {
+  let acc = 0;
+  for (const b of entry.brackets) {
+    acc += b.sets;
+    if (n < acc) return b;
+  }
+  return entry.brackets[entry.brackets.length - 1] ?? null;
+}
+
+/** a set whose prescription link points at nothing in this session's
+ *  snapshot (null, or a prescription since deleted) */
+export function isOrphanSet(s: SetInsert, knownRxIds: Set<string>): boolean {
+  return s.prescription_id === null || !knownRxIds.has(s.prescription_id);
+}
+
+/**
+ * The accordion list for a session: prescribed entries (ramps collapsed),
+ * then mid-session extras, then a synthesized entry for any exercise that
+ * has orphan sets and no home yet (lost extras cache, plan edited
+ * mid-session, sets logged on another device).
+ */
+export function buildEntries(
+  rx: ResolvedPrescriptionRow[],
+  extras: ExtraExercise[],
+  sets: SetInsert[],
+  exercises: { id: string; name: string }[],
+): ExerciseEntry[] {
+  const fromRx: ExerciseEntry[] = groupRamps(rx).map((brackets) => ({
+    key: brackets[0].id,
+    exercise_id: brackets[0].exercise_id,
+    name: brackets[0].exercise_name,
+    brackets,
+  }));
+  const covered = new Set(fromRx.map((f) => f.exercise_id));
+  const extraEntries: ExerciseEntry[] = extras
+    .filter((e) => !covered.has(e.exercise_id))
+    .map((e) => ({
+      key: `extra:${e.exercise_id}`,
+      exercise_id: e.exercise_id,
+      name: e.name,
+      brackets: [],
+    }));
+  for (const e of extraEntries) covered.add(e.exercise_id);
+  const knownRxIds = new Set(rx.map((r) => r.id));
+  const orphanIds = [
+    ...new Set(
+      sets
+        .filter(
+          (s) => !covered.has(s.exercise_id) && isOrphanSet(s, knownRxIds),
+        )
+        .map((s) => s.exercise_id),
+    ),
+  ];
+  const fallback: ExerciseEntry[] = orphanIds.map((id) => ({
+    key: `extra:${id}`,
+    exercise_id: id,
+    name: exercises.find((e) => e.id === id)?.name ?? id.replace(/_/g, " "),
+    brackets: [],
+  }));
+  return [...fromRx, ...extraEntries, ...fallback];
+}
+
+/**
+ * The sets that belong to one entry.
+ *
+ * The FIRST rx entry for an exercise also claims that exercise's orphan
+ * sets, so nothing logged can disappear from the UI. An unprescribed entry
+ * owns its exercise's orphan sets outright.
+ */
+export function setsForEntry(
+  entry: ExerciseEntry,
+  sets: SetInsert[],
+  rx: ResolvedPrescriptionRow[],
+  knownRxIds: Set<string>,
+): SetInsert[] {
+  if (entry.brackets.length > 0) {
+    const ids = new Set(entry.brackets.map((b) => b.id));
+    const claimsOrphans =
+      rx.find((r) => r.exercise_id === entry.exercise_id)?.id === entry.key;
+    return sets.filter(
+      (s) =>
+        (s.prescription_id !== null && ids.has(s.prescription_id)) ||
+        (claimsOrphans &&
+          s.exercise_id === entry.exercise_id &&
+          isOrphanSet(s, knownRxIds)),
+    );
+  }
+  return sets.filter(
+    (s) => s.exercise_id === entry.exercise_id && isOrphanSet(s, knownRxIds),
+  );
+}
+
+/** A1/A2 tags and bracket-rail position for supersetted entries. */
+export interface SupersetTag {
+  tag: string;
+  first: boolean;
+  last: boolean;
+}
+
+/** 1 -> "A", 2 -> "B". */
+export function supersetLetter(group: number): string {
+  return String.fromCharCode(64 + group);
+}
+
+/**
+ * Tag consecutive entries that share a non-null superset group. A group with
+ * only ONE member is not a superset — it has no partner to alternate with —
+ * so it gets no tag at all.
+ */
+export function supersetInfo(
+  entries: ExerciseEntry[],
+): Map<string, SupersetTag> {
+  const map = new Map<string, SupersetTag>();
+  let i = 0;
+  while (i < entries.length) {
+    const group = entries[i].brackets[0]?.superset_group ?? null;
+    if (group === null) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (
+      j < entries.length &&
+      (entries[j].brackets[0]?.superset_group ?? null) === group
+    )
+      j++;
+    if (j - i > 1) {
+      const letter = supersetLetter(group);
+      for (let k = i; k < j; k++)
+        map.set(entries[k].key, {
+          tag: `${letter}${k - i + 1}`,
+          first: k === i,
+          last: k === j - 1,
+        });
+    }
+    i = j;
+  }
+  return map;
+}
