@@ -33,7 +33,11 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   A discarded session leaves every view but stays in Postgres.
 - Planned tables (`programs`/`planned_workouts`/`prescriptions`) are written
   by BOTH the MCP server (service role, program parsing) and the PWA (RLS
-  owner policies, plan editor). `planned_workouts.notes` is coach notes from
+  owner policies, plan editor). The PWA can now CREATE a day too, not just
+  edit one: `createPlannedWorkout` always sets `scheduled_date` (an undated
+  day leaves the calendar entirely) and makes a confirmed program when none
+  exists. A user-authored program is confirmed on creation; only what CLAUDE
+  writes needs the separate confirm step. `planned_workouts.notes` is coach notes from
   the parse (the coach's OWN words, brief — parse caveats go in chat);
   `plan_note` is the user's own and the parse must not touch it.
   `prescriptions.superset_group` (1=A…) marks supersets; consecutive

@@ -3,6 +3,22 @@
 import type { ResolvedPrescriptionRow } from "./types";
 import { kgToLb, toDisplay, type Unit } from "./units";
 
+/**
+ * What to call a planned day.
+ *
+ * `label` is nullable AND can be blank: a day created in the app starts
+ * unnamed, and `label ?? fallback` does not fire for an empty string, which
+ * rendered a day with no heading at all. Blank and null are the same thing to
+ * a reader, so they resolve the same way here rather than at four call sites.
+ */
+export function workoutName(w: {
+  label: string | null;
+  day_index: number;
+}): string {
+  const named = (w.label ?? "").trim();
+  return named.length > 0 ? named : `Workout ${w.day_index + 1}`;
+}
+
 /** "5" or "5-8" */
 export function formatRepRange(min: number, max: number): string {
   return min === max ? String(min) : `${min}-${max}`;

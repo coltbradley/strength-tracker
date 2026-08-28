@@ -277,11 +277,20 @@ export async function deletePrescription(
   await invalidatePlanCaches(plannedWorkoutId);
 }
 
+/**
+ * Append an exercise to a planned day and return its new id, so the caller can
+ * open the editor on it immediately. Returning the id is the point: adding an
+ * exercise and then having to hunt for the row you just made was the whole
+ * complaint about this flow.
+ *
+ * The defaults are a starting point, not a guess to live with — 3x8 by feel is
+ * the least surprising thing to land on before the editor opens.
+ */
 export async function addPrescription(
   plannedWorkoutId: string,
   exerciseId: string,
   existing: ResolvedPrescriptionRow[],
-): Promise<void> {
+): Promise<string> {
   const position = existing.reduce((m, r) => Math.max(m, r.position), -1) + 1;
   const row: PrescriptionInsert = {
     id: uuid(),
@@ -299,6 +308,109 @@ export async function addPrescription(
   const { error } = await supabase.from("prescriptions").insert(row);
   throwIf(error);
   await invalidatePlanCaches(plannedWorkoutId);
+  return row.id;
+}
+
+/**
+ * Move one exercise up or down within its day.
+ *
+ * `unique (planned_workout_id, position)` means the two rows cannot simply
+ * take each other's numbers — the first UPDATE would collide with the row it
+ * is about to replace. So the mover parks on a position nothing can occupy
+ * (negative fails the `position >= 0` check, so park high instead), the
+ * neighbour takes the vacated slot, then the mover lands. Same shape as
+ * swapWorkoutOrder does for day_index.
+ */
+export async function movePrescription(
+  rxId: string,
+  plannedWorkoutId: string,
+  direction: -1 | 1,
+  existing: ResolvedPrescriptionRow[],
+): Promise<void> {
+  const ordered = [...existing].sort((a, b) => a.position - b.position);
+  const i = ordered.findIndex((r) => r.id === rxId);
+  const j = i + direction;
+  if (i < 0 || j < 0 || j >= ordered.length) return;
+
+  const mover = ordered[i];
+  const neighbour = ordered[j];
+  const park = ordered.reduce((m, r) => Math.max(m, r.position), 0) + 1;
+
+  const step = async (id: string, position: number) => {
+    const { error } = await supabase
+      .from("prescriptions")
+      .update({ position })
+      .eq("id", id);
+    throwIf(error);
+  };
+  await step(mover.id, park);
+  await step(neighbour.id, mover.position);
+  await step(mover.id, neighbour.position);
+  await invalidatePlanCaches(plannedWorkoutId);
+}
+
+/**
+ * Create a planned day ON A DATE and return its id.
+ *
+ * A day with no `scheduled_date` does not merely sort oddly, it leaves the
+ * calendar entirely: the week strip disappears and Today falls back to a
+ * DAY 1..N list. So everything this app creates is dated, always.
+ *
+ * A day needs a program. Rather than make the user invent one, this attaches
+ * to their newest confirmed program and creates a plain one only when there is
+ * none. That program is CONFIRMED on creation, unlike anything Claude writes:
+ * the confirm step exists so a parsed or prompt-injected program cannot go
+ * live unreviewed, and there is nothing to review in a day the user is
+ * authoring by hand. See docs/decisions.md.
+ */
+export async function createPlannedWorkout(
+  scheduledDate: string,
+  label: string,
+): Promise<string> {
+  const { data: programs, error: pErr } = await supabase
+    .from("programs")
+    .select("id")
+    .not("confirmed_at", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  throwIf(pErr);
+
+  let programId = (programs ?? [])[0]?.id as string | undefined;
+  if (programId === undefined) {
+    const created = uuid();
+    const { error } = await supabase.from("programs").insert({
+      id: created,
+      name: "My plan",
+      source_note: "Created in the app",
+      confirmed_at: new Date().toISOString(),
+    });
+    throwIf(error);
+    programId = created;
+  }
+
+  // `unique (program_id, day_index)` — take the next free index in this program.
+  const { data: siblings, error: sErr } = await supabase
+    .from("planned_workouts")
+    .select("day_index")
+    .eq("program_id", programId)
+    .order("day_index", { ascending: false })
+    .limit(1);
+  throwIf(sErr);
+  const dayIndex = ((siblings ?? [])[0]?.day_index ?? -1) + 1;
+
+  const id = uuid();
+  const { error } = await supabase.from("planned_workouts").insert({
+    id,
+    program_id: programId,
+    day_index: dayIndex,
+    // null, never "": an empty string is not null, so `label ?? fallback`
+    // would not fire and the day would render with a blank heading.
+    label: label.trim().length === 0 ? null : label.trim(),
+    scheduled_date: scheduledDate,
+  });
+  throwIf(error);
+  await invalidatePlanCaches();
+  return id;
 }
 
 // ---- workout completion ----------------------------------------------------

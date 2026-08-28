@@ -17,6 +17,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { Note } from "../components/Note";
 import {
+  createPlannedWorkout,
   getDoneWorkoutIds,
   getExercises,
   getLastActuals,
@@ -45,6 +46,7 @@ import {
   parseLocalDate,
   rxHasNoTm,
   todayLocalIso,
+  workoutName,
 } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import type {
@@ -70,6 +72,7 @@ export function Today() {
   const [loadError, setLoadError] = useState(false);
   // week strip selection + LATER-list accordion
   const [selectedDate, setSelectedDate] = useState<string>(todayLocalIso());
+  const [creating, setCreating] = useState(false);
   const [laterExpanded, setLaterExpanded] = useState<string | null>(null);
   // undated-program fallback keeps the old expandable ruled list
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -264,6 +267,23 @@ export function Today() {
   };
 
   const startingRef = useRef(false);
+  /**
+   * Create a planned day for `date` and go straight to its editor.
+   *
+   * Dated by construction: an undated day leaves the calendar entirely (the
+   * week strip disappears and the screen falls back to a DAY 1..N list), so
+   * planning starts from the day being planned rather than from a form with an
+   * optional date field.
+   */
+  const planDay = (date: string) => {
+    if (creating) return;
+    setCreating(true);
+    createPlannedWorkout(date, "")
+      .then((id) => navigate(`/plan/${id}`))
+      .catch((e: unknown) => reportError(e, "plan a day"))
+      .finally(() => setCreating(false));
+  };
+
   const start = async (workout: PlannedWorkoutRow | null) => {
     if (startingRef.current) return; // double-tap = one session
     startingRef.current = true;
@@ -705,8 +725,7 @@ export function Today() {
               <>
                 <div className="selected-day-head">
                   <h2 className="selected-day-label">
-                    {selectedWorkout.label ??
-                      `Workout ${selectedWorkout.day_index + 1}`}
+                    {workoutName(selectedWorkout)}
                   </h2>
                   <span className="section-meta">
                     {stateLabel(states.get(selectedWorkout.id) ?? "UPCOMING")}
@@ -715,11 +734,26 @@ export function Today() {
                 {dayDetail(selectedWorkout)}
               </>
             ) : (
-              <div className="microcopy">
-                {selectedDate === today
-                  ? "Nothing scheduled today — rest day. Move a workout here to train anyway."
-                  : "Rest day — nothing scheduled."}
-              </div>
+              <>
+                <div className="microcopy">
+                  {selectedDate === today
+                    ? "Nothing scheduled today — rest day."
+                    : "Rest day — nothing scheduled."}
+                </div>
+                {/* The only way to create a planned day used to be duplicating
+                    an existing one, which meant no way at all before the first
+                    program existed. Planning starts on the calendar, on the
+                    day being planned, so the new workout is dated by
+                    construction and cannot land off the week strip. */}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-block"
+                  disabled={creating}
+                  onClick={() => planDay(selectedDate)}
+                >
+                  {creating ? "Creating…" : "Plan this day"}
+                </button>
+              </>
             )}
           </div>
         </section>
@@ -746,7 +780,7 @@ export function Today() {
                 >
                   <span className="week-day">{dayLabel(w)}</span>
                   <span className="week-label">
-                    {w.label ?? `Workout ${w.day_index + 1}`}
+                    {workoutName(w)}
                     {w.plan_note ? <span className="note-dot"> ·</span> : ""}
                   </span>
                   <span
@@ -795,7 +829,7 @@ export function Today() {
                   <span
                     className={`week-label ${state === "TODAY" ? "week-label-today" : ""} ${muted ? "week-label-done" : ""}`}
                   >
-                    {w.label ?? `Workout ${w.day_index + 1}`}
+                    {workoutName(w)}
                     {w.plan_note ? <span className="note-dot"> ·</span> : ""}
                   </span>
                   <span
@@ -814,7 +848,22 @@ export function Today() {
 
       {/* the empty state is a claim about the data; it must wait for it */}
       {!list && !loadError && <p className="muted">Loading…</p>}
-      {list && !program && <p className="muted">No confirmed programs yet.</p>}
+      {list && !program && (
+        <>
+          <p className="muted">No confirmed programs yet.</p>
+          {/* With no program there was previously NO planning affordance
+              anywhere in the app — the whole screen was "Start empty
+              session". createPlannedWorkout makes the first program itself. */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-block"
+            disabled={creating}
+            onClick={() => planDay(todayLocalIso())}
+          >
+            {creating ? "Creating…" : "Plan a workout"}
+          </button>
+        </>
+      )}
 
       {canStart && (
         <button

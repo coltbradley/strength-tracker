@@ -9,7 +9,7 @@ A coached lifter logs sets on their phone. Claude reads the log to analyze
 progress and writes programming parsed from coach-provided screenshots.
 The coach programs. Claude parses, analyzes, and proposes. The app captures.
 
-**Non-goals:** social features, in-app routine editor, nutrition, running data,
+**Non-goals:** social features, nutrition, running data,
 multi-user, RIR or per-set subjective ratings.
 
 ## 2. Architecture

@@ -514,6 +514,38 @@
     letter-spacing: var(--track-tight);
   }
 
+  /* The workout name is now editable, and reads as the heading it replaced
+     rather than as a form field: no box until you touch it. A day created in
+     the app starts unnamed, so the placeholder is doing real work. */
+  .plan-title-input {
+    font-family: var(--font-sans);
+    font-size: var(--fs-title);
+    font-weight: 800;
+    letter-spacing: var(--track-tight);
+    border-color: transparent;
+    background: transparent;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .plan-title-input:focus {
+    border-color: var(--control-border-color);
+    background: var(--bg-input);
+    padding-left: var(--s-7);
+    padding-right: var(--s-7);
+  }
+
+  /* Consecutive rows naming the same exercise run as one ramp on Today. The
+     editor keeps them separate so each is editable; this says why they look
+     different in the two places. */
+  .rx-ramp {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-2);
+    color: var(--text-dim);
+  }
+
   .splash {
     display: flex;
     align-items: center;
@@ -2520,5 +2552,12 @@
     line-height: 1.5;
     color: var(--text-dim);
     margin-top: var(--s-5);
+  }
+
+  /* Microcopy that reports a CONSEQUENCE rather than an aside: an undated day
+     is invisible on the calendar, which the reader has to notice. --danger is
+     5.9:1 on paper, so it carries small text. */
+  .microcopy-warn {
+    color: var(--danger);
   }
 }

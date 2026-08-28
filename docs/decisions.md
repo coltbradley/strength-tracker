@@ -753,3 +753,56 @@ clipped by the sheet's own overflow. Left alone — closing it means adding
 padding to the top of every sheet for half a millimetre on the one control that
 is also dismissable by backdrop tap and by ESC. Recorded in styles.css beside
 the family so the next person measures rather than trusting the rule.
+
+## 2026-08-28 the app plans workouts now (reverses a non-goal)
+
+`spec.md` and `plan.md` both listed "in-app routine editor" as a non-goal. The
+premise was a division of labour: the coach programs, Claude parses, the app
+captures. Reversed on the owner's request, and the reasons it was worth
+reversing are worth recording.
+
+The editor that existed could only edit days that already existed. The only
+`insert` into `planned_workouts` anywhere in the PWA lived inside _Duplicate to
+another day_, so a day could be copied but never created — and before the first
+MCP-parsed program existed there was no planning affordance at all. The whole
+empty state was "Start empty session". That is not a deliberate boundary, it is
+a hole: planning was possible only if Claude had already planned something.
+
+What changed:
+
+- **A day is created from the calendar**, on the day being planned ("Plan this
+  day" on an empty date, "Plan a workout" from the empty state). It is dated by
+  construction, which matters more than it sounds: a day with no
+  `scheduled_date` does not merely sort oddly, it leaves the calendar entirely
+  — the week strip disappears and Today falls back to a DAY 1..N list. An
+  undated day now says so in the editor.
+- **Adding an exercise opens its editor on the new row.** It used to insert a
+  fixed 3x8-by-feel and close, leaving the user to find the row they had just
+  made in order to say anything about it. `addPrescription` returns the new id
+  so the caller can open it; the defaults are a starting point, not an answer.
+- **Exercises reorder within a day.** Nothing wrote `position` before, so an
+  exercise added last was last forever. `unique (planned_workout_id, position)`
+  means the swap parks on a free slot first, the same shape `swapWorkoutOrder`
+  already used for `day_index`.
+- **A day can be renamed**, and `workoutName()` now resolves blank and null the
+  same way. `label ?? fallback` does not fire for an empty string, so a
+  freshly created day rendered with no heading at all — caught by testing the
+  create flow rather than by reading it.
+
+**A user-created program is CONFIRMED on creation**, unlike anything Claude
+writes. The confirm step exists so a parsed or prompt-injected program cannot
+go live unreviewed; there is nothing to review in a day the user is authoring
+by hand, and making them approve their own typing would be theatre. The MCP
+path is untouched: `upsert_program` still lands `confirmed_at IS NULL`.
+
+Consecutive prescriptions naming the same exercise remain a ramp, rendered by
+Today as one grouped entry ("1x8 @60 · 1x6 @85 · 3x3 @112") and by the editor
+as separate editable rows. That is the right behaviour for a warmup ramp, but
+it happened silently, so adding an exercise twice looked like the two screens
+disagreeing. Ramp rows are now marked in the editor and the toast says what
+just happened.
+
+Still not built: no way to reorder DAYS other than the existing earlier/later
+swap, and no multi-week program authoring. Claude remains much better at
+turning a coach's screenshot into a block than any form would be; this is for
+the day you want to change something yourself.

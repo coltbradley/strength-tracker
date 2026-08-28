@@ -114,6 +114,22 @@ decisions.md for the reasoning and docs/setup.md for the runbook.
 - [ ] OAuth authorization server, for clients that refuse static API keys.
       Deliberately not built — see decisions.md.
 
+## Phase 3.8: in-app plan authoring (done)
+
+Reverses the "in-app routine editor" non-goal — see decisions.md. No migration:
+the RLS write policies for `programs` / `planned_workouts` / `prescriptions`
+already existed.
+
+- [x] Create a planned day from the calendar ("Plan this day" on an empty
+      date, "Plan a workout" when there is no program at all). Dated by
+      construction; creates the first program itself when none exists.
+- [x] Adding an exercise opens its editor on the new row, so sets/reps/load
+      are set in the same gesture rather than hunted for afterwards.
+- [x] Reorder exercises within a day; rename a day.
+- [x] Ramp rows are marked in the editor, so it agrees with Today's grouped
+      rendering instead of silently disagreeing.
+- [x] An undated day says it is off the calendar.
+
 ## Phase 4: first real use
 
 - [ ] Log training maxes via Claude (set_training_max).
@@ -123,7 +139,7 @@ decisions.md for the reasoning and docs/setup.md for the runbook.
 
 ## Out of scope (per spec)
 
-Social, in-app routine editor, nutrition, running data, RIR,
+Social, nutrition, running data, RIR,
 per-set subjective ratings, set editing of any kind.
 
 Considered in the polish round and declined for now (see `.audit/PLAN.md`

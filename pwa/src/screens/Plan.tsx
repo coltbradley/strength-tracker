@@ -4,7 +4,7 @@
 // (planning happens at home); each action saves immediately and confirms
 // with a toast so there is never an unsaved-state question.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
 import { Note } from "../components/Note";
@@ -16,6 +16,7 @@ import {
   getExercises,
   getPlannedWorkouts,
   getResolvedPrescriptions,
+  movePrescription,
   swapWorkoutOrder,
   updatePlannedWorkout,
   updatePrescription,
@@ -28,6 +29,7 @@ import {
   formatRepRange,
   formatStoredTwin,
   todayLocalIso,
+  workoutName,
 } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
@@ -53,6 +55,19 @@ interface RxDraft {
   hasRest: boolean;
   /** 0 = not in a superset; 1-4 = group A-D */
   superset: number;
+}
+
+/**
+ * Whether row `i` runs as a ramp with the row beside it — consecutive
+ * prescriptions naming the SAME exercise. Today renders those as one grouped
+ * entry ("1×8 @60 · 1×6 @85 · 3×3 @112"), which is how a warmup ramp is
+ * expressed; this editor keeps them as separate rows so each is editable. The
+ * marker exists so the two screens visibly agree.
+ */
+function rampWith(rows: ResolvedPrescriptionRow[], i: number): boolean {
+  const id = rows[i]?.exercise_id;
+  if (id === undefined) return false;
+  return rows[i - 1]?.exercise_id === id || rows[i + 1]?.exercise_id === id;
 }
 
 function draftFrom(r: ResolvedPrescriptionRow): RxDraft {
@@ -110,6 +125,12 @@ export function Plan() {
   const [exercisesFailed, setExercisesFailed] = useState(false);
   const [duplicateDate, setDuplicateDate] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [labelValue, setLabelValue] = useState("");
+  const [labelDirty, setLabelDirty] = useState(false);
+  /** Set by addExercise so the reload that follows can open the new row's
+   *  editor. Adding an exercise and then having to hunt for it was the
+   *  complaint; landing in its editor is the answer. */
+  const openAfterReload = useRef<string | null>(null);
 
   const workout: PlannedWorkoutRow | null =
     list?.workouts.find((w) => w.id === id) ?? null;
@@ -140,8 +161,33 @@ export function Plan() {
   useEffect(() => {
     if (workout && !noteDirty) setPlanNote(workout.plan_note ?? "");
     if (workout && !dateDirty) setDateValue(workout.scheduled_date ?? "");
+    if (workout && !labelDirty) setLabelValue(workout.label ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workout?.id, workout?.plan_note, workout?.scheduled_date]);
+  }, [
+    workout?.id,
+    workout?.plan_note,
+    workout?.scheduled_date,
+    workout?.label,
+  ]);
+
+  // Open the editor on the exercise that was just added, and bring it into
+  // view. Runs when the reload that follows the insert delivers the new row.
+  useEffect(() => {
+    const wanted = openAfterReload.current;
+    if (wanted === null || rx === null) return;
+    const row = rx.find((r) => r.id === wanted);
+    if (row === undefined) return;
+    openAfterReload.current = null;
+    setEditingRx(row.id);
+    setDraft(draftFrom(row));
+    setConfirming(null);
+    requestAnimationFrame(() =>
+      document
+        .querySelector(`[data-rx="${row.id}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rx]);
 
   useEffect(() => {
     if (!searchOpen || allExercises.length > 0) return;
@@ -264,9 +310,38 @@ export function Plan() {
 
   const addExercise = (ex: ExerciseRow) =>
     void run("add exercise", async () => {
-      await addPrescription(workout.id, ex.id, rx ?? []);
+      // Consecutive prescriptions for the SAME exercise are a ramp: Today
+      // renders them as one grouped entry ("3×5 · 3×3"), while this editor
+      // keeps them as separate rows. That is deliberate — it is how a warmup
+      // ramp is expressed — but it happened silently, so the two screens
+      // appeared to disagree. Say it out loud instead.
+      const last = (rx ?? [])[(rx ?? []).length - 1];
+      const startsRamp = last !== undefined && last.exercise_id === ex.id;
+
+      const newId = await addPrescription(workout.id, ex.id, rx ?? []);
+      openAfterReload.current = newId;
       setSearchOpen(false);
-      toast(`${ex.name} added`);
+      toast(
+        startsRamp
+          ? `${ex.name} added as a second set-group — these run as one ramp`
+          : `${ex.name} added — set it up below`,
+      );
+      reload();
+    });
+
+  const moveRx = (r: ResolvedPrescriptionRow, dir: -1 | 1) =>
+    void run("reorder exercise", async () => {
+      await movePrescription(r.id, workout.id, dir, rx ?? []);
+      reload();
+    });
+
+  const saveLabel = () =>
+    void run("rename workout", async () => {
+      const next = labelValue.trim();
+      await updatePlannedWorkout(workout.id, {
+        label: next.length === 0 ? null : next,
+      });
+      setLabelDirty(false);
       reload();
     });
 
@@ -285,9 +360,17 @@ export function Plan() {
       <button type="button" className="back-link" onClick={() => navigate("/")}>
         ‹ TODAY
       </button>
-      <h1 className="screen-title">
-        {workout.label ?? `Workout ${workout.day_index + 1}`}
-      </h1>
+      <input
+        className="input plan-title-input"
+        value={labelValue}
+        placeholder={workoutName(workout)}
+        aria-label="workout name"
+        onChange={(e) => {
+          setLabelValue(e.target.value);
+          setLabelDirty(true);
+        }}
+        onBlur={() => labelDirty && saveLabel()}
+      />
       {workout.notes && <Note label="COACH" text={workout.notes} />}
 
       <section className="rule-section">
@@ -296,10 +379,10 @@ export function Plan() {
           <span className="section-meta">{rx?.length ?? 0}</span>
         </div>
         {rx === null && <p className="muted">Loading…</p>}
-        {(rx ?? []).map((r) => {
+        {(rx ?? []).map((r, i) => {
           const editing = editingRx === r.id && draft;
           return (
-            <div key={r.id} className="week-item">
+            <div key={r.id} className="week-item" data-rx={r.id}>
               <button
                 type="button"
                 className="week-row week-row-rx"
@@ -314,7 +397,12 @@ export function Plan() {
                   }
                 }}
               >
-                <span className="week-label">{r.exercise_name}</span>
+                <span className="week-label">
+                  {r.exercise_name}
+                  {rampWith(rx ?? [], i) && (
+                    <span className="rx-ramp"> · RAMP</span>
+                  )}
+                </span>
                 <span className="week-state">
                   {r.superset_group !== null
                     ? `${String.fromCharCode(64 + r.superset_group)} · `
@@ -477,6 +565,34 @@ export function Plan() {
                     />
                   )}
 
+                  {/* Order is part of the plan: an exercise added last used
+                      to be stuck last, with nothing anywhere that writes
+                      `position`. */}
+                  <div className="section-head">
+                    <span className="field-label">ORDER</span>
+                    <span className="section-meta">
+                      {i + 1} of {(rx ?? []).length}
+                    </span>
+                  </div>
+                  <div className="chip-row">
+                    <button
+                      type="button"
+                      className="chip"
+                      disabled={i === 0 || busy}
+                      onClick={() => moveRx(r, -1)}
+                    >
+                      ↑ Move up
+                    </button>
+                    <button
+                      type="button"
+                      className="chip"
+                      disabled={i >= (rx ?? []).length - 1 || busy}
+                      onClick={() => moveRx(r, 1)}
+                    >
+                      ↓ Move down
+                    </button>
+                  </div>
+
                   <div className="detail-actions">
                     <button
                       type="button"
@@ -563,7 +679,14 @@ export function Plan() {
             </button>
           )}
         </div>
-        <div className="microcopy">Start unlocks on the scheduled day.</div>
+        {dateValue === "" ? (
+          <div className="microcopy microcopy-warn">
+            Not on the calendar. A day with no date does not appear on the week
+            strip at all — pick one so this workout is findable.
+          </div>
+        ) : (
+          <div className="microcopy">Start unlocks on the scheduled day.</div>
+        )}
         <div className="chip-row">
           <button
             type="button"

@@ -6,6 +6,7 @@ import {
   formatSessionDate,
   formatShortDate,
   formatStoredTwin,
+  workoutName,
 } from "./format";
 import { lbToKg, toDisplay } from "./units";
 import type { ResolvedPrescriptionRow } from "./types";
@@ -133,5 +134,24 @@ describe("formatPlate", () => {
 
   it("keeps two decimals for an lb plate read in kg mode", () => {
     expect(formatPlate(lbToKg(45), "kg")).toBe("20.41");
+  });
+});
+
+// A day created in the app starts unnamed. `label ?? fallback` does not fire
+// for an EMPTY STRING, so the day rendered with no heading at all — a blank
+// where its name should be, on the calendar and in the editor.
+describe("workoutName", () => {
+  it("uses the label when there is one", () => {
+    expect(workoutName({ label: "Leg Day", day_index: 2 })).toBe("Leg Day");
+  });
+
+  it("treats blank exactly like null — both mean unnamed", () => {
+    expect(workoutName({ label: null, day_index: 0 })).toBe("Workout 1");
+    expect(workoutName({ label: "", day_index: 0 })).toBe("Workout 1");
+    expect(workoutName({ label: "   ", day_index: 3 })).toBe("Workout 4");
+  });
+
+  it("trims, so a stray space does not become the name", () => {
+    expect(workoutName({ label: "  Push  ", day_index: 1 })).toBe("Push");
   });
 });
