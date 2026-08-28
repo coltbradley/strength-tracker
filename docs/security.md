@@ -1,17 +1,19 @@
 # Security model
 
-This is a single-user system published as open source. The repo must be safe
+This is a small multi-user system (a household) published as open source. The
+repo must be safe
 to publish: nothing in it is secret, and the design assumes the code is
 public. Security lives in the deployment, not in obscurity.
 
 ## What is secret (and lives only in deployment)
 
-| Secret                      | Where it lives                                     | Blast radius if leaked                                                                                                                                                              |
-| --------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MCP_SECRET` bearer token   | Edge function secret + local Claude Desktop config | Full MCP tool surface: read training data, write programs/TMs/goals. Cannot touch `sessions`/`sets` (no tool exists). Rotate by setting a new secret and updating the local config. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Edge runtime only (platform-injected)              | Full database. Never in the repo, never in the PWA, never logged.                                                                                                                   |
-| `OWNER_USER_ID`             | Edge function secret                               | Not sensitive alone (it's a uuid), but treated as config, not code.                                                                                                                 |
-| Supabase anon key + URL     | PWA build env                                      | Public by design. Safe because RLS is the enforcement layer, not the key.                                                                                                           |
+| Secret                      | Where it lives                                            | Blast radius if leaked                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP bearer tokens           | `mcp_tokens` (SHA-256 digest only) + each client's config | Full MCP tool surface FOR ONE USER: read their training data, write their programs/TMs/goals. Cannot touch `sessions`/`sets` (no tool exists), and cannot reach another user's rows. Only the digest is stored, so a database leak yields no working credential. Revoke with `update mcp_tokens set revoked_at = now()`; re-issue with `scripts/issue-mcp-token.mjs`. |
+| `MCP_SECRET` (legacy)       | Edge function secret                                      | The pre-multi-user single credential, mapped to `OWNER_USER_ID`. Still accepted so an existing client config survives the upgrade. Unset both once per-user tokens are issued.                                                                                                                                                                                        |
+| `SUPABASE_SERVICE_ROLE_KEY` | Edge runtime only (platform-injected)                     | Full database. Never in the repo, never in the PWA, never logged.                                                                                                                                                                                                                                                                                                     |
+| `OWNER_USER_ID` (legacy)    | Edge function secret                                      | The user `MCP_SECRET` maps to. Not sensitive alone (it's a uuid), but treated as config, not code.                                                                                                                                                                                                                                                                    |
+| Supabase anon key + URL     | PWA build env                                             | Public by design. Safe because RLS is the enforcement layer, not the key.                                                                                                                                                                                                                                                                                             |
 
 The repo contains no project refs, user ids, emails, or tokens. `.env*` and
 the generated seed are gitignored; `.env.example` documents shape only.
@@ -29,13 +31,16 @@ the generated seed are gitignored; `.env.example` documents shape only.
    treat that as a review blocker.
 3. **The MCP path uses the service role, deliberately constrained.** MCP
    requests carry a static bearer token, not a user session, so `auth.uid()`
-   is null on that path and RLS cannot scope it. Instead: the service client
-   is constructed in exactly one module, every query stamps/filters
-   `OWNER_USER_ID`, and the tool surface is the authorization boundary,
-   there are no tools that write `sessions` or `sets`, so the training
-   record is unreachable from MCP by construction. The tradeoff (service
-   role behind a bearer check vs. running a full OAuth 2.1 server for one
-   user) is argued in decisions.md.
+   is null on that path and RLS cannot scope it. Instead: the token IS the
+   identity — it is hashed and looked up in `mcp_tokens` to resolve a user —
+   the service client is constructed in exactly one module, every query
+   stamps/filters that resolved `db.ownerId`, and the tool surface is the
+   authorization boundary. There are no tools that write `sessions` or
+   `sets`, so the training record is unreachable from MCP by construction.
+   The identity is resolved PER REQUEST and never cached: edge isolates are
+   reused across callers, so a cached owner id would be a cross-user leak.
+   The tradeoff (service role behind a bearer check vs. running a full
+   OAuth 2.1 server) is argued in decisions.md.
 4. **Auth check before parsing.** The edge function rejects unauthenticated
    requests before touching the request body, with a constant-time
    comparison (hash both sides, `timingSafeEqual`) so token checking leaks
@@ -48,10 +53,18 @@ the generated seed are gitignored; `.env.example` documents shape only.
 
 ## Threats considered
 
-- **Stolen bearer token**: worst realistic case. Attacker reads training
-  data and writes junk programs (unconfirmed) / TMs / goals. Training
-  history is untouchable. Mitigation: long random token, HTTPS only,
-  rotation is one command. Accepted for a single-user system.
+- **Stolen bearer token**: worst realistic case. Attacker reads ONE user's
+  training data and writes junk programs (unconfirmed) / TMs / goals for that
+  user. Training history is untouchable, and other users are unreachable —
+  the blast radius is one person, which is the main thing per-user tokens
+  buy over the old shared secret. Mitigation: 32 bytes of CSPRNG entropy,
+  HTTPS only, digest-only storage, and revocation is one SQL statement.
+- **One household member reading another's log**: the same RLS that isolates
+  strangers isolates them, and it is exercised directly in
+  `scripts/validate-db.mjs`. The places it does NOT apply are the ones to
+  watch: the service-role MCP path (scoped in code, see above) and the
+  device cache, which is claimed by one user id and cleared when that
+  changes.
 - **Public endpoint scanning**: the function URL is guessable. Everything
   401s without the token; no information is returned before auth.
 - **Prompt injection via coach screenshot**: a malicious image could try to

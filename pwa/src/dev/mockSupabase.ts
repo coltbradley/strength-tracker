@@ -19,6 +19,7 @@ import {
   type DemoStore,
   type Row,
 } from "./fixtures";
+import { mountScenarioBadge } from "./scenarioBadge";
 
 // ---- scenario selection ----------------------------------------------------
 
@@ -882,6 +883,13 @@ export async function createMockSupabase(): Promise<MockSupabase> {
     refreshSession: async () => ({ data: { session }, error: null }),
     onAuthStateChange: (cb: AuthCallback) => {
       listeners.add(cb);
+      // supabase-js fires INITIAL_SESSION on subscribe. The mock did not, so
+      // anything keyed off the first auth event (the device-cache ownership
+      // check) never ran in the demo and the harness silently stopped covering
+      // it. Async, matching the real client, so subscribe() returns first.
+      queueMicrotask(() => {
+        if (listeners.has(cb)) cb("INITIAL_SESSION", session);
+      });
       return {
         data: {
           subscription: {
@@ -916,5 +924,6 @@ export async function createMockSupabase(): Promise<MockSupabase> {
     __demo: { scenario, store },
   };
   (window as unknown as Record<string, unknown>).__demo = client.__demo;
+  mountScenarioBadge(scenario);
   return client;
 }

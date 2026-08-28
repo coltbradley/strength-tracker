@@ -7,6 +7,7 @@ import { Sheet } from "./Sheet";
 import { split } from "../lib/plates";
 import { BAR_CATALOG, setExerciseBarKg } from "../lib/settings";
 import { useExerciseBarKg, usePlatesOnHand } from "../hooks/useSettings";
+import { formatPlate } from "../lib/format";
 import { toDisplay, type Unit } from "../lib/units";
 
 interface PlateSheetProps {
@@ -36,11 +37,13 @@ export function PlateSheet({
 
   const maxPlate = Math.max(...inventory, 1);
   const disp = (kg: number) => toDisplay(kg, unit);
+  // things you pick up off a rack are labelled, not rounded — see formatPlate
+  const iron = (kg: number) => formatPlate(kg, unit);
 
   const note = result.exact
     ? barKg === 0
       ? "Plate-loaded — no bar weight counted."
-      : `Exact on a ${disp(barKg)} ${unit} bar with your plates.`
+      : `Exact on a ${iron(barKg)} ${unit} bar with your plates.`
     : `Closest build is ${disp(result.achievedKg)} ${unit}. Rounded down.`;
 
   return (
@@ -69,7 +72,7 @@ export function PlateSheet({
               className={`chip ${Math.abs(b - barKg) < 1e-6 ? "chip-on" : ""}`}
               onClick={() => setExerciseBarKg(exerciseId, b)}
             >
-              BAR {disp(b)}
+              BAR {iron(b)}
             </button>
           ))}
         </span>
@@ -95,7 +98,7 @@ export function PlateSheet({
       {result.plates.map((p) => (
         <div key={p.plate} className="plate-row">
           <span className="muted">
-            {disp(p.plate)} {unit.toUpperCase()}
+            {iron(p.plate)} {unit.toUpperCase()}
           </span>
           <span className="plate-count">× {p.count}</span>
         </div>
@@ -103,7 +106,7 @@ export function PlateSheet({
       <div className="plate-row plate-total">
         <span className="muted">PER SIDE</span>
         <span>
-          {disp(result.perSideKg)} {unit.toUpperCase()}
+          {iron(result.perSideKg)} {unit.toUpperCase()}
         </span>
       </div>
       <div className="plate-note">{note}</div>

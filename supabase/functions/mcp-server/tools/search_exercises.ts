@@ -53,10 +53,28 @@ export function registerSearchExercises(
         const q = args.query.trim().replace(/[,()%]/g, " ");
         const slugQ = q.replace(/\s+/g, "_");
 
+        // The seeded library is shared; a CUSTOM exercise belongs to one
+        // person. This runs as the service role, which bypasses RLS, so the
+        // scoping is explicit here or it does not happen: without it every
+        // caller would see everyone's custom lifts.
+        const owned = must(
+          await db.client
+            .from("exercise_owners")
+            .select("exercise_id")
+            .eq("user_id", db.ownerId),
+          "own custom exercises",
+        ) as { exercise_id: string }[];
+        const mine = owned.map((o) => o.exercise_id);
+
         let query = db.client
           .from("exercises")
           .select("id, name, primary_muscles, equipment, mechanic, category")
-          .or(`name.ilike.%${q}%,id.ilike.%${slugQ}%`);
+          .or(`name.ilike.%${q}%,id.ilike.%${slugQ}%`)
+          .or(
+            mine.length > 0
+              ? `source.neq.custom,id.in.(${mine.join(",")})`
+              : "source.neq.custom",
+          );
         if (args.equipment) query = query.eq("equipment", args.equipment);
         if (args.muscle)
           query = query.contains("primary_muscles", [args.muscle]);

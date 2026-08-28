@@ -21,13 +21,15 @@ Phone (PWA, offline-first) ──► Supabase Postgres (Auth + RLS + views)
 | Piece           | Where                                                                            | Auth                                                |
 | --------------- | -------------------------------------------------------------------------------- | --------------------------------------------------- |
 | Postgres + Auth | Supabase project                                                                 | RLS, `user_id = auth.uid()`                         |
-| MCP server      | Supabase Edge Function `mcp-server`, streamable HTTP, deployed `--no-verify-jwt` | Static bearer (`MCP_SECRET`), constant-time check   |
+| MCP server      | Supabase Edge Function `mcp-server`, streamable HTTP, deployed `--no-verify-jwt` | Per-user bearer token (`mcp_tokens`, SHA-256)       |
 | PWA             | React + Vite, any static host                                                    | Supabase Auth (email magic link), session persisted |
 
 ## Data model in one paragraph
 
-`exercises` is a global library seeded from free-exercise-db plus a curated
-seed (source-tagged so each seed only updates its own rows). PLANNED tables
+`exercises` is a shared library seeded from free-exercise-db plus a curated
+seed (source-tagged so each seed only updates its own rows). Seeded rows are
+shared by every user; a `source = 'custom'` row belongs to one person via the
+`exercise_owners` side table. PLANNED tables
 (`programs` → `planned_workouts` → `prescriptions`, incl. `scheduled_date`,
 `plan_note`, `skipped_at`, `superset_group`) are written by Claude via MCP
 AND the PWA's plan editor; Claude's programs land unconfirmed until
@@ -52,12 +54,16 @@ of "sets that count"), `v_current_tm`, `v_resolved_prescriptions`, `v_e1rm`
 (Epley, working sets, 1-8 reps), `v_session_best_e1rm`, `v_weekly_volume`,
 `v_adherence`, `v_rest`, `v_goal_progress`. Nothing derived is ever stored.
 
-Every calendar bucket (dates, ISO weeks, "today") goes through `app_tz()`,
-which reads `app_config.tz` — the lifter's home timezone, not the database's
-UTC. The MCP server reads that same row for its own "today", so a training max
-set in the evening lands on the day the lifter trained. The PWA uses the device
-clock instead, on purpose: the phone travels with the lifter. See
-[decisions.md](decisions.md).
+Every calendar bucket (dates, ISO weeks, "today") goes through
+`app_tz(user_id)` — the lifter's home timezone, not the database's UTC. It
+resolves that user's `user_config` row, then the deployment-wide
+`app_config.tz` default, then UTC. Views pass the user id OF THE ROW they are
+bucketing rather than `auth.uid()`, so a training max becomes effective in its
+owner's calendar and the answer is the same on the PWA path and the
+service-role (MCP) path. The MCP server calls the same function for its own
+"today", so a training max set in the evening lands on the day the lifter
+trained. The PWA uses the device clock instead, on purpose: the phone travels
+with the lifter. See [decisions.md](decisions.md).
 
 ## MCP tool surface (12 tools)
 

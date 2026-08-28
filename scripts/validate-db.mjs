@@ -681,5 +681,145 @@ await check("load_entry can never be backfilled on an existing set", async () =>
   if (still.rows[0].n === 0) throw new Error("unasserted rows disappeared");
 });
 
+// --- multi-user -------------------------------------------------------------
+// The schema was always per-user. These pin the three things that were not:
+// one global timezone, an unowned exercise library, and one MCP credential.
+console.log("\nmulti-user (per-user tz, exercise ownership, MCP tokens):");
+
+await check("app_tz falls back deployment-wide when a user has no row", async () => {
+  await db.exec(`update app_config set value = 'America/Los_Angeles' where key = 'tz'`);
+  const r = await db.query(`select app_tz('${OWNER}'::uuid) as tz, app_tz('${OTHER}'::uuid) as other`);
+  assertEq(r.rows[0].tz, "America/Los_Angeles", "owner falls back to app_config");
+  assertEq(r.rows[0].other, "America/Los_Angeles", "other falls back to app_config");
+});
+
+await check("app_tz's parameter is named p_user_id (PostgREST resolves the overload by name)", async () => {
+  // The edge function calls this over PostgREST RPC as {"p_user_id": "..."},
+  // and PostgREST picks between app_tz() and app_tz(uuid) by matching argument
+  // NAMES. Renaming the parameter would keep every SQL caller working and break
+  // the MCP server silently, so pin the name here.
+  const r = await db.query(`select app_tz(p_user_id => '${OWNER}'::uuid) as tz`);
+  if (typeof r.rows[0].tz !== "string") throw new Error("named-arg call failed");
+});
+
+await check("a user_config row overrides the default for THAT user only", async () => {
+  await asUser(OTHER, `insert into user_config (user_id, tz) values ('${OTHER}', 'Europe/Berlin')`);
+  const r = await db.query(`select app_tz('${OWNER}'::uuid) as owner, app_tz('${OTHER}'::uuid) as other`);
+  assertEq(r.rows[0].owner, "America/Los_Angeles", "owner keeps the default");
+  assertEq(r.rows[0].other, "Europe/Berlin", "other gets their own zone");
+});
+
+await check("user_config is private: no reading or writing another user's zone", async () => {
+  const read = await asUser(OWNER, `select count(*)::int as n from user_config`);
+  assertEq(read.rows[0].n, 0, "owner cannot see other's row");
+  let rejected = false;
+  try {
+    await asUser(OWNER, `insert into user_config (user_id, tz) values ('${OTHER}', 'UTC')`);
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("wrote a zone onto another user");
+});
+
+await check("views bucket by the ROW OWNER's zone, not the caller's", async () => {
+  // The whole point of app_tz(user_id): a training max becomes effective in its
+  // OWNER's calendar. Reading it as the service role (no auth.uid()) must give
+  // the same answer as reading it as the owner.
+  await db.exec(`insert into user_config (user_id, tz) values ('${OWNER}', 'Pacific/Kiritimati')
+                 on conflict (user_id) do update set tz = excluded.tz`);
+  const asService = await db.query(
+    `select count(*)::int as n from v_current_tm where user_id = '${OWNER}'`,
+  );
+  const asOwner = await asUser(OWNER, `select count(*)::int as n from v_current_tm`);
+  assertEq(asOwner.rows[0].n, asService.rows[0].n, "same answer on both paths");
+  await db.exec(`delete from user_config where user_id = '${OWNER}'`);
+});
+
+await check("seeded exercises stay shared; custom ones do not", async () => {
+  await db.exec(
+    `insert into exercises (id, name, primary_muscles, source)
+     values ('Owner_Only_Lift', 'Owner Only Lift', array['quadriceps'], 'custom');
+     insert into exercise_owners (exercise_id, user_id) values ('Owner_Only_Lift', '${OWNER}');`,
+  );
+  const mine = await asUser(OWNER, `select count(*)::int as n from exercises where id = 'Owner_Only_Lift'`);
+  assertEq(mine.rows[0].n, 1, "owner sees their custom exercise");
+  const theirs = await asUser(OTHER, `select count(*)::int as n from exercises where id = 'Owner_Only_Lift'`);
+  assertEq(theirs.rows[0].n, 0, "the other user does not");
+  const shared = await asUser(OTHER, `select count(*)::int as n from exercises where id = 'Barbell_Squat'`);
+  assertEq(shared.rows[0].n, 1, "the seeded library is still shared");
+});
+
+await check("inserting a custom exercise claims it automatically", async () => {
+  await asUser(
+    OTHER,
+    `insert into exercises (id, name, primary_muscles, source)
+     values ('Other_Only_Lift', 'Other Only Lift', array['chest'], 'custom')`,
+  );
+  const owner = await db.query(
+    `select user_id from exercise_owners where exercise_id = 'Other_Only_Lift'`,
+  );
+  assertEq(owner.rows[0].user_id, OTHER, "trigger stamped the inserting user");
+  const seen = await asUser(OWNER, `select count(*)::int as n from exercises where id = 'Other_Only_Lift'`);
+  assertEq(seen.rows[0].n, 0, "not visible to anyone else");
+});
+
+await check("a custom exercise can only be edited or deleted by its owner", async () => {
+  const foreignUpd = await asUser(
+    OTHER,
+    `update exercises set name = 'Hijacked' where id = 'Owner_Only_Lift'`,
+  );
+  assertEq(foreignUpd.affectedRows ?? 0, 0, "cannot edit another user's custom exercise");
+  const ownUpd = await asUser(
+    OWNER,
+    `update exercises set name = 'Owner Only Lift v2' where id = 'Owner_Only_Lift'`,
+  );
+  assertEq(ownUpd.affectedRows ?? 0, 1, "owner can edit their own");
+  const seededUpd = await asUser(OWNER, `update exercises set name = 'X' where id = 'Barbell_Squat'`);
+  assertEq(seededUpd.affectedRows ?? 0, 0, "the shared library is not editable");
+});
+
+await check("mcp_tokens is invisible to authenticated users entirely", async () => {
+  await db.exec(
+    `insert into mcp_tokens (token_sha256, user_id, label)
+     values ('${"a".repeat(64)}', '${OWNER}', 'owner laptop')`,
+  );
+  const r = await asUser(OWNER, `select count(*)::int as n from mcp_tokens`);
+  assertEq(r.rows[0].n, 0, "RLS with no policies hides it even from its own user");
+  let rejected = false;
+  try {
+    await asUser(OWNER, `insert into mcp_tokens (token_sha256, user_id, label)
+                         values ('${"b".repeat(64)}', '${OWNER}', 'forged')`);
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("authenticated user minted a credential");
+});
+
+await check("only a SHA-256 digest can be stored, never a raw token", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into mcp_tokens (token_sha256, user_id, label)
+       values ('sk-live-plaintext-token', '${OWNER}', 'oops')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("a non-digest was accepted as a token hash");
+});
+
+await check("deleting a user takes their tokens, config and ownership with them", async () => {
+  await db.exec(`insert into auth.users (id, email) values ('00000000-0000-4000-8000-000000000009', 'temp@example.test');
+                 insert into mcp_tokens (token_sha256, user_id, label) values ('${"c".repeat(64)}', '00000000-0000-4000-8000-000000000009', 'temp');
+                 insert into user_config (user_id, tz) values ('00000000-0000-4000-8000-000000000009', 'UTC');
+                 delete from auth.users where id = '00000000-0000-4000-8000-000000000009';`);
+  const t = await db.query(`select count(*)::int as n from mcp_tokens where label = 'temp'`);
+  assertEq(t.rows[0].n, 0, "tokens cascade");
+  const c = await db.query(
+    `select count(*)::int as n from user_config where user_id = '00000000-0000-4000-8000-000000000009'`,
+  );
+  assertEq(c.rows[0].n, 0, "config cascades");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

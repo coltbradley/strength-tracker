@@ -214,9 +214,11 @@
     --column: 480px;
 
     /* -- tap targets ------------------------------------------------------
-     * Every existing min-height is preserved here; sizing changes are Phase C.
-     * .sheet-close (32px) and .set-note-add (30px) are still below the 44px
-     * floor the rest of the file keeps — flagged, not changed. */
+     * .sheet-close and .set-note-add keep small INK and reach the 44px floor
+     * through the hit-extension family below. Verify that family by MEASURING
+     * the hit area (elementFromPoint), never by reading the rules: a pseudo-
+     * element's min-width and a scroll container's clipping both change the
+     * answer, and the note beside the family records where that still bites. */
     --tap: 52px;
     --tap-min: 44px;
     --tap-md: 48px;
@@ -763,6 +765,15 @@
     height: var(--tap-min);
     min-width: var(--tap-min);
   }
+
+  /* MEASURED, not assumed: probing the real hit area with elementFromPoint
+     gives 44.5x44 for every member of this family except .sheet-close, which
+     comes out 44.5x42.2. Its extension reaches 16.25px above the ink and
+     .sheet has 16px of top padding, so the top ~2px is clipped by the sheet's
+     own overflow. Left alone deliberately: closing the gap means adding
+     padding to the top of every sheet for half a millimetre of target on the
+     one control that is also dismissable by tapping the backdrop and by ESC.
+     Recorded here so the next person measures instead of trusting the rule. */
 
   /* ---- forms ---- */
 
@@ -2015,7 +2026,16 @@
 
   .toasts {
     position: fixed;
-    top: calc(env(safe-area-inset-top) + var(--s-4));
+    /* BELOW the topbar, not over it. A toast is 92vw wide and lives for 4.5s
+       (longer when three stack), and anchored to the viewport top it covered
+       the whole header — including the settings gear and the wordmark's
+       go-to-Today button. An error toast is exactly when someone reaches for
+       settings, so those 4.5s landed on the worst possible moment.
+       --topbar-h is published by the shell (see App.tsx); the fallback keeps
+       the toast clear of the notch if it is ever unset. */
+    top: calc(
+      var(--topbar-h, calc(env(safe-area-inset-top) + 56px)) + var(--s-4)
+    );
     left: 50%;
     transform: translateX(-50%);
     display: flex;
@@ -2023,6 +2043,11 @@
     gap: var(--s-4);
     z-index: var(--z-toast);
     width: min(92vw, 440px);
+    /* Belt and braces, and the rule that actually matters: this overlay has
+       no interactive content, so it must never swallow a tap meant for what
+       is underneath it. Position alone would leave it blocking whatever it
+       happens to sit over on a screen size nobody measured. */
+    pointer-events: none;
     /* 92vw in landscape on a notched phone reaches under the sensor housing;
      * the shell escapes this only because it is a centred 480px column. */
     padding-left: env(safe-area-inset-left);

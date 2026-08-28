@@ -27,6 +27,18 @@ export interface OutboxItem {
   last_error: string | null;
   /** 'dead' = permanently failing, skipped by flush until retryDead() */
   status: "pending" | "dead";
+  /**
+   * Who queued this. Payloads leave `user_id` to the database default
+   * (auth.uid()), which was safe while one person could ever be signed in and
+   * became a data-integrity hazard the moment two could: a set queued offline
+   * by one user and flushed after a different user signed in would be stamped,
+   * permanently and append-only, with the wrong owner.
+   *
+   * Optional because items queued before multi-user have no owner recorded.
+   * Those are treated as belonging to whoever is signed in, which is exactly
+   * what they already were.
+   */
+  user_id?: string;
 }
 
 interface StrengthDB extends DBSchema {
@@ -89,6 +101,81 @@ export async function cacheDeleteByPrefix(
       await db.delete("kv", key);
     }
   }
+}
+
+/**
+ * Drop the ENTIRE server-data cache. The one caller is sign-out.
+ *
+ * `kv` mirrors this user's programs, sessions, sets, training maxes and coach
+ * notes so the app works offline. Signing out cleared the Supabase session and
+ * nothing else, so all of it stayed readable on the device — indefinitely, and
+ * to whoever signs in next. That is the first thing that has to be true before
+ * a second person ever opens this app in the same browser.
+ *
+ * `outbox` is deliberately NOT touched. It holds sets that exist nowhere else;
+ * the sign-out flow already makes the user discard those explicitly, in their
+ * own confirmation step, and a cache drop must never be the thing that does it.
+ */
+export async function cacheClearAll(): Promise<void> {
+  const db = await getDb();
+  await db.clear("kv");
+}
+
+/**
+ * Which user the `kv` cache belongs to. Kept in localStorage rather than in
+ * `kv` itself, because `kv` is the thing being cleared.
+ *
+ * Cache keys are NOT namespaced by user, deliberately: the registry below is
+ * the single vocabulary for every key in the app, and threading a user id
+ * through it would mean every call site could get the prefix wrong. One marker
+ * plus "clear when it changes" has one place to be wrong instead of forty.
+ */
+const CACHE_OWNER_KEY = "strengthLogCacheOwner";
+
+/** Same access pattern as settings.ts: the bare global, guarded. `window` is
+ *  not it — node defines localStorage without a window, and the tests run on
+ *  the node environment. */
+function storage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null; // storage blocked: treat the cache as unowned, which clears
+  }
+}
+
+function readCacheOwner(): string | null {
+  return storage()?.getItem(CACHE_OWNER_KEY) ?? null;
+}
+
+/**
+ * Make the device cache belong to `userId`, clearing it if it belonged to
+ * anyone else. Returns true when it cleared.
+ *
+ * Signing out is not the only way the person at the device changes: a refresh
+ * token can expire and someone else can sign in, with no SIGNED_OUT in between.
+ * That path would have shown one user the other's cached plan, sets and
+ * training maxes. The outbox is never touched here — it holds unsynced work,
+ * and the flusher already refuses to replay one user's writes as another.
+ */
+export async function claimCacheFor(userId: string | null): Promise<boolean> {
+  // With nowhere to record the owner we cannot detect a change, and treating
+  // "unknown" as "someone else" would clear the cache on EVERY load — which
+  // would quietly destroy the offline promise for anyone in private mode. Do
+  // nothing instead: in those contexts IndexedDB is usually per-session anyway,
+  // so the data does not outlive the visit that created it.
+  if (storage() === null) return false;
+
+  const previous = readCacheOwner();
+  if (previous === userId) return false;
+
+  await cacheClearAll();
+  try {
+    if (userId === null) storage()?.removeItem(CACHE_OWNER_KEY);
+    else storage()?.setItem(CACHE_OWNER_KEY, userId);
+  } catch {
+    // storage blocked: the cache is cleared, which is the safe half
+  }
+  return true;
 }
 
 /** Every stored kv key under one of the prefixes. Lets a caller PATCH a

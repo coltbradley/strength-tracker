@@ -4,6 +4,7 @@
 
 import { supabase } from "./supabase";
 import { getDb } from "./db";
+import { getCurrentUserId } from "./currentUser";
 import {
   createOutbox,
   type OutboxTransport,
@@ -48,4 +49,13 @@ const transport: OutboxTransport = {
   },
 };
 
-export const outbox = createOutbox({ getDb, transport });
+export const outbox = createOutbox({
+  getDb,
+  transport,
+  // Queued writes leave `user_id` to the database default (auth.uid()), so
+  // without this a set queued by one user and flushed after a different user
+  // signed in would be stamped with the wrong owner — permanently, because
+  // `sets` is append-only. Stamping the OWNER on the item lets the flusher
+  // hold it for the person it belongs to instead.
+  currentUserId: getCurrentUserId,
+});

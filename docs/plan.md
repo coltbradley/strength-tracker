@@ -66,7 +66,7 @@ Status legend: [x] done, [~] in progress, [ ] not started.
 - [x] Five finder agents + verification pass over the whole repo; 20
       confirmed findings, all fixed (see decisions.md, review round entry).
 
-## Phase 3.6: polish round (in progress)
+## Phase 3.6: polish round (done)
 
 Driven by five audit reports in `.audit/`. Owner decisions in `.audit/PLAN.md`.
 
@@ -78,17 +78,41 @@ Driven by five audit reports in `.audit/`. Owner decisions in `.audit/PLAN.md`.
       PDT chart labels, keyset-paginated `getLastActuals`.
 - [x] A3 Settings: typed registry, versioned envelope + v0→v1 migration,
       inventories, per-exercise prefs, export, reset, outbox-aware sign out.
-- [~] B1 Session screen: staged values, last-time reference, per-exercise
-  rest and increments, per-side logging UI.
-- [~] B2 Sheet primitive: `role="dialog"`, focus trap, ESC, scroll and
-  keyboard inset; one shared exercise picker replacing three copies.
-- [ ] C1 Responsive + consolidation: breakpoints, row/button family
-      collapse, touch targets, `min-width: 0` sweep, class-prefix rename.
-- [ ] C2 Features: training max UI, adherence readback, session duration,
-      PR detection. (Prescription notes and export landed early, in A2/A3.)
+- [x] B1 Session screen: staged values, last-time reference, per-exercise
+      rest and increments, per-side logging UI.
+- [x] B2 Sheet primitive: `role="dialog"`, focus trap, ESC, scroll and
+      keyboard inset; one shared exercise picker replacing three copies.
+- [x] C1 Responsive + consolidation: breakpoints, row/button family
+      collapse, touch targets, `min-width: 0` sweep. (Class-prefix rename
+      declined after measuring — see the commit body for 018239b.)
+- [x] C2 Features: training max UI, adherence readback, session duration,
+      tonnage and bodyweight. (Prescription notes and export landed early, in
+      A2/A3. PR detection not done.)
 - [x] C3 Migration + docs: per-side `load_entry` on `sets` and
       `prescriptions` (migration `20260827160000_per_side_load.sql`,
       validated in PGlite), decisions.md, flows.md, CLAUDE.md, this plan.
+
+## Phase 3.7: multi-user (done)
+
+Migration `20260827180000_multi_user.sql` plus the client half. See
+decisions.md for the reasoning and docs/setup.md for the runbook.
+
+- [x] Per-user MCP identity: `mcp_tokens` (SHA-256 digests), per-request `Db`,
+      `scripts/issue-mcp-token.mjs`. Legacy `MCP_SECRET`/`OWNER_USER_ID` still
+      work so an existing client config survives the deploy.
+- [x] Per-user timezone: `app_tz(user_id)`, views bucket by the row owner's
+      zone, `app_config.tz` demoted to the deployment default.
+- [x] Custom exercises are owned (`exercise_owners` + claim trigger); the
+      seeded library stays shared. MCP reads scope by owner in code because
+      the service role bypasses RLS.
+- [x] Outbox items carry their owner; another user's writes are held, never
+      replayed or dropped. Device cache is claimed per user and cleared on
+      change.
+- [x] Client interop: CORS + preflight, unauthenticated `/health`, `x-api-key`
+      accepted, RFC 9110 `WWW-Authenticate` on 401, 503 (not 401) when the
+      token store is unreachable. Pinned by `lib/protocol.test.ts`.
+- [ ] OAuth authorization server, for clients that refuse static API keys.
+      Deliberately not built — see decisions.md.
 
 ## Phase 4: first real use
 
@@ -99,7 +123,7 @@ Driven by five audit reports in `.audit/`. Owner decisions in `.audit/PLAN.md`.
 
 ## Out of scope (per spec)
 
-Social, in-app routine editor, nutrition, running data, multi-user, RIR,
+Social, in-app routine editor, nutrition, running data, RIR,
 per-set subjective ratings, set editing of any kind.
 
 Considered in the polish round and declined for now (see `.audit/PLAN.md`

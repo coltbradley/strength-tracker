@@ -11,8 +11,10 @@
 
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cacheClearAll,
+  claimCacheFor,
   cacheGet,
   cacheKeys,
   cacheKeysWithPrefix,
@@ -153,5 +155,136 @@ describe("cache families", () => {
       const hits = families.filter((p) => key.startsWith(p));
       expect(hits.length, `${key} matched ${hits.join(", ")}`).toBeLessThan(2);
     }
+  });
+});
+
+// Signing out ended the Supabase session and nothing else: every cached
+// program, session, set, training max and coach note stayed readable in
+// IndexedDB for whoever opened the app next. The outbox must survive it —
+// those sets exist nowhere else, and the sign-out flow asks about them in its
+// own confirmation step. A cache drop must never be what discards them.
+describe("cacheClearAll (sign-out)", () => {
+  it("drops every cached key", async () => {
+    for (const key of ALL_KEYS) await cacheSet(key, { seeded: true });
+    const db = await getDb();
+    expect((await db.getAllKeys("kv")).length).toBe(ALL_KEYS.length);
+
+    await cacheClearAll();
+
+    expect(await db.getAllKeys("kv")).toEqual([]);
+    for (const key of ALL_KEYS) expect(await cacheGet(key)).toBeUndefined();
+  });
+
+  it("leaves the outbox alone — it is the only copy of unsynced sets", async () => {
+    const db = await getDb();
+    await db.add("outbox", {
+      op: {
+        kind: "insert",
+        table: "sets",
+        payload: { id: "set-1", session_id: "sess-1" },
+      },
+      created_at: "2026-08-27T00:00:00.000Z",
+      retries: 0,
+      last_error: null,
+      status: "pending",
+    } as never);
+    await cacheSet(cacheKeys.plannedWorkouts, { seeded: true });
+
+    await cacheClearAll();
+
+    expect(await db.getAllKeys("kv")).toEqual([]);
+    expect((await db.getAll("outbox")).length).toBe(1);
+  });
+});
+
+// The device cache belongs to exactly ONE person. Signing out is not the only
+// way that person changes: a refresh token can expire and someone else can sign
+// in with no SIGNED_OUT in between, and that path would have handed one user
+// the other's cached plan, sets and training maxes.
+describe("claimCacheFor (whose device cache is this)", () => {
+  const ALICE = "aaaaaaaa-1111-4111-8111-111111111111";
+  const BOB = "bbbbbbbb-2222-4222-8222-222222222222";
+
+  // node >=22 defines a global localStorage that is unavailable without a
+  // backing file, so stub it the way settings.test.ts does.
+  class MemoryStorage implements Storage {
+    private map = new Map<string, string>();
+    get length(): number {
+      return this.map.size;
+    }
+    clear(): void {
+      this.map.clear();
+    }
+    getItem(key: string): string | null {
+      return this.map.get(key) ?? null;
+    }
+    key(index: number): string | null {
+      return [...this.map.keys()][index] ?? null;
+    }
+    removeItem(key: string): void {
+      this.map.delete(key);
+    }
+    setItem(key: string, value: string): void {
+      this.map.set(key, value);
+    }
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", new MemoryStorage());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("clears when the user changes, and says that it did", async () => {
+    await cacheSet(cacheKeys.plannedWorkouts, { owner: "alice" });
+    expect(await claimCacheFor(ALICE)).toBe(true); // unclaimed -> Alice
+    await cacheSet(cacheKeys.plannedWorkouts, { owner: "alice" });
+
+    expect(await claimCacheFor(BOB)).toBe(true);
+    expect(await cacheGet(cacheKeys.plannedWorkouts)).toBeUndefined();
+  });
+
+  it("is a no-op for the same user, so a reload keeps working offline", async () => {
+    await claimCacheFor(ALICE);
+    await cacheSet(cacheKeys.plannedWorkouts, { owner: "alice" });
+
+    expect(await claimCacheFor(ALICE)).toBe(false);
+    expect(await cacheGet(cacheKeys.plannedWorkouts)).toEqual({
+      owner: "alice",
+    });
+  });
+
+  it("clears on sign-out and again on the next sign-in", async () => {
+    await claimCacheFor(ALICE);
+    await cacheSet(cacheKeys.plannedWorkouts, { owner: "alice" });
+
+    expect(await claimCacheFor(null)).toBe(true); // signed out
+    expect(await cacheGet(cacheKeys.plannedWorkouts)).toBeUndefined();
+    expect(await claimCacheFor(BOB)).toBe(true); // and Bob starts empty
+  });
+
+  it("never touches the outbox — that is unsynced work, not a cache", async () => {
+    const db = await getDb();
+    await claimCacheFor(ALICE);
+    await db.add("outbox", {
+      op: {
+        kind: "insert",
+        table: "sets",
+        payload: { id: "s1", session_id: "x" },
+      },
+      created_at: "2026-08-27T00:00:00.000Z",
+      retries: 0,
+      last_error: null,
+      status: "pending",
+      user_id: ALICE,
+    } as never);
+
+    await claimCacheFor(BOB);
+
+    const held = await db.getAll("outbox");
+    expect(held.length).toBe(1);
+    expect(held[0].user_id).toBe(ALICE);
   });
 });

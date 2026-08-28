@@ -76,6 +76,12 @@ interface Deps {
   getDb: () => Promise<Database>;
   transport: OutboxTransport;
   isOnline?: () => boolean;
+  /**
+   * The signed-in user, or null when nobody is. Used to stamp queued items
+   * with their owner and to refuse to replay one person's writes as another.
+   * Omitted in tests that do not exercise identity.
+   */
+  currentUserId?: () => string | null;
 }
 
 type ErrorClass = "retry" | "dead" | "auth" | "fk-prescription";
@@ -105,7 +111,12 @@ interface Row {
   item: OutboxItem;
 }
 
-export function createOutbox({ getDb, transport, isOnline }: Deps): Outbox {
+export function createOutbox({
+  getDb,
+  transport,
+  isOnline,
+  currentUserId,
+}: Deps): Outbox {
   let status: OutboxStatus = {
     pending: 0,
     dead: 0,
@@ -119,6 +130,20 @@ export function createOutbox({ getDb, transport, isOnline }: Deps): Outbox {
   const listeners = new Set<() => void>();
 
   const online = isOnline ?? (() => navigator.onLine);
+  const whoAmI = currentUserId ?? (() => null);
+
+  /**
+   * Whether this item may be replayed right now. An item queued by someone
+   * else waits for them; it is never flushed as the current user and never
+   * discarded. `sets` is append-only, so a wrong owner could not be corrected
+   * afterwards — holding is the only safe answer.
+   */
+  function replayable(item: OutboxItem): boolean {
+    const owner = item.user_id;
+    if (owner === undefined) return true; // pre-multi-user item
+    const me = whoAmI();
+    return me === null || me === owner;
+  }
 
   function setStatus(patch: Partial<OutboxStatus>): void {
     status = { ...status, ...patch };
@@ -183,6 +208,8 @@ export function createOutbox({ getDb, transport, isOnline }: Deps): Outbox {
 
       for (const row of rows) {
         if (row.item.status === "dead") continue;
+        // Someone else's queued work: leave it exactly where it is.
+        if (!replayable(row.item)) continue;
         let item = row.item;
 
         attempt: for (;;) {
@@ -288,12 +315,14 @@ export function createOutbox({ getDb, transport, isOnline }: Deps): Outbox {
   return {
     async enqueue(op) {
       const db = await getDb();
+      const owner = whoAmI();
       const item: OutboxItem = {
         op,
         created_at: new Date().toISOString(),
         retries: 0,
         last_error: null,
         status: "pending",
+        ...(owner === null ? {} : { user_id: owner }),
       };
       await db.add("outbox", item);
       await refreshCounts();

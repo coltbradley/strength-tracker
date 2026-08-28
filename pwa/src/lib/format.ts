@@ -39,6 +39,23 @@ export function formatRxTarget(
 }
 
 /**
+ * A plate or bar weight, as it is LABELLED on the iron.
+ *
+ * `toDisplay` rounds to one decimal, which is correct for a LOAD (a 102.06 kg
+ * total is "102.1 kg") and wrong for a plate: the standard 1.25 kg plate —
+ * one of the kg defaults in settings.ts — renders as "1.3", and no rack has a
+ * 1.3. The lifter is matching this string against a number stamped on metal,
+ * so a plate gets two decimals with trailing zeros trimmed: "1.25", "2.5",
+ * "20", and "20.41" for a 45 lb plate read in kg mode.
+ *
+ * Loads keep `toDisplay`. Only the things you physically pick up use this.
+ */
+export function formatPlate(kg: number, unit: Unit): string {
+  const v = unit === "kg" ? kg : kgToLb(kg);
+  return String(Math.round(v * 100) / 100);
+}
+
+/**
  * The subtext under a load field: the SAME number in the other convention.
  *
  * kg is what the database stores everywhere, so when the user is typing lb

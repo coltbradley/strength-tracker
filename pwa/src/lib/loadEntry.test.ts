@@ -48,6 +48,30 @@ describe("defaultLoadEntry", () => {
     }
   });
 
+  // "Alternating" and "Alternate" are the same movement class, and the
+  // library ships both spellings — free-exercise-db uses "Alternate" for the
+  // three dumbbell curls below and "Alternating" for the presses. Matching
+  // only one spelling made the SAME movement per_side or total depending on
+  // how it happened to be named, which silently doubles load_kg, volume and
+  // e1RM for the rows that lost the coin flip.
+  it("treats 'Alternate' exactly like 'Alternating' — both are one bell per rep", () => {
+    for (const name of [
+      "Alternate Hammer Curl",
+      "Alternate Incline Dumbbell Curl",
+      "Dumbbell Alternate Bicep Curl",
+      "Standing Alternating Dumbbell Press",
+    ]) {
+      expect(defaultLoadEntry("dumbbell", name)).toBe("total");
+    }
+  });
+
+  // The regex must not fire on a word that merely starts with "alternat".
+  it("does not read 'alternative' as one-limb work", () => {
+    expect(defaultLoadEntry("dumbbell", "Alternative Grip Curl")).toBe(
+      "per_side",
+    );
+  });
+
   it("never guesses per side for a bar, a stack or a body", () => {
     expect(defaultLoadEntry("barbell", "Back Squat")).toBe("total");
     expect(defaultLoadEntry("machine", "Leg Press")).toBe("total");

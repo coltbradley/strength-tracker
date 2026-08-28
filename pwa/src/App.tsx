@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BrowserRouter,
   NavLink,
@@ -22,6 +22,27 @@ function Shell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const topbar = useRef<HTMLElement>(null);
+
+  // Publish the topbar's height so fixed overlays can sit UNDER it instead of
+  // over it. Toasts are the caller: anchored to the viewport top they covered
+  // the gear and the wordmark for the 4.5s a toast lives. Measured rather than
+  // hard-coded because the height moves with the safe-area inset, the font and
+  // the breakpoint's --gutter. Same idea as --kb in <Sheet>.
+  useEffect(() => {
+    const el = topbar.current;
+    if (el === null) return;
+    const publish = () =>
+      document.documentElement.style.setProperty(
+        "--topbar-h",
+        `${el.getBoundingClientRect().height}px`,
+      );
+    publish();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // Session runs its own footer + rest strip; End keeps its own buttons.
   // The tab bar exists only on the two tab routes.
   const inSession = location.pathname === "/session";
@@ -29,7 +50,7 @@ function Shell() {
 
   return (
     <div className="shell">
-      <header className="topbar">
+      <header className="topbar" ref={topbar}>
         <button
           type="button"
           className="topbar-title"

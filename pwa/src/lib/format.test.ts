@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   formatMonth,
+  formatPlate,
   formatRxTarget,
   formatSessionDate,
   formatShortDate,
   formatStoredTwin,
 } from "./format";
+import { lbToKg, toDisplay } from "./units";
 import type { ResolvedPrescriptionRow } from "./types";
 
 // A DATE-ONLY string is a calendar day, not an instant. `new Date("2026-08-24")`
@@ -96,5 +98,40 @@ describe("formatStoredTwin", () => {
   it("gives the lb equivalent when the user is typing kg", () => {
     expect(formatStoredTwin(100, "kg")).toBe("220.5 lb");
     expect(formatStoredTwin(0, "kg")).toBe("0 lb");
+  });
+});
+
+describe("formatPlate", () => {
+  // The bug this exists for: toDisplay rounds to one decimal, so the 1.25 kg
+  // plate that ships in the DEFAULT kg inventory rendered as "1.3" — in the
+  // settings chip, its remove-button aria-label, and the session's
+  // "25·20·1.3" rack hint. The lifter matches this string to stamped metal.
+  it("names the 1.25 kg plate 1.25, not 1.3", () => {
+    expect(formatPlate(1.25, "kg")).toBe("1.25");
+    expect(toDisplay(1.25, "kg")).toBe(1.3); // the reason this helper exists
+  });
+
+  it("trims trailing zeros so whole plates stay whole", () => {
+    expect(formatPlate(20, "kg")).toBe("20");
+    expect(formatPlate(2.5, "kg")).toBe("2.5");
+    expect(formatPlate(0.5, "kg")).toBe("0.5");
+  });
+
+  it("renders the whole default kg inventory as its real labels", () => {
+    const labels = [25, 20, 15, 10, 5, 2.5, 1.25].map((p) =>
+      formatPlate(p, "kg"),
+    );
+    expect(labels).toEqual(["25", "20", "15", "10", "5", "2.5", "1.25"]);
+  });
+
+  it("renders the lb inventory cleanly in lb mode", () => {
+    const labels = [45, 35, 25, 10, 5, 2.5]
+      .map(lbToKg)
+      .map((p) => formatPlate(p, "lb"));
+    expect(labels).toEqual(["45", "35", "25", "10", "5", "2.5"]);
+  });
+
+  it("keeps two decimals for an lb plate read in kg mode", () => {
+    expect(formatPlate(lbToKg(45), "kg")).toBe("20.41");
   });
 });

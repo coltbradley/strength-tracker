@@ -31,7 +31,11 @@ jobs:
           deno-version: v2.x
       - run: deno check index.ts
         working-directory: supabase/functions/mcp-server
-      - run: deno test lib/
+      # --allow-env/--allow-net for protocol.test.ts: it sets the auth env vars
+      # it needs and points SUPABASE_URL at a closed port to exercise the
+      # token-store-unreachable path. It makes no outbound request that can
+      # succeed, and never contacts a real project.
+      - run: deno test --allow-env --allow-net lib/
         working-directory: supabase/functions/mcp-server
 
   pwa:

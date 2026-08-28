@@ -53,21 +53,50 @@ Nothing to run. Push to main → the `deploy` GitHub Action publishes to
 GitHub Pages; the installed app picks it up on next launch (service worker
 autoUpdate). Device data survives updates (IndexedDB is untouched).
 
+## Adding or removing a person
+
+```bash
+node scripts/issue-mcp-token.mjs --user <uuid> --label "Who · which client"
+```
+
+Prints the token once plus the SQL to activate it. Full runbook, including
+what is shared between users and what is not, in
+[setup.md](setup.md#adding-another-user). Revoking is one statement:
+
+```sql
+update mcp_tokens set revoked_at = now() where label = '<that label>';
+```
+
 ## Post-deploy smoke test (2 min)
 
-1. Open the PWA, pull up Today — the week should load.
-2. Ask Claude (MCP) to `search_exercises` for "pendulum" — curated rows
+1. `curl https://<PROJECT_REF>.supabase.co/functions/v1/mcp-server/health`
+   — `{"status":"ok",...}` with no credential.
+2. Open the PWA, pull up Today — the week should load.
+3. Ask Claude (MCP) to `search_exercises` for "pendulum" — curated rows
    should appear after a seed deploy.
-3. After a migration touching views: load History for a lift with data.
+4. After a migration touching views: load History for a lift with data.
+5. After a migration touching auth or ownership: confirm each person still
+   sees their own log and none of anyone else's.
 
 ## Known snags (learned the hard way)
 
 - `alter database ... set` for custom GUCs is superuser-only on managed
-  Postgres. The timezone lives in the `app_config` table instead:
-  `update app_config set value = 'America/Los_Angeles' where key = 'tz';`
-  The MCP server reads that same row for its own "today" and caches it per
-  edge isolate, so after changing it, redeploy `mcp-server` rather than
-  wondering why a training max still lands on the wrong day.
+  Postgres, so timezones live in tables instead:
+
+  ```sql
+  -- the deployment-wide default (everyone in one house)
+  update app_config set value = 'America/Los_Angeles' where key = 'tz';
+
+  -- one person who differs from it
+  insert into user_config (user_id, tz) values ('<uuid>', 'Europe/Berlin')
+    on conflict (user_id) do update set tz = excluded.tz;
+  ```
+
+  The MCP server resolves the same `app_tz(user_id)` for its own "today" and
+  caches the answer per user per edge isolate, so after changing either,
+  redeploy `mcp-server` rather than wondering why a training max still lands
+  on the wrong day.
+
 - Custom auth email templates need custom SMTP (free tier can't). SMTP creds
   come from `.env.local` via `scripts/push-auth-config.sh`.
 - Auth redirect origins must be allowlisted (dashboard → Auth → URL

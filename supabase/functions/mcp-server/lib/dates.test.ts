@@ -46,13 +46,17 @@ Deno.test("isoDateInTz: DST boundary in the configured zone", () => {
   );
 });
 
-Deno.test("isoDateInTz: an unusable app_config.tz fails loudly", () => {
+Deno.test("isoDateInTz: an unusable stored zone fails loudly", () => {
   // Never degrade to UTC: a silent fallback is the defect being fixed.
-  assertThrows(
+  const err = assertThrows(
     () => isoDateInTz(new Date(), "Mars/Olympus_Mons"),
     Error,
-    "app_config.tz",
-  );
+    "Mars/Olympus_Mons",
+  ) as Error;
+  // Since multi-user a zone can come from either place, and the message has to
+  // name BOTH or it sends the reader to fix the wrong row.
+  assertEquals(err.message.includes("user_config"), true);
+  assertEquals(err.message.includes("app_config"), true);
 });
 
 Deno.test("assertIsoDate: accepts real dates, rejects impossible ones", () => {

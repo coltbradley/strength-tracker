@@ -36,7 +36,7 @@ function isPerSideEquipment(equipment: string | null): boolean {
  * modelled — log each side as its own set).
  */
 const UNILATERAL_NAME =
-  /\b(?:single|one|1)[- ]?(?:arm|armed|leg|legged|side|sided|hand|handed)\b|\balternating\b|\bunilateral\b/i;
+  /\b(?:single|one|1)[- ]?(?:arm|armed|leg|legged|side|sided|hand|handed)\b|\balternat(?:e|es|ed|ing)\b|\bunilateral\b/i;
 
 /**
  * The default when nobody has asserted anything: a dumbbell movement that is

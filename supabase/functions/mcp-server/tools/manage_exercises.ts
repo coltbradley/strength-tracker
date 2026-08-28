@@ -1,10 +1,16 @@
-// Exercise library management: Claude can add and modify exercises. The
-// library is shared (single-user system), so these are the only MCP write
-// tools that touch a non-user-scoped table. Two rules keep it safe:
+// Exercise library management: Claude can add and modify exercises. The SEEDED
+// library (free-exercise-db + curated) is shared by everyone; a CUSTOM entry
+// belongs to the person who made it, via the exercise_owners side table. These
+// are the only MCP write tools touching a table that is not itself user-scoped,
+// so three rules keep it safe:
 //  - add_exercise writes source='custom' so re-running the free-exercise-db
-//    seed can never clobber it (that seed only updates its own rows).
+//    seed can never clobber it (that seed only updates its own rows), and
+//    claims the row for the caller.
 //  - update_exercise flips a 'free-exercise-db' row to 'custom' on edit for
 //    the same reason: an edited row must survive upstream re-seeds.
+//  - a custom exercise someone else owns does not exist as far as this caller
+//    is concerned. The service role bypasses RLS, so that has to be enforced
+//    HERE; the database policy only covers the PWA path.
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
@@ -16,6 +22,33 @@ import {
   ToolError,
   type RequestContext,
 } from "../lib/errors.ts";
+
+/** An exercise plus its owner row, if it has one (seeded rows do not). */
+interface ExerciseLookup {
+  id: string;
+  name: string;
+  source: string;
+  exercise_owners: { user_id: string }[] | { user_id: string } | null;
+}
+
+/**
+ * Refuse to act on a custom exercise belonging to somebody else, and say the
+ * same thing as "no such exercise" -- confirming that an id exists but is
+ * another person's is itself a leak.
+ *
+ * A custom row with NO owner is treated as not-mine too. That combination only
+ * arises if a claim failed midway, and quietly letting anyone edit it is the
+ * wrong recovery.
+ */
+function assertVisible(row: ExerciseLookup, userId: string, id: string): void {
+  if (row.source !== "custom") return;
+  const owners = row.exercise_owners;
+  const list = owners === null ? [] : Array.isArray(owners) ? owners : [owners];
+  if (list.some((o) => o.user_id === userId)) return;
+  throw new ToolError(
+    `No exercise with id '${id}'. Use search_exercises to find the right slug.`,
+  );
+}
 
 // Vocabulary from free-exercise-db; the PWA filters on these exact strings
 // (e.g. equipment 'barbell'/'machine' turns on the plate calculator).
@@ -138,6 +171,19 @@ export function registerManageExercises(
           }
           throw new Error(`insert exercise: ${error.message}`);
         }
+        // The database trigger claims a custom exercise for auth.uid(), but
+        // this path is the SERVICE ROLE and has no auth.uid(), so the owner row
+        // is written here. Without it the exercise belongs to nobody and the
+        // read policy hides it from everyone, including the person who just
+        // asked for it.
+        const claim = await db.client
+          .from("exercise_owners")
+          .insert({ exercise_id: id, user_id: db.ownerId });
+        if (claim.error) {
+          // Leaving an unowned row behind would be invisible and confusing.
+          await db.client.from("exercises").delete().eq("id", id);
+          throw new Error(`claim exercise: ${claim.error.message}`);
+        }
         return jsonResult({ id, name: args.name, source: "custom" });
       }),
   );
@@ -173,16 +219,17 @@ export function registerManageExercises(
         const existing = must(
           await db.client
             .from("exercises")
-            .select("id, name, source")
+            .select("id, name, source, exercise_owners(user_id)")
             .eq("id", args.id),
           "exercise lookup",
-        ) as { id: string; name: string; source: string }[];
+        ) as ExerciseLookup[];
         if (existing.length === 0) {
           throw new ToolError(
             `No exercise with id '${args.id}'. Use search_exercises to find ` +
               "the right slug, or add_exercise to create it.",
           );
         }
+        assertVisible(existing[0], db.ownerId, args.id);
 
         const patch: Record<string, unknown> = {};
         for (const key of [
@@ -237,13 +284,14 @@ export function registerManageExercises(
         const existing = must(
           await db.client
             .from("exercises")
-            .select("id, name, source")
+            .select("id, name, source, exercise_owners(user_id)")
             .eq("id", args.id),
           "exercise lookup",
-        ) as { id: string; name: string; source: string }[];
+        ) as ExerciseLookup[];
         if (existing.length === 0) {
           throw new ToolError(`No exercise with id '${args.id}'.`);
         }
+        assertVisible(existing[0], db.ownerId, args.id);
         if (existing[0].source !== "custom") {
           throw new ToolError(
             `'${args.id}' is a seeded exercise (source ` +

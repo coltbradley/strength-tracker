@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Strength log + Claude programming layer. Single-user system, public repo.
+Strength log + Claude programming layer. Multi-user, public repo.
 
 A coached lifter logs sets on their phone (PWA). Claude reads the log via MCP to
 analyze progress and writes programming parsed from coach screenshots. The coach
@@ -54,9 +54,15 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   referenced exercises are never deleted — history is never orphaned.
   `exercises` never grows a per-user column, and never a column the generated
   seed cannot populate: 873 rows would sit null forever and each re-seed
-  would write it back. Movement hints (unilateral, bar type) are derived
-  client-side from `equipment` and the name; overrides live in device-local
-  per-exercise settings.
+  would write it back. Ownership therefore lives in `exercise_owners`: SEEDED
+  rows have no entry and are shared by everyone, a 'custom' row belongs to one
+  person. An `after insert` trigger claims it for `auth.uid()`; the
+  service-role (MCP) path has no auth.uid() and writes the owner row itself.
+  The service role bypasses RLS, so every MCP read of `exercises` must scope
+  by owner in code — `requireExercise` is the gate. Another user's custom
+  exercise reports as UNKNOWN, never as forbidden. Movement hints (unilateral,
+  bar type) are derived client-side from `equipment` and the name; overrides
+  live in device-local per-exercise settings.
 - All client writes carry client-generated UUIDs; replay is idempotent
   (`on conflict do nothing`). Do not break this.
 - A planned day is DONE only when its session has `ended_at`. An open session
@@ -66,6 +72,25 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   simply mean this device never had the cache; never lead with a destructive
   default on an unconfirmed count.
 - Units are kg in the database everywhere. Display conversion is client-side.
+- Identity: the MCP server has NO auth.uid() (it authenticates with a bearer
+  token, not a session) and runs as the service role, which bypasses RLS. The
+  token IS the identity: `mcp_tokens` maps its SHA-256 to a user, and every
+  tool must filter and stamp `db.ownerId` itself. Build the `Db` handle per
+  request (`dbFor`); NEVER cache it or anything derived from a user id at
+  module scope — edge isolates are reused across callers, and that is how one
+  person's data reaches another. The connection may be cached; the identity
+  may not.
+- Calendar days are per user: `app_tz(user_id)`, defaulting to `app_config.tz`
+  then UTC. Views pass the user_id OF THE ROW they bucket, not `auth.uid()`,
+  so the answer is the same on the PWA and service-role paths. The PWA keeps
+  using the device clock — the phone travels with the lifter.
+- Every queued write carries the id of the user who made it. The flusher HOLDS
+  another user's items rather than replaying them (payloads leave `user_id` to
+  the DB default, so replaying as the wrong user would misattribute a set
+  permanently — `sets` is append-only). Held, never dropped.
+- The device cache belongs to one user, tracked by a localStorage marker, and
+  is cleared when that changes. Cache keys are NOT namespaced by user on
+  purpose: one marker has one place to be wrong, forty key builders do not.
 - `load_kg` is ALWAYS the TOTAL system load — the whole weight moved in one
   rep. A pair of 30 kg dumbbells is stored as 60. Never store a per-hand
   value in `load_kg`; every view, chart and MCP read assumes totals and would
@@ -76,7 +101,9 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   `sets` is append-only, so they can never be corrected. Single-arm work is
   `'total'` (one dumbbell IS the whole system for that rep); what is per side
   there is the reps, which are deliberately not modelled.
-- Settings are DEVICE-LOCAL, in a typed registry (`pwa/src/lib/settings.ts`)
+- Settings are DEVICE-LOCAL, not per-user: two people sharing one phone share
+  its plate inventory and per-exercise prefs. They are in a typed registry
+  (`pwa/src/lib/settings.ts`)
   behind a versioned envelope; migrations there are additive too. There is no
   `user_settings` or `exercise_prefs` table and adding one needs a decision
   entry: it would create a third write-ownership class for data no view and
@@ -107,6 +134,9 @@ cd pwa && npm run build     # tsc + vite build
 
 # regenerate exercise seed from free-exercise-db
 node scripts/build-exercise-seed.mjs
+
+# mint an MCP bearer token for one user (prints it once + the SQL to activate)
+node scripts/issue-mcp-token.mjs --user <uuid> --label "Who · which client"
 ```
 
 ## Conventions

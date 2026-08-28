@@ -36,7 +36,7 @@ import {
   type PerUnit,
   type SettingKey,
 } from "../lib/settings";
-import { formatClock, todayLocalIso } from "../lib/format";
+import { formatClock, formatPlate, todayLocalIso } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
@@ -194,26 +194,27 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   };
 
   const queued = status.pending + status.dead;
-  // Sign-out is two taps normally. With unsynced work it is three, and the
-  // middle one states the count: signing out drops the outbox, and the outbox
-  // is the only copy of those sets.
-  const signOutStage = armed === "signout" ? 1 : armed === "signout2" ? 2 : 0;
+  // Two taps, and the second states the count when there is unsynced work.
+  //
+  // This used to be THREE taps, the last one reading "Discard unsynced sets and
+  // sign out" — which was never what happened: nothing dropped the outbox, and
+  // signing back in flushed it. Since multi-user it is true in the other
+  // direction as well. Every queued write is stamped with its owner, the
+  // flusher refuses to replay one person's writes as another, and signing out
+  // clears the read cache but never the outbox. So the sets are genuinely kept
+  // for whoever queued them, and the button should say so instead of
+  // threatening a deletion it does not perform.
+  const signOutStage = armed === "signout" ? 1 : 0;
   const signOutLabel =
     signOutStage === 0
       ? "Sign out"
-      : signOutStage === 1
-        ? queued > 0
-          ? `${queued} unsynced — sign out anyway?`
-          : "Sign out?"
-        : "Discard unsynced sets and sign out";
+      : queued > 0
+        ? `${queued} unsynced, kept for you — sign out?`
+        : "Sign out?";
 
   const signOut = () => {
     if (signOutStage === 0) {
       setArmed("signout");
-      return;
-    }
-    if (signOutStage === 1 && queued > 0) {
-      setArmed("signout2");
       return;
     }
     supabase.auth
@@ -638,9 +639,9 @@ function PlateInventory({
             type="button"
             className="chip chip-on"
             onClick={() => removePlate(unit, p)}
-            aria-label={`remove ${toDisplay(p, unit)} ${unit} plate`}
+            aria-label={`remove ${formatPlate(p, unit)} ${unit} plate`}
           >
-            {toDisplay(p, unit)} ×
+            {formatPlate(p, unit)} ×
           </button>
         ))}
         <button
@@ -767,7 +768,9 @@ function ExerciseOverrides({
         const parts: string[] = [];
         if (pref.barKg !== undefined) {
           parts.push(
-            pref.barKg === 0 ? "NO BAR" : `BAR ${toDisplay(pref.barKg, unit)}`,
+            pref.barKg === 0
+              ? "NO BAR"
+              : `BAR ${formatPlate(pref.barKg, unit)}`,
           );
         }
         if (pref.restSeconds !== undefined) {

@@ -385,3 +385,105 @@ describe("outbox", () => {
     expect(await outbox.pendingSets("other-session")).toEqual([]);
   });
 });
+
+// Multi-user. Queued payloads leave `user_id` to the database default
+// (auth.uid()), which was safe while only one person could ever be signed in.
+// With two, a set queued offline by one user and flushed after the other signed
+// in would be stamped with the WRONG owner — permanently, because `sets` is
+// append-only and has no update path. So the item carries its owner and the
+// flusher holds anything that is not the current user's.
+describe("outbox identity", () => {
+  const ALICE = "aaaaaaaa-1111-4111-8111-111111111111";
+  const BOB = "bbbbbbbb-2222-4222-8222-222222222222";
+
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory();
+    resetDbForTests();
+  });
+
+  it("replays only the signed-in user's queued writes", async () => {
+    let who: string | null = ALICE;
+    const { calls, transport } = makeTransport();
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+    });
+
+    await box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: makeSet("aaaa1111-1111-4111-8111-111111111111", 0),
+    });
+    await box.flush();
+    expect(calls).toHaveLength(1);
+
+    // Alice goes offline mid-session and queues one more, then Bob signs in.
+    who = ALICE;
+    await box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: makeSet("aaaa2222-1111-4111-8111-111111111111", 1),
+    });
+    who = BOB;
+    await box.flush();
+    expect(calls).toHaveLength(1); // Alice's set was NOT sent as Bob
+
+    // It is held, not dropped: Alice signing back in replays it.
+    who = ALICE;
+    await box.flush();
+    expect(calls).toHaveLength(2);
+    expect((calls[1].payload as SetInsert).id).toBe(
+      "aaaa2222-1111-4111-8111-111111111111",
+    );
+  });
+
+  it("never discards the other user's work, only defers it", async () => {
+    let who: string | null = ALICE;
+    const { transport } = makeTransport();
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+    });
+    await box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: makeSet("aaaa3333-1111-4111-8111-111111111111", 2),
+    });
+
+    who = BOB;
+    await box.flush();
+    const db = await getDb();
+    expect((await db.getAll("outbox")).length).toBe(1);
+    expect((await db.getAll("outbox"))[0].user_id).toBe(ALICE);
+  });
+
+  it("treats an item queued before multi-user as the current user's", async () => {
+    // Items already in the outbox on the day this shipped carry no owner.
+    // Refusing to flush them would strand real sets forever.
+    const { calls, transport } = makeTransport();
+    const db = await getDb();
+    await db.add("outbox", {
+      op: {
+        kind: "insert",
+        table: "sets",
+        payload: makeSet("aaaa4444-1111-4111-8111-111111111111", 3),
+      },
+      created_at: "2026-08-25T10:00:00.000Z",
+      retries: 0,
+      last_error: null,
+      status: "pending",
+    });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => BOB,
+    });
+    await box.flush();
+    expect(calls).toHaveLength(1);
+  });
+});

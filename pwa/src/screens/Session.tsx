@@ -61,6 +61,7 @@ import { getPrefillFallback, prefillSet } from "../lib/prefill";
 import { split } from "../lib/plates";
 import {
   formatClock,
+  formatPlate,
   formatRepRange,
   formatRxTarget,
   formatStoredTwin,
@@ -791,7 +792,7 @@ export function Session() {
           ? r.plates
               .map(
                 (p) =>
-                  `${p.count > 1 ? `${p.count}×` : ""}${toDisplay(p.plate, unit)}`,
+                  `${p.count > 1 ? `${p.count}×` : ""}${formatPlate(p.plate, unit)}`,
               )
               .join("·")
           : exerciseBarKg > 0

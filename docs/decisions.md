@@ -399,9 +399,9 @@ collapses until asked for; parse artifacts never dominate.
 - **MCP delete tools** (same day): delete_program (unconfirmed freely;
   confirmed only with an explicit flag after chat approval; logged
   sessions/sets always survive via FK nulling) and delete_exercise (custom
-  + unreferenced only — the FK restraint IS the guarantee; seeded rows
-  refuse since re-seeding restores them). The "exercises are never deleted"
-  hard rule softened to "referenced or seeded exercises are never deleted".
+  - unreferenced only — the FK restraint IS the guarantee; seeded rows
+    refuse since re-seeding restores them). The "exercises are never deleted"
+    hard rule softened to "referenced or seeded exercises are never deleted".
 - **CI gained workflow_dispatch**: GitHub silently dropped push events for
   two consecutive pushes (64c9705, d8821c0 — commits landed, zero workflow
   runs); manual dispatch is the recovery path for both workflows now.
@@ -478,19 +478,20 @@ batch of correctness bugs, and settings. What changed structurally, and why:
 row logged as "30" was ambiguous between 30 per hand and 60 total. Nothing in
 the schema recorded which, and every day of use accumulated more mixed data.
 This was the round's one approved schema change; time-based sets, bodyweight
-+ added load and per-set RPE were considered and declined.
 
-- **`load_kg` is the total system load, everywhere, always.** A pair of 30 kg
+- added load and per-set RPE were considered and declined.
+
+* **`load_kg` is the total system load, everywhere, always.** A pair of 30 kg
   dumbbells is 60. `v_e1rm`, `v_weekly_volume`, `v_adherence` and every future
   query keep working untouched and keep being right. The alternative — store
   the number the user typed and make readers multiply — pushes the ambiguity
   into every reader that will ever exist, including Claude's MCP reads, and
   guarantees that one of them eventually forgets.
-- **`load_entry` records how the number was EXPRESSED**, so the UI can still
+* **`load_entry` records how the number was EXPRESSED**, so the UI can still
   show and prefill "30 × 2" and Claude can quote back what the lifter
   actually said. `'per_side'` means one side was entered and both sides moved
   together; `'total'` means the number is already the whole system.
-- **NULL is not 'total'.** `sets` is append-only and RLS has no update path,
+* **NULL is not 'total'.** `sets` is append-only and RLS has no update path,
   so pre-convention rows can never be corrected: their ambiguity is permanent
   and has to stay visible. The column is nullable with no default —
   defaulting to `'total'` would have backdated an assertion nobody made
@@ -499,18 +500,18 @@ This was the round's one approved schema change; time-based sets, bodyweight
   rather than reporting them as fact. Accepted risk: a trend line that
   crosses the NULL/asserted boundary can be an artefact of the convention
   rather than of training, and no migration can fix that.
-- **The plan side carries the same column.** Without it, a coach's "DB row
+* **The plan side carries the same column.** Without it, a coach's "DB row
   3×10 @ 30" would sit in `prescriptions.load_kg` as a per-hand number while
   sets stored totals, and `v_adherence` would report a phantom +30 kg
   overshoot on every dumbbell set it ever compared. `upsert_program` now
   instructs the parser to double per-hand numbers into `load_kg` and mark
   them `per_side`, and echoes both figures in its review table.
-- **Single-arm work is `'total'`, not `'per_side'`.** One 30 kg dumbbell in a
+* **Single-arm work is `'total'`, not `'per_side'`.** One 30 kg dumbbell in a
   one-arm row IS the whole system for that rep. What is per side there is the
   REPS, and reps-per-side is deliberately not modelled — log each side as its
   own set. Calling that case `per_side` would have doubled its tonnage, which
   is exactly the corruption the column exists to prevent.
-- **No hint column on `exercises`.** It is a shared library seeded from two
+* **No hint column on `exercises`.** It is a shared library seeded from two
   sources: free-exercise-db carries no unilateral field, so 873 generated
   rows could never be populated and every re-seed would write the column back
   to null. The UI derives its default from `equipment` and the movement name
@@ -518,9 +519,9 @@ This was the round's one approved schema change; time-based sets, bodyweight
   override in the device-local per-exercise settings, next to bar and
   increment. A wrong default costs one tap; `load_entry` on the row is what
   makes the record honest.
-- A check constraint refuses `'per_side'` on a 0 kg bodyweight set, and on a
+* A check constraint refuses `'per_side'` on a 0 kg bodyweight set, and on a
   "by feel" prescription with no load: half of nothing is still nothing.
-- Validated in PGlite (the 2026-08-25 precedent): full migration chain from
+* Validated in PGlite (the 2026-08-25 precedent): full migration chain from
   scratch, all 29 existing view and RLS checks still green, plus 15 new
   assertions covering the enum, the three-state NULL/total/per_side
   distinction, unchanged tonnage and e1RM math on totals, `v_adherence`
@@ -532,11 +533,11 @@ This was the round's one approved schema change; time-based sets, bodyweight
 Three writers had three definitions of the calendar day that
 `training_maxes.effective_date` is written and compared against:
 
-| where | definition | source |
-| --- | --- | --- |
-| SQL views | `(now() at time zone app_tz())::date` | `20260825120003_views.sql` |
-| MCP server | UTC | `lib/dates.ts` |
-| PWA | device local | `pwa/src/lib/format.ts` |
+| where      | definition                            | source                     |
+| ---------- | ------------------------------------- | -------------------------- |
+| SQL views  | `(now() at time zone app_tz())::date` | `20260825120003_views.sql` |
+| MCP server | UTC                                   | `lib/dates.ts`             |
+| PWA        | device local                          | `pwa/src/lib/format.ts`    |
 
 With `app_config.tz = 'America/Los_Angeles'` (what `docs/setup.md` tells you to
 set), the MCP server's UTC "today" runs a day ahead of everyone else's for the
@@ -572,7 +573,7 @@ precisely that row.
 
 **The PWA's device-local today stays device-local, deliberately.** The phone is
 where the lifter is; a set logged at 21:00 belongs on the day the lifter just
-trained, whatever `app_config.tz` says. `app_config.tz` is the *home* timezone,
+trained, whatever `app_config.tz` says. `app_config.tz` is the _home_ timezone,
 the fixed reference the database needs because Postgres has no device. The two
 agree except while travelling across a date boundary, and there the phone is
 right about the workout and the home timezone is right about the weekly
@@ -588,3 +589,167 @@ Coverage, both halves pinned to the same instant so they cannot drift apart:
 `supabase/functions/mcp-server/lib/dates.test.ts` (Deno, run in CI) for the
 TypeScript formatter, and a new check in `scripts/validate-db.mjs` for the SQL
 rule and the `.gt`/`.gte` boundary.
+
+## 2026-08-27 signing out clears the device cache (never the outbox)
+
+Signing out ended the Supabase session and did nothing else. Everything the
+app had cached to work offline — programs, planned workouts, sessions, sets,
+training maxes, coach notes — stayed in the IndexedDB `kv` store, readable by
+whoever opened the app next. Reproduced in the demo harness: after sign-out the
+Login screen renders while `plannedWorkouts` and `trainingMaxes` (with values)
+are still there, and offline they would stay there indefinitely, because the
+refetch that would replace them cannot run.
+
+`onAuthStateChange` now clears `kv` on `SIGNED_OUT` (`cacheClearAll` in
+`lib/db.ts`, called from `hooks/useAuth.ts`).
+
+**The outbox is deliberately not touched.** It holds sets that exist nowhere
+else. The sign-out flow already asks about those in its own confirmation step
+("N unsynced — sign out anyway?" → "Discard unsynced sets and sign out"), and a
+cache drop must never be the thing that discards them. Both halves are pinned
+in `lib/db.test.ts`.
+
+This is a prerequisite for the multi-user question, not an answer to it. Cache
+keys still carry no user id, so a _different_ user signing in without the
+previous one signing out first would still read the previous user's cache.
+Closing that needs either per-user key prefixes or a clear on user-id change,
+and that is a decision to make alongside the rest of the multi-user work
+(`app_config.tz` is one global row, `exercises` has no owner, and the MCP
+server is pinned to `OWNER_USER_ID` — see the 2026-08-25 service-role entry).
+
+## 2026-08-27 multi-user: identity is the token, ownership is a side table
+
+The schema was per-user from day one — every training table carries `user_id`,
+33 RLS policies enforce it, views are `security_invoker` so RLS reaches every
+derived metric. Three things assumed exactly one person anyway, and all three
+are now closed. Migration `20260827180000_multi_user.sql`.
+
+**The MCP server had one credential and one identity.** `lib/db.ts` built a
+service-role client pinned to `OWNER_USER_ID`; `requireAuth` compared a single
+`MCP_SECRET`. Anyone holding that secret WAS that user. Now a token is the
+identity: `mcp_tokens` maps a SHA-256 digest to a `user_id`, `resolveCaller`
+looks it up, and `dbFor(userId)` builds the handle per request.
+
+Chose static per-user tokens over Supabase JWTs and over OAuth. JWTs expire
+hourly, which is unusable in a config file a client reads at launch. OAuth is
+what claude.ai and ChatGPT prefer for one-click connector installs, but running
+an authorization server (PKCE, dynamic client registration, consent UI) is a
+project in itself and would still need exactly the per-user identity built here.
+Bearer tokens are what every MCP client supports today, so this is the version
+that works everywhere now and does not preclude OAuth later.
+
+The sharp edge is caching. `getDb()` returned a module-level singleton, which
+was correct when the owner came from an env var and would have been a
+cross-user data leak the moment it came from a request: edge isolates are
+reused, and every tool trusts `db.ownerId` completely. `getClient()` still
+caches the connection (it holds no user state); the `Db` handle is built fresh
+per request and the comment there says why. `lib/dates.ts` had the same shape —
+a single `cachedTz` slot — and is now a Map keyed by user.
+
+**One global timezone.** `app_config.tz` was a single row and five views called
+`app_tz()`. The fix is `app_tz(user_id)`, and the views pass the user id OF THE
+ROW they are bucketing rather than asking who is asking. A training max becomes
+effective in ITS OWNER's calendar. That is the correct semantics anyway, and it
+is what makes the service-role path right without impersonating anyone —
+`auth.uid()` is null there, so a view reading the caller would have silently
+fallen back to the deployment default. `app_config.tz` survives as that default,
+which is the right answer for a household in one timezone.
+
+**An unowned exercise library.** `exercises_insert_custom` let any authenticated
+user insert `source = 'custom'`, visible to everyone. CLAUDE.md forbids a
+per-user column on `exercises` (873 generated rows would carry a null forever
+and every re-seed would write it back), so ownership lives in `exercise_owners`.
+Seeded rows have no entry and stay shared, which is right: a library is not
+anyone's data. Claiming is an `after insert` trigger so the invariant cannot be
+forgotten by a new writer; the service-role path has no `auth.uid()` and
+inserts the owner row itself. The backfill assigns each custom exercise to
+whoever actually referenced it, which needs no guess about who "the" user is.
+
+Because the service role bypasses RLS, the scoping had to be repeated in the
+MCP tools: `requireExercise` is the single gate every tool naming an exercise
+passes through, and `search_exercises` filters explicitly. Another person's
+custom lift reports as _unknown_, not as forbidden — confirming that an id
+exists but belongs to someone else is itself a leak.
+
+### The client half
+
+Queued writes leave `user_id` to the database default (`auth.uid()`). That was
+safe while one person could be signed in and became a data-integrity hazard the
+moment two could: a set queued offline by one user and flushed after another
+signed in would be stamped, permanently and append-only, with the wrong owner.
+Outbox items now carry their owner and the flusher holds anything that is not
+the current user's — held, never dropped, and still counted in the sync pill so
+it cannot go quietly missing. Items queued before this shipped carry no owner
+and are treated as the current user's, which is exactly what they already were.
+
+The device cache is claimed by one user id in localStorage and cleared when it
+changes. Cache keys are deliberately NOT namespaced: `cacheKeys` is the single
+vocabulary for every key in the app, and threading a user through it would give
+forty call sites a chance to get the prefix wrong. One marker has one place to
+be wrong. When localStorage is unavailable the check is skipped rather than
+clearing every load, which would have destroyed the offline promise in private
+mode for no gain (IndexedDB is per-session there anyway).
+
+Sign-out no longer claims to "discard unsynced sets". It never did discard
+them, and now they are explicitly held for their owner, so the button says so.
+
+### Not done, deliberately
+
+PWA settings stay device-local. Two people sharing one phone share its plate
+inventory and per-exercise preferences. Making them per-user means a
+`user_settings` table, which CLAUDE.md rules out as a third write-ownership
+class for data no view and no MCP tool reads. Two phones, no overlap, and that
+is the expected setup.
+
+There is no timezone control in the app. It is a SQL one-liner in setup.md that
+changes about once in a lifetime, and putting it in device-local settings would
+be the wrong home for a server-side per-user value.
+
+## 2026-08-27 toasts sat on the topbar, and how the sweep missed it
+
+A toast is `position: fixed` anchored to the top of the viewport, 92vw wide,
+alive for 4.5s and stackable three deep. That put it directly on the topbar,
+and because it is a real element in the hit test it swallowed every tap aimed
+at the settings gear and the wordmark's go-to-Today button for as long as it
+showed. An error toast is precisely when someone reaches for settings.
+
+Two changes, either of which fixes the blocking; both are worth having.
+`pointer-events: none` on `.toasts`, because an overlay with no interactive
+content must never be in the hit path on ANY screen size, measured or not. And
+`top: var(--topbar-h)`, published by the shell from a ResizeObserver (the same
+idea as `--kb` in `<Sheet>`), so the toast does not visually cover the chrome
+either. Measured rather than hard-coded: the topbar's height moves with the
+safe-area inset, the font and the breakpoint's gutter.
+
+**Why the earlier responsive sweep called this clean.** It measured geometry —
+document overflow, elements outside the viewport, character stacking, computed
+tap-target size — and geometry cannot see occlusion. Every one of those checks
+passes on a button with a toast sitting on top of it. It also only ever
+measured at scroll-top, and never opened a sheet, so overlays were not in the
+DOM at all when it ran.
+
+The check that finds this class is `document.elementFromPoint` at the centre
+and four inset corners of every interactive element: if the topmost element
+there is not the control or its descendant, the control is unreachable. It
+catches occlusion from any cause at once — fixed overlays, modal backdrops, and
+a neighbouring control's `::after` hit extension stealing taps — because
+hit-testing attributes a pseudo-element to the element that owns it.
+
+Three things that harness has to get right, each of which produced a false
+positive first:
+
+- Clip by scroll containers, not the viewport. An element inside `.content`
+  can be below that container's clip while still "on screen" by its own
+  coordinates. It is scrolled away, not covered.
+- Settle animations before measuring. Sheets slide in with a `rise` keyframe,
+  and CSS animations do not advance in a hidden tab — which is where an
+  automated sweep runs — so an unsettled sheet measures as sitting entirely
+  below the fold. `getAnimations().forEach(a => a.finish())` first.
+- A modal backdrop covering the page is the point of a modal, not a defect.
+
+`.sheet-close` measures 44.5x42.2 rather than 44x44: its hit extension reaches
+16.25px above the ink and `.sheet` has 16px of top padding, so the top ~2px is
+clipped by the sheet's own overflow. Left alone — closing it means adding
+padding to the top of every sheet for half a millimetre on the one control that
+is also dismissable by backdrop tap and by ESC. Recorded in styles.css beside
+the family so the next person measures rather than trusting the rule.

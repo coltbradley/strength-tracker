@@ -35,11 +35,15 @@ and [docs/security.md](docs/security.md); the short version:
    1-8 reps only), weekly volume, prescribed-vs-achieved adherence, rest
    times, goal progress: all `security_invoker` SQL views, so they're always
    consistent with raw data and RLS applies through them.
-5. **No OAuth for one user.** The claude.ai connector UI supports only OAuth
-   or no auth, but `mcp-remote --header` carries a static bearer token from
-   the local Claude Desktop config. A constant-time token check in the edge
-   function replaces an entire OAuth 2.1 deployment. The upgrade path
-   (Supabase Auth's OAuth 2.1 server) is documented, not built.
+5. **A token is an identity, not a password.** Each person gets their own MCP
+   bearer token; the server stores only its SHA-256, hashes what it is given
+   and resolves the user from `mcp_tokens`. Every tool then filters and stamps
+   that user. Static bearer auth is what every MCP client supports today —
+   `mcp-remote --header` for Claude Desktop, a URL-plus-key field for
+   claude.ai and ChatGPT custom connectors — so it works everywhere without
+   running an OAuth 2.1 authorization server. OAuth would change only how a
+   token is obtained, not what it authorizes; the upgrade path is documented,
+   not built.
 
 ## Layout
 
