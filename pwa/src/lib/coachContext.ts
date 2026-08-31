@@ -15,6 +15,7 @@
 // log another set, which is exactly when they are most likely to ask.
 
 import { cacheGet, cacheKeys } from "./db";
+import { supabase } from "./supabase";
 import { getUnit } from "./settings";
 import { toDisplay, type Unit } from "./units";
 import { todayLocalIso, workoutName } from "./format";
@@ -41,6 +42,28 @@ export async function buildCoachContext(): Promise<string> {
   const today = todayLocalIso();
 
   lines.push(`Today is ${today}. Weights below are shown in ${unit}.`);
+
+  // Standing facts, first, before anything about today. They arrive here
+  // rather than through a tool because memory that has to be fetched is memory
+  // that gets forgotten — and the whole point is that the lifter stops having
+  // to re-explain their shoulder.
+  try {
+    const { data } = await supabase
+      .from("coach_memory")
+      .select("kind, fact")
+      .order("kind");
+    const memory = (data ?? []) as { kind: string; fact: string }[];
+    if (memory.length > 0) {
+      lines.push("\nWHAT YOU ALREADY KNOW ABOUT THEM:");
+      for (const m of memory) lines.push(`  - [${m.kind}] ${m.fact}`);
+      lines.push(
+        "  (Use `remember` when they tell you something standing and new, " +
+          "and `forget` when one of these stops being true.)",
+      );
+    }
+  } catch {
+    // Offline or unreachable: answering with less beats not answering.
+  }
 
   try {
     const active = await cacheGet<ActiveSession>(cacheKeys.activeSession);

@@ -104,6 +104,18 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
     if (pinned.current) endRef.current?.scrollIntoView({ block: "end" });
   }, [msgs]);
 
+  // The keyboard halves the thread. Without this the last answer scrolls out
+  // of view the moment someone taps the box to reply to it.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      if (pinned.current) endRef.current?.scrollIntoView({ block: "end" });
+    };
+    vv.addEventListener("resize", onResize);
+    return () => vv.removeEventListener("resize", onResize);
+  }, []);
+
   // An answer this device was not connected for. The phone locks mid-answer,
   // or the app is closed; the function finishes the turn regardless and stores
   // it. On reopen, go and get what was missed rather than leaving a truncated

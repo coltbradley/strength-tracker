@@ -1200,3 +1200,55 @@ coach prompt says the rest: never two variants of one movement in a session,
 and vary the movement PATTERN rather than the name of the same exercise. An
 untrained variant gives them no history to compare against and no working
 weight to start from — the cost is invisible until a chart has a hole in it.
+
+## The coach remembers the person
+
+A conversation remembered itself and nothing else: "New" wiped it, a second
+device started empty, and the lifter re-explained their shoulder every time.
+None of that is derivable from the log — no view holds "I train at 6am before
+work" or "no barbell on Fridays".
+
+`coach_memory` holds standing facts, kinded (injury / constraint / preference /
+context) and capped at 300 characters, because the value is being readable in
+full at the start of every conversation rather than holding everything.
+Deliberately not goals: `goals` and v_goal_progress already measure those
+against real sets, which is a better record than a sentence.
+
+**It arrives in the context block, not through a tool.** Memory that has to be
+fetched is memory that gets forgotten. Verified: a brand new conversation with
+no history opened with "Given your left shoulder impingement (no overhead
+pressing) and that Friday you're home with just dumbbells and bands" and
+programmed around both.
+
+It is deletable, unlike the training record. A fact that has stopped being true
+is not history worth keeping — it is something that would make every future
+answer worse. This is the sessions.notes mutability class, not the sets one.
+
+## What the recorded conversations said
+
+The point of logging prompts and responses is to read them. Thirteen turns in:
+median latency 10.8s, cache hits 12/13, median answer 280 characters — brevity
+is holding, caching is working, and three turns needed no tool at all because
+the context block already answered them.
+
+The one clear waste: the model called `get_memory` on a turn where memory was
+already in its context. Seconds spent by someone standing at a rack, for
+nothing. The prompt now says not to, and says why tool calls cost what they
+cost — one well-chosen tool beats three thorough ones.
+
+## The chat broke when the keyboard opened
+
+Two bugs, both structural rather than cosmetic.
+
+`.sheet` is `overflow-y: auto` so a long form can be reached. A chat has its
+own scroller inside it, and with both, the keyboard shrinking the sheet
+scrolled the COMPOSER out of view instead of pinning it above the keys. The
+chat sheet is now `overflow: hidden`: one scroller, the thread.
+
+And raising `.sheet-tall` from 78dvh to 88dvh had done nothing, because
+`.sheet` sets a `max-height` and max-height beats height. Both are set now, and
+both subtract `--kb`. Measured: keyboard open, the sheet shrinks to 468px and
+the composer's bottom edge sits at 472 against a keyboard starting at 492.
+
+The thread also re-pins to the bottom on a visualViewport resize, or the answer
+being replied to scrolls away the moment the box is tapped.

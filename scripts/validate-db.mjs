@@ -1150,5 +1150,51 @@ await check("deleting a user takes their notes, not the exercise", async () => {
   assertEq(after.rows[0].n, ex.rows[0].n, "the shared exercise survives");
 });
 
+console.log("\ncoach memory (so they stop repeating themselves):");
+
+await check("kind is a closed set and a blank fact is rejected", async () => {
+  await db.exec(
+    `insert into coach_memory (user_id, kind, fact)
+     values ('${OWNER}', 'injury', 'Left shoulder impingement; avoid overhead pressing')`,
+  );
+  for (const bad of [
+    `insert into coach_memory (user_id, kind, fact) values ('${OWNER}', 'vibe', 'x')`,
+    `insert into coach_memory (user_id, kind, fact) values ('${OWNER}', 'injury', '   ')`,
+  ]) {
+    let rejected = false;
+    try {
+      await db.exec(bad);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error(`accepted: ${bad}`);
+  }
+});
+
+await check("a fact that stops being true can be deleted", async () => {
+  // Unlike the training record. An expired fact is not history, it is
+  // something that would make every future answer worse.
+  const pol = await db.query(
+    `select count(*)::int as n from pg_policies
+      where tablename = 'coach_memory' and cmd = 'DELETE'`,
+  );
+  assertEq(pol.rows[0].n, 1, "there is a delete policy, on purpose");
+});
+
+await check("memory is private to its owner", async () => {
+  const mine = await asUser(OWNER, `select count(*)::int as n from coach_memory`);
+  assertEq(mine.rows[0].n, 1, "owner sees their own");
+  let rejected = false;
+  try {
+    await asUser(
+      OWNER,
+      `insert into coach_memory (user_id, kind, fact) values ('${OTHER}', 'context', 'not mine')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("wrote a memory onto another user");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

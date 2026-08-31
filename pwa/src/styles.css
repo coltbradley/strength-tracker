@@ -1632,7 +1632,12 @@
    * something anyone reads. It still stops short of the top so the sheet
    * reads as a sheet rather than a page, and still yields to the keyboard. */
   .sheet-tall {
+    /* BOTH, or the max-height on .sheet caps this at 78dvh and the height is
+     * ignored — max-height beats height, and that is why raising it alone did
+     * nothing. Both terms subtract --kb so a tall sheet yields to the
+     * keyboard rather than sliding its own composer underneath it. */
     height: min(88dvh, calc(100dvh - var(--kb, 0px) - var(--s-9)));
+    max-height: min(88dvh, calc(100dvh - var(--kb, 0px) - var(--s-9)));
   }
 
   /* A bottom sheet is a phone idiom: it starts at the thumb. On a 1400x900
@@ -2937,10 +2942,15 @@
   /* -- coach chat ----------------------------------------------------------
    * A chat, not a form: the thread takes the room and scrolls, the composer is
    * pinned under it and never moves. Both inside the sheet's own height. */
+  /* The sheet itself must NOT scroll here. `.sheet` is overflow-y:auto so a
+   * long form can be reached, but a chat has its own scroller inside it — and
+   * with both, the keyboard shrinking the sheet scrolled the composer out of
+   * view instead of pinning it above the keys. One scroller: the thread. */
   .coach-sheet {
     display: flex;
     flex-direction: column;
     min-height: 0;
+    overflow: hidden;
   }
 
   .coach-thread {
