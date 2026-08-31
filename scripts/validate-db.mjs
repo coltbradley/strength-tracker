@@ -36,6 +36,11 @@ const assertEq = (actual, expected, what) => {
   if (JSON.stringify(actual) !== JSON.stringify(expected))
     throw new Error(`${what}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 };
+/** For the checks whose point is "there is at least one", where the exact
+ *  count depends on the seed and asserting it would be brittle. */
+const assert = (ok, what) => {
+  if (!ok) throw new Error(what);
+};
 
 // --- auth shim -------------------------------------------------------------
 await db.exec(`
@@ -761,6 +766,76 @@ await check("inserting a custom exercise claims it automatically", async () => {
   assertEq(owner.rows[0].user_id, OTHER, "trigger stamped the inserting user");
   const seen = await asUser(OWNER, `select count(*)::int as n from exercises where id = 'Other_Only_Lift'`);
   assertEq(seen.rows[0].n, 0, "not visible to anyone else");
+});
+
+await check("a planned day is soft-deleted, and logged sets keep their plan", async () => {
+  // The bug: prescriptions cascade from planned_workouts and
+  // sets.prescription_id is ON DELETE SET NULL, so hard-deleting one planned
+  // day silently severed every set ever logged against it from the plan it
+  // fulfilled. `sets` is append-only, so v_adherence lost that history for good.
+  const pw = (await db.query(
+    `select id from planned_workouts where not is_template limit 1`,
+  )).rows[0].id;
+  const before = await db.query(
+    `select count(*)::int as n from v_resolved_prescriptions where planned_workout_id = $1`,
+    [pw],
+  );
+  assert(before.rows[0].n > 0, "the day has prescriptions to begin with");
+
+  await db.exec(`update planned_workouts set discarded_at = now() where id = '${pw}'`);
+  const after = await db.query(
+    `select count(*)::int as n from v_resolved_prescriptions where planned_workout_id = $1`,
+    [pw],
+  );
+  assertEq(after.rows[0].n, 0, "a discarded day leaves every plan read");
+  const gone = await db.query(
+    `select count(*)::int as n from v_plan_workouts where id = $1`,
+    [pw],
+  );
+  assertEq(gone.rows[0].n, 0, "and leaves the calendar");
+  const rows = await db.query(
+    `select count(*)::int as n from prescriptions where planned_workout_id = $1`,
+    [pw],
+  );
+  assert(rows.rows[0].n > 0, "but the rows themselves survive in Postgres");
+  await db.exec(`update planned_workouts set discarded_at = null where id = '${pw}'`);
+});
+
+await check("a prescription with logged sets against it refuses to be deleted", async () => {
+  const row = (await db.query(
+    `select p.id from prescriptions p
+      join sets s on s.prescription_id = p.id limit 1`,
+  )).rows[0];
+  assert(row !== undefined, "there is a prescription with a set logged against it");
+  let refused = false;
+  try {
+    await db.exec(`delete from prescriptions where id = '${row.id}'`);
+  } catch {
+    refused = true;
+  }
+  assertEq(refused, true, "the trigger refuses rather than orphaning history");
+  const still = await db.query(
+    `select count(*)::int as n from sets where prescription_id = $1`,
+    [row.id],
+  );
+  assert(still.rows[0].n > 0, "and the sets still point at it");
+});
+
+await check("a prescription nothing was logged against still deletes freely", async () => {
+  // the ordinary case: editing a plan before you train it
+  const pw = (await db.query(
+    `select id from planned_workouts where not is_template limit 1`,
+  )).rows[0].id;
+  await db.exec(
+    `insert into prescriptions (id, user_id, planned_workout_id, exercise_id,
+                                position, sets, reps_min, reps_max)
+     values ('11111111-2222-4333-8444-555555555555', '${OWNER}', '${pw}',
+             'Barbell_Squat', 99, 3, 5, 5)`,
+  );
+  const del = await db.query(
+    `delete from prescriptions where id = '11111111-2222-4333-8444-555555555555'`,
+  );
+  assertEq(del.affectedRows ?? 0, 1, "an untrained prescription deletes");
 });
 
 await check("an edited library row stays shared, and no seed may revert it", async () => {

@@ -370,6 +370,47 @@ describe("outbox", () => {
     expect(outbox.getStatus().pending).toBe(0);
   });
 
+  it("401 with an UNREACHABLE refresh keeps the item pending, not dead", async () => {
+    // A refresh that threw and a refresh that returned false are different
+    // answers. Throwing means we never found out — getSession() timed out on
+    // gym wifi. Treating that as a verdict dead-lettered the whole queue for a
+    // transient condition, and since the refresh is attempted once per flush,
+    // every following item skipped it and died too.
+    const { calls, transport } = makeTransport([authErr, authErr]);
+    const refreshAuth = vi.fn(async () => {
+      throw new Error("network timeout");
+    });
+    const outbox = build({ ...transport, refreshAuth });
+
+    await seed(outbox, [
+      { kind: "insert", table: "sets", payload: setA },
+      { kind: "insert", table: "sets", payload: setB },
+    ]);
+
+    online = true;
+    await outbox.flush();
+
+    expect(refreshAuth).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1); // stopped, rather than marching on
+    expect(outbox.getStatus().dead).toBe(0);
+    expect(outbox.getStatus().pending).toBe(2);
+    expect(outbox.getStatus().state).toBe("error");
+  });
+
+  it("and sends them once the refresh can actually answer", async () => {
+    const { calls, transport } = makeTransport([authErr]);
+    const refreshAuth = vi.fn(async () => true);
+    const outbox = build({ ...transport, refreshAuth });
+
+    await seed(outbox, [{ kind: "insert", table: "sets", payload: setA }]);
+    online = true;
+    await outbox.flush();
+
+    expect(outbox.getStatus().pending).toBe(0);
+    expect(outbox.getStatus().dead).toBe(0);
+    expect(calls).toHaveLength(2);
+  });
+
   it("pendingSets returns queued set inserts for a session", async () => {
     const { transport } = makeTransport();
     const outbox = build(transport);

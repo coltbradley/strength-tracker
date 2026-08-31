@@ -263,10 +263,21 @@ export function createOutbox({
           if (kind === "auth" && !authRefreshTried && transport.refreshAuth) {
             authRefreshTried = true;
             let refreshed = false;
+            // A refresh that THREW and a refresh that returned false are not
+            // the same answer. Returning false means there is no valid
+            // session — genuinely an auth failure, and the item is dead.
+            // Throwing means we never found out: getSession() timed out on gym
+            // wifi, the request was aborted, DNS failed. Treating that as a
+            // verdict dead-lettered the entire queue for a transient
+            // condition, and because authRefreshTried is per-flush, every
+            // following item skipped the refresh and went straight to dead
+            // too — a 25-set session showing as 25 failures because one
+            // request took too long.
+            let unreachable = false;
             try {
               refreshed = await transport.refreshAuth();
             } catch {
-              refreshed = false;
+              unreachable = true;
             }
             if (refreshed) {
               item = {
@@ -277,7 +288,23 @@ export function createOutbox({
               await db.put("outbox", item, row.key);
               continue attempt;
             }
-            // refresh didn't help: park below
+            if (unreachable) {
+              // fall through to the retryable path: stay pending, stop the
+              // flush, try again on the next trigger
+              item = {
+                ...item,
+                retries: item.retries + 1,
+                last_error: err.message,
+              };
+              await db.put("outbox", item, row.key);
+              setStatus({
+                ...counts(await readAll(db)),
+                state: "error",
+                lastError: err.message,
+              });
+              return;
+            }
+            // refresh answered, and the answer was no: park below
           }
 
           if (kind === "dead" || kind === "auth") {

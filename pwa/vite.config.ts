@@ -15,7 +15,15 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // NOT "autoUpdate". That combination — autoUpdate plus
+      // registerSW({immediate:true}) — makes a new deploy call skipWaiting and
+      // reload the open page the moment it is noticed. Mid-set, that throws
+      // away whatever is staged in the steppers and any half-typed set note,
+      // and it does it at the one moment the user is least able to deal with
+      // it. "prompt" leaves the new worker WAITING instead, and main.tsx
+      // decides when to let it in. Same runtime rule as the additive-only
+      // IndexedDB versioning: an update must never cost the user work.
+      registerType: "prompt",
       includeAssets: ["icons/icon-192.png", "icons/icon-512.png"],
       manifest: {
         name: "Strength Log",
