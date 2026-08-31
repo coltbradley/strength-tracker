@@ -18,6 +18,15 @@ export interface StepDef {
   delta: number;
   /** fine steps render lighter */
   fine?: boolean;
+  /**
+   * What this step IS, in the words the user reads: "5 lb", "2.5 kg", "30s".
+   *
+   * The spoken label used to render `delta` raw, which for a load stepper in
+   * lb mode is the kg equivalent of five pounds — "increase load by
+   * 2.2679618500000003". Internal units and a float, announced to the one
+   * person who cannot see the screen to work out what was meant.
+   */
+  announce?: string;
 }
 
 interface StepperProps {
@@ -37,6 +46,14 @@ interface StepperProps {
   compact?: boolean;
   /** aria label base, e.g. "load" */
   label: string;
+  /**
+   * Round the result to a multiple of the step rather than adding to it.
+   *
+   * For loads, where the stored unit (kg) and the stepped unit (the display
+   * unit) differ — see the note in `bump`. Not for reps or seconds, which are
+   * already integers in the unit they are shown in.
+   */
+  snap?: boolean;
 }
 
 export function Stepper({
@@ -52,9 +69,23 @@ export function Stepper({
   inline = false,
   compact = false,
   label,
+  snap = false,
 }: StepperProps) {
   const bump = (delta: number) => {
-    const raw = Math.round((value + delta) * 100) / 100;
+    // Land ON the step grid, not `delta` away from wherever we happen to be.
+    //
+    // Loads are stored in kg and stepped by the display unit's own increment,
+    // so in lb mode the step is 5 lb expressed as 2.26796 kg. Adding that to a
+    // kg-authored 100 kg gave 220.5 -> 225.5 -> 230.5 lb: the value kept the
+    // half-pound of its kilogram origin forever and never reached a number
+    // anyone loads on a bar. Snapping to a multiple of the step makes the
+    // first press land on 225 and every one after it stay round. In kg mode
+    // the value is already on the grid, so this is a no-op there.
+    const next =
+      snap && delta !== 0
+        ? Math.round((value + delta) / Math.abs(delta)) * Math.abs(delta)
+        : value + delta;
+    const raw = Math.round(next * 1000) / 1000;
     onChange(Math.min(max, Math.max(min, raw)));
   };
 
@@ -81,7 +112,9 @@ export function Stepper({
       key={s.label}
       type="button"
       className={s.fine ? "stepper-btn-fine" : "stepper-btn"}
-      aria-label={`${s.delta > 0 ? "increase" : "decrease"} ${label} by ${Math.abs(s.delta)}`}
+      aria-label={`${s.delta > 0 ? "increase" : "decrease"} ${label} by ${
+        s.announce ?? Math.abs(s.delta)
+      }`}
       onClick={() => bump(s.delta)}
     >
       {s.label}

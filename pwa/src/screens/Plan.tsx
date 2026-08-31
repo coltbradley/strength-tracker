@@ -32,6 +32,7 @@ import {
   weekOrder,
   type WorkoutList,
 } from "../lib/data";
+import { sectionAt, sectionUnit } from "../lib/sections";
 import { reportError, toast } from "../lib/errors";
 import {
   formatPlannedDate,
@@ -91,22 +92,6 @@ function rampWith(rows: ResolvedPrescriptionRow[], i: number): boolean {
  * is performed. Rows in a group now share a left rail and the run is labelled
  * once at its top, so a pair reads as a pair.
  */
-/**
- * Where row `i` sits in its section run.
- *
- * Same shape as supersetAt, deliberately: a section, a superset and a ramp are
- * all "these consecutive rows belong together", and rendering them three
- * different ways would make a workout harder to read, not easier.
- */
-function sectionAt(
-  rows: ResolvedPrescriptionRow[],
-  i: number,
-): { name: string; first: boolean } | null {
-  const sec = rows[i]?.section ?? null;
-  if (sec === null || sec.trim() === "") return null;
-  return { name: sec, first: (rows[i - 1]?.section ?? null) !== sec };
-}
-
 function supersetAt(
   rows: ResolvedPrescriptionRow[],
   i: number,
@@ -431,6 +416,34 @@ export function Plan() {
     });
 
   /**
+   * Write an edited row, and carry a changed section to everything bound to it.
+   *
+   * A section holds whole exercises. Sectioning one row of a ramp used to put
+   * its first bracket under the heading and leave the other two outside it,
+   * and did the same to a superset — worse there, because the pairing IS the
+   * prescription. `sectionUnit` says what "whole" means; only the section
+   * travels, since every other field on this row is about this row.
+   *
+   * The unit is read from the rows as DISPLAYED, before the patch lands: that
+   * is the ramp the user was looking at when they picked the section.
+   */
+  const commitRx = async (
+    r: ResolvedPrescriptionRow,
+    patch: PrescriptionPatch,
+  ) => {
+    const next = patch.section ?? null;
+    const unit =
+      next === (r.section ?? null)
+        ? []
+        : sectionUnit(orderedRx, orderedRx.findIndex((o) => o.id === r.id));
+    await updatePrescription(r.id, workout.id, patch);
+    for (const o of unit) {
+      if (o.id === r.id || (o.section ?? null) === next) continue;
+      await updatePrescription(o.id, workout.id, { section: next });
+    }
+  };
+
+  /**
    * Commit an edited row.
    *
    * Called on collapse rather than from a Save button. Everything else on this
@@ -454,7 +467,7 @@ export function Plan() {
       return Promise.resolve();
     }
     return run("save exercise", async () => {
-      await updatePrescription(r.id, workout.id, patch);
+      await commitRx(r, patch);
       if (!keepOpen) {
         setEditingRx(null);
         setDraft(null);
@@ -511,7 +524,7 @@ export function Plan() {
     void run("reorder exercise", async () => {
       // Commit first: moving a row used to discard whatever was typed in it.
       if (editingRx === r.id && draft) {
-        await updatePrescription(r.id, workout.id, patchFrom(draft));
+        await commitRx(r, patchFrom(draft));
       }
       await movePrescription(r.id, workout.id, dir, rx ?? []);
       reload();
@@ -573,6 +586,8 @@ export function Plan() {
           const editing = editingRx === r.id && draft;
           const ss = supersetAt(orderedRx, i);
           const sec = sectionAt(orderedRx, i);
+          // More than one row here means picking a section moves all of them.
+          const sectionRows = sectionUnit(orderedRx, i);
           return (
             <div
               key={r.id}
@@ -763,9 +778,18 @@ export function Plan() {
                       min={0}
                       max={999}
                       onChange={(v) => setDraft({ ...draft, load_kg: v })}
+                      snap
                       steps={[
-                        { label: "−", delta: -stepKg(unit, false) },
-                        { label: "+", delta: stepKg(unit, false) },
+                        {
+                          label: "−",
+                          delta: -stepKg(unit, false),
+                          announce: `${toDisplay(stepKg(unit, false), unit)} ${unit}`,
+                        },
+                        {
+                          label: "+",
+                          delta: stepKg(unit, false),
+                          announce: `${toDisplay(stepKg(unit, false), unit)} ${unit}`,
+                        },
                       ]}
                     />
                   )}
@@ -824,6 +848,13 @@ export function Plan() {
                       setDraft({ ...draft, section: e.target.value.slice(0, 40) })
                     }
                   />
+                  {sectionRows.length > 1 && (
+                    <div className="microcopy">
+                      A section holds whole exercises, so this applies to all{" "}
+                      {sectionRows.length} rows of the{" "}
+                      {ss ? "superset" : "ramp"}.
+                    </div>
+                  )}
 
                   <div className="section-head">
                     <span className="field-label">HOW IT IS LOGGED</span>

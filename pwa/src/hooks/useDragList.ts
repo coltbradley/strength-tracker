@@ -43,6 +43,8 @@ export function useDragList(
   const startY = useRef(0);
   const rowH = useRef(0);
   const fromIndex = useRef(0);
+  /** The element holding pointer capture, so it can actually be released. */
+  const captured = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
 
   // While not dragging, follow the source of truth. During a drag the local
@@ -61,6 +63,18 @@ export function useDragList(
 
   const finish = (commit: boolean) => {
     clearHold();
+    // Release FIRST, and unconditionally. A capture that outlives the drag
+    // sends every later pointer event to this row, which is indistinguishable
+    // from the page having frozen.
+    const cap = captured.current;
+    captured.current = null;
+    if (cap !== null) {
+      try {
+        cap.el.releasePointerCapture(cap.pointerId);
+      } catch {
+        // already released, or the row unmounted under us
+      }
+    }
     if (dragging === null) return;
     const next = order;
     setDragging(null);
@@ -77,15 +91,29 @@ export function useDragList(
     order,
     handlers: (id, index) => ({
       onPointerDown: (e) => {
-        const box = e.currentTarget.getBoundingClientRect();
+        // Hold the element in a variable. React sets e.currentTarget to NULL
+        // once the handler returns, so reading it inside the timeout threw —
+        // which happened after setDragging and before the capture, leaving the
+        // row stuck mid-drag with no pointer capture and the page unable to
+        // navigate away from it.
+        const el = e.currentTarget as HTMLElement;
+        const pointerId = e.pointerId;
+        const box = el.getBoundingClientRect();
         startY.current = e.clientY;
         rowH.current = box.height || 1;
         fromIndex.current = index;
+        captured.current = null;
         clearHold();
         holdTimer.current = window.setTimeout(() => {
           setDragging(id);
           setOverIndex(index);
-          e.currentTarget.setPointerCapture?.(e.pointerId);
+          try {
+            el.setPointerCapture(pointerId);
+            captured.current = { el, pointerId };
+          } catch {
+            // Capture is an optimisation, not a requirement: without it the
+            // drag still tracks while the finger stays over the list.
+          }
           navigator.vibrate?.(15);
         }, LONG_PRESS_MS);
       },

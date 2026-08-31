@@ -423,9 +423,18 @@ export function SetSchemeSheet({
                 min={0}
                 max={999}
                 onChange={(v) => patch(i, { loadKg: v })}
+                snap
                 steps={[
-                  { label: "−", delta: -stepKg(unit, false) },
-                  { label: "+", delta: stepKg(unit, false) },
+                  {
+                    label: "−",
+                    delta: -stepKg(unit, false),
+                    announce: `${toDisplay(stepKg(unit, false), unit)} ${unit}`,
+                  },
+                  {
+                    label: "+",
+                    delta: stepKg(unit, false),
+                    announce: `${toDisplay(stepKg(unit, false), unit)} ${unit}`,
+                  },
                 ]}
               />
             )}

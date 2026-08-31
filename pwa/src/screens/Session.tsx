@@ -882,15 +882,19 @@ export function Session() {
     const coarse = stepKgFor(exerciseId, u, false);
     const fine = stepKgFor(exerciseId, u, true);
     const label = (kg: number) => toDisplay(kg, u);
+    // `announce` says the step in the unit the lifter reads. Without it the
+    // spoken label carried the kg equivalent of a five-pound plate —
+    // "increase load by 2.2679618500000003".
+    const say = (kg: number) => `${label(kg)} ${u}`;
     const steps: StepDef[] = [
-      { label: `− ${label(coarse)}`, delta: -coarse },
-      { label: `+ ${label(coarse)}`, delta: coarse },
+      { label: `− ${label(coarse)}`, delta: -coarse, announce: say(coarse) },
+      { label: `+ ${label(coarse)}`, delta: coarse, announce: say(coarse) },
     ];
     if (label(fine) === label(coarse)) return steps;
     return [
       steps[0],
-      { label: `− ${label(fine)}`, delta: -fine, fine: true },
-      { label: `+ ${label(fine)}`, delta: fine, fine: true },
+      { label: `− ${label(fine)}`, delta: -fine, fine: true, announce: say(fine) },
+      { label: `+ ${label(fine)}`, delta: fine, fine: true, announce: say(fine) },
       steps[1],
     ];
   };
@@ -1163,6 +1167,7 @@ export function Session() {
                         display={String(toDisplay(entryKg, unit))}
                         subText={loadSub}
                         onTapValue={() => openPad("load")}
+                        snap
                         value={entryKg}
                         min={0}
                         max={maxEntryKg}
