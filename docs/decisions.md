@@ -820,8 +820,11 @@ row, the CSV export and every bug report already wanted and had been faking
 with a hardcoded `0.1.0`. The DSN sits in the workflow rather than in secrets
 because it is not one — it is write-only and ships in the client bundle by
 design. On a public repo that means anyone can read it and post events, so the
-Sentry project needs a rate limit and an allowed-domains entry; that is the
-mitigation, not hiding the string.
+mitigation is on the Sentry side, not hiding the string: the DSN is capped at
+1000 events per hour, and an allowed-domains entry (Settings → Security &
+Privacy) restricts ingest to the Pages origin. The cap is generous enough that
+a real bad day still reports in full and low enough that a stranger cannot bury
+the issue stream.
 
 Session replay is on (10% of sessions, 100% of sessions with an error) with the
 SDK's `maskAllText` and `blockAllMedia` defaults left alone. Replay is the
