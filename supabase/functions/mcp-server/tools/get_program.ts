@@ -82,6 +82,7 @@ export function registerGetProgram(
           .from("programs")
           .select("id, name, starts_on, confirmed_at, created_at")
           .eq("user_id", db.ownerId)
+          .is("discarded_at", null)
           .order("created_at", { ascending: false })
           .limit(1);
         if (!args.include_unconfirmed) q = q.not("confirmed_at", "is", null);

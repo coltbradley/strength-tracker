@@ -985,5 +985,46 @@ await check("deleting a user takes their feedback with them", async () => {
   assertEq(r.rows[0].n, 0, "feedback cascades");
 });
 
+console.log("\nprograms are soft-deleted (nothing a model writes is unrecoverable):");
+
+await check("discarding a program takes its days off the calendar", async () => {
+  const before = await db.query(`select count(*)::int as n from v_plan_workouts`);
+  await db.exec(`update programs set discarded_at = now()`);
+  const after = await db.query(`select count(*)::int as n from v_plan_workouts`);
+  assertEq(after.rows[0].n, 0, "no plannable days survive a discarded program");
+  if (before.rows[0].n === 0) throw new Error("fixture had no days to hide");
+  await db.exec(`update programs set discarded_at = null`);
+});
+
+await check("but the rows themselves survive, and can come back", async () => {
+  const restored = await db.query(`select count(*)::int as n from v_plan_workouts`);
+  if (restored.rows[0].n === 0) throw new Error("undiscarding did not restore the days");
+  const rx = await db.query(`select count(*)::int as n from prescriptions`);
+  if (rx.rows[0].n === 0) throw new Error("prescriptions were destroyed");
+});
+
+await check("a discarded program takes no sessions or sets with it", async () => {
+  const s0 = await db.query(`select count(*)::int as n from sessions`);
+  const x0 = await db.query(`select count(*)::int as n from sets`);
+  await db.exec(`update programs set discarded_at = now()`);
+  const s1 = await db.query(`select count(*)::int as n from sessions`);
+  const x1 = await db.query(`select count(*)::int as n from sets`);
+  assertEq(s1.rows[0].n, s0.rows[0].n, "sessions untouched");
+  assertEq(x1.rows[0].n, x0.rows[0].n, "sets untouched");
+  await db.exec(`update programs set discarded_at = null`);
+});
+
+await check("v_plan_workouts still hides templates as well", async () => {
+  await db.exec(
+    `insert into planned_workouts (user_id, program_id, day_index, label, is_template)
+     values ('${OWNER}', (select id from programs where discarded_at is null limit 1), 950, 'Tpl', true)`,
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_plan_workouts where label = 'Tpl'`,
+  );
+  assertEq(r.rows[0].n, 0, "both filters apply, not just the newer one");
+  await db.exec(`delete from planned_workouts where label = 'Tpl'`);
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

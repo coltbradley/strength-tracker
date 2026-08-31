@@ -49,7 +49,8 @@ export function registerDeleteProgram(
             .from("programs")
             .select("id, name, confirmed_at")
             .eq("user_id", db.ownerId)
-            .eq("id", args.program_id),
+            .eq("id", args.program_id)
+            .is("discarded_at", null),
           "program lookup",
         ) as { id: string; name: string; confirmed_at: string | null }[];
         if (rows.length === 0) {
@@ -63,18 +64,28 @@ export function registerDeleteProgram(
               "confirm_delete_confirmed=true.",
           );
         }
+        // Soft delete, matching sessions. This is the one table a model can
+        // write, and it used to be the only one with no undo — in a codebase
+        // whose whole principle is that the record survives. The row and its
+        // workouts and prescriptions stay in Postgres; v_plan_workouts joins
+        // through to programs, so they leave the calendar immediately.
         const { error } = await db.client
           .from("programs")
-          .delete()
+          .update({ discarded_at: new Date().toISOString() })
           .eq("user_id", db.ownerId)
-          .eq("id", args.program_id);
+          .eq("id", args.program_id)
+          .is("discarded_at", null);
         if (error) throw new Error(`delete program: ${error.message}`);
         return jsonResult({
           deleted: true,
           program_id: program.id,
           name: program.name,
           was_confirmed: program.confirmed_at !== null,
-          note: "Logged sessions/sets are untouched; their plan links are nulled.",
+          note:
+            "Removed from the plan. Logged sessions and sets are untouched. " +
+            "This is a soft delete: the program is still in the database and " +
+            "can be restored from SQL, so tell the user it is recoverable " +
+            "rather than gone.",
         });
       }),
   );

@@ -127,6 +127,9 @@ export async function getPlannedWorkouts(): Promise<{
       .from("programs")
       .select("id,name,source_note,created_at,confirmed_at")
       .not("confirmed_at", "is", null)
+      // A discarded program is out of the plan. v_plan_workouts already hides
+      // its days; this stops the program itself heading the Today screen.
+      .is("discarded_at", null)
       .order("created_at", { ascending: false });
     throwIf(pErr);
     const progs = (programs ?? []) as ProgramRow[];
@@ -592,6 +595,7 @@ export async function createPlannedWorkout(
     .from("programs")
     .select("id")
     .not("confirmed_at", "is", null)
+    .is("discarded_at", null)
     .order("created_at", { ascending: false })
     .limit(1);
   throwIf(pErr);

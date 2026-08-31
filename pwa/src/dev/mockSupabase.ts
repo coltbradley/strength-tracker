@@ -361,12 +361,21 @@ function vGoalProgress(s: DemoStore): Row[] {
 }
 
 /**
- * v_plan_workouts (20260831020000_workout_templates.sql): the plannable days.
- * A saved template is a dateless planned_workout, and this is what keeps it
- * off the calendar and out of the DAY 1..N fallback.
+ * v_plan_workouts: the plannable days. Two things are dropped here rather than
+ * at each call site — a saved template (a dateless planned_workout), and any
+ * day whose PROGRAM has been discarded. The second matters: a soft-deleted
+ * program leaves its workouts untouched with real scheduled_dates, so without
+ * the join they keep appearing on the calendar after the plan is gone.
  */
 function vPlanWorkouts(s: DemoStore): Row[] {
-  return (s.planned_workouts ?? []).filter((w) => w.is_template !== true);
+  const live = new Set(
+    (s.programs ?? [])
+      .filter((p) => (p.discarded_at ?? null) === null)
+      .map((p) => p.id),
+  );
+  return (s.planned_workouts ?? []).filter(
+    (w) => w.is_template !== true && live.has(w.program_id),
+  );
 }
 
 const VIEWS: Record<string, (s: DemoStore) => Row[]> = {

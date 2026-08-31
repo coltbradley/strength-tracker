@@ -37,6 +37,8 @@ export function registerConfirmProgram(
           .eq("id", args.program_id)
           .eq("user_id", db.ownerId)
           .is("confirmed_at", null)
+          // A discarded program must not be confirmable back into existence.
+          .is("discarded_at", null)
           .select("id, name, confirmed_at");
         if (error) throw new Error(`confirm program: ${error.message}`);
 

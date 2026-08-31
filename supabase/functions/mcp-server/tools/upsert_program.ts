@@ -336,7 +336,11 @@ export function registerUpsertProgram(
             .from("programs")
             .select("id, confirmed_at")
             .eq("user_id", db.ownerId)
-            .eq("name", program.name),
+            .eq("name", program.name)
+            // A discarded program of the same name is already out of the plan;
+            // it must neither block the write as a "confirmed same name" nor
+            // be counted as something this call replaced.
+            .is("discarded_at", null),
           "existing program lookup",
         ) as { id: string; confirmed_at: string | null }[];
         const oldUnconfirmedIds = existing
@@ -436,7 +440,9 @@ export function registerUpsertProgram(
         if (oldUnconfirmedIds.length > 0) {
           const { error: cleanupError } = await db.client
             .from("programs")
-            .delete()
+            // Soft, like delete_program: a superseded draft is still something
+            // the model wrote, and nothing it writes should be unrecoverable.
+            .update({ discarded_at: new Date().toISOString() })
             .eq("user_id", db.ownerId)
             .in("id", oldUnconfirmedIds)
             .is("confirmed_at", null);

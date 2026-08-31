@@ -1051,3 +1051,31 @@ Rebuilt per turn rather than pinned to the top of the thread, because it goes
 stale the moment another set is logged — which is exactly when someone asks.
 Attached to the newest user turn, which also keeps it after the cache
 breakpoint. It covers today only; tools remain the way to reach history.
+
+## Programs are soft-deleted too
+
+`sets` are append-only, `sessions` soft-delete via `discarded_at`, corrections
+go through `set_voids` — and then `programs`, the one table an LLM can write,
+had a hard DELETE. A mis-parsed instruction or a misread "get rid of that"
+destroyed a plan with no undo, in a codebase whose entire stated principle is
+that the record survives. The asymmetry was exactly backwards: the least
+trustworthy writer had the most destructive verb.
+
+`delete_program` now sets `discarded_at`. So does the path that retires a
+superseded unconfirmed draft — a draft is still something the model wrote. The
+one delete left hard is the compensating rollback when a write fails partway:
+that is cleaning up a fragment nobody ever saw, and soft-deleting it would
+leave debris instead of removing it.
+
+The leak this had to close is not the program row, it is the days hanging off
+it. A discarded program's `planned_workouts` are untouched rows carrying real
+`scheduled_date`s, so without joining through to the program they keep
+appearing on the calendar after the plan is gone. `v_plan_workouts` already
+existed as the single place every plan read goes (added with templates for the
+same reason), so the join lives there rather than in each caller — and the
+harness pins both filters, because adding the second one is exactly where the
+first gets dropped by accident.
+
+Restoring is a SQL update, not a UI. That is deliberate: undoing a deletion is
+a rare, deliberate act, and a restore button is a second way to change the plan
+for a case that should be measured in "once".
