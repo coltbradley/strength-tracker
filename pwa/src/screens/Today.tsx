@@ -17,6 +17,10 @@ import {
 import { useNavigate } from "react-router-dom";
 import { Note } from "../components/Note";
 import {
+  CalendarSheet,
+  type CalendarDay,
+} from "../components/CalendarSheet";
+import {
   createPlannedWorkout,
   getDoneWorkoutIds,
   getExercises,
@@ -49,6 +53,7 @@ import {
   workoutName,
 } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
+import { useWeekStartsOn } from "../hooks/useSettings";
 import type {
   ActiveSession,
   PlannedWorkoutRow,
@@ -72,6 +77,7 @@ export function Today() {
   const [loadError, setLoadError] = useState(false);
   // week strip selection + LATER-list accordion
   const [selectedDate, setSelectedDate] = useState<string>(todayLocalIso());
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [laterExpanded, setLaterExpanded] = useState<string | null>(null);
   // undated-program fallback keeps the old expandable ruled list
@@ -178,7 +184,14 @@ export function Today() {
 
   const today = todayLocalIso();
   const anyDates = workouts.some((w) => w.scheduled_date !== null);
-  const weekDates = useMemo(() => getWeekDates(), []);
+  const weekStart = useWeekStartsOn();
+  // Anchored on the SELECTED day, not on today, so picking a date in another
+  // week from the calendar moves the strip to that week instead of silently
+  // showing this one.
+  const weekDates = useMemo(
+    () => getWeekDates(parseLocalDate(selectedDate), weekStart),
+    [selectedDate, weekStart],
+  );
 
   const states = useMemo(() => {
     const map = new Map<string, WorkoutState>();
@@ -217,6 +230,24 @@ export function Today() {
         m.set(w.scheduled_date, w);
     return m;
   }, [workouts]);
+  /** ISO day -> what the calendar should mark on it. */
+  const calendarDays = useMemo(() => {
+    const m = new Map<string, CalendarDay>();
+    for (const w of workouts) {
+      if (w.scheduled_date === null) continue;
+      const st = states.get(w.id);
+      const prev = m.get(w.scheduled_date);
+      m.set(w.scheduled_date, {
+        planned: true,
+        // A date can hold more than one workout. Done wins over skipped wins
+        // over planned, so a day with anything finished on it reads as done.
+        done: (prev?.done ?? false) || st === "DONE",
+        skipped: (prev?.skipped ?? false) || st === "SKIPPED",
+      });
+    }
+    return m;
+  }, [workouts, states]);
+
   const laterWorkouts = useMemo(
     () =>
       workouts.filter(
@@ -645,10 +676,27 @@ export function Today() {
         </div>
       )}
 
-      {program && anyDates && (
+      {/* The week strip used to be gated behind `program && anyDates`, so a
+          brand new account — no program yet — had no calendar at all, and no
+          way to pick the day it wanted to plan on. The strip IS the way in:
+          tap a day, plan it. It renders as soon as the plan list has loaded
+          and there is nothing dateless to show instead: an empty account gets
+          the strip, and a program whose days carry no dates still falls back
+          to the DAY 1..N list below, which is the case the strip cannot
+          represent. */}
+      {list !== null && (workouts.length === 0 || anyDates) && (
         <section className="rule-section">
           <div className="section-head">
-            <span className="field-label">THIS WEEK</span>
+            {/* The strip shows seven days and nothing else, so a block written
+                three weeks out used to be unreachable from this screen. */}
+            <button
+              type="button"
+              className="field-label cal-open"
+              aria-label="open calendar to pick another day"
+              onClick={() => setCalendarOpen(true)}
+            >
+              THIS WEEK <span aria-hidden="true">▾</span>
+            </button>
             <span className="section-meta">
               {doneCount} DONE · {workouts.length - doneCount - skippedCount} TO
               GO
@@ -873,6 +921,22 @@ export function Today() {
         >
           Start empty session
         </button>
+      )}
+
+      {calendarOpen && (
+        <CalendarSheet
+          selected={selectedDate}
+          today={today}
+          weekStart={weekStart}
+          days={calendarDays}
+          onPick={(iso) => {
+            setSelectedDate(iso);
+            const w = byDate.get(iso);
+            if (w) loadRx(w.id);
+            setCalendarOpen(false);
+          }}
+          onClose={() => setCalendarOpen(false)}
+        />
       )}
     </div>
   );

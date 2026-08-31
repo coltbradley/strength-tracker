@@ -160,17 +160,18 @@ export function formatPlannedDate(iso: string): string {
 }
 
 /** Mon–Sun ISO dates (YYYY-MM-DD, local) for the week containing d. */
-export function getWeekDates(d: Date = new Date()): string[] {
+export function getWeekDates(
+  d: Date = new Date(),
+  /** 0 = Sunday … 6 = Saturday. Was hardcoded to Monday, which is why the
+   *  weekStartsOn setting had never moved anything. */
+  weekStart = 1,
+): string[] {
   const day = d.getDay(); // 0=Sun..6=Sat
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  const monday = new Date(
-    d.getFullYear(),
-    d.getMonth(),
-    d.getDate() + mondayOffset,
-  );
+  const offset = -(((day - weekStart) % 7) + 7) % 7;
+  const first = new Date(d.getFullYear(), d.getMonth(), d.getDate() + offset);
   return Array.from({ length: 7 }, (_, i) =>
     todayLocalIso(
-      new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i),
+      new Date(first.getFullYear(), first.getMonth(), first.getDate() + i),
     ),
   );
 }

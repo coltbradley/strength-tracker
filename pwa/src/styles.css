@@ -2579,6 +2579,144 @@
     margin-right: var(--s-3);
   }
 
+  /* -- calendar sheet ------------------------------------------------------
+   * A month as whole weeks. Cells are square-ish tap targets with the day
+   * number and one state mark; the mark is a single dot, never two, because a
+   * day is done or skipped or planned, not several at once. */
+  .cal-open {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--accent-dim);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-height: var(--tap-min);
+  }
+
+  .cal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+  }
+
+  .cal-month {
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+  }
+
+  /* flex:none, or space-between stretches these into two empty boxes with the
+   * chevron pinned to one edge. inline-flex centres the glyph inside them. */
+  .cal-nav {
+    flex: none;
+    width: var(--tap-min);
+    height: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--fs-lg);
+    line-height: 1;
+    color: var(--text-dim);
+    border: var(--rule-strong);
+    border-radius: var(--radius);
+  }
+
+  .cal-nav:active {
+    background: var(--bg-input);
+  }
+
+  .cal-week-head,
+  .cal-row {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+  }
+
+  .cal-week-head {
+    margin-top: var(--s-6);
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  .cal-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-2);
+    aspect-ratio: 1;
+    min-height: 40px;
+    border: var(--bw-hair) solid transparent;
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+  }
+
+  /* Padding days stay legible rather than invisible: a greyed-out 31st is
+   * still a date you might mean to tap. */
+  .cal-cell-out .cal-cell-n {
+    color: rgb(var(--ink-rgb) / 0.35);
+  }
+
+  .cal-cell-today {
+    border-color: var(--rule-strong-color);
+    font-weight: 700;
+  }
+
+  .cal-cell-selected {
+    background: var(--accent);
+    color: var(--text-inverse);
+  }
+
+  .cal-cell-selected .cal-cell-n,
+  .cal-cell-selected.cal-cell-out .cal-cell-n {
+    color: var(--text-inverse);
+  }
+
+  .cal-dot {
+    width: var(--s-2);
+    height: var(--s-2);
+    border-radius: var(--radius-pill);
+    background: transparent;
+  }
+
+  .cal-dot-planned {
+    background: var(--accent-dim);
+  }
+
+  .cal-dot-done {
+    background: var(--text);
+  }
+
+  /* Skipped is an outline: something was there and did not happen. */
+  .cal-dot-skipped {
+    box-shadow: inset 0 0 0 1px var(--text-dim);
+  }
+
+  .cal-cell-selected .cal-dot-planned,
+  .cal-cell-selected .cal-dot-done {
+    background: var(--text-inverse);
+  }
+
+  .cal-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-6);
+    margin-top: var(--s-8);
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    color: var(--text-dim);
+  }
+
+  .cal-key > span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+
   /* -- supersets, as a visible run ---------------------------------------
    * A superset used to be a letter prefix on each row, which says a pairing
    * exists without showing WHICH rows are paired. The rail is the grouping:
