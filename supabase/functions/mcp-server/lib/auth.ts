@@ -104,11 +104,17 @@ export async function resolveCaller(
   }
 
   const hash = await sha256Hex(token);
+  const now = new Date().toISOString();
   const { data, error } = await client
     .from("mcp_tokens")
-    .update({ last_used_at: new Date().toISOString() })
+    .update({ last_used_at: now })
     .eq("token_sha256", hash)
     .is("revoked_at", null)
+    // expires_at is NULL for every token a person pastes into an MCP client,
+    // and set only on the short-lived ones the coach function mints per turn.
+    // A permanent token must keep working exactly as before, so the filter has
+    // to accept null rather than compare it.
+    .or(`expires_at.is.null,expires_at.gt.${now}`)
     .select("user_id, label")
     .maybeSingle();
 

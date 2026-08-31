@@ -17,7 +17,7 @@ import { Plan } from "./screens/Plan";
 import { SyncStatus } from "./components/SyncStatus";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { Toasts } from "./components/Toasts";
-import { ReportBug } from "./components/ReportBug";
+import { FabDock } from "./components/FabDock";
 import { setSentryUser } from "./lib/errors";
 
 function Shell({ userId }: { userId: string }) {
@@ -138,7 +138,7 @@ function Shell({ userId }: { userId: string }) {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
-      {showTabs && <ReportBug userId={userId} route={location.pathname} />}
+      {showTabs && <FabDock userId={userId} route={location.pathname} />}
       <Toasts />
     </div>
   );

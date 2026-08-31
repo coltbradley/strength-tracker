@@ -962,3 +962,92 @@ note store, and the tool description says so. There is no delete policy:
 resolving answers a request, and the record of having asked stays. And the tool
 tells the assistant to say what it filed, because a request the user never
 hears about is the same as no request at all.
+
+## The in-app coach
+
+A chat, in the app, backed by Claude Sonnet 5, which can read the log and
+change the plan. The API key is a Supabase secret; the browser authenticates
+with its own Supabase session and never holds a credential that reaches the
+MCP server directly.
+
+**The tool surface is the existing MCP server**, reached through the Anthropic
+MCP connector rather than reimplemented. One authorization boundary instead of
+two, no tool loop to get wrong, and the guarantees that already matter come for
+free: no tool writes `sets` or `sessions`, so the coach cannot log training,
+and a program it writes lands unconfirmed. The connector needs a plaintext
+bearer and `mcp_tokens` stores only digests, so the function mints a fresh
+token per turn with a ten-minute expiry. Permanent tokens (everything a person
+pastes into an MCP client) have `expires_at` NULL and are untouched.
+
+`delete_program` and `delete_exercise` are switched OFF for the coach at the
+connector layer. Claude Desktop keeps them. The coach has no use for them, and
+disabling them converts "the prompt says ask first" into something an injected
+instruction cannot reach at all. `upsert_program` stays, because drafting a
+plan is the job; its unconfirmed gate is real but softer, resting on the
+model's judgment rather than on structure. Worth knowing rather than trusting
+blindly.
+
+**Untrusted input is JSON-encoded, not delimited.** The first version wrapped
+uploaded files in `<uploaded_file name="...">` built by concatenation, which a
+CSV containing the closing tag can break out of — landing attacker text in the
+turn as if the lifter had typed it. JSON escaping cannot be closed from the
+inside. Images and PDFs now carry a provenance block too; they previously
+arrived with nothing distinguishing them from the lifter's own words except a
+blanket rule in the system prompt.
+
+**Four bugs found by researching the design rather than by running it**, all
+now fixed and all invisible from the outside:
+
+- Usage was recorded after `finalMessage()`, so an aborted turn — which the UI
+  offers as a first-class action — was billed by Anthropic and invisible to the
+  quota. Recording moved into a `finally`.
+- The daily limit counted refusal rows, so every retry after hitting the cap
+  extended the rolling window. A 24-hour limit was a permanent lockout, and the
+  message shown to the user ("resets a day after your first message") was false.
+- Only output tokens were metered. Input is the side the user controls.
+- `max_tokens` was 8000 while Sonnet 5 defaults to HIGH effort with adaptive
+  thinking, which counts against the same budget. That truncates mid-sentence.
+  Now 16000 at `effort: "low"`, which is the right trade for someone holding a
+  phone between sets.
+
+`thinking.display` defaults to `"omitted"` on Sonnet 5, so the stream emitted
+empty thinking blocks and the UI sat silent for seconds looking broken. Set to
+`"summarized"` and forwarded as its own SSE event.
+
+**Caching** uses a 1-hour TTL rather than the 5-minute default: a lifter
+between sets is exactly the gap where the 2x write cost pays for itself, and at
+5 minutes every question after a working set was a cold miss on ~17k tokens of
+tool definitions. Verified live — a follow-up turn reads 9,656 cached tokens
+and writes none.
+
+**The prompt is XML-structured with worked examples**, not markdown with
+instructions. Sonnet 5 takes prompt structure as a cue for output structure,
+and markdown headers were nudging markdown answers onto a phone screen.
+Brevity is shown rather than described, which is what actually moves it.
+
+**Conversation history is device-local.** There is no server table of threads;
+localStorage holds the last 24 turns with attachment payloads stripped. A
+shared phone shares a thread and a new phone starts empty — the same trade the
+settings registry makes, and the right one for the most personal thing here.
+
+**What IS recorded server-side is the prompt and the response**, along with
+tokens, latency, tools used and cache counters. That is a product decision and
+not a technical detail: whoever runs the deployment can read the conversation.
+It is on because the owner asked for it, `COACH_LOG_CONTENT=off` disables it
+without touching anything else, and anyone else using the deployment should be
+told.
+
+## Context beats a tool call
+
+The coach gets a `<current_context>` block on every turn: today's plan, whether
+a session is running, what has been logged in it, coach and plan notes. Built
+from the app's own cache — the same state on the lifter's screen.
+
+Without it, "should I drop the last set?" costs a tool round trip before the
+model can say anything, and mid-set that round trip is the whole latency
+budget. Worse, a model that has to go looking may answer generically instead.
+
+Rebuilt per turn rather than pinned to the top of the thread, because it goes
+stale the moment another set is logged — which is exactly when someone asks.
+Attached to the newest user turn, which also keeps it after the cache
+breakpoint. It covers today only; tools remain the way to reach history.
