@@ -245,7 +245,7 @@ export function Plan() {
   const startKgFor = (exerciseId: string): number => {
     const mine = (rx ?? []).filter((r) => r.exercise_id === exerciseId);
     const last = mine[mine.length - 1];
-    return last?.resolved_load_kg ?? getSetting("fallbackLoadKg");
+    return last?.resolved_load_kg ?? getSetting("fallbackLoad")[unit];
   };
 
   const saveDate = (value: string) =>

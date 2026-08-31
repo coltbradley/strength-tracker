@@ -1,6 +1,13 @@
 // One logged set line: index, load × reps, type, optional rest column, and
 // an optional void control (append-only correction — the set is hidden, not
 // edited). Used by Session (with rest + void) and History (plain).
+//
+// The control SAYS "remove" and the code says "void" on purpose. "Void" is the
+// honest domain word — the row survives in Postgres and an insert into
+// set_voids hides it from every view — and it stays the name of the table, the
+// prop and the cache family. But it is jargon at the exact moment a person is
+// least sure what is about to happen: the confirm tap. What she needs to know
+// there is that the set leaves her history, which is what "remove" says.
 
 import { enteredKg } from "../lib/loadEntry";
 import { toDisplay, type Unit } from "../lib/units";
@@ -54,10 +61,10 @@ export function SetRow({
         <button
           type="button"
           className={`set-void ${voidArmed ? "set-void-armed" : ""}`}
-          aria-label={voidArmed ? "confirm void set" : "void set"}
+          aria-label={voidArmed ? "confirm remove set" : "remove set"}
           onClick={() => (voidArmed ? onVoid() : onArmVoid?.())}
         >
-          {voidArmed ? "VOID?" : "✕"}
+          {voidArmed ? "REMOVE?" : "✕"}
         </button>
       )}
     </div>

@@ -238,14 +238,21 @@ const defaultStepCoarse = (): PerUnit<number> => ({ kg: 2.5, lb: lbToKg(5) });
 
 const defaultStepFine = (): PerUnit<number> => ({ kg: 0.5, lb: lbToKg(1) });
 
+/** 20 kg and 45 lb: the empty bar in each system, not a conversion of the
+ *  other. */
+const defaultFallbackLoad = (): PerUnit<number> => ({
+  kg: 20,
+  lb: lbToKg(45),
+});
+
+/** Only the starts people actually use. Tuesday-to-Monday is not a training
+ *  week anyone keeps, and offering it made the control a menu of five wrong
+ *  answers. Monday (ISO, and what the SQL buckets by), Sunday (US calendars),
+ *  Saturday (common for weekend-anchored splits). */
 const WEEKDAYS = [
-  { value: 0, label: "SU" },
-  { value: 1, label: "MO" },
-  { value: 2, label: "TU" },
-  { value: 3, label: "WE" },
-  { value: 4, label: "TH" },
-  { value: 5, label: "FR" },
-  { value: 6, label: "SA" },
+  { value: 1, label: "MON" },
+  { value: 6, label: "SAT" },
+  { value: 0, label: "SUN" },
 ] as const;
 
 const SETTINGS = {
@@ -340,13 +347,18 @@ const SETTINGS = {
     parse: parseExercisePrefs,
   }),
 
-  fallbackLoadKg: def<number>({
+  // Per display unit, for the reason the whole file is per display unit: a
+  // single kg number is a clean default in kg mode and a conversion artifact
+  // in lb mode. 20 kg showed up in Settings, and in every suggested load, as
+  // "44.1 lb" — a number nobody has ever put on a bar. Stored kg either way.
+  fallbackLoad: def<PerUnit<number>>({
     group: "logging",
     label: "Fallback load",
     help: "Used when a movement has no prescription and no history at all.",
-    control: { kind: "load", min: 0, max: 999 },
-    defaults: () => 20,
-    parse: (raw) => num(raw, 0, 999),
+    control: { kind: "loadPerUnit", min: 0, max: 999 },
+    defaults: defaultFallbackLoad,
+    parse: (raw) =>
+      perUnit(raw, (v) => num(v, 0, 999), defaultFallbackLoad),
   }),
 
   fallbackReps: def<number>({
@@ -395,6 +407,9 @@ const SETTINGS = {
     help: "Weekly volume is bucketed Monday-first in SQL, so a different start shifts the calendar strip only.",
     control: { kind: "segment", options: WEEKDAYS },
     defaults: () => 1,
+    // Still parses 0-6, not just the three offered. Anyone who picked Wednesday
+    // before the list was trimmed keeps it; the control simply stops offering
+    // new ones. Narrowing this to the offered set would silently reset them.
     parse: (raw) => int(raw, 0, 6),
   }),
 } as const;
@@ -420,7 +435,7 @@ export function settingsInGroup(group: Group): SettingKey[] {
 // ---- envelope + migrations -------------------------------------------------
 
 const ENVELOPE_KEY = "strength-log.settings";
-const ENVELOPE_VERSION = 1;
+const ENVELOPE_VERSION = 2;
 
 type Values = Record<string, unknown>;
 
@@ -494,8 +509,33 @@ function migrateV0toV1(values: Values): Values {
   return next;
 }
 
+/**
+ * v1 -> v2: `fallbackLoadKg` (one kg number) became `fallbackLoad` (one value
+ * per display unit), because a single kg default is a conversion artifact in
+ * lb mode — 20 kg was shown, and suggested, as "44.1 lb".
+ *
+ * A stored number is carried onto the unit it was actually chosen in. There is
+ * no record of which that was, so the kg slot takes it (the value was typed
+ * against a kg-labelled control in the only mode that displayed it honestly)
+ * and the lb slot takes the lb default. Someone who set 60 kg keeps 60 kg; a
+ * lb user who never touched it gets 45 lb instead of 44.1.
+ *
+ * The old key is NOT deleted, matching the v0 rule above: a rollback to the
+ * previous release must still find its configuration.
+ */
+function migrateV1toV2(values: Values): Values {
+  const next = { ...values };
+  const old = values.fallbackLoadKg;
+  if (typeof old === "number" && Number.isFinite(old) && old >= 0) {
+    const d = defaultFallbackLoad();
+    next.fallbackLoad = { kg: old, lb: d.lb };
+  }
+  return next;
+}
+
 const MIGRATIONS: Record<number, (values: Values) => Values> = {
   0: migrateV0toV1,
+  1: migrateV1toV2,
 };
 
 // ---- store -----------------------------------------------------------------

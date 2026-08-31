@@ -452,8 +452,8 @@ export function registerUpsertProgram(
         const lines = [
           `## Program written: ${program.name}`,
           "",
-          "| Day | Date | Label | # | Exercise | Type | Sets x Reps | Load | Rest |",
-          "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+          "| Day | Date | Label | # | Exercise | SS | Type | Sets x Reps | Load | Rest |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ];
         for (const w of [...program.workouts].sort(
           (a, b) => a.day_index - b.day_index,
@@ -463,6 +463,10 @@ export function registerUpsertProgram(
           )) {
             lines.push(
               `| ${w.day_index} | ${w.scheduled_date ?? ""} | ${w.label ?? ""} | ${p.position} | ${p.exercise_id} ` +
+                // The superset group is the thing most worth catching in
+                // review: a mis-parsed A1/A2 pairing changes how the session is
+                // actually performed, and it was written but never shown back.
+                `| ${p.superset_group == null ? "" : String.fromCharCode(64 + p.superset_group)} ` +
                 `| ${p.set_type ?? "working"} ` +
                 `| ${formatRepRange(p.sets, p.reps_min, p.reps_max)} | ${loadLabel(p, tms)} ` +
                 `| ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,

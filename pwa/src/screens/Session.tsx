@@ -658,8 +658,8 @@ export function Session() {
         table: "set_voids",
         payload: { set_id: s.id },
       })
-      .catch((e: unknown) => reportError(e, "void set"));
-    toast(`Set ${s.set_index + 1} voided`);
+      .catch((e: unknown) => reportError(e, "remove set"));
+    toast(`Set ${s.set_index + 1} removed`);
   };
 
   const persistSkips = (next: Set<string>) => {

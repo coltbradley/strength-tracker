@@ -6,7 +6,7 @@
 // the one place it is read. Session.tsx must seed its steppers from
 // `getPrefillFallback()` rather than repeating the literals.
 
-import { getSetting } from "./settings";
+import { getSetting, getUnit } from "./settings";
 
 export interface PrefillPrescription {
   resolved_load_kg: number | null;
@@ -31,10 +31,12 @@ export interface PrefillResult {
   reps: number;
 }
 
-/** Last-resort values when a movement has no prescription and no history. */
+/** Last-resort values when a movement has no prescription and no history.
+ *  The load is per display unit — 20 kg in kg mode, 45 lb in lb mode — so the
+ *  suggestion is a bar someone recognises rather than a conversion of one. */
 export function getPrefillFallback(): PrefillResult {
   return {
-    loadKg: getSetting("fallbackLoadKg"),
+    loadKg: getSetting("fallbackLoad")[getUnit()],
     reps: getSetting("fallbackReps"),
   };
 }

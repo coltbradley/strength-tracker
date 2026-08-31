@@ -216,9 +216,9 @@ export function History() {
       setVoidArm(null);
       await invalidateForSetChange();
       setReloadTick((t) => t + 1);
-      toast("Set voided");
+      toast("Set removed");
     } catch (e) {
-      reportError(e, "void set");
+      reportError(e, "remove set");
     }
   };
 

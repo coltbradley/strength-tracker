@@ -148,12 +148,14 @@ describe("v0 -> v1 migration off the pre-registry keys", () => {
     expect(localStorage.getItem("strength-log.defaultRest")).toBe("90");
   });
 
-  it("persists the migrated values into a v1 envelope on first write", () => {
+  it("persists the migrated values into a current envelope on first write", () => {
     localStorage.setItem("strength-log.defaultRest", "240");
     reloadSettings();
     setSetting("weekStartsOn", 0);
     const env = envelope();
-    expect(env.v).toBe(1);
+    // Whatever the current envelope version is: the v0 keys must survive every
+    // migration that has been added since, not just the first one.
+    expect(env.v).toBe(2);
     expect(env.values.defaultRest).toBe(240);
     expect(env.values.weekStartsOn).toBe(0);
   });
@@ -434,5 +436,56 @@ describe("reset and subscription", () => {
     reloadSettings();
     resetAllSettings();
     expect(localStorage.getItem("strength-log.plates")).not.toBeNull();
+  });
+});
+
+describe("v1 -> v2: fallbackLoadKg becomes per-unit fallbackLoad", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    reloadSettings();
+  });
+
+  it("carries a customised kg value onto the kg slot", () => {
+    localStorage.setItem(
+      "strength-log.settings",
+      JSON.stringify({ v: 1, values: { fallbackLoadKg: 60 } }),
+    );
+    reloadSettings();
+    expect(getSetting("fallbackLoad").kg).toBe(60);
+  });
+
+  it("gives lb mode a round bar instead of a converted one", () => {
+    localStorage.setItem(
+      "strength-log.settings",
+      JSON.stringify({ v: 1, values: { fallbackLoadKg: 60 } }),
+    );
+    reloadSettings();
+    // 45 lb, not 60 kg converted (132.3 lb) and not 20 kg converted (44.1 lb).
+    const lbKg = getSetting("fallbackLoad").lb;
+    expect(Math.round(lbKg / 0.45359237)).toBe(45);
+  });
+
+  it("an untouched v1 envelope lands on both defaults", () => {
+    localStorage.setItem(
+      "strength-log.settings",
+      JSON.stringify({ v: 1, values: {} }),
+    );
+    reloadSettings();
+    expect(getSetting("fallbackLoad").kg).toBe(20);
+    expect(Math.round(getSetting("fallbackLoad").lb / 0.45359237)).toBe(45);
+  });
+
+  it("does not delete the old key, so a rollback still finds it", () => {
+    localStorage.setItem(
+      "strength-log.settings",
+      JSON.stringify({ v: 1, values: { fallbackLoadKg: 60 } }),
+    );
+    reloadSettings();
+    setSetting("fallbackReps", 5); // force a persist
+    const env = JSON.parse(
+      localStorage.getItem("strength-log.settings") ?? "{}",
+    ) as { v: number; values: Record<string, unknown> };
+    expect(env.v).toBe(2);
+    expect(env.values.fallbackLoadKg).toBe(60);
   });
 });
