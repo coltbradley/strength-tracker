@@ -23,10 +23,25 @@ function cssPx(name: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Where the dock may sit: below the top bar, above the tab bar, inset. */
+/**
+ * Where the dock may sit: below the top bar, above whatever bottom chrome this
+ * route has, inset by MARGIN.
+ *
+ * The bottom is MEASURED here rather than read from a published variable. It
+ * used to come from --tabbar-h, set by an effect on route change — which is
+ * before the session footer has mounted, so the dock sat on top of it every
+ * time. Reading the live element each time the dock positions itself has no
+ * such ordering problem, and it costs one querySelector per render of a
+ * two-button widget.
+ */
+function bottomChrome(): number {
+  const el = document.querySelector(".tabbar, .session-footer");
+  return el === null ? 0 : el.getBoundingClientRect().height;
+}
+
 function band(height: number) {
   const top = cssPx("--topbar-h") + MARGIN;
-  const bottom = window.innerHeight - cssPx("--tabbar-h") - MARGIN - height;
+  const bottom = window.innerHeight - bottomChrome() - MARGIN - height;
   return { top, bottom: Math.max(top, bottom) };
 }
 
@@ -63,15 +78,40 @@ export function useFabDrag(pos: BugButtonPos): FabDrag {
   }, []);
 
   // The stored position is a FRACTION of a band whose size changes with
-  // rotation and with the tab bar coming and going, so a resize just needs a
-  // re-render: the pixel position is derived fresh each time.
+  // rotation and with the bottom chrome coming and going, so any of that just
+  // needs a re-render: the pixel position is derived fresh each time.
+  //
+  // The body observer is the load-bearing one. Bottom chrome does not appear
+  // when the route changes, it appears when the screen under it finishes
+  // loading — so a route-keyed effect measures too early and the dock sits on
+  // top of the session footer. Watching the body catches it whenever it lands.
   useEffect(() => {
     const onResize = () => bump((n) => n + 1);
     window.addEventListener("resize", onResize);
     window.addEventListener("orientationchange", onResize);
+    // Watching document.body does NOT work here: the app shell is a
+    // viewport-height flex column, so the body's own box never changes when a
+    // footer appears inside it. Watch the tree instead — that catches the
+    // session footer mounting AND its height settling afterwards, which is the
+    // gap that had the dock sitting 26px into it.
+    let mo: MutationObserver | undefined;
+    const root = document.getElementById("root");
+    if (typeof MutationObserver !== "undefined" && root !== null) {
+      let queued = false;
+      mo = new MutationObserver(() => {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(() => {
+          queued = false;
+          onResize();
+        });
+      });
+      mo.observe(root, { childList: true, subtree: true });
+    }
     return () => {
       window.removeEventListener("resize", onResize);
       window.removeEventListener("orientationchange", onResize);
+      mo?.disconnect();
     };
   }, []);
   useEffect(() => clearHold, [clearHold]);

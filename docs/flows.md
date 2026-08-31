@@ -255,6 +255,35 @@ bodyweight and by-feel rows, and any exercise with no logged history.
 The confirmation says how many changed — "4 of 9 weights updated from your last
 sessions" — because a silent refresh is indistinguishable from no refresh.
 
+## Asking the coach
+
+A chat icon floats beside the bug icon, on every screen including mid-session —
+which is the point, since "should I drop this set?" is asked with a bar loaded.
+Both live in one draggable dock: press and hold, drag, release.
+
+It sees the log and the plan through the same MCP tools every other client
+uses, plus a live context block the app builds from its own cache each turn
+(today's plan, whether a session is running, what has been logged in it). That
+block is why it can answer without a tool round trip first, which mid-set is
+the whole latency budget.
+
+It can change what is scheduled, and it maintains the exercise library: if you
+name a movement it looks it up, and adds it when it genuinely is not there
+rather than telling you it cannot be tracked. It searches first and reuses a
+near-match, because a duplicate splits a lift's history in two and breaks its
+prefill.
+
+It cannot log training. No tool writes `sets` or `sessions`, so when you tell
+it what you did, you still log it yourself. Deleting programs and exercises is
+switched off for it specifically.
+
+Photos, PDFs, CSVs and text files can be attached. They are passed as data with
+their provenance marked; a screenshot telling the coach to do something is a
+picture of text, not an instruction.
+
+Offline, the coach button is dimmed and says why. It is an API call and cannot
+work without a connection, unlike the rest of the app.
+
 ## Reporting a problem
 
 A bug glyph floats over Today and History — never during a session, where it

@@ -51,14 +51,16 @@ function Shell({ userId }: { userId: string }) {
   const inSession = location.pathname === "/session";
   const showTabs = !inSession && location.pathname !== "/end";
 
-  // Same measure-and-publish trick as --topbar-h above, for the other end of
-  // the screen: the tab bar sits in normal flow, so a fixed overlay (the bug
-  // button) has no way to know how far up to start. Republished when the tab
-  // bar mounts and unmounts, because its height is 0 on the routes without it.
+  // Tab bar height, for the bottom padding that keeps the last row of a long
+  // list clear of the floating dock.
+  //
+  // The DOCK does not read this: it measures its own floor in useFabDrag,
+  // because an effect keyed on the route runs before the session footer has
+  // mounted and the dock would sit on top of it.
   useEffect(() => {
-    const el = tabbar.current;
     const set = (px: number) =>
       document.documentElement.style.setProperty("--tabbar-h", `${px}px`);
+    const el = tabbar.current;
     if (el === null) {
       set(0);
       return;
@@ -138,7 +140,11 @@ function Shell({ userId }: { userId: string }) {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
-      {showTabs && <FabDock userId={userId} route={location.pathname} />}
+      {/* Every screen, always. It was hidden during a session to keep it off
+          the footer and the rest strip — which had it disappear at exactly the
+          moment "give me advice mid workout" is the whole point of it. It is
+          draggable; someone who finds it in the way moves it. */}
+      <FabDock userId={userId} route={location.pathname} />
       <Toasts />
     </div>
   );
