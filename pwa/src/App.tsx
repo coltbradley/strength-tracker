@@ -17,12 +17,15 @@ import { Plan } from "./screens/Plan";
 import { SyncStatus } from "./components/SyncStatus";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { Toasts } from "./components/Toasts";
+import { ReportBug } from "./components/ReportBug";
+import { setSentryUser } from "./lib/errors";
 
-function Shell() {
+function Shell({ userId }: { userId: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const topbar = useRef<HTMLElement>(null);
+  const tabbar = useRef<HTMLElement>(null);
 
   // Publish the topbar's height so fixed overlays can sit UNDER it instead of
   // over it. Toasts are the caller: anchored to the viewport top they covered
@@ -48,6 +51,26 @@ function Shell() {
   const inSession = location.pathname === "/session";
   const showTabs = !inSession && location.pathname !== "/end";
 
+  // Same measure-and-publish trick as --topbar-h above, for the other end of
+  // the screen: the tab bar sits in normal flow, so a fixed overlay (the bug
+  // button) has no way to know how far up to start. Republished when the tab
+  // bar mounts and unmounts, because its height is 0 on the routes without it.
+  useEffect(() => {
+    const el = tabbar.current;
+    const set = (px: number) =>
+      document.documentElement.style.setProperty("--tabbar-h", `${px}px`);
+    if (el === null) {
+      set(0);
+      return;
+    }
+    const publish = () => set(el.getBoundingClientRect().height);
+    publish();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [showTabs]);
+
   return (
     <div className="shell">
       <header className="topbar" ref={topbar}>
@@ -72,7 +95,17 @@ function Shell() {
         </div>
       </header>
 
-      <main className={inSession ? "content content-session" : "content"}>
+      <main
+        className={
+          inSession
+            ? "content content-session"
+            : // The bug button floats over the bottom-right of this scroller.
+              // Without the extra bottom padding the last row of a long list
+              // (Today's exercise list, History) comes to rest underneath it
+              // with its right-hand value covered.
+              `content${showTabs ? " content-fab" : ""}`
+        }
+      >
         <Routes>
           <Route path="/" element={<Today />} />
           <Route path="/session" element={<Session />} />
@@ -84,7 +117,7 @@ function Shell() {
       </main>
 
       {showTabs && (
-        <nav className="tabbar">
+        <nav className="tabbar" ref={tabbar}>
           <NavLink
             to="/"
             end
@@ -105,6 +138,7 @@ function Shell() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+      {showTabs && <ReportBug userId={userId} route={location.pathname} />}
       <Toasts />
     </div>
   );
@@ -112,6 +146,13 @@ function Shell() {
 
 export function App() {
   const { loading, session } = useAuth();
+  const userId = session?.user?.id ?? null;
+
+  // Sentry learns who an event belongs to on every auth transition, and
+  // forgets on sign-out — the next person on this device is not the last one.
+  useEffect(() => {
+    setSentryUser(userId);
+  }, [userId]);
 
   if (loading) {
     return (
@@ -133,7 +174,7 @@ export function App() {
 
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
-      <Shell />
+      <Shell userId={session.user.id} />
     </BrowserRouter>
   );
 }

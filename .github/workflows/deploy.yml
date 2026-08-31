@@ -37,6 +37,16 @@ jobs:
           PAGES_BASE: /strength-tracker/
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          # Not a secret: a Sentry DSN is write-only and ships in the client
+          # bundle by design, so it lives here rather than in secrets. Rate
+          # limit it and set allowed domains in the Sentry project — on a
+          # public repo anyone can read it and post events.
+          VITE_SENTRY_DSN: https://fc68a697d5ac1c02ab435cdddf18677e@o4512002739601408.ingest.us.sentry.io/4512002743730176
+          # The build stamp the About row and every bug report quote. Without
+          # these a report says "0.1.0" for every build ever shipped.
+          VITE_APP_VERSION: ${{ github.ref_name }}
+          VITE_BUILD_SHA: ${{ github.sha }}
+          VITE_BUILD_TIME: ${{ github.event.repository.updated_at }}
       - run: npm test -- --run
         working-directory: pwa
       - uses: peaceiris/actions-gh-pages@v4

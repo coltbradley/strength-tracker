@@ -806,3 +806,71 @@ Still not built: no way to reorder DAYS other than the existing earlier/later
 swap, and no multi-week program authoring. Claude remains much better at
 turning a coach's screenshot into a block than any form would be; this is for
 the day you want to change something yourself.
+
+## Error reporting is Sentry, and the tester gets a button
+
+Sentry was wired into `reportError` from the start but never given a DSN, so
+production reported nothing: an error surfaced as a toast on the phone and then
+did not exist. That is survivable for one person who also owns the repo and
+fails the moment a second, non-technical person is the one hitting the bug.
+
+`VITE_SENTRY_DSN` is now set in `deploy.yml` alongside a real build stamp
+(`VITE_APP_VERSION` / `VITE_BUILD_SHA` / `VITE_BUILD_TIME`), which the About
+row, the CSV export and every bug report already wanted and had been faking
+with a hardcoded `0.1.0`. The DSN sits in the workflow rather than in secrets
+because it is not one — it is write-only and ships in the client bundle by
+design. On a public repo that means anyone can read it and post events, so the
+Sentry project needs a rate limit and an allowed-domains entry; that is the
+mitigation, not hiding the string.
+
+Session replay is on (10% of sessions, 100% of sessions with an error) with the
+SDK's `maskAllText` and `blockAllMedia` defaults left alone. Replay is the
+whole point of this for a tester who cannot describe what she tapped, and the
+masking is the reason it is acceptable to watch: it shows the shape of the
+interaction, not a readable training log.
+
+The in-app reporter asks for one sentence and attaches the rest. The single
+most useful attached field is outbox depth — a person cannot tell "my sets
+vanished" from "my sets are queued", and those are different bugs. When no DSN
+is configured the button says so instead of returning a thank-you for a report
+it threw away; a silent drop dressed as success is worse than no button.
+
+## The report button is draggable, and that is not a gimmick
+
+A floating action button covers content — that is the deal you make for putting
+one on screen. The usual fix is to pick a corner and pad the scroller under it,
+which is what the first version did. It still covered the right-hand value of a
+row whenever the list ended near the button.
+
+Rather than keep guessing, the button moves: 400ms hold, drag, release. It
+snaps to the nearer side edge (a button parked mid-list reads as a bug, not as
+chrome) and keeps its vertical position as a FRACTION of the band between the
+top bar and the tab bar, so it lands in the same relative place after a
+rotation or on a different phone. Position lives in the settings registry as
+`bugButtonPos`, device-local like everything else there.
+
+The gesture has one non-obvious requirement: moving more than 8px before the
+hold completes must cancel it. Without that, a scroll flick starting on top of
+the button is swallowed and the list does not move — the exact bug that makes
+draggable buttons feel broken. Pointer capture is likewise taken only after the
+hold completes, never on pointerdown, for the same reason.
+
+Discoverability is one line of microcopy inside the report sheet. There is no
+tooltip, no coach mark and no settings row: the sheet is the one moment the
+person is already looking at the button and wondering about it.
+
+## The login screen stopped promising a link
+
+The email template went code-only (`{{ .Token }}`, no link) when custom SMTP
+landed, because a link cannot sign in an installed iOS PWA — Safari opens it
+and the installed app cannot see Safari's storage. The screen's copy was never
+updated: the button said "Send magic link", the confirmation said "Tap it in
+your email", and the microcopy explained how to long-press a link. All three
+described an email that had not been sent in months. Someone non-technical
+would have hunted a nonexistent link on step one, before seeing anything else
+in the app.
+
+Now: "Email me a code" → "We sent a 6-digit code to <email>". The paste-a-link
+path stays in the code, undocumented, so a deployment on the stock Supabase
+template still works — but it is no longer offered, because two advertised ways
+to sign in is what made the screen confusing in the first place.

@@ -62,14 +62,8 @@ import {
 import { outbox } from "../lib/sync";
 import { supabase } from "../lib/supabase";
 import { reportError, toast } from "../lib/errors";
+import { APP_VERSION, BUILD_SHA, BUILD_TIME } from "../lib/build";
 
-// Vite inlines import.meta.env at build time. These three are optional — wire
-// them up in vite.config.ts (`define`) or CI to get a real version/build stamp;
-// without them the About row still says which mode the bundle was built in.
-const ENV = import.meta.env as unknown as Record<string, string | undefined>;
-const APP_VERSION = ENV.VITE_APP_VERSION ?? "0.1.0";
-const BUILD_SHA = ENV.VITE_BUILD_SHA ?? null;
-const BUILD_TIME = ENV.VITE_BUILD_TIME ?? null;
 
 interface SettingsSheetProps {
   open: boolean;

@@ -236,6 +236,8 @@
     --rail-accent: inset 3px 0 0 var(--accent);
 
     --z-rail: 1;
+    /* Floats over content, under every sheet — the bug button opens one. */
+    --z-fab: 30;
     --z-sheet: 40;
     --z-toast: 50;
 
@@ -451,6 +453,12 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: var(--s-8) var(--gutter) var(--s-9);
+  }
+
+  /* Room for the floating bug button to sit over, so the end of a long list
+   * is never stuck underneath it. Matches the button's own offset + height. */
+  .content-fab {
+    padding-bottom: calc(var(--tap-min) + var(--s-9) * 2);
   }
 
   /* session manages its own scroll + docked strips */
@@ -2529,6 +2537,73 @@
   /* sign out sits apart from the utility rows */
   .signout-btn {
     margin-top: var(--s-5);
+  }
+
+  /* -- report a problem -------------------------------------------------
+   * A quiet affordance, not a call to action: paper-card chrome, ink glyph,
+   * sized to the house tap target. It sits above the tab bar (whose height
+   * App.tsx measures into --tabbar-h, 0 on routes without one) so it never
+   * covers a tab, and it is not rendered at all during a session. */
+  .bug-btn {
+    position: fixed;
+    /* left/top are set inline by the component, which owns the drag maths and
+     * the stored side + vertical fraction. */
+    z-index: var(--z-fab);
+    width: var(--tap-min);
+    height: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    background: var(--bg-raised);
+    border: var(--rule-strong);
+    border-radius: var(--radius-pill);
+    box-shadow: 0 1px 3px rgb(var(--ink-rgb) / 0.18);
+    /* The button must receive the whole gesture once it is held, or the list
+     * scrolls out from under the finger mid-drag. */
+    touch-action: none;
+    /* A long press otherwise selects the glyph or raises the iOS callout. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  .bug-btn:active {
+    background: var(--bg-input);
+  }
+
+  /* Held and loose. Growing is the signal that carries on iOS, where
+   * navigator.vibrate does not exist. No transition on position — that would
+   * make the button lag the finger. */
+  .bug-btn-held {
+    transform: scale(1.15);
+    color: var(--accent-dim);
+    border-color: var(--accent);
+    background: var(--bg-input);
+    box-shadow: 0 3px 10px rgb(var(--ink-rgb) / 0.28);
+  }
+
+  .bug-btn {
+    transition:
+      transform 120ms ease-out,
+      box-shadow 120ms ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bug-btn {
+      transition: none;
+    }
+  }
+
+  .bug-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bug-text {
+    resize: vertical;
+    min-height: 6rem;
+    font-family: inherit;
   }
 }
 

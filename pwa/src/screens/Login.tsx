@@ -27,14 +27,18 @@ export function Login() {
     }
   };
 
-  // Fallback for installed iOS PWAs: the magic link opens in Safari, whose
-  // storage is partitioned away from the installed app, so the session never
-  // reaches the PWA. Two in-app paths work instead:
-  //   * the 6-digit code, when the Supabase email template includes
-  //     {{ .Token }} (needs custom SMTP on free tier), or
-  //   * pasting the magic link itself — its `token` query param is a token
-  //     hash that verifyOtp accepts, so long-press > Copy Link in Mail and
-  //     paste here. Works with the stock email template.
+  // The code IS the sign-in path, not a fallback: supabase/config.toml ships a
+  // code-only email template ({{ .Token }}, no link) because a link is useless
+  // to an installed iOS PWA — it opens in Safari, whose storage is partitioned
+  // away from the app, so the session never reaches it. The copy on this
+  // screen must never promise a link; it used to, and the email has not
+  // contained one since the custom template landed.
+  //
+  // Pasting a magic link is still accepted here, silently and undocumented, so
+  // that a link-bearing email (the stock template, a project that has not run
+  // scripts/push-auth-config.sh) is not a dead end. Its `token` query param is
+  // a token hash verifyOtp takes. Not advertised: offering two ways to sign in
+  // is what made this screen confusing.
   const verifyCode = async () => {
     setBusy(true);
     try {
@@ -53,7 +57,8 @@ export function Login() {
         } catch {
           // not a URL; fall through to the error below
         }
-        if (!tokenHash) throw new Error("Paste the full link from the email");
+        if (!tokenHash)
+          throw new Error("That does not look like the 6-digit code from the email");
         ({ error } = await supabase.auth.verifyOtp({
           token_hash: tokenHash,
           type: "email",
@@ -80,7 +85,8 @@ export function Login() {
       {sent ? (
         <div className="login-form">
           <p className="login-sent">
-            Magic link sent to {email}. Tap it in your email and you’re in.
+            We sent a 6-digit code to {email}. Check your email and type the
+            code in below.
           </p>
           <form
             className="login-form"
@@ -89,18 +95,18 @@ export function Login() {
               void verifyCode();
             }}
           >
-            <div className="field-label">CODE OR PASTED LINK</div>
+            <div className="field-label">6-DIGIT CODE</div>
             <input
               className="input"
               autoComplete="one-time-code"
-              placeholder="6-digit code or pasted link"
+              inputMode="numeric"
+              placeholder="123456"
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
             <div className="microcopy">
-              Installed app: the link opens in Safari instead — enter the
-              6-digit code from the email, or long-press the link, Copy Link,
-              and paste it here.
+              The email contains a code, not a link. It expires in an hour; if
+              it does, use a different email below to send a new one.
             </div>
             <button
               type="submit"
@@ -145,7 +151,7 @@ export function Login() {
             className="btn btn-primary"
             disabled={busy || email.length === 0}
           >
-            {busy ? "Sending…" : "Send magic link"}
+            {busy ? "Sending…" : "Email me a code"}
           </button>
         </form>
       )}

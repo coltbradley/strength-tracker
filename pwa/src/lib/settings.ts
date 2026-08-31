@@ -76,6 +76,17 @@ export interface ExercisePref {
 export type ExercisePrefs = Record<string, ExercisePref>;
 
 /**
+ * Where the floating bug button sits. `side` because it snaps to an edge
+ * rather than floating loose in the middle of a set list, and `y` as a
+ * FRACTION of the band it may occupy (0 = top, 1 = bottom) so the position
+ * survives rotation, a different phone, and the keyboard opening.
+ */
+export interface BugButtonPos {
+  side: "left" | "right";
+  y: number;
+}
+
+/**
  * How the settings sheet renders a preference. `hidden` means the registry
  * owns the value (validation, migration, reset) but a bespoke section renders
  * it — the bar selection rides along with the bar inventory, and per-exercise
@@ -362,6 +373,20 @@ const SETTINGS = {
     control: { kind: "toggle" },
     defaults: () => true,
     parse: (raw) => (typeof raw === "boolean" ? raw : null),
+  }),
+
+  /** Moved by long-pressing the button and dragging it; no sheet control. */
+  bugButtonPos: def<BugButtonPos>({
+    group: "display",
+    label: "Report button position",
+    control: { kind: "hidden" },
+    defaults: () => ({ side: "right" as const, y: 1 }),
+    parse: (raw) => {
+      if (!isRecord(raw)) return null;
+      const side = raw.side === "left" || raw.side === "right" ? raw.side : null;
+      const y = num(raw.y, 0, 1);
+      return side === null || y === null ? null : { side, y };
+    },
   }),
 
   weekStartsOn: def<number>({

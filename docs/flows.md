@@ -12,16 +12,20 @@ title is a link home, and the gear opens Settings from anywhere.
 
 ## Sign in
 
-- **Magic link** — email → "tap the link in your email". Opens the app
-  signed in when the browser that opens the link is the browser running the
-  app.
-- **Installed-app fallback** — on an installed iOS PWA the link opens in
-  Safari, whose storage the installed app cannot see, so the same screen
-  accepts either the email's 6-digit code or the pasted magic link itself
-  (its `token` query param is a token hash `verifyOtp` accepts). The code
-  path needs a Supabase email template carrying `{{ .Token }}`, which needs
-  custom SMTP; pasting the link works with the stock template. Kept as
-  microcopy under the primary instruction, not as a second headline.
+One path, two screens: email → "Email me a code" → type the 6-digit code from
+the email. The deployed email template (`supabase/templates/magic_link.html`)
+carries `{{ .Token }}` and **no link**, because a link is useless to an
+installed iOS PWA — it opens in Safari, whose storage the installed app cannot
+see, so the session never reaches the app.
+
+The screen still accepts a pasted magic link (its `token` query param is a
+token hash `verifyOtp` takes), so a project running the stock Supabase template
+is not a dead end. That path is deliberately undocumented in the UI: offering
+two ways to sign in is what made this screen confusing, and the copy promised a
+link the email had stopped containing.
+
+Custom templates need custom SMTP (`scripts/push-auth-config.sh`). Without it
+Supabase sends the stock link email and the paste path is the working one.
 
 ## Weekly planning
 
@@ -195,6 +199,32 @@ no settings table in Postgres (see decisions.md). Sections:
   first: unsynced sets are the only copy, so it names how many would be lost
   and points at Sync now, or at the sync pill when items are permanently
   failed.
+
+## Reporting a problem
+
+A bug glyph floats over Today and History — never during a session, where it
+would sit on top of the footer and the rest strip, and never mid-set. A tap
+opens a sheet asking one question: what were you doing, and what happened
+instead.
+
+**It moves.** A floating button covers something by definition, so rather than
+guess the right corner for every screen, press and hold it for 400ms (it grows
+and buzzes), drag, and let go. It snaps to the nearer side edge, keeps its
+vertical position, and remembers both in device settings (`bugButtonPos`).
+Moving the finger before the hold completes cancels it and scrolls the list
+instead, so the button never eats a scroll that started on top of it. The only
+place this is discoverable is a line of microcopy in the report sheet, which is
+the one moment someone is already looking at the button.
+
+Everything else is collected, not typed: build stamp, route, user id, online
+and installed state, viewport, outbox depth and last sync error, and the last
+five errors `reportError` saw this session. The report goes to Sentry as user
+feedback. Queue depth is the number that earns its place — "my sets vanished"
+and "my sets are sitting unsynced in the outbox" are the same sentence from the
+couch and different bugs.
+
+Without `VITE_SENTRY_DSN` the button says the build has no error reporting
+rather than thanking someone for a report it dropped.
 
 ## Known non-flows (deliberate)
 

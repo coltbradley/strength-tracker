@@ -186,8 +186,10 @@ link, and add to home screen.
 Everything below is per-person. Nothing is shared except the exercise library,
 which is the point of a library.
 
-**1. Create the account.** Authentication → Users → Add user (their email), or
-send them a magic link. Copy the new UUID.
+**1. Create the account.** Nothing to do, usually: sign-up is open, so they
+enter their email on the login screen and the account is created on the spot.
+To pre-create instead, Authentication → Users → Add user (their email). Either
+way, copy the new UUID — the MCP token and timezone steps below need it.
 
 **2. Give them the PWA.** Nothing to configure — the app is one deployment and
 RLS scopes every read and write to whoever is signed in. They install it and
