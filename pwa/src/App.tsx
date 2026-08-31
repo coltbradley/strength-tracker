@@ -180,7 +180,15 @@ export function App() {
 
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
-      <Shell userId={session.user.id} />
+      {/* Keyed by user, so a change of person REMOUNTS the whole shell.
+          Supabase does not always emit SIGNED_OUT between two people on one
+          phone — a token can simply expire and the next sign-in be somebody
+          else (db.ts names this exact case when it clears the device cache).
+          Without the key, React keeps every screen's state across that
+          boundary: Today's program, week strip, DONE marks, RESUME banner and
+          the coach's notes would all still be the previous person's, sitting
+          under the new person's name. */}
+      <Shell key={session.user.id} userId={session.user.id} />
     </BrowserRouter>
   );
 }

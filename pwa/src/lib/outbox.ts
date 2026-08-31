@@ -77,11 +77,19 @@ interface Deps {
   transport: OutboxTransport;
   isOnline?: () => boolean;
   /**
-   * The signed-in user, or null when nobody is. Used to stamp queued items
-   * with their owner and to refuse to replay one person's writes as another.
-   * Omitted in tests that do not exercise identity.
+   * The signed-in user, or null when nobody is — AND null while the answer is
+   * still unknown, which is the state the app boots in. Used to stamp queued
+   * items with their owner and to refuse to replay one person's writes as
+   * another. Omitted in tests that do not exercise identity.
    */
   currentUserId?: () => string | null;
+  /**
+   * Subscribe to identity changes; returns an unsubscribe. Because an unknown
+   * identity now HOLDS stamped items (see `replayable`), something has to run
+   * the queue again once identity arrives, or a queue that was held at boot
+   * would sit there until the next `online` event or the next write.
+   */
+  onIdentityChange?: (fn: (id: string | null) => void) => () => void;
 }
 
 type ErrorClass = "retry" | "dead" | "auth" | "fk-prescription";
@@ -116,6 +124,7 @@ export function createOutbox({
   transport,
   isOnline,
   currentUserId,
+  onIdentityChange,
 }: Deps): Outbox {
   let status: OutboxStatus = {
     pending: 0,
@@ -137,12 +146,25 @@ export function createOutbox({
    * else waits for them; it is never flushed as the current user and never
    * discarded. `sets` is append-only, so a wrong owner could not be corrected
    * afterwards — holding is the only safe answer.
+   *
+   * An UNKNOWN identity holds too, and that is the whole point of this shape.
+   * getCurrentUserId() returns null for "signed out" and for "not known yet"
+   * alike, and "not known yet" is exactly the state the app boots in: start()
+   * flushes after two IndexedDB round-trips, while identity resolution is a
+   * network token refresh whenever the stored access token has expired — any
+   * next-morning open. IndexedDB wins that race. Treating null as permission
+   * meant the first held item was inserted with no user_id in the payload, so
+   * the `default auth.uid()` on the column stamped it with whoever happened to
+   * be signed in. One person's set, permanently recorded against another, in
+   * an append-only table with no correction path.
+   *
+   * Nothing is lost by waiting: the item stays pending, and start() re-runs
+   * the queue the moment identity arrives.
    */
   function replayable(item: OutboxItem): boolean {
     const owner = item.user_id;
     if (owner === undefined) return true; // pre-multi-user item
-    const me = whoAmI();
-    return me === null || me === owner;
+    return whoAmI() === owner;
   }
 
   function setStatus(patch: Partial<OutboxStatus>): void {
@@ -380,6 +402,13 @@ export function createOutbox({
 
     start() {
       window.addEventListener("online", () => void flush());
+      // Identity arrives asynchronously and usually AFTER this first flush.
+      // Items stamped with an owner are held until it does (see `replayable`),
+      // so the queue has to be walked again once we know who we are — without
+      // this, a boot-time queue waits for the next `online` event or the next
+      // write, which for someone who opens the app just to check yesterday is
+      // never.
+      onIdentityChange?.(() => void flush());
       void refreshCounts().then(() => void flush());
     },
   };

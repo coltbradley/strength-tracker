@@ -50,6 +50,53 @@ export function dbFor(userId: string): Db {
   return { client: getClient(), ownerId: userId };
 }
 
+/** Shape of the ownership join, which PostgREST returns as an object or an
+ *  array depending on how it resolved the relationship. */
+interface OwnedExerciseRow {
+  id: string;
+  source: string;
+  exercise_owners: { user_id: string }[] | { user_id: string } | null;
+}
+
+/**
+ * The one visibility rule: a shared library row is everybody's, a 'custom' row
+ * is only its owner's. Every read of `exercises` in this server goes through
+ * this, because the server is the service role and RLS is not there to help.
+ */
+function canSee(row: OwnedExerciseRow, ownerId: string): boolean {
+  if (row.source !== "custom") return true;
+  const owners = row.exercise_owners;
+  const list = owners === null ? [] : Array.isArray(owners) ? owners : [owners];
+  return list.some((o) => o.user_id === ownerId);
+}
+
+/**
+ * Filter a list of exercise ids down to the ones this caller can see.
+ *
+ * The bulk counterpart to requireExercise, for tools that validate many ids at
+ * once. upsert_program used to check existence with a bare
+ * `.select("id").in("id", ids)`, which as the service role sees every row in
+ * the table: another account's custom exercise passed the check, went into the
+ * program, and came back out of get_program by name. Ids are name-derived
+ * slugs, so they are guessable rather than secret.
+ *
+ * Returns the visible ids. Callers report the remainder as UNKNOWN — never as
+ * forbidden, which would confirm the id exists.
+ */
+export async function visibleExerciseIds(
+  db: Db,
+  exerciseIds: string[],
+): Promise<Set<string>> {
+  if (exerciseIds.length === 0) return new Set();
+  const { data, error } = await db.client
+    .from("exercises")
+    .select("id, source, exercise_owners(user_id)")
+    .in("id", exerciseIds);
+  if (error) throw new Error(`look up exercises: ${error.message}`);
+  const rows = (data ?? []) as OwnedExerciseRow[];
+  return new Set(rows.filter((r) => canSee(r, db.ownerId)).map((r) => r.id));
+}
+
 /**
  * Assert an exercise id exists AND that this caller can see it, returning its
  * row. Throws a user-facing ToolError pointing at search_exercises otherwise.
@@ -72,26 +119,9 @@ export async function requireExercise(
     .maybeSingle();
   if (error) throw new Error(`look up exercise: ${error.message}`);
 
-  const row = data as
-    | {
-        id: string;
-        name: string;
-        source: string;
-        exercise_owners: { user_id: string }[] | { user_id: string } | null;
-      }
-    | null;
+  const row = data as (OwnedExerciseRow & { name: string }) | null;
 
-  const visible =
-    row !== null &&
-    (row.source !== "custom" ||
-      (Array.isArray(row.exercise_owners)
-        ? row.exercise_owners
-        : row.exercise_owners
-          ? [row.exercise_owners]
-          : []
-      ).some((o) => o.user_id === db.ownerId));
-
-  if (!visible) {
+  if (row === null || !canSee(row, db.ownerId)) {
     throw new ToolError(
       `Unknown exercise_id '${exerciseId}'. Call search_exercises to find the correct id slug.`,
     );

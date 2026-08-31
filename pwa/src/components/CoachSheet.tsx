@@ -27,8 +27,13 @@ import {
   type CoachTurn,
 } from "../lib/coach";
 import { reportError, toast } from "../lib/errors";
+import { COACH_THREAD_KEY } from "../lib/db";
 
-const HISTORY_KEY = "strength-log.coach.thread";
+/** The thread key lives in lib/db.ts, beside the cache-clearing path that has
+ *  to drop it. It used to be declared here and cleared nowhere: signing out
+ *  and handing the phone over left the previous person's questions, and the
+ *  coach's answers about their training, on screen for the next one. */
+const HISTORY_KEY = COACH_THREAD_KEY;
 /** Enough for a session's worth of back-and-forth; the API bills the whole
  *  thread every turn, so an unbounded one gets expensive quietly. */
 const MAX_TURNS = 24;

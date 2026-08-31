@@ -6,8 +6,10 @@
 //  - add_exercise writes source='custom' so re-running the free-exercise-db
 //    seed can never clobber it (that seed only updates its own rows), and
 //    claims the row for the caller.
-//  - update_exercise flips a 'free-exercise-db' row to 'custom' on edit for
-//    the same reason: an edited row must survive upstream re-seeds.
+//  - update_exercise flips a seeded row to 'edited' on edit for the same
+//    reason: an edited row must survive upstream re-seeds. 'edited' is still
+//    a SHARED row — only 'custom' is private — so fixing a typo in the shared
+//    library does not take the movement away from everybody else.
 //  - a custom exercise someone else owns does not exist as far as this caller
 //    is concerned. The service role bypasses RLS, so that has to be enforced
 //    HERE; the database policy only covers the PWA path.
@@ -195,8 +197,8 @@ export function registerManageExercises(
       description:
         "Update fields on an existing exercise (any source). Only the fields " +
         "passed are changed. Editing a seeded row ('free-exercise-db' or " +
-        "'curated') re-tags it source='custom' so re-seeds never revert the " +
-        "edit. The id " +
+        "'curated') re-tags it source='edited' so re-seeds never revert the " +
+        "edit; it stays a shared library row. The id " +
         "itself cannot change (history references it), and exercises cannot " +
         "be deleted (logged sets reference them) — rename or repurpose instead.",
       inputSchema: {
@@ -247,9 +249,16 @@ export function registerManageExercises(
         if (Object.keys(patch).length === 0) {
           throw new ToolError("Pass at least one field to change.");
         }
-        // edited rows must survive a re-seed: both the free-exercise-db and
-        // curated seeds only update rows still carrying their own source tag
-        if (existing[0].source !== "custom") patch.source = "custom";
+        // Edited rows must survive a re-seed: both the free-exercise-db and
+        // curated seeds only update rows still carrying their own source tag.
+        //
+        // 'edited', NOT 'custom'. Re-tagging a shared row 'custom' made it
+        // private — and private to nobody, because the claim trigger fires on
+        // insert and this path is the service role, which has no auth.uid().
+        // The row became readable by no one and took every prescription naming
+        // it out of the plan. See 20260901010000_edited_exercise_source.sql.
+        // A custom row stays custom; its owner is not disturbed by an edit.
+        if (existing[0].source !== "custom") patch.source = "edited";
 
         const { error } = await db.client
           .from("exercises")
@@ -314,7 +323,11 @@ export function registerManageExercises(
           }
           throw new Error(`delete exercise: ${error.message}`);
         }
-        return jsonResult({ deleted: true, id: args.id, name: existing[0].name });
+        return jsonResult({
+          deleted: true,
+          id: args.id,
+          name: existing[0].name,
+        });
       }),
   );
 }

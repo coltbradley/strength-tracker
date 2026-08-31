@@ -57,10 +57,7 @@ import {
   type ExerciseEntry,
   type ExtraExercise,
 } from "../lib/entries";
-import {
-  SetSchemeSheet,
-  type SetGroup,
-} from "../components/SetSchemeSheet";
+import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { getPrefillFallback, prefillSet } from "../lib/prefill";
@@ -893,8 +890,18 @@ export function Session() {
     if (label(fine) === label(coarse)) return steps;
     return [
       steps[0],
-      { label: `− ${label(fine)}`, delta: -fine, fine: true, announce: say(fine) },
-      { label: `+ ${label(fine)}`, delta: fine, fine: true, announce: say(fine) },
+      {
+        label: `− ${label(fine)}`,
+        delta: -fine,
+        fine: true,
+        announce: say(fine),
+      },
+      {
+        label: `+ ${label(fine)}`,
+        delta: fine,
+        fine: true,
+        announce: say(fine),
+      },
       steps[1],
     ];
   };
@@ -963,6 +970,9 @@ export function Session() {
               ? workingCount(entry)
               : setsForEntry(entry).length;
             const total = prescribed ? totalSets(entry) : null;
+            // An unprescribed exercise has no plan to meet, so it never hands
+            // the lead over to NEXT — there is always another set you might do.
+            const planMet = total !== null && done >= total;
             const skipped = skips.has(entry.key);
             const removable = !prescribed && setsForEntry(entry).length === 0;
             const superset = supersetInfo.get(entry.key);
@@ -1109,81 +1119,85 @@ export function Session() {
                       </section>
                     ) : (
                       <>
-                    <section className="rule-section">
-                      <div className="section-head">
-                        <span className="field-label">REPS</span>
-                      </div>
-                      <Stepper
-                        label="reps"
-                        inline
-                        display={String(reps)}
-                        onTapValue={() => openPad("reps")}
-                        value={reps}
-                        min={0}
-                        max={MAX_REPS}
-                        onChange={(v) => setReps(Math.round(v))}
-                        steps={[
-                          { label: "−", delta: -1 },
-                          { label: "+", delta: 1 },
-                        ]}
-                      />
-                    </section>
+                        <section className="rule-section">
+                          <div className="section-head">
+                            <span className="field-label">REPS</span>
+                          </div>
+                          <Stepper
+                            label="reps"
+                            inline
+                            display={String(reps)}
+                            onTapValue={() => openPad("reps")}
+                            value={reps}
+                            min={0}
+                            max={MAX_REPS}
+                            onChange={(v) => setReps(Math.round(v))}
+                            steps={[
+                              { label: "−", delta: -1 },
+                              { label: "+", delta: 1 },
+                            ]}
+                          />
+                        </section>
 
-                    <section className="rule-section">
-                      <div className="section-head">
-                        <span className="field-label">
-                          LOAD · {unit.toUpperCase()}
-                        </span>
-                        {showLoadEntry && (
-                          /* a property of the movement, not a per-set choice:
+                        <section className="rule-section">
+                          <div className="section-head">
+                            <span className="field-label">
+                              LOAD · {unit.toUpperCase()}
+                            </span>
+                            {showLoadEntry && (
+                              /* a property of the movement, not a per-set choice:
                              it only appears where a pair is possible, and it
                              remembers per exercise like the bar does */
-                          <button
-                            type="button"
-                            className="plate-hint"
-                            aria-label={
-                              perSide
-                                ? "load is typed per side; switch to total load"
-                                : "load is typed as the total; switch to per side"
-                            }
-                            onClick={toggleLoadEntry}
-                          >
-                            {perSide ? "PER SIDE ×2" : "TOTAL"}
-                          </button>
-                        )}
-                        {hint !== null && (
-                          <button
-                            type="button"
-                            className="plate-hint"
-                            onClick={() => openSheet("plates")}
-                          >
-                            {hint} ›
-                          </button>
-                        )}
-                      </div>
-                      <Stepper
-                        label="load"
-                        accent
-                        display={String(toDisplay(entryKg, unit))}
-                        subText={loadSub}
-                        onTapValue={() => openPad("load")}
-                        snap
-                        value={entryKg}
-                        min={0}
-                        max={maxEntryKg}
-                        onChange={setEntryKg}
-                        /* labels and deltas both come from the setting, so a
+                              <button
+                                type="button"
+                                className="plate-hint"
+                                aria-label={
+                                  perSide
+                                    ? "load is typed per side; switch to total load"
+                                    : "load is typed as the total; switch to per side"
+                                }
+                                onClick={toggleLoadEntry}
+                              >
+                                {perSide ? "PER SIDE ×2" : "TOTAL"}
+                              </button>
+                            )}
+                            {hint !== null && (
+                              <button
+                                type="button"
+                                className="plate-hint"
+                                onClick={() => openSheet("plates")}
+                              >
+                                {hint} ›
+                              </button>
+                            )}
+                          </div>
+                          <Stepper
+                            label="load"
+                            accent
+                            display={String(toDisplay(entryKg, unit))}
+                            subText={loadSub}
+                            onTapValue={() => openPad("load")}
+                            snap
+                            value={entryKg}
+                            min={0}
+                            max={maxEntryKg}
+                            onChange={setEntryKg}
+                            /* labels and deltas both come from the setting, so a
                            custom increment can never make the button lie */
-                        steps={loadSteps(entry.exercise_id, unit)}
-                      />
-                    </section>
+                            steps={loadSteps(entry.exercise_id, unit)}
+                          />
+                        </section>
                       </>
                     )}
 
-                    {/* once the plan is met, NEXT leads and extra sets recede */}
+                    {/* Once the plan is met, NEXT leads and extra sets recede.
+                        Exactly one of these two is primary at any moment: two
+                        filled buttons stacked on a phone read as a choice
+                        between equals, and mid-set the lifter should never
+                        have to work out which one the app meant. */}
                     <button
                       type="button"
-                      className={`btn ${total !== null && done >= total ? "btn-outline-ink" : "btn-primary"} btn-log`}
+                      className={`btn ${planMet ? "btn-outline-ink" : "btn-primary"} btn-log`}
                       disabled={logLocked || !setsLoaded}
                       onClick={logSet}
                     >
@@ -1193,7 +1207,7 @@ export function Session() {
                     {nextEntry && (
                       <button
                         type="button"
-                        className="btn btn-primary btn-block"
+                        className={`btn ${planMet ? "btn-primary" : "btn-outline-ink"} btn-block`}
                         onClick={() => setOpenKey(nextEntry.key)}
                       >
                         Next · {nextEntry.name}

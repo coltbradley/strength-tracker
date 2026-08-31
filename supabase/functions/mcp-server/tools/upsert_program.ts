@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
-import { must } from "../lib/db.ts";
+import { must, visibleExerciseIds } from "../lib/db.ts";
 import { todayIso } from "../lib/dates.ts";
 import {
   guard,
@@ -265,7 +265,13 @@ export function registerUpsertProgram(
           }
         }
 
-        // Every exercise_id must exist.
+        // Every exercise_id must exist AND be one this caller can see.
+        //
+        // This ran as a bare existence check, and the service role bypasses
+        // RLS, so another account's custom exercise passed it, was written
+        // into the program, and came back out of get_program by name. Slugs
+        // are derived from names, so they are guessable rather than secret.
+        // Scoped now, through the same gate requireExercise uses.
         const allIds = [
           ...new Set(
             program.workouts.flatMap((w) =>
@@ -273,11 +279,9 @@ export function registerUpsertProgram(
             ),
           ),
         ];
-        const known = must(
-          await db.client.from("exercises").select("id").in("id", allIds),
-          "exercise lookup",
-        ) as { id: string }[];
-        const knownIds = new Set(known.map((e) => e.id));
+        const knownIds = await visibleExerciseIds(db, allIds);
+        // Reported as unknown, never as forbidden: saying "that exists but is
+        // not yours" is the leak this is here to prevent.
         const unknown = allIds.filter((id) => !knownIds.has(id));
         if (unknown.length > 0) {
           throw new ToolError(

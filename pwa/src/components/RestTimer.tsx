@@ -36,34 +36,51 @@ interface RestTimerProps {
 
 export function RestTimer({ rest, onAdjust, onEdit, onDone }: RestTimerProps) {
   const [now, setNow] = useState(() => Date.now());
-  const notified = useRef(false);
+
+  // One rest is one `startedAt`. Keying the tick on the whole `rest` object
+  // meant every −30/+30 built a new object by spread, which restarted the
+  // interval — so the clock stuttered on every adjustment.
+  const startedAt = rest?.startedAt ?? null;
 
   useEffect(() => {
-    if (!rest) return;
-    notified.current = false;
+    if (startedAt === null) return;
     const t = setInterval(() => setNow(Date.now()), 400);
     return () => clearInterval(t);
-  }, [rest]);
+  }, [startedAt]);
 
-  if (!rest) return null;
+  const elapsed = rest ? Math.max(0, (now - rest.startedAt) / 1000) : 0;
+  const remaining = rest ? rest.targetSeconds - elapsed : 0;
+  const over = rest !== null && remaining < 0;
 
-  const elapsed = Math.max(0, (now - rest.startedAt) / 1000);
-  const remaining = rest.targetSeconds - elapsed;
-  const over = remaining < 0;
+  // Notifying is a side effect, so it belongs in an effect. Raised from the
+  // render body, React could fire a system notification for a render it went
+  // on to discard — and a boolean ref set by that same render is no guard.
+  //
+  // What we remember is WHICH rest was announced, not merely that one was.
+  // A boolean has to be cleared by somebody, and whoever clears it is a
+  // second effect whose ordering you then have to reason about: with the
+  // reset living in the tick effect above, a rest that was over the moment it
+  // started (a zero-second target) never flipped `over` and so never got its
+  // announcement. Keyed on the rest's own identity, ordering stops mattering.
+  const announcedFor = useRef<number | null>(null);
 
-  if (
-    over &&
-    !notified.current &&
-    typeof Notification !== "undefined" &&
-    Notification.permission === "granted"
-  ) {
-    notified.current = true;
+  useEffect(() => {
+    if (!over || startedAt === null) return;
+    if (announcedFor.current === startedAt) return;
+    if (
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    )
+      return;
+    announcedFor.current = startedAt;
     try {
       new Notification("Rest over", { body: "Next set." });
     } catch {
       // cosmetic
     }
-  }
+  }, [over, startedAt]);
+
+  if (!rest) return null;
 
   const pct = over
     ? 100

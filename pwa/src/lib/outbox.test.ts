@@ -439,6 +439,93 @@ describe("outbox identity", () => {
     );
   });
 
+  it("holds a stamped item while identity is still unknown", async () => {
+    // The boot race. getCurrentUserId() returns null for "signed out" AND for
+    // "not known yet", and start() flushes after two IndexedDB round-trips
+    // while identity resolution is a network token refresh — IndexedDB wins
+    // that race on any morning the stored token has expired. Treating null as
+    // permission sent the item with no user_id, and the column's
+    // `default auth.uid()` stamped it with whoever was actually signed in.
+    // In an append-only table, that misattribution is permanent.
+    let who: string | null = ALICE;
+    const { calls, transport } = makeTransport();
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+    });
+    await box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: makeSet("aaaa4444-1111-4111-8111-111111111111", 3),
+    });
+
+    who = null; // identity not resolved yet
+    await box.flush();
+    expect(calls).toHaveLength(0);
+
+    // Held, never dropped — it goes the moment we know who we are.
+    who = ALICE;
+    await box.flush();
+    expect(calls).toHaveLength(1);
+    expect((calls[0].payload as SetInsert).id).toBe(
+      "aaaa4444-1111-4111-8111-111111111111",
+    );
+  });
+
+  it("re-runs the queue when identity arrives, without another trigger", async () => {
+    // Holding is only safe if something un-holds it. Nothing else would:
+    // start() flushes once, and the next trigger is an `online` event or the
+    // next write — neither of which happens for someone who opens the app
+    // just to look at yesterday.
+    let who: string | null = null;
+    let announce: ((id: string | null) => void) | null = null;
+    const { calls, transport } = makeTransport();
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+      onIdentityChange: (fn) => {
+        announce = fn;
+        return () => {};
+      },
+    });
+
+    const db = await getDb();
+    await db.add("outbox", {
+      op: {
+        kind: "insert",
+        table: "sets",
+        payload: makeSet("aaaa5555-1111-4111-8111-111111111111", 4),
+      },
+      user_id: ALICE,
+      status: "pending",
+    } as never);
+
+    // start() also wires an `online` listener; this file runs in node, which
+    // has no window. The subscription under test is the identity one.
+    const priorWindow = (globalThis as { window?: unknown }).window;
+    (globalThis as { window?: unknown }).window = {
+      addEventListener: () => {},
+    };
+    try {
+      box.start();
+    } finally {
+      if (priorWindow === undefined)
+        delete (globalThis as { window?: unknown }).window;
+      else (globalThis as { window?: unknown }).window = priorWindow;
+    }
+    await box.flush();
+    expect(calls).toHaveLength(0); // identity still unknown
+
+    who = ALICE;
+    announce!(ALICE);
+    await box.flush();
+    expect(calls).toHaveLength(1);
+  });
+
   it("never discards the other user's work, only defers it", async () => {
     let who: string | null = ALICE;
     const { transport } = makeTransport();

@@ -119,7 +119,31 @@ export async function cacheDeleteByPrefix(
 export async function cacheClearAll(): Promise<void> {
   const db = await getDb();
   await db.clear("kv");
+  for (const key of LOCAL_CACHE_KEYS) {
+    try {
+      storage()?.removeItem(key);
+    } catch {
+      // storage blocked; the kv half is cleared, which is the data that matters
+    }
+  }
 }
+
+/**
+ * Cached user data that lives in localStorage rather than in `kv`, and must be
+ * dropped on the same boundary.
+ *
+ * The coach thread is the whole list. It sat outside every clearing path, so
+ * signing out and handing the phone over left the previous person's questions
+ * and the coach's answers about their training verbatim on screen for the next
+ * one. It is in localStorage rather than `kv` because it is written on every
+ * streamed token and reads have to be synchronous; that is a fine reason to
+ * store it there and no reason at all to exempt it from ownership.
+ */
+const LOCAL_CACHE_KEYS = ["strength-log.coach.thread"] as const;
+
+/** The coach thread's storage key. Defined here, beside the clearing path
+ *  that has to know about it, so the two can never drift apart. */
+export const COACH_THREAD_KEY = LOCAL_CACHE_KEYS[0];
 
 /**
  * Which user the `kv` cache belongs to. Kept in localStorage rather than in

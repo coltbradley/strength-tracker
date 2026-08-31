@@ -4,7 +4,7 @@
 
 import { supabase } from "./supabase";
 import { getDb } from "./db";
-import { getCurrentUserId } from "./currentUser";
+import { getCurrentUserId, onUserChange } from "./currentUser";
 import {
   createOutbox,
   type OutboxTransport,
@@ -58,4 +58,7 @@ export const outbox = createOutbox({
   // `sets` is append-only. Stamping the OWNER on the item lets the flusher
   // hold it for the person it belongs to instead.
   currentUserId: getCurrentUserId,
+  // Identity resolves asynchronously, and the flusher holds every stamped
+  // item until it does. This is what un-holds them.
+  onIdentityChange: onUserChange,
 });
