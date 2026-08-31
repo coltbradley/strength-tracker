@@ -293,6 +293,59 @@ describe("declared schemes for mid-session extras", () => {
     expect(entry!.brackets[1]!.resolved_load_kg).toBe(20);
   });
 
+  it("carries the section and tracking mode it was declared with", () => {
+    // Both used to be dropped between the add sheet and the entry. Picking
+    // "tick only" for a mobility drill mid-session still produced load and
+    // reps steppers, because isTick reads brackets[0].tracking — and picking
+    // a section filed the exercise nowhere. Anything sayable while planning
+    // has to mean the same thing said on the gym floor.
+    const [entry] = buildEntries(
+      [],
+      [
+        {
+          exercise_id: "curl",
+          name: "Hammer Curl",
+          scheme: [
+            {
+              sets: 2,
+              reps_min: 10,
+              reps_max: 10,
+              load_kg: null,
+              set_type: "working",
+              rest_seconds: 60,
+              section: "Activations",
+              tracking: "done",
+            },
+          ],
+        },
+      ],
+      [],
+      ex,
+    );
+    expect(entry!.brackets[0]!.section).toBe("Activations");
+    expect(entry!.brackets[0]!.tracking).toBe("done");
+  });
+
+  it("defaults an extra declared before those existed to reps, no section", () => {
+    // Extras already in the device cache carry neither field.
+    const [entry] = buildEntries(
+      [],
+      [
+        {
+          exercise_id: "curl",
+          name: "Hammer Curl",
+          scheme: [
+            { sets: 3, reps_min: 8, reps_max: 8, load_kg: 20, set_type: "working", rest_seconds: 90 },
+          ],
+        },
+      ],
+      [],
+      ex,
+    );
+    expect(entry!.brackets[0]!.tracking).toBe("reps");
+    expect(entry!.brackets[0]!.section).toBeNull();
+  });
+
   it("marks its brackets local, so no set links them as a prescription", () => {
     // sets.prescription_id is a foreign key. A synthesized id in it fails the
     // insert, and on the offline queue it fails forever.

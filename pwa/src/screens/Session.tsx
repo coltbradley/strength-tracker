@@ -26,7 +26,14 @@
 //   `load_entry` records which it was — the resolution chain and the
 //   arithmetic both live in lib/loadEntry.ts.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { Stepper, type StepDef } from "../components/Stepper";
 import { Note } from "../components/Note";
@@ -415,6 +422,43 @@ export function Session() {
   // superset grouping: consecutive entries sharing a non-null group get
   // A1/A2 tags and a bracket rail
   const supersetInfo = useMemo(() => supersetInfoOf(entries), [entries]);
+
+  /**
+   * What the plan editor knows about this day, offered to the mid-session add
+   * sheet so the two screens answer the same question the same way.
+   *
+   * Adding a warmup during a workout used to offer only the generic defaults
+   * (Activations / Abs / Cooldown), so an exercise added on the gym floor
+   * could not join a section the coach had actually written — you had to
+   * retype its name exactly, or it landed in the main body and the day's
+   * shape quietly diverged from the plan. Anything you can do while planning
+   * should be doable while training; this is that, for sections and supersets.
+   */
+  const knownSections = useMemo(() => {
+    const seen: string[] = [];
+    const add = (raw: string | null | undefined) => {
+      const v = (raw ?? "").trim();
+      if (v !== "" && !seen.includes(v)) seen.push(v);
+    };
+    // plan order, so the chips read in the order the day is actually done
+    for (const r of rx) add(r.section);
+    for (const e of extras) for (const g of e.scheme ?? []) add(g.section);
+    return seen;
+  }, [rx, extras]);
+
+  /** group number -> who is already in it, so picking "A" can say what it
+   *  pairs with instead of leaving the letter to mean nothing */
+  const supersetMembers = useMemo(() => {
+    const out: Record<number, string[]> = {};
+    for (const r of rx) {
+      const g = r.superset_group;
+      if (g == null || g < 1) continue;
+      const name = r.exercise_name;
+      out[g] ??= [];
+      if (!out[g].includes(name)) out[g].push(name);
+    }
+    return out;
+  }, [rx]);
 
   // "NEXT ▸" hint once the open exercise is complete — suggestion, not
   // auto-advance
@@ -968,7 +1012,24 @@ export function Session() {
             )}
           </div>
 
-          {entries.map((entry) => {
+          {entries.map((entry, entryIndex) => {
+            // The heading the coach wrote — "Activations", "Cooldown" —
+            // shown above the first exercise that sits under it, exactly as
+            // the plan editor shows it. The session used to render one flat
+            // list, so a day the coach had shaped into parts arrived on the
+            // gym floor with the shape thrown away.
+            //
+            // Emitted on CHANGE rather than once per distinct name, which is
+            // what the plan editor does too: sections are contiguous by
+            // construction there, and if an older plan ever interleaved them,
+            // showing the heading again is honest about the order the day is
+            // actually in.
+            const sectionOf = (e: ExerciseEntry | undefined) =>
+              e?.brackets[0]?.section ?? null;
+            const section = sectionOf(entry);
+            const showSection =
+              section !== null && section !== sectionOf(entries[entryIndex - 1]);
+
             const isOpen = entry.key === openKey;
             const prescribed = entry.brackets.length > 0;
             const done = prescribed
@@ -982,8 +1043,13 @@ export function Session() {
             const removable = !prescribed && setsForEntry(entry).length === 0;
             const superset = supersetInfo.get(entry.key);
             return (
+              <Fragment key={entry.key}>
+                {showSection && (
+                  <div className="section-head wk-section-head">
+                    <span className="field-label">{section.toUpperCase()}</span>
+                  </div>
+                )}
               <div
-                key={entry.key}
                 ref={(el) => {
                   if (el) itemRefs.current.set(entry.key, el);
                   else itemRefs.current.delete(entry.key);
@@ -1341,6 +1407,7 @@ export function Session() {
                   </div>
                 )}
               </div>
+              </Fragment>
             );
           })}
 
@@ -1425,6 +1492,8 @@ export function Session() {
       {declaring && (
         <SetSchemeSheet
           exerciseName={declaring.name}
+          knownSections={knownSections}
+          supersetMembers={supersetMembers}
           unit={unit}
           startKg={
             lastActuals[declaring.id]?.load_kg ?? getPrefillFallback().loadKg

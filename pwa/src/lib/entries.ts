@@ -40,6 +40,12 @@ export interface DeclaredGroup {
   rest_seconds: number;
   /** 0 = not in a superset; 1-4 = group A-D */
   superset_group?: number;
+  /** Heading this sits under; null/absent = the main body of the workout.
+   *  Optional because extras cached before sections existed have neither. */
+  section?: string | null;
+  /** How it is logged. Absent means 'reps', which is what every extra
+   *  declared before tick-only movements existed was. */
+  tracking?: ResolvedPrescriptionRow["tracking"];
 }
 
 /** An exercise added mid-session that the plan did not prescribe. */
@@ -151,6 +157,14 @@ function declaredToBracket(
         ? g.superset_group
         : null,
     set_type: g.set_type as ResolvedPrescriptionRow["set_type"],
+    // Both of these were dropped on the floor. SetSchemeSheet asks for them
+    // when an exercise is added mid-session, and neither reached the entry:
+    // picking "tick only" for a banded glute bridge still produced a load and
+    // a reps stepper (`isTick` reads brackets[0].tracking), and picking a
+    // section filed it nowhere. Anything you can say while planning has to
+    // mean the same thing when you say it on the gym floor.
+    section: g.section ?? null,
+    tracking: g.tracking ?? "reps",
   };
 }
 

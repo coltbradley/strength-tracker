@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 import { App } from "./App";
+import { cacheGet, cacheKeys } from "./lib/db";
 import { installGlobalHandlers, initSentry } from "./lib/errors";
 import { outbox } from "./lib/sync";
 import "./styles.css";
@@ -25,7 +26,8 @@ outbox.start(); // flush on app start + 'online' events
 // reporting to the user — there is nothing they could do about it.
 void navigator.storage?.persist?.().catch(() => undefined);
 
-// Let a new build in only when it costs the user nothing.
+// Let a new build in as soon as it costs the user nothing — and make sure it
+// is actually noticed.
 //
 // The worker is registered "prompt", so an update installs and then WAITS.
 // Applying it reloads the page, and the one moment that must never happen is
@@ -33,22 +35,56 @@ void navigator.storage?.persist?.().catch(() => undefined);
 // it. Logged sets are already safe — they hit the IndexedDB outbox on the tap
 // — but the rest of the screen is not.
 //
-// So: apply it the next time the app is hidden. Backgrounding the app is
-// exactly when a reload is free, and a phone gets backgrounded constantly. If
-// it never does, the waiting worker takes over on the next launch anyway,
-// which is the default behaviour and also safe. There is no path here that
-// strands someone on an old build, and none that interrupts them.
+// The first version of this deferred every update to the next
+// visibilitychange→hidden, and that was too clever by half. An installed PWA
+// on a phone can go a long time without a clean background-then-return, the
+// browser only checks for a new worker when the page is registered, and there
+// was no periodic check at all — so a shipped build could sit waiting,
+// unnoticed, while the person using it wondered where the feature went. That
+// happened on the first real deploy. Trading "never interrupts a set" for
+// "might never arrive" is a bad trade; this keeps the first and drops the
+// second.
+//
+// Two halves. NOTICE: ask the browser to look for a new worker whenever the
+// app comes back to the foreground, and hourly while it is open. APPLY: if
+// there is no session in progress, take it immediately — reloading Today or
+// History costs nothing. Only mid-session does it wait, and then only until
+// the app is next hidden.
+async function sessionInProgress(): Promise<boolean> {
+  try {
+    return (await cacheGet(cacheKeys.activeSession)) != null;
+  } catch {
+    // If we cannot tell, assume we are mid-session: a delayed update is a
+    // nuisance, an interrupted set is lost work.
+    return true;
+  }
+}
+
 const applyUpdate = registerSW({
   immediate: true,
+  onRegisteredSW(_url, registration) {
+    if (!registration) return;
+    const check = () => void registration.update().catch(() => undefined);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") check();
+    });
+    window.setInterval(check, 60 * 60 * 1000);
+  },
   onNeedRefresh() {
-    const onHidden = () => {
-      if (document.visibilityState !== "hidden") return;
-      document.removeEventListener("visibilitychange", onHidden);
-      void applyUpdate(true);
-    };
-    document.addEventListener("visibilitychange", onHidden);
-    // already in the background when the update landed
-    onHidden();
+    void (async () => {
+      if (!(await sessionInProgress())) {
+        void applyUpdate(true);
+        return;
+      }
+      const onHidden = () => {
+        if (document.visibilityState !== "hidden") return;
+        document.removeEventListener("visibilitychange", onHidden);
+        void applyUpdate(true);
+      };
+      document.addEventListener("visibilitychange", onHidden);
+      // already backgrounded when the update landed
+      onHidden();
+    })();
   },
 });
 
