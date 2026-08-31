@@ -1292,3 +1292,40 @@ the user's own unit now.
 Typing was always exact and still is: 50 lb round-trips through 22.6796 kg back
 to 50 lb. Only the stepper was wrong, which is why it survived the round-trip
 test that was written when per-side loads landed.
+
+## A superset is gathered by its letter, not by adjacency
+
+The spec models a planned day as a flat, ordered list, with `superset_group`
+as a label on rows that happen to sit next to each other. The plan editor now
+treats the letter as authoritative and gathers a superset by GROUP even when
+its members have drifted apart, then writes them back together.
+
+The deviation matters because the letter is the coach's declaration that these
+exercises alternate. Adjacency is downstream of that: it is how the day
+happens to be stored after edits, reorders and section moves, and any of those
+could separate two rows that must still be performed as a pair. An editor that
+grouped by adjacency would show one superset as two half-supersets and let a
+person move a heading between them, which describes a day nobody can perform.
+
+`entries.ts` stays adjacency-only, and that difference is deliberate rather
+than an oversight. The session screens cannot reorder anything, so they must
+render exactly what is stored; the editor is the one place allowed to have an
+opinion about what the stored order SHOULD be.
+
+A ramp stays adjacency-only in both places. Consecutive rows naming the same
+exercise are one climb; the same exercise squatted early and again as a
+finisher is two exercises in the day, and no letter says otherwise.
+
+## Sections are ranked, and the drag is clamped to the rank
+
+Activations, warm-ups, prep and mobility run before the main body; cooldowns,
+stretches and finishers run after it. Everything else ranks WITH the main body
+and keeps the place the user put it — a section the coach invented ("Grip",
+"Carries") is not banished to one end by a table that has never heard of it.
+
+Two consequences worth writing down. Ranking happens at render AND any
+grouping write stores the ranked order, so Today, the session screen and the
+editor never read a different day. And the drag is clamped to the rank band
+rather than being allowed anywhere: letting someone drag a cooldown to the top
+and then silently ranking it back down is a UI that argues with the person
+using it.
