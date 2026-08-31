@@ -28,11 +28,13 @@ import type { RequestContext } from "./errors.ts";
 import { log } from "./log.ts";
 import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
+import { registerExerciseNotes } from "../tools/exercise_notes.ts";
 import { registerFeedback } from "../tools/feedback.ts";
 import { registerGetGoalProgress } from "../tools/get_goal_progress.ts";
 import { registerGetLiftHistory } from "../tools/get_lift_history.ts";
 import { registerGetProgram } from "../tools/get_program.ts";
 import { registerGetRecentSessions } from "../tools/get_recent_sessions.ts";
+import { registerGetVolume } from "../tools/get_volume.ts";
 import { registerManageExercises } from "../tools/manage_exercises.ts";
 import { registerSearchExercises } from "../tools/search_exercises.ts";
 import { registerSetGoal } from "../tools/set_goal.ts";
@@ -49,6 +51,7 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerGetLiftHistory(server, db, ctx);
   registerGetRecentSessions(server, db, ctx);
   registerGetGoalProgress(server, db, ctx);
+  registerGetVolume(server, db, ctx);
   // Write tools. NEVER add tools that write sessions or sets: those tables
   // belong to the PWA (see CLAUDE.md hard rules).
   registerGetProgram(server, db, ctx);
@@ -59,6 +62,7 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerSetGoal(server, db, ctx);
   registerManageExercises(server, db, ctx);
   registerFeedback(server, db, ctx);
+  registerExerciseNotes(server, db, ctx);
   return server;
 }
 

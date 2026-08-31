@@ -1085,5 +1085,70 @@ await check("a 'done' set is a real set and pollutes no analytics", async () => 
   assertEq(e.rows[0].n, 0, "and no e1RM row");
 });
 
+console.log("\nexercise notes (a cue that belongs to the movement):");
+
+await check("one note per person per exercise", async () => {
+  const ex = `(select id from exercises limit 1)`;
+  await db.exec(
+    `insert into exercise_notes (user_id, exercise_id, note)
+     values ('${OWNER}', ${ex}, 'front foot stays flat')`,
+  );
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into exercise_notes (user_id, exercise_id, note)
+       values ('${OWNER}', ${ex}, 'second note')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("a duplicate note was accepted");
+});
+
+await check("it is editable, unlike a set", async () => {
+  await db.exec(
+    `update exercise_notes set note = 'ribs down too' where user_id = '${OWNER}'`,
+  );
+  const r = await db.query(
+    `select note from exercise_notes where user_id = '${OWNER}'`,
+  );
+  assertEq(r.rows[0].note, "ribs down too", "the note updated in place");
+});
+
+await check("two people can note the same shared exercise", async () => {
+  const ex = `(select id from exercises limit 1)`;
+  await db.exec(
+    `insert into exercise_notes (user_id, exercise_id, note)
+     values ('${OTHER}', ${ex}, 'mine, not theirs')`,
+  );
+  const r = await db.query(`select count(*)::int as n from exercise_notes`);
+  assertEq(r.rows[0].n, 2, "both rows coexist");
+});
+
+await check("a note is private to its owner", async () => {
+  const mine = await asUser(OWNER, `select count(*)::int as n from exercise_notes`);
+  assertEq(mine.rows[0].n, 1, "the owner sees only their own");
+  let rejected = false;
+  try {
+    await asUser(
+      OWNER,
+      `insert into exercise_notes (user_id, exercise_id, note)
+       values ('${OTHER}', (select id from exercises offset 1 limit 1), 'not mine to write')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("wrote a note onto another user");
+});
+
+await check("deleting a user takes their notes, not the exercise", async () => {
+  const ex = await db.query(`select count(*)::int as n from exercises`);
+  await db.exec(`delete from auth.users where id = '${OTHER}'`);
+  const n = await db.query(`select count(*)::int as n from exercise_notes`);
+  assertEq(n.rows[0].n, 1, "their note went with them");
+  const after = await db.query(`select count(*)::int as n from exercises`);
+  assertEq(after.rows[0].n, ex.rows[0].n, "the shared exercise survives");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

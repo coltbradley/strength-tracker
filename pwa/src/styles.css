@@ -1626,8 +1626,13 @@
     animation: rise var(--dur-sheet) var(--ease-sheet);
   }
 
+  /* 88dvh, not 78. A tall sheet is a form — the scheme sheet asks seven
+   * questions, settings is longer still — and the 10% it was giving back to
+   * the screen behind it bought nothing: the backdrop is a scrim, not
+   * something anyone reads. It still stops short of the top so the sheet
+   * reads as a sheet rather than a page, and still yields to the keyboard. */
   .sheet-tall {
-    height: min(78dvh, calc(100dvh - var(--kb, 0px) - var(--s-9)));
+    height: min(88dvh, calc(100dvh - var(--kb, 0px) - var(--s-9)));
   }
 
   /* A bottom sheet is a phone idiom: it starts at the thumb. On a 1400x900
@@ -3032,6 +3037,53 @@
     font-size: var(--fs-micro);
     color: var(--text-dim);
     margin-top: var(--s-3);
+  }
+
+  /* A row of choices that is a CHOICE, not a set of primary actions: the
+   * scheme sheet asks seven questions and full-size segments made it 1475px
+   * of scroll on a 633px sheet. */
+  .seg-tight .seg-btn {
+    min-height: 38px;
+    padding: 0 var(--s-5);
+    font-size: var(--fs-micro);
+  }
+
+  .coach-starters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    margin-top: var(--s-6);
+  }
+
+  .coach-starters .chip {
+    font-family: inherit;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    text-align: left;
+  }
+
+  /* Per-answer actions. Quiet: they are there when wanted and invisible when
+   * reading, which is most of the time. */
+  .coach-msg-actions {
+    display: flex;
+    gap: var(--s-5);
+    margin-top: var(--s-4);
+  }
+
+  .coach-msg-action {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-1);
+    color: var(--text-dim);
+    text-transform: uppercase;
+    min-height: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .coach-msg-action:active {
+    color: var(--accent-dim);
   }
 
   .coach-files {

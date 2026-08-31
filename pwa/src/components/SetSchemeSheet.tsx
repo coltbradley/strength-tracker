@@ -193,7 +193,7 @@ export function SetSchemeSheet({
   return (
     <Sheet title={exerciseName} onClose={onCancel} tall>
       <div className="field-label">SECTION</div>
-      <div className="seg">
+      <div className="seg seg-tight">
         {["", ...knownSections, "Activations", "Abs", "Cooldown"]
           .filter((v, i, a) => a.indexOf(v) === i)
           .map((sec) => (
@@ -216,7 +216,7 @@ export function SetSchemeSheet({
       />
 
       <div className="field-label">HOW IT IS LOGGED</div>
-      <div className="seg">
+      <div className="seg seg-tight">
         <button
           type="button"
           className={`seg-btn ${tracking === "reps" ? "seg-on" : ""}`}
@@ -243,6 +243,7 @@ export function SetSchemeSheet({
       <div className="field-label">HOW MANY SETS?</div>
       <Stepper
         label="sets"
+        compact
         onTapValue={() =>
           setPad({
             label: "HOW MANY SETS",
@@ -274,6 +275,7 @@ export function SetSchemeSheet({
       <div className="field-label">REPS PER SET</div>
       <Stepper
         label="reps"
+        compact
         onTapValue={() =>
           setPad({
             label: "REPS PER SET",
@@ -298,6 +300,7 @@ export function SetSchemeSheet({
       <div className="field-label">REST BETWEEN SETS</div>
       <Stepper
         label="rest"
+        compact
         onTapValue={() =>
           setPad({
             label: "REST BETWEEN SETS · SECONDS",
@@ -407,15 +410,17 @@ export function SetSchemeSheet({
                     allowDecimal: true,
                     onCommit: (v) =>
                       patch(i, {
-                        loadKg: Math.min(999, Math.max(0.5, fromDisplay(v, unit))),
+                        loadKg: Math.min(999, Math.max(0, fromDisplay(v, unit))),
                       }),
                     onCancel: () => setPad(null),
                   })
                 }
                 display={`${toDisplay(s.loadKg, unit)} ${unit}`}
-                subText={formatStoredTwin(s.loadKg, unit)}
+                subText={
+                  s.loadKg === 0 ? "bodyweight" : formatStoredTwin(s.loadKg, unit)
+                }
                 value={s.loadKg}
-                min={0.5}
+                min={0}
                 max={999}
                 onChange={(v) => patch(i, { loadKg: v })}
                 steps={[

@@ -1166,3 +1166,37 @@ No dependency: the service worker precaches the whole bundle for offline use,
 and a markdown library is larger than the rest of the chat. The parser covers
 what actually appears and nothing else, with tests for what must NOT be
 formatting — "3*5" is a set scheme, not italics.
+
+## Notes belong to the movement, and travel with it
+
+Every note in the system was scoped to an occasion — a planned day, a logged
+set, a session. None of them carried "front foot stays flat", which is true
+every time that exercise comes up and had to be retyped onto each day or
+forgotten.
+
+`exercise_notes` is keyed (user_id, exercise_id) rather than being a column on
+`exercises`, for the reason CLAUDE.md already gives for `exercise_owners`: that
+table is a shared library seeded from free-exercise-db, it never grows a
+per-user column, and never a column the generated seed cannot populate — 873
+rows would sit null forever and every re-seed would write it back.
+
+More useful than the table is that both kinds of note now travel WITH the
+exercise. `search_exercises` — the tool the assistant calls while programming —
+returns each result carrying the standing note and the last three things the
+lifter wrote while actually lifting it. Making it fetch history per exercise to
+find that out is a round trip it will usually skip, and "left hip pinches below
+parallel" is exactly the sentence that should change what gets written down.
+
+## Search is ranked by what the lifter trains
+
+The seeded library holds a dozen near-identical variants of most movements —
+eleven lateral raises, six squats beginning "Barbell" — returned alphabetically.
+Handing that back unranked is how a program ends up prescribing three squats
+that are the same squat, which is what happened.
+
+Results are now ordered by what the lifter has actually logged, annotated with
+`last_trained` and a set count, and carry guidance saying to prefer them. The
+coach prompt says the rest: never two variants of one movement in a session,
+and vary the movement PATTERN rather than the name of the same exercise. An
+untrained variant gives them no history to compare against and no working
+weight to start from — the cost is invisible until a chart has a hole in it.

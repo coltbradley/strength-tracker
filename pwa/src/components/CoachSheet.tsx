@@ -86,8 +86,22 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Follow the stream only when already at the bottom. Scrolling someone back
+  // down while they are reading an earlier answer is the single most annoying
+  // thing a chat can do, and it happens on every token.
+  const threadRef = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    const el = threadRef.current;
+    if (el === null) return;
+    const onScroll = () => {
+      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+  useEffect(() => {
+    if (pinned.current) endRef.current?.scrollIntoView({ block: "end" });
   }, [msgs]);
 
   // An answer this device was not connected for. The phone locks mid-answer,
@@ -228,6 +242,45 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
     );
   };
 
+  /** Stop mid-answer. The tokens are spent either way, so whatever arrived
+   *  is kept rather than thrown away — and the server finishes and records the
+   *  turn regardless, so the full text is recoverable. */
+  const stop = () => {
+    abort.current?.abort();
+    setBusy(false);
+    setMsgs((prev) =>
+      prev.map((m, i) =>
+        i === prev.length - 1
+          ? {
+              ...m,
+              streaming: false,
+              tool: null,
+              thinking: false,
+              text: m.text || "(stopped)",
+            }
+          : m,
+      ),
+    );
+  };
+
+  /** Ask the last question again, dropping the answer that failed. */
+  const retry = () => {
+    if (busy) return;
+    const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
+    setMsgs((prev) => {
+      const cut = [...prev];
+      while (cut.length > 0 && cut[cut.length - 1]!.role === "assistant")
+        cut.pop();
+      return cut;
+    });
+    // Re-send on the next tick, once the failed turn is out of the thread.
+    setTimeout(() => {
+      setDraft(lastUser.text);
+      setFiles(lastUser.attachments ?? []);
+    }, 0);
+  };
+
   const clear = () => {
     abort.current?.abort();
     setMsgs([]);
@@ -253,13 +306,34 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
         ) : undefined
       }
     >
-      <div className="coach-thread">
+      <div className="coach-thread" ref={threadRef}>
         {msgs.length === 0 && (
-          <div className="microcopy">
-            Ask about your training. I can see your log and your plan, and I can
-            change what’s scheduled. Send a photo for a form check, or a
-            spreadsheet or PDF from another app.
-          </div>
+          <>
+            <div className="microcopy">
+              Ask about your training. I can see your log and your plan, and I
+              can change what’s scheduled. Send a photo for a form check, or a
+              spreadsheet or PDF from another app.
+            </div>
+            {/* A blank box is a hard thing to start from, and these double as
+                a statement of what it can actually do. */}
+            <div className="coach-starters">
+              {[
+                "How did my last session go?",
+                "What should I do today?",
+                "Am I making progress on squat?",
+                "This felt heavy — should I back off?",
+              ].map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  className="chip"
+                  onClick={() => setDraft(q)}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </>
         )}
 
         {msgs.map((m, i) => (
@@ -280,6 +354,31 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
               <Markdown source={m.text} />
             ) : (
               <div className="coach-text">{m.text}</div>
+            )}
+            {m.role === "assistant" && !m.streaming && m.text.length > 0 && (
+              <div className="coach-msg-actions">
+                <button
+                  type="button"
+                  className="coach-msg-action"
+                  onClick={() => {
+                    void navigator.clipboard
+                      ?.writeText(m.text)
+                      .then(() => toast("Copied"))
+                      .catch(() => toast("Couldn't copy", "error"));
+                  }}
+                >
+                  Copy
+                </button>
+                {i === msgs.length - 1 && (
+                  <button
+                    type="button"
+                    className="coach-msg-action"
+                    onClick={retry}
+                  >
+                    Ask again
+                  </button>
+                )}
+              </div>
             )}
             {m.streaming && (
               <div className="coach-status">
@@ -349,14 +448,24 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
               }}
             />
           </label>
-          <button
-            type="button"
-            className="btn btn-primary coach-send"
-            disabled={busy || (draft.trim() === "" && files.length === 0)}
-            onClick={send}
-          >
-            {busy ? "Asking…" : "Ask"}
-          </button>
+          {busy ? (
+            <button
+              type="button"
+              className="btn btn-outline-ink coach-send"
+              onClick={stop}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary coach-send"
+              disabled={draft.trim() === "" && files.length === 0}
+              onClick={send}
+            >
+              Ask
+            </button>
+          )}
         </div>
       </div>
     </Sheet>

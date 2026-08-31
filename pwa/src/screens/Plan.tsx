@@ -159,7 +159,10 @@ function patchFrom(d: RxDraft): PrescriptionPatch {
     sets: d.sets,
     reps_min: d.reps_min,
     reps_max: Math.max(d.reps_min, d.reps_max),
-    load_kg: d.mode === "kg" ? Math.max(0.5, d.load_kg) : null,
+    // 0 is bodyweight, not "unset": the schema says so
+    // (`load_kg >= 0`, 0 = bodyweight) and a chin-up prescribed at 0 is a
+    // real prescription. Clamping it up to 0.5 made bodyweight unexpressible.
+    load_kg: d.mode === "kg" ? Math.max(0, d.load_kg) : null,
     load_pct_tm: d.mode === "pct" ? d.load_pct : null,
     rest_seconds: d.hasRest ? d.rest_seconds : null,
     superset_group: d.superset === 0 ? null : d.superset,
@@ -750,14 +753,14 @@ export function Plan() {
                           action: "SET",
                           initial: String(toDisplay(draft.load_kg, unit)),
                           allowDecimal: true,
-                          onCommit: (v) => setDraft({ ...draft, load_kg: Math.min(999, Math.max(0.5, fromDisplay(v, unit))) }),
+                          onCommit: (v) => setDraft({ ...draft, load_kg: Math.min(999, Math.max(0, fromDisplay(v, unit))) }),
                           onCancel: () => setPad(null),
                         })
                       }
                       display={loadDraftLabel}
                       subText={formatStoredTwin(draft.load_kg, unit)}
                       value={draft.load_kg}
-                      min={0.5}
+                      min={0}
                       max={999}
                       onChange={(v) => setDraft({ ...draft, load_kg: v })}
                       steps={[
