@@ -10,10 +10,7 @@ import { Stepper } from "../components/Stepper";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
 import { getSetting } from "../lib/settings";
-import {
-  SetSchemeSheet,
-  type SetGroup,
-} from "../components/SetSchemeSheet";
+import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { Note } from "../components/Note";
 import {
   addPrescriptionGroups,
@@ -25,14 +22,28 @@ import {
   getExercises,
   getPlannedWorkouts,
   getResolvedPrescriptions,
-  movePrescription,
+  setPrescriptionSection,
   swapWorkoutOrder,
   updatePlannedWorkout,
   updatePrescription,
   weekOrder,
   type WorkoutList,
 } from "../lib/data";
-import { sectionAt, sectionUnit } from "../lib/sections";
+import {
+  blockBand,
+  blockRowIds,
+  canonicalRowIds,
+  entryBand,
+  entryKeys,
+  moveEntry,
+  normalizeSection,
+  planBlocks,
+  reorderBlocks,
+  reorderEntries,
+  sectionUnit,
+  type PlanBlock,
+  type PlanEntry,
+} from "../lib/sections";
 import { reportError, toast } from "../lib/errors";
 import {
   formatPlannedDate,
@@ -73,37 +84,28 @@ interface RxDraft {
 }
 
 /**
- * Whether row `i` runs as a ramp with the row beside it — consecutive
- * prescriptions naming the SAME exercise. Today renders those as one grouped
- * entry ("1×8 @60 · 1×6 @85 · 3×3 @112"), which is how a warmup ramp is
- * expressed; this editor keeps them as separate rows so each is editable. The
- * marker exists so the two screens visibly agree.
+ * Whether this row runs as a ramp — several prescriptions for the SAME
+ * exercise inside one entry. Today renders those as one grouped entry
+ * ("1×8 @60 · 1×6 @85 · 3×3 @112"), which is how a warmup ramp is expressed;
+ * this editor keeps them as separate rows so each is editable. The marker
+ * exists so the two screens visibly agree.
  */
-function rampWith(rows: ResolvedPrescriptionRow[], i: number): boolean {
-  const id = rows[i]?.exercise_id;
-  if (id === undefined) return false;
-  return rows[i - 1]?.exercise_id === id || rows[i + 1]?.exercise_id === id;
+function isRampRow(entry: PlanEntry, r: ResolvedPrescriptionRow): boolean {
+  return entry.rows.filter((o) => o.exercise_id === r.exercise_id).length > 1;
 }
 
-/**
- * Where row `i` sits in its superset run. A superset was rendered as a bare
- * "A · " prefix on each row, which says the pairing exists without showing
- * WHICH rows are paired — the one thing that actually changes how the session
- * is performed. Rows in a group now share a left rail and the run is labelled
- * once at its top, so a pair reads as a pair.
- */
-function supersetAt(
-  rows: ResolvedPrescriptionRow[],
-  i: number,
-): { group: number; first: boolean; last: boolean } | null {
-  const g = rows[i]?.superset_group ?? null;
-  if (g === null) return null;
-  return {
-    group: g,
-    first: (rows[i - 1]?.superset_group ?? null) !== g,
-    last: (rows[i + 1]?.superset_group ?? null) !== g,
-  };
+/** "Superset A", the way a person says it. */
+function supersetName(group: number): string {
+  return `SUPERSET ${String.fromCharCode(64 + group)}`;
 }
+
+/** MAIN WORK is the null section: the body of the day, which needs no
+ *  heading. Named here because three places offer it as a choice and it must
+ *  read the same in all of them. */
+const MAIN_LABEL = "MAIN WORK";
+
+/** Sections the editor offers before anything the day already uses. */
+const SECTION_SUGGESTIONS = ["Activations", "Abs", "Cooldown"];
 
 function draftFrom(r: ResolvedPrescriptionRow): RxDraft {
   return {
@@ -122,10 +124,7 @@ function draftFrom(r: ResolvedPrescriptionRow): RxDraft {
 }
 
 /** Did the draft actually change anything? */
-function unchanged(
-  r: ResolvedPrescriptionRow,
-  p: PrescriptionPatch,
-): boolean {
+function unchanged(r: ResolvedPrescriptionRow, p: PrescriptionPatch): boolean {
   return (
     p.sets === r.sets &&
     p.reps_min === r.reps_min &&
@@ -183,6 +182,12 @@ export function Plan() {
   const [searchOpen, setSearchOpen] = useState(false);
   /** Exercise chosen in the picker, awaiting its set scheme. */
   const [adding, setAdding] = useState<ExerciseRow | null>(null);
+  /** The section an add started from, so "Add to ACTIVATIONS" adds INTO it
+   *  rather than dropping the exercise in the main body to be filed later. */
+  const [addingTo, setAddingTo] = useState<string | null>(null);
+  /** Block key of the section whose panel is open (rename / add / dissolve). */
+  const [sectionOpen, setSectionOpen] = useState<string | null>(null);
+  const [sectionName, setSectionName] = useState("");
   /** null = not saving; a string = the name being typed */
   const [templateName, setTemplateName] = useState<string | null>(null);
   /** Tap a value to type it, in the row editor as well as the add sheet. */
@@ -280,26 +285,48 @@ export function Plan() {
     return m;
   }, [rx]);
 
-  /** Long-press a row and drag it. The ↑/↓ buttons stay: they are the
-   *  keyboard and screen-reader path, and dragging is not available to
-   *  either. */
-  // Hooks must run before the early returns below, so the drop handler cannot
-  // close over `run`/`reload` (defined after them). It calls through a ref that
+  /**
+   * The day as parts, not rows.
+   *
+   * Everything below renders from this: a section exists once here, so it can
+   * only be drawn once, and a ramp or a superset is one object, so nothing can
+   * pick up half of it. See lib/sections.ts.
+   */
+  const blocks = useMemo(() => planBlocks(rx ?? []), [rx]);
+
+  /** Long-press to drag, at both levels a day actually has: a whole part of
+   *  the day (its heading, or a lone exercise), and one exercise inside a
+   *  part. The ↑/↓ buttons stay — they are the keyboard and screen-reader
+   *  path, and dragging is not available to either. */
+  // Hooks must run before the early returns below, so the drop handlers cannot
+  // close over `run`/`reload` (defined after them). They call through refs that
   // the render body fills in — the alternative is hoisting half the component.
-  const onDropRef = useRef<(ids: string[]) => void>(() => undefined);
-  const drag = useDragList(
-    (rx ?? []).map((r) => r.id),
-    (nextIds) => onDropRef.current(nextIds),
+  const onBlockDropRef = useRef<(keys: string[]) => void>(() => undefined);
+  const onEntryDropRef = useRef<(keys: string[]) => void>(() => undefined);
+  const blockDrag = useDragList(
+    blocks.map((b) => b.key),
+    (keys) => onBlockDropRef.current(keys),
+    (key) => blockBand(blocks, key),
+  );
+  const draggedBlocks = useMemo(
+    () => reorderBlocks(blocks, blockDrag.order),
+    [blocks, blockDrag.order],
+  );
+  const entryDrag = useDragList(
+    entryKeys(draggedBlocks),
+    (keys) => onEntryDropRef.current(keys),
+    (key) => entryBand(draggedBlocks, key),
   );
 
-  /** The rows in the order being dragged, not the order last loaded. */
-  const orderedRx = useMemo(() => {
-    const byId = new Map((rx ?? []).map((r) => [r.id, r]));
-    return drag.order
-      .map((id) => byId.get(id))
-      .filter((r): r is ResolvedPrescriptionRow => Boolean(r));
-  }, [rx, drag.order]);
-
+  /** The day in the order being dragged, not the order last loaded. */
+  const shownBlocks = useMemo(
+    () => reorderEntries(draggedBlocks, entryDrag.order),
+    [draggedBlocks, entryDrag.order],
+  );
+  const entries = useMemo(
+    () => shownBlocks.flatMap((b) => b.entries),
+    [shownBlocks],
+  );
 
   if (!id) return null;
   if (!list) return <div className="screen muted">Loading…</div>;
@@ -335,11 +362,31 @@ export function Plan() {
    * set-group is almost always near the last one. Otherwise the device's
    * fallback load, which is what the session screen would suggest anyway.
    */
-  onDropRef.current = (nextIds) =>
+  /** Store the row order a dragged layout implies. Whole blocks and whole
+   *  entries move, so `position` is only ever rewritten for things that
+   *  actually moved together. */
+  const storeLayout = (next: PlanBlock[]) =>
     void run("reorder exercises", async () => {
-      await reorderPrescriptions(workout.id, nextIds, rx ?? []);
+      await reorderPrescriptions(workout.id, blockRowIds(next), rx ?? []);
       reload();
     });
+
+  onBlockDropRef.current = (keys) => storeLayout(reorderBlocks(blocks, keys));
+  onEntryDropRef.current = (keys) =>
+    storeLayout(reorderEntries(draggedBlocks, keys));
+
+  /**
+   * Store what the editor RENDERS.
+   *
+   * `planBlocks` gathers a section's exercises under one heading and ranks
+   * activations before the main body — so after any write that changes
+   * grouping, the rendered day and the stored day differ until this lands.
+   * Today and the session screen read the stored order, and two screens
+   * describing different days is the bug this whole module exists to stop.
+   */
+  const settle = async (rows: ResolvedPrescriptionRow[]) => {
+    await reorderPrescriptions(workout.id, canonicalRowIds(rows), rows);
+  };
 
   /** Sections already used in this day, so naming one twice is a tap. */
   const knownSections = [
@@ -416,31 +463,42 @@ export function Plan() {
     });
 
   /**
-   * Write an edited row, and carry a changed section to everything bound to it.
+   * Write an edited row, and carry a changed section to the whole exercise.
    *
    * A section holds whole exercises. Sectioning one row of a ramp used to put
    * its first bracket under the heading and leave the other two outside it,
    * and did the same to a superset — worse there, because the pairing IS the
    * prescription. `sectionUnit` says what "whole" means; only the section
    * travels, since every other field on this row is about this row.
-   *
-   * The unit is read from the rows as DISPLAYED, before the patch lands: that
-   * is the ramp the user was looking at when they picked the section.
    */
   const commitRx = async (
     r: ResolvedPrescriptionRow,
     patch: PrescriptionPatch,
   ) => {
-    const next = patch.section ?? null;
-    const unit =
-      next === (r.section ?? null)
-        ? []
-        : sectionUnit(orderedRx, orderedRx.findIndex((o) => o.id === r.id));
+    const rows = rx ?? [];
+    const next = normalizeSection(patch.section);
+    const group = patch.superset_group ?? null;
+    const moved = next !== normalizeSection(r.section);
+    const mates = moved
+      ? sectionUnit(rows, r.id)
+          .filter((o) => o.id !== r.id && normalizeSection(o.section) !== next)
+          .map((o) => o.id)
+      : [];
     await updatePrescription(r.id, workout.id, patch);
-    for (const o of unit) {
-      if (o.id === r.id || (o.section ?? null) === next) continue;
-      await updatePrescription(o.id, workout.id, { section: next });
-    }
+    await setPrescriptionSection(mates, workout.id, next);
+    // A section or a letter says which PART of the day this belongs to, and
+    // the editor has already redrawn it there. Land it, or Today would still
+    // read the old order.
+    if (moved || group !== (r.superset_group ?? null))
+      await settle(
+        rows.map((o) =>
+          o.id === r.id
+            ? { ...o, section: next, superset_group: group }
+            : mates.includes(o.id)
+              ? { ...o, section: next }
+              : o,
+        ),
+      );
   };
 
   /**
@@ -507,26 +565,93 @@ export function Plan() {
         groups,
         rx ?? [],
       );
+      // Appended last, which is wrong the moment it belongs to a part of the
+      // day: an activation added at the end is an activation nobody does
+      // first. Refetch and land it where the editor draws it.
+      const section = normalizeSection(groups[0]?.section);
+      if (section !== null)
+        await settle((await getResolvedPrescriptions(workout.id)).data);
       // Only auto-expand a single-row add. A ramp is already fully specified
       // by the sheet; opening its first row would suggest it is not.
       if (groups.length === 1) openAfterReload.current = newId;
       setAdding(null);
+      setAddingTo(null);
       const total = groups.reduce((n, g) => n + g.sets, 0);
       toast(
         startsRamp
           ? `${ex.name} added — it joins the ramp above it`
-          : `${ex.name}: ${total} ${total === 1 ? "set" : "sets"} added`,
+          : section !== null
+            ? `${ex.name} added to ${section}`
+            : `${ex.name}: ${total} ${total === 1 ? "set" : "sets"} added`,
       );
       reload();
     });
 
-  const moveRx = (r: ResolvedPrescriptionRow, dir: -1 | 1) =>
+  /**
+   * ↑/↓ move a whole EXERCISE, never a row.
+   *
+   * Moving one bracket of a ramp past the exercise above it split the ramp in
+   * exactly the way dragging used to — same bug, quieter path. Inside a
+   * section this swaps with the neighbouring exercise; an exercise that is a
+   * part of the day on its own moves that part. `moveEntry` returns null when
+   * there is nowhere to go, which is also what disables the button.
+   */
+  const moveExercise = (
+    entry: PlanEntry,
+    r: ResolvedPrescriptionRow,
+    dir: -1 | 1,
+  ) =>
     void run("reorder exercise", async () => {
+      let rows = rx ?? [];
       // Commit first: moving a row used to discard whatever was typed in it.
+      // The commit can itself re-rank the day, so the move is computed from
+      // what the database holds afterwards, not from the stale render.
       if (editingRx === r.id && draft) {
         await commitRx(r, patchFrom(draft));
+        rows = (await getResolvedPrescriptions(workout.id)).data;
       }
-      await movePrescription(r.id, workout.id, dir, rx ?? []);
+      const next = moveEntry(planBlocks(rows), entry.key, dir);
+      if (next !== null)
+        await reorderPrescriptions(workout.id, blockRowIds(next), rows);
+      reload();
+    });
+
+  /** Rename a section from its heading: it is one name over several rows, so
+   *  editing it on one row and hoping is not a thing a person should do. */
+  const renameSection = (block: PlanBlock, name: string) =>
+    void run("rename section", async () => {
+      const next = normalizeSection(name);
+      if (next === null || next === block.section) {
+        setSectionOpen(null);
+        return;
+      }
+      const ids = block.entries.flatMap((e) => e.rows.map((o) => o.id));
+      await setPrescriptionSection(ids, workout.id, next);
+      // A rename can change where the part runs — "Abs" renamed to "Cooldown"
+      // belongs at the end now.
+      await settle(
+        (rx ?? []).map((o) =>
+          ids.includes(o.id) ? { ...o, section: next } : o,
+        ),
+      );
+      setSectionOpen(null);
+      toast(`Renamed to ${next}`);
+      reload();
+    });
+
+  /** Dissolve a section: its exercises stay, in order, as main work. */
+  const dissolveSection = (block: PlanBlock) =>
+    void run("remove section", async () => {
+      const ids = block.entries.flatMap((e) => e.rows.map((o) => o.id));
+      await setPrescriptionSection(ids, workout.id, null);
+      await settle(
+        (rx ?? []).map((o) =>
+          ids.includes(o.id) ? { ...o, section: null } : o,
+        ),
+      );
+      setSectionOpen(null);
+      setConfirming(null);
+      toast(`${block.section} removed — its exercises stay`);
       reload();
     });
 
@@ -582,46 +707,155 @@ export function Plan() {
           <span className="section-meta">{rx?.length ?? 0}</span>
         </div>
         {rx === null && <p className="muted">Loading…</p>}
-        {orderedRx.map((r, i) => {
-          const editing = editingRx === r.id && draft;
-          const ss = supersetAt(orderedRx, i);
-          const sec = sectionAt(orderedRx, i);
-          // More than one row here means picking a section moves all of them.
-          const sectionRows = sectionUnit(orderedRx, i);
-          return (
-            <div
-              key={r.id}
-              className={[
-                "week-item",
-                ss ? "ss-member" : "",
-                ss?.first ? "ss-first" : "",
-                ss?.last ? "ss-last" : "",
-                drag.dragging === r.id ? "row-dragging" : "",
-                drag.dragging !== null && drag.overIndex === i ? "row-over" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              data-rx={r.id}
-              {...drag.handlers(r.id, i)}
-            >
-              {/* Labelled once, at the top of the run, instead of a letter
-                  repeated on every row. "Superset A · 2 exercises" says what is
-                  actually true; "A · " on two separate rows did not. */}
-              {sec?.first && (
-                <div className="section-head-row">{sec.name.toUpperCase()}</div>
-              )}
-              {ss?.first && (
-                <div className="ss-head">
-                  SUPERSET {String.fromCharCode(64 + ss.group)}
-                  <span className="ss-head-note">
-                    {" · "}
-                    {(rx ?? []).filter(
-                      (o) => o.superset_group === ss.group,
-                    ).length}{" "}
-                    exercises, alternated
+        {/* Sections are the one feature of this editor you cannot see until
+            you go looking for it. Say what they are, once, while there are
+            none. */}
+        {rx !== null && rx.length > 1 && knownSections.length === 0 && (
+          <div className="microcopy">
+            This day is one flat list. Sections break it into parts —
+            activations, main work, abs — each with its own heading and its own
+            place in the day. Open any exercise to put it in one.
+          </div>
+        )}
+        {shownBlocks.map((block, bi) => (
+          <div
+            key={block.key}
+            className={[
+              "plan-block",
+              block.section !== null ? "plan-block-named" : "",
+              blockDrag.dragging === block.key ? "block-dragging" : "",
+              blockDrag.dragging !== null && blockDrag.overIndex === bi
+                ? "block-over"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            {/* A part of the day, drawn once as a divider with what is in it.
+                The heading is also the handle: dragging it moves the whole
+                part, and tapping it is how a section is renamed, added to or
+                dissolved — a section you can only edit one row at a time is
+                not a thing, it is a column value. */}
+            {block.section !== null && (
+              <div {...blockDrag.handlers(block.key, bi)}>
+                <button
+                  type="button"
+                  className="plan-section-head"
+                  onClick={() => {
+                    setSectionName(block.section ?? "");
+                    setConfirming(null);
+                    setSectionOpen(
+                      sectionOpen === block.key ? null : block.key,
+                    );
+                  }}
+                >
+                  <span className="plan-section-name">
+                    {block.section.toUpperCase()}
                   </span>
-                </div>
-              )}
+                  <span className="plan-section-count">
+                    {block.entries.length}{" "}
+                    {block.entries.length === 1 ? "exercise" : "exercises"}
+                  </span>
+                  <span className="chev">
+                    {sectionOpen === block.key ? "▾" : "▸"}
+                  </span>
+                </button>
+                {sectionOpen === block.key && (
+                  <div className="plan-section-detail">
+                    <input
+                      className="input"
+                      aria-label="section name"
+                      value={sectionName}
+                      onChange={(e) =>
+                        setSectionName(e.target.value.slice(0, 40))
+                      }
+                    />
+                    <div className="detail-actions">
+                      {/* Adding INTO a part is the action this panel exists
+                          for: an exercise you add and then file is an
+                          exercise you decided about twice. */}
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={busy}
+                        onClick={() => {
+                          setAddingTo(block.section);
+                          setSectionOpen(null);
+                          setSearchOpen(true);
+                        }}
+                      >
+                        Add exercise here
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={busy}
+                        onClick={() => renameSection(block, sectionName)}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn ${confirming === block.key ? "btn-danger" : "btn-ghost"}`}
+                        disabled={busy}
+                        onClick={() =>
+                          confirming === block.key
+                            ? dissolveSection(block)
+                            : setConfirming(block.key)
+                        }
+                      >
+                        {confirming === block.key
+                          ? "Remove heading?"
+                          : "Remove heading"}
+                      </button>
+                    </div>
+                    <div className="microcopy">
+                      {confirming === block.key
+                        ? "The heading goes; its exercises stay in the day, in this order, as main work."
+                        : "Hold the heading to drag the whole part. To take one exercise out, change its section."}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {block.entries.map((entry) => {
+              const ei = entries.findIndex((e) => e.key === entry.key);
+              return (
+                <div
+                  key={entry.key}
+                  className={[
+                    "plan-entry",
+                    entry.supersetGroup !== null ? "ss-group" : "",
+                    entryDrag.dragging === entry.key ? "block-dragging" : "",
+                    entryDrag.dragging !== null && entryDrag.overIndex === ei
+                      ? "block-over"
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  {...(block.section === null
+                    ? blockDrag.handlers(block.key, bi)
+                    : entryDrag.handlers(entry.key, ei))}
+                >
+                  {/* Labelled once, at the top of the run, instead of a letter
+                      repeated on every row. "Superset A · 2 exercises" says
+                      what is actually true; "A · " on two separate rows did
+                      not. */}
+                  {entry.supersetGroup !== null && (
+                    <div className="ss-head">
+                      {supersetName(entry.supersetGroup)}
+                      <span className="ss-head-note">
+                        {" · "}
+                        {entry.exercises > 1
+                          ? `${entry.exercises} exercises, alternated`
+                          : "nothing else in it yet"}
+                      </span>
+                    </div>
+                  )}
+                  {entry.rows.map((r) => {
+                    const editing = editingRx === r.id && draft;
+                    return (
+                      <div key={r.id} className="week-item" data-rx={r.id}>
               <button
                 type="button"
                 className="week-row week-row-rx"
@@ -637,7 +871,7 @@ export function Plan() {
               >
                 <span className="week-label">
                   {r.exercise_name}
-                  {rampWith(rx ?? [], i) && (
+                  {isRampRow(entry, r) && (
                     <span className="rx-ramp"> · RAMP</span>
                   )}
                 </span>
@@ -648,11 +882,8 @@ export function Plan() {
                   {/* Warmup is worth saying on the collapsed row: it is the
                       difference between "you owe 5 working sets" and 3. */}
                   {r.set_type !== undefined && r.set_type !== "working" && (
-                    <span className="rx-type">
-                      {r.set_type.toUpperCase()}
-                    </span>
+                    <span className="rx-type">{r.set_type.toUpperCase()}</span>
                   )}
-
                   {r.sets} × {formatRepRange(r.reps_min, r.reps_max)}
                   {r.load_kg !== null
                     ? ` · ${toDisplay(r.load_kg, unit)} ${unit}`
@@ -673,7 +904,11 @@ export function Plan() {
                         action: "SET",
                         initial: String(draft.sets),
                         allowDecimal: false,
-                        onCommit: (v) => setDraft({ ...draft, sets: Math.min(20, Math.max(1, Math.round(v))) }),
+                        onCommit: (v) =>
+                          setDraft({
+                            ...draft,
+                            sets: Math.min(20, Math.max(1, Math.round(v))),
+                          }),
                         onCancel: () => setPad(null),
                       })
                     }
@@ -698,7 +933,11 @@ export function Plan() {
                         action: "SET",
                         initial: String(draft.reps_min),
                         allowDecimal: false,
-                        onCommit: (v) => setDraft({ ...draft, reps_min: Math.min(100, Math.max(1, Math.round(v))) }),
+                        onCommit: (v) =>
+                          setDraft({
+                            ...draft,
+                            reps_min: Math.min(100, Math.max(1, Math.round(v))),
+                          }),
                         onCancel: () => setPad(null),
                       })
                     }
@@ -721,9 +960,18 @@ export function Plan() {
                       setPad({
                         label: `REPS MAX`,
                         action: "SET",
-                        initial: String(Math.max(draft.reps_min, draft.reps_max)),
+                        initial: String(
+                          Math.max(draft.reps_min, draft.reps_max),
+                        ),
                         allowDecimal: false,
-                        onCommit: (v) => setDraft({ ...draft, reps_max: Math.min(100, Math.max(draft.reps_min, Math.round(v))) }),
+                        onCommit: (v) =>
+                          setDraft({
+                            ...draft,
+                            reps_max: Math.min(
+                              100,
+                              Math.max(draft.reps_min, Math.round(v)),
+                            ),
+                          }),
                         onCancel: () => setPad(null),
                       })
                     }
@@ -768,7 +1016,14 @@ export function Plan() {
                           action: "SET",
                           initial: String(toDisplay(draft.load_kg, unit)),
                           allowDecimal: true,
-                          onCommit: (v) => setDraft({ ...draft, load_kg: Math.min(999, Math.max(0, fromDisplay(v, unit))) }),
+                          onCommit: (v) =>
+                            setDraft({
+                              ...draft,
+                              load_kg: Math.min(
+                                999,
+                                Math.max(0, fromDisplay(v, unit)),
+                              ),
+                            }),
                           onCancel: () => setPad(null),
                         })
                       }
@@ -803,7 +1058,11 @@ export function Plan() {
                           action: "SET",
                           initial: String(draft.load_pct),
                           allowDecimal: true,
-                          onCommit: (v) => setDraft({ ...draft, load_pct: Math.min(200, Math.max(2.5, v)) }),
+                          onCommit: (v) =>
+                            setDraft({
+                              ...draft,
+                              load_pct: Math.min(200, Math.max(2.5, v)),
+                            }),
                           onCancel: () => setPad(null),
                         })
                       }
@@ -819,12 +1078,14 @@ export function Plan() {
                     />
                   )}
 
-                  {/* exercises sharing a letter run together as a superset (A1/A2) */}
+                  {/* Which PART of the day this belongs to. Picking one
+                      moves the whole exercise there and gives the part a
+                      heading — it is not a label on a row. */}
                   <div className="section-head">
-                    <span className="field-label">SECTION</span>
+                    <span className="field-label">PART OF THE DAY</span>
                   </div>
                   <div className="seg seg-types">
-                    {["", ...knownSections, "Activations", "Abs", "Cooldown"]
+                    {["", ...knownSections, ...SECTION_SUGGESTIONS]
                       .filter((v, j, a) => a.indexOf(v) === j)
                       .map((secName) => (
                         <button
@@ -835,7 +1096,7 @@ export function Plan() {
                             setDraft({ ...draft, section: secName })
                           }
                         >
-                          {secName === "" ? "MAIN" : secName.toUpperCase()}
+                          {secName === "" ? MAIN_LABEL : secName.toUpperCase()}
                         </button>
                       ))}
                   </div>
@@ -845,16 +1106,17 @@ export function Plan() {
                     placeholder="Or type a section name"
                     value={draft.section}
                     onChange={(e) =>
-                      setDraft({ ...draft, section: e.target.value.slice(0, 40) })
+                      setDraft({
+                        ...draft,
+                        section: e.target.value.slice(0, 40),
+                      })
                     }
                   />
-                  {sectionRows.length > 1 && (
-                    <div className="microcopy">
-                      A section holds whole exercises, so this applies to all{" "}
-                      {sectionRows.length} rows of the{" "}
-                      {ss ? "superset" : "ramp"}.
-                    </div>
-                  )}
+                  <div className="microcopy">
+                    {entry.rows.length > 1
+                      ? `A section holds whole exercises, so this moves all ${entry.rows.length} rows of the ${entry.supersetGroup !== null ? "superset" : "ramp"} into it.`
+                      : `${MAIN_LABEL} is the body of the day and needs no heading. A named part gets one, and runs where its name says it does.`}
+                  </div>
 
                   <div className="section-head">
                     <span className="field-label">HOW IT IS LOGGED</span>
@@ -956,27 +1218,37 @@ export function Plan() {
                   <div className="section-head">
                     <span className="field-label">ORDER</span>
                     <span className="section-meta">
-                      {i + 1} of {(rx ?? []).length}
+                      {ei + 1} of {entries.length}
                     </span>
                   </div>
                   <div className="chip-row">
                     <button
                       type="button"
                       className="chip"
-                      disabled={i === 0 || busy}
-                      onClick={() => moveRx(r, -1)}
+                      disabled={
+                        busy || moveEntry(shownBlocks, entry.key, -1) === null
+                      }
+                      onClick={() => moveExercise(entry, r, -1)}
                     >
                       ↑ Move up
                     </button>
                     <button
                       type="button"
                       className="chip"
-                      disabled={i >= (rx ?? []).length - 1 || busy}
-                      onClick={() => moveRx(r, 1)}
+                      disabled={
+                        busy || moveEntry(shownBlocks, entry.key, 1) === null
+                      }
+                      onClick={() => moveExercise(entry, r, 1)}
                     >
                       ↓ Move down
                     </button>
                   </div>
+                  {block.section !== null && (
+                    <div className="microcopy">
+                      Moves it within {block.section}. To take it out, pick a
+                      different section above.
+                    </div>
+                  )}
 
                   <div className="detail-actions">
                     {/* Saves on collapse; this is the same action with a
@@ -1024,13 +1296,21 @@ export function Plan() {
                   )}
                 </div>
               )}
-            </div>
-          );
-        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        ))}
         <button
           type="button"
           className="btn btn-outline-ink btn-block"
-          onClick={() => setSearchOpen(true)}
+          onClick={() => {
+            setAddingTo(null);
+            setSearchOpen(true);
+          }}
         >
           Add exercise
         </button>
@@ -1278,10 +1558,14 @@ export function Plan() {
           exerciseName={adding.name}
           supersetMembers={supersetMembers}
           knownSections={knownSections}
+          initialSection={addingTo}
           unit={unit}
           startKg={startKgFor(adding.id)}
           busy={busy}
-          onCancel={() => setAdding(null)}
+          onCancel={() => {
+            setAdding(null);
+            setAddingTo(null);
+          }}
           onSave={(groups) => saveScheme(adding, groups)}
         />
       )}

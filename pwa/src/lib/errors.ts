@@ -95,20 +95,159 @@ export function setSentryUser(userId: string | null): void {
   sentry?.setUser(userId === null ? null : { id: userId });
 }
 
+/**
+ * When this tab loaded. A report twenty seconds after a cold start and one
+ * from a PWA left open for three days are different animals — the second is
+ * where stale caches and expired tokens live.
+ */
+const OPENED_AT = Date.now();
+
+export function appOpenedAt(): number {
+  return OPENED_AT;
+}
+
+/** One labelled line of a bug report, worded for the person sending it. */
+export interface BugDiagnostic {
+  label: string;
+  value: string;
+}
+
+/**
+ * What the app knows about itself at the moment someone hits report.
+ *
+ * Passed in rather than read off `window` in here, so the formatting below is
+ * pure and testable, and so the list in the sheet and the payload cannot
+ * drift apart: both come from one call to buildBugDiagnostics.
+ */
+export interface BugFacts {
+  build: string;
+  route: string;
+  userId: string | null;
+  online: boolean;
+  standalone: boolean;
+  viewport: { w: number; h: number };
+  screen: { w: number; h: number; dpr: number };
+  now: Date;
+  /** IANA zone. A "my workout is on the wrong day" report is unanswerable
+   *  without it — calendar days in this app are the DEVICE's days. */
+  timeZone: string;
+  unit: string;
+  openedAt: number;
+  /** The session running right now, if there is one. */
+  session: { id: string; label: string | null; startedAt: string } | null;
+  queued: number;
+  dead: number;
+  syncState: string;
+  syncError: string | null;
+  recentErrors: string;
+  userAgent: string;
+}
+
+const ROUTE_NAMES: Record<string, string> = {
+  "/": "Today",
+  "/session": "Session",
+  "/history": "History",
+  "/end": "Finishing a session",
+};
+
+/** Route as a place the sender recognises, with the raw path kept: the id in
+ *  `/plan/<uuid>` is the only pointer to WHICH day they were editing. */
+function routeLabel(route: string): string {
+  if (route.startsWith("/plan/")) return `Plan editor · ${route}`;
+  const name = ROUTE_NAMES[route];
+  return name === undefined ? route : `${name} · ${route}`;
+}
+
+/** "12 min" / "3h 05m" — durations a reader holds in their head. */
+function duration(ms: number): string {
+  const mins = Math.max(0, Math.round(ms / 60000));
+  if (mins < 60) return `${mins} min`;
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+}
+
+/**
+ * The report as a list a non-technical person can read before sending it.
+ *
+ * Ordered by what the SENDER recognises — where they were, what they were
+ * doing — before what a debugger wants. Every row is rendered in the sheet
+ * and every row is sent, because the payload is literally this array: there
+ * is no second place for a field to be attached from unseen.
+ */
+export function buildBugDiagnostics(f: BugFacts): BugDiagnostic[] {
+  return [
+    { label: "App version", value: f.build },
+    { label: "Screen you were on", value: routeLabel(f.route) },
+    {
+      label: "Workout in progress",
+      value:
+        f.session === null
+          ? "none"
+          : [
+              f.session.label ?? "unnamed workout",
+              `started ${duration(
+                f.now.getTime() - new Date(f.session.startedAt).getTime(),
+              )} ago`,
+              f.session.id,
+            ].join(" · "),
+    },
+    {
+      label: "Connection",
+      value: `${f.online ? "online" : "offline"} · ${
+        f.standalone ? "installed to the home screen" : "in a browser tab"
+      }`,
+    },
+    {
+      // The single most useful line here: "my sets vanished" and "my sets are
+      // sitting in the outbox" look identical from the couch. Depth, state and
+      // the last failure are one row because they are one question.
+      label: "Waiting to sync",
+      value: [
+        f.queued === 0 && f.dead === 0
+          ? "nothing waiting"
+          : `${f.queued} queued · ${f.dead} failed`,
+        f.syncState,
+        ...(f.syncError === null ? [] : [`last error: ${f.syncError}`]),
+      ].join(" · "),
+    },
+    { label: "Weights shown in", value: f.unit },
+    {
+      // Both sizes, because a layout complaint is about the window and a
+      // "everything is tiny" one is about the device.
+      label: "Screen size",
+      value: `${f.viewport.w}×${f.viewport.h} in ${f.screen.w}×${f.screen.h} · ${f.screen.dpr}x`,
+    },
+    {
+      label: "Device clock",
+      value: `${f.now.toLocaleString("en-GB")} · ${f.timeZone}`,
+    },
+    { label: "App open for", value: duration(f.now.getTime() - f.openedAt) },
+    { label: "Signed in as", value: f.userId ?? "signed out" },
+    { label: "Recent errors", value: f.recentErrors },
+    { label: "Browser", value: f.userAgent },
+  ];
+}
+
 export interface BugReport {
   message: string;
-  /** Free-form key/value diagnostics shown on the Sentry issue. */
-  diagnostics: Record<string, string | number | null>;
+  /** Exactly the rows the sender was shown. */
+  diagnostics: BugDiagnostic[];
 }
 
 /**
  * Send a user-written bug report. Returns false when there is nowhere to send
  * it (no DSN configured), so the caller can say so rather than pretending.
+ *
+ * It goes as Sentry USER FEEDBACK (`type: 'feedback'`), not an exception: the
+ * point is a person asking for help, and the feedback inbox is where a person
+ * gets answered. The diagnostics ride along as event context.
  */
 export function sendBugReport(report: BugReport): boolean {
   if (!sentry) return false;
   sentry.withScope((scope) => {
-    scope.setContext("diagnostics", report.diagnostics);
+    scope.setContext(
+      "diagnostics",
+      Object.fromEntries(report.diagnostics.map((d) => [d.label, d.value])),
+    );
     scope.setTag("source", "in-app-report");
     sentry?.captureFeedback({
       message: report.message,

@@ -20,7 +20,10 @@ export interface DragList {
   overIndex: number | null;
   /** the order to render right now — the dragged row already moved */
   order: string[];
-  handlers: (id: string, index: number) => {
+  handlers: (
+    id: string,
+    index: number,
+  ) => {
     onPointerDown: (e: React.PointerEvent<HTMLElement>) => void;
     onPointerMove: (e: React.PointerEvent<HTMLElement>) => void;
     onPointerUp: (e: React.PointerEvent<HTMLElement>) => void;
@@ -32,10 +35,16 @@ export interface DragList {
 /**
  * @param ids     current order
  * @param onDrop  called with the new order, only when it actually changed
+ * @param bandOf  optional index range an item may be dropped within. The plan
+ *                editor ranks activations before the main body and cooldowns
+ *                after it, so a cooldown dragged to the top would be ranked
+ *                straight back down on the next render; refusing to take it
+ *                there is honest, silently undoing the drop is not.
  */
 export function useDragList(
   ids: string[],
   onDrop: (nextIds: string[]) => void,
+  bandOf?: (id: string) => [number, number] | null,
 ): DragList {
   const [dragging, setDragging] = useState<string | null>(null);
   const [order, setOrder] = useState<string[]>(ids);
@@ -43,15 +52,27 @@ export function useDragList(
   const startY = useRef(0);
   const rowH = useRef(0);
   const fromIndex = useRef(0);
+  /** the index range this drag may land in; the whole list by default */
+  const band = useRef<[number, number]>([0, 0]);
   /** The element holding pointer capture, so it can actually be released. */
   const captured = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
 
   // While not dragging, follow the source of truth. During a drag the local
   // order IS the truth, or every pointer move would be undone by a re-render.
+  //
+  // By VALUE, not by array identity. Callers derive the id list from state, so
+  // it is a fresh array on every render: depending on the reference meant the
+  // effect re-ran, set a new array, re-rendered, and looped until React gave
+  // up with "maximum update depth exceeded" — the whole screen stuck on
+  // Loading. It only ever survived because the first array was also the
+  // initial state and nothing re-rendered in between.
+  const signature = ids.join("\u0000");
+  const latest = useRef(ids);
+  latest.current = ids;
   useEffect(() => {
-    if (dragging === null) setOrder(ids);
-  }, [ids, dragging]);
+    if (dragging === null) setOrder(latest.current);
+  }, [signature, dragging]);
 
   const clearHold = useCallback(() => {
     if (holdTimer.current !== null) {
@@ -102,6 +123,7 @@ export function useDragList(
         startY.current = e.clientY;
         rowH.current = box.height || 1;
         fromIndex.current = index;
+        band.current = bandOf?.(id) ?? [0, ids.length - 1];
         captured.current = null;
         clearHold();
         holdTimer.current = window.setTimeout(() => {
@@ -126,8 +148,8 @@ export function useDragList(
         }
         const moved = Math.round(dy / rowH.current);
         const to = Math.min(
-          ids.length - 1,
-          Math.max(0, fromIndex.current + moved),
+          band.current[1],
+          Math.max(band.current[0], fromIndex.current + moved),
         );
         setOverIndex(to);
         setOrder(() => {

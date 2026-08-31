@@ -2474,6 +2474,67 @@
     background: var(--accent-dim);
   }
 
+  /* -- the week strip swipes ------------------------------------------------
+   * Three weeks laid side by side in a scroll-snapping track, one page wide
+   * each. Native scrolling rather than a pointer-based swipe handler: the
+   * strip sits directly above a vertically scrolling list, and the browser's
+   * own direction locking is what decides which of the two a drag belongs to.
+   * A hand-rolled gesture has to guess that, and it either steals the page
+   * scroll or misses the swipe.
+   *
+   * The track runs edge to edge so a swipe can start anywhere, and each page
+   * puts the gutter back so the cells line up with the rest of the screen. */
+  .week-track {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    /* no rubber-band into the browser's own back gesture */
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    margin-left: calc(var(--gutter) * -1);
+    margin-right: calc(var(--gutter) * -1);
+  }
+
+  .week-track::-webkit-scrollbar {
+    display: none;
+  }
+
+  .week-page {
+    flex: 0 0 100%;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    padding: 0 var(--gutter);
+  }
+
+  /* The strip's own narrow-phone bleed is the track's job now; doubling the
+   * negative gutter would push each page wider than the page it sits in and
+   * break every snap point. */
+  @media (max-width: 359px) {
+    .week-page {
+      padding: 0;
+    }
+
+    .week-page .week-strip {
+      margin-left: 0;
+      margin-right: 0;
+    }
+  }
+
+  /* Right-aligned under the strip: adjacent to what it acts on, and one
+   * thumb-stretch below it rather than up in the section head where the
+   * counts already live. */
+  .week-jump {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--s-4);
+  }
+
+  .week-today {
+    min-height: var(--tap-min);
+    padding: 0 var(--s-6);
+  }
+
   .selected-day-head {
     display: flex;
     justify-content: space-between;
@@ -2732,18 +2793,17 @@
    * exists without showing WHICH rows are paired. The rail is the grouping:
    * members share a left accent edge, the run is labelled once at its top, and
    * the ends are rounded off so a pair reads as one block. */
-  .ss-member {
+  .ss-group {
     box-shadow: var(--rail-accent);
     padding-left: var(--s-6);
     background: rgb(var(--ink-rgb) / 0.025);
+    margin: var(--s-6) 0;
   }
 
-  .ss-first {
-    margin-top: var(--s-6);
-  }
-
-  .ss-last {
-    margin-bottom: var(--s-6);
+  /* The rail belongs to the group, so the last row inside it must not draw
+     the list's own divider across the bottom of the rail. */
+  .ss-group .week-item:last-child {
+    border-bottom: 0;
   }
 
   .ss-head {
@@ -2860,25 +2920,71 @@
     padding: 0 3px;
   }
 
-  /* A named part of a workout: activations, main lift, abs. Reads as a
-   * divider rather than a card — sections group what is already there, they do
-   * not add another box. */
-  .section-head-row {
+  /* -- parts of a day ------------------------------------------------------
+   * A planned day is activations, then the main work, then abs — not nine
+   * rows you have to read to find that out. A named part is a rule across the
+   * page with its name and its size on it, so the shape of the session is
+   * legible before any single exercise is.
+   *
+   * A divider, not a card: sections group what is already there, they do not
+   * add another box. The rule is what separates them; the heading sits on it.
+   */
+  .plan-block-named {
+    border-top: var(--rule-strong);
+    margin-top: var(--s-7);
+  }
+
+  /* The heading is a button (it opens rename / add / remove) and the drag
+     handle for the whole part, so it is a full tap target, not a caption. */
+  .plan-section-head {
+    display: grid;
+    grid-template-columns: 1fr auto var(--s-7);
+    gap: var(--s-5);
+    align-items: baseline;
+    width: 100%;
+    padding: var(--s-6) 0 var(--s-4);
+    min-height: var(--tap-min);
+    text-align: left;
+  }
+
+  .plan-section-name {
     font-family: var(--font-mono);
     font-size: var(--fs-label);
     font-weight: 700;
     letter-spacing: var(--track-2);
-    color: var(--text-dim);
-    border-top: var(--rule-strong);
-    padding-top: var(--s-7);
-    margin-top: var(--s-7);
+    color: var(--accent-dim);
   }
 
-  /* First section in a list needs no rule above it; the list already has one. */
-  .week-item:first-child .section-head-row {
-    border-top: 0;
-    margin-top: 0;
-    padding-top: 0;
+  .plan-section-count {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-1);
+    color: var(--text-dim);
+  }
+
+  .plan-section-detail {
+    padding: 0 0 var(--s-6);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+
+  /* Its exercises sit in from the rule, under a hairline that shows where the
+     part ends — an indent alone leaves "is the bench press in Activations?"
+     to be answered by squinting. */
+  .plan-block-named .plan-entry {
+    padding-left: var(--s-6);
+    box-shadow: inset 1px 0 0 var(--rule-hair-color);
+  }
+
+  /* ...except a superset, which already carries the accent rail. Two rails
+     side by side is a ladder, not a grouping. */
+  .plan-block-named .plan-entry.ss-group {
+    box-shadow: var(--rail-accent);
+  }
+
+  .plan-block-named {
+    padding-bottom: var(--s-6);
   }
 
   /* A tick-only movement: no numbers to show, so the row says what it is. */
@@ -2890,13 +2996,16 @@
   }
 
   /* -- drag to reorder ----------------------------------------------------
-   * The row must own the whole gesture once it is held, or the list scrolls
-   * out from under the finger mid-drag. */
-  .week-item {
+   * What is dragged is a whole part of the day or a whole exercise, never a
+   * row: half a ramp and half a superset are not things a day can contain.
+   * The element must own the whole gesture once it is held, or the list
+   * scrolls out from under the finger mid-drag. */
+  .plan-block,
+  .plan-entry {
     touch-action: pan-y;
   }
 
-  .row-dragging {
+  .block-dragging {
     opacity: 0.9;
     background: var(--bg-input);
     box-shadow: 0 3px 10px rgb(var(--ink-rgb) / 0.22);
@@ -2905,7 +3014,7 @@
     z-index: var(--z-rail);
   }
 
-  .row-over {
+  .block-over {
     box-shadow: inset 0 2px 0 var(--accent);
   }
 
@@ -3166,6 +3275,49 @@
     resize: vertical;
     min-height: 6rem;
     font-family: inherit;
+  }
+
+  /* What the report will carry, spelled out before it is sent. Two columns
+   * on anything but the narrowest phone; the values are the subject, so they
+   * take the remaining width and the labels stay a fixed reading column. */
+  .bug-diag {
+    display: grid;
+    grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+    gap: var(--s-2) var(--s-5);
+    margin-top: var(--s-4);
+    padding: var(--s-5) 0;
+    border-top: var(--rule-hair);
+    border-bottom: var(--rule-hair);
+    font-size: var(--fs-meta);
+    line-height: 1.5;
+  }
+
+  .bug-diag dt {
+    font-family: var(--font-mono);
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  /* The user agent is one unbroken 120-character token; without this it
+   * widens the grid and the whole sheet scrolls sideways. */
+  .bug-diag dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    /* the collected values are data, not prose: keep any newline the app put
+     * in them (the recent-error tail is one line per error) */
+    white-space: pre-wrap;
+  }
+
+  @media (max-width: 359px) {
+    .bug-diag {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+
+    .bug-diag dd {
+      margin-bottom: var(--s-4);
+    }
   }
 }
 

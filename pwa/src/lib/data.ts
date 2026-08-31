@@ -13,6 +13,7 @@ import {
   cacheKeys,
 } from "./db";
 import { reportError } from "./errors";
+import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
 import type {
@@ -277,6 +278,28 @@ export async function updatePrescription(
   await invalidatePlanCaches(plannedWorkoutId);
 }
 
+/**
+ * Put a set of rows in one section, or take them out of every section.
+ *
+ * A section is not a row's private property — it is the name of a part of the
+ * day, and renaming it, emptying it or moving a whole exercise into it all
+ * touch several rows at once. One statement, so a section is never half
+ * renamed.
+ */
+export async function setPrescriptionSection(
+  ids: string[],
+  plannedWorkoutId: string,
+  section: string | null,
+): Promise<void> {
+  if (ids.length === 0) return;
+  const { error } = await supabase
+    .from("prescriptions")
+    .update({ section })
+    .in("id", ids);
+  throwIf(error);
+  await invalidatePlanCaches(plannedWorkoutId);
+}
+
 export async function deletePrescription(
   id: string,
   plannedWorkoutId: string,
@@ -377,7 +400,10 @@ export async function getTemplates(): Promise<TemplateRow[]> {
   throwIf(rxErr);
   const counts = new Map<string, number>();
   for (const r of (rx ?? []) as { planned_workout_id: string }[])
-    counts.set(r.planned_workout_id, (counts.get(r.planned_workout_id) ?? 0) + 1);
+    counts.set(
+      r.planned_workout_id,
+      (counts.get(r.planned_workout_id) ?? 0) + 1,
+    );
 
   return rows.map((r) => ({
     id: r.id,
@@ -595,23 +621,12 @@ export async function addPrescriptionGroups(
 }
 
 /**
- * Move one exercise up or down within its day.
- *
- * `unique (planned_workout_id, position)` means the two rows cannot simply
- * take each other's numbers — the first UPDATE would collide with the row it
- * is about to replace. So the mover parks on a position nothing can occupy
- * (negative fails the `position >= 0` check, so park high instead), the
- * neighbour takes the vacated slot, then the mover lands. Same shape as
- * swapWorkoutOrder does for day_index.
- */
-/**
  * Reorder a whole day at once, from a dragged order.
  *
  * `unique (planned_workout_id, position)` means positions cannot simply be
  * reassigned in place — the first UPDATE would collide with a row still
  * holding its target number. So every row parks above the range first, then
- * comes back down into its new slot. Same trick movePrescription uses for a
- * swap of two, generalised to n.
+ * comes back down into its new slot. Two passes, never a collision.
  *
  * Rows whose position is already correct are skipped, so dropping a row back
  * where it came from writes nothing.
@@ -646,34 +661,6 @@ export async function reorderPrescriptions(
   for (const t of target) {
     await step(t.row.id, t.index);
   }
-  await invalidatePlanCaches(plannedWorkoutId);
-}
-
-export async function movePrescription(
-  rxId: string,
-  plannedWorkoutId: string,
-  direction: -1 | 1,
-  existing: ResolvedPrescriptionRow[],
-): Promise<void> {
-  const ordered = [...existing].sort((a, b) => a.position - b.position);
-  const i = ordered.findIndex((r) => r.id === rxId);
-  const j = i + direction;
-  if (i < 0 || j < 0 || j >= ordered.length) return;
-
-  const mover = ordered[i];
-  const neighbour = ordered[j];
-  const park = ordered.reduce((m, r) => Math.max(m, r.position), 0) + 1;
-
-  const step = async (id: string, position: number) => {
-    const { error } = await supabase
-      .from("prescriptions")
-      .update({ position })
-      .eq("id", id);
-    throwIf(error);
-  };
-  await step(mover.id, park);
-  await step(neighbour.id, mover.position);
-  await step(mover.id, neighbour.position);
   await invalidatePlanCaches(plannedWorkoutId);
 }
 
@@ -1151,6 +1138,12 @@ export interface OpenSessionPort {
   /** null when the server has never seen the row — its insert may still be
    *  queued in the outbox, which is NOT the same as "closed" */
   closedState(sessionId: string): Promise<SessionClosedState | null>;
+  /** how many of this session's sets are still queued on THIS device.
+   *  Local on purpose. Everything else on this port asks the server, but
+   *  "this session has no sets" is the fact that decides whether a day of
+   *  training gets discarded, and the server cannot see what has not
+   *  finished uploading. */
+  queuedSetCount(sessionId: string): Promise<number>;
 }
 
 const supabaseOpenSessions: OpenSessionPort = {
@@ -1198,6 +1191,9 @@ const supabaseOpenSessions: OpenSessionPort = {
     throwIf(error);
     return (data as SessionClosedState | null) ?? null;
   },
+  async queuedSetCount(sessionId) {
+    return (await outbox.pendingSets(sessionId)).length;
+  },
 };
 
 /**
@@ -1224,6 +1220,16 @@ export async function syncOpenSessions(
 
   for (const s of open) {
     if (localDayOf(s.started_at) >= today) continue; // still today's business
+    // Sets for this session still sitting in this device's outbox mean the
+    // server's answer is not the whole truth, so leave the session entirely
+    // alone — neither branch below is safe. Completing it would stamp
+    // ended_at at a server-known time that is earlier than the real last
+    // set; discarding it would soft-delete a workout that is mid-upload,
+    // and the queued sets would then land in a session no view will ever
+    // show, with no un-discard anywhere in the PWA. Next launch reconciles
+    // it, by which point the flush has either gone through or the item is
+    // visibly dead in the outbox.
+    if ((await port.queuedSetCount(s.id)) > 0) continue;
     const last = await port.lastSetAt(s.id);
     if (last) {
       // complete at the last logged set (clamped: the DB requires

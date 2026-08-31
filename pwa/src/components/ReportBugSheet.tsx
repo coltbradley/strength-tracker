@@ -5,13 +5,29 @@
 // one thing only they have: what they were trying to do. Everything below the
 // textarea is collected, not typed.
 //
+// It is also SHOWN. Attaching someone's app version, sync state and open
+// session without putting them on screen is asking them to send a sealed
+// envelope; the list under the box is the same array that goes in the
+// payload, so what they read is what leaves the phone.
+//
 // The floating button that opens this lives in FabDock, which it shares with
 // the coach.
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Sheet } from "./Sheet";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
-import { recentErrorLog, sendBugReport, toast } from "../lib/errors";
+import { useUnit } from "../hooks/useUnit";
+import { cacheGet, cacheKeys } from "../lib/db";
+import {
+  appOpenedAt,
+  buildBugDiagnostics,
+  recentErrorLog,
+  reportError,
+  sendBugReport,
+  toast,
+  type BugDiagnostic,
+} from "../lib/errors";
 import { buildStamp } from "../lib/build";
+import type { ActiveSession } from "../lib/types";
 
 interface ReportBugSheetProps {
   userId: string | null;
@@ -19,33 +35,75 @@ interface ReportBugSheetProps {
   onClose: () => void;
 }
 
-export function ReportBugSheet({ userId, route, onClose }: ReportBugSheetProps) {
+export function ReportBugSheet({
+  userId,
+  route,
+  onClose,
+}: ReportBugSheetProps) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [session, setSession] = useState<ActiveSession | null>(null);
   const status = useOutboxStatus();
+  const unit = useUnit();
+
+  // Whether a session is open right now, and which one. Half the reports
+  // worth reading are about mid-workout behaviour, and "was there a session
+  // running?" is the first question every one of them raises.
+  useEffect(() => {
+    let cancelled = false;
+    void cacheGet<ActiveSession>(cacheKeys.activeSession)
+      .then((s) => {
+        if (!cancelled) setSession(s ?? null);
+      })
+      .catch((e: unknown) => reportError(e, "read open session for report"));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Built on every render rather than memoised: the clock and the open-session
+  // age are in here, and a list that says 14:02 while sending 14:19 is the
+  // exact dishonesty this display exists to remove.
+  const diagnostics = (): BugDiagnostic[] =>
+    buildBugDiagnostics({
+      build: buildStamp(),
+      route,
+      userId,
+      online: navigator.onLine,
+      standalone: window.matchMedia("(display-mode: standalone)").matches,
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      screen: {
+        w: window.screen.width,
+        h: window.screen.height,
+        dpr: window.devicePixelRatio,
+      },
+      now: new Date(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      unit,
+      openedAt: appOpenedAt(),
+      session:
+        session === null
+          ? null
+          : {
+              id: session.id,
+              label: session.workout_label,
+              startedAt: session.started_at,
+            },
+      queued: status.pending,
+      dead: status.dead,
+      syncState: status.state,
+      syncError: status.lastError,
+      recentErrors: recentErrorLog(),
+      userAgent: navigator.userAgent,
+    });
+
+  const rows = diagnostics();
 
   const submit = () => {
     setBusy(true);
     const sent = sendBugReport({
       message: text.trim(),
-      diagnostics: {
-        build: buildStamp(),
-        route,
-        user: userId ?? "signed out",
-        online: navigator.onLine ? "yes" : "no",
-        installed: window.matchMedia("(display-mode: standalone)").matches
-          ? "yes"
-          : "no",
-        viewport: `${window.innerWidth}x${window.innerHeight}`,
-        // Queue depth is the single most useful number here: "my sets vanished"
-        // and "my sets are sitting in the outbox" look identical from the couch.
-        queued: status.pending,
-        dead: status.dead,
-        syncState: status.state,
-        syncError: status.lastError,
-        recentErrors: recentErrorLog(),
-        userAgent: navigator.userAgent,
-      },
+      diagnostics: diagnostics(),
     });
     setBusy(false);
     onClose();
@@ -71,10 +129,21 @@ export function ReportBugSheet({ userId, route, onClose }: ReportBugSheetProps) 
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
+
+      <div className="field-label">SENT WITH IT</div>
       <div className="microcopy">
-        Your app version, screen, sync queue and the last few errors are
-        attached automatically. No need to describe them.
+        Read from the app, not from you. Nothing you have written or logged is
+        in here.
       </div>
+      <dl className="bug-diag">
+        {rows.map((r) => (
+          <Fragment key={r.label}>
+            <dt>{r.label}</dt>
+            <dd>{r.value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+
       <button
         type="button"
         className="btn btn-primary"

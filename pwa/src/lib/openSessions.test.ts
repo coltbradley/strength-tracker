@@ -35,7 +35,8 @@ interface PortCall {
   at: string;
 }
 
-/** Port over plain fixtures. `lastSets` maps session id -> newest set time. */
+/** Port over plain fixtures. `lastSets` maps session id -> newest set time.
+ *  `queued` maps session id -> sets still waiting in this device's outbox. */
 function makePort(
   open: OpenSessionRow[],
   lastSets: Record<string, string> = {},
@@ -43,6 +44,7 @@ function makePort(
     string,
     { ended_at: string | null; discarded_at: string | null } | null
   > = {},
+  queued: Record<string, number> = {},
 ) {
   const calls: PortCall[] = [];
   const port: OpenSessionPort = {
@@ -61,6 +63,9 @@ function makePort(
     async closedState(id) {
       return closed[id] ?? null;
     },
+    async queuedSetCount(id) {
+      return queued[id] ?? 0;
+    },
   };
   return { port, calls };
 }
@@ -74,6 +79,41 @@ beforeEach(async () => {
 });
 
 describe("syncOpenSessions", () => {
+  // The bug this guards: "empty" was read off the SERVER alone. A session
+  // logged offline has no server-side sets yet, so yesterday's real workout
+  // was soft-deleted and the sets then flushed into a discarded session —
+  // invisible in every view, and the PWA has no un-discard.
+  it("leaves a session ALONE while its sets are still queued locally", async () => {
+    const s = session();
+    const { port, calls } = makePort([s], {}, {}, { [s.id]: 3 });
+    const r = await syncOpenSessions(null, localDayOf, TODAY, new Set(), port);
+    expect(calls).toEqual([]);
+    expect(r.autoDiscarded).toBe(0);
+    expect(r.autoCompleted).toBe(0);
+  });
+
+  it("does not auto-complete early when sets are still queued", async () => {
+    // the server knows about an early set; the device holds later ones, so
+    // completing now would stamp ended_at before the session really ended
+    const s = session();
+    const { port, calls } = makePort(
+      [s],
+      { [s.id]: "2026-08-26T18:30:00.000Z" },
+      {},
+      { [s.id]: 1 },
+    );
+    await syncOpenSessions(null, localDayOf, TODAY, new Set(), port);
+    expect(calls).toEqual([]);
+  });
+
+  it("still discards a session the device agrees is empty", async () => {
+    const s = session();
+    const { port, calls } = makePort([s], {}, {}, { [s.id]: 0 });
+    const r = await syncOpenSessions(null, localDayOf, TODAY, new Set(), port);
+    expect(r.autoDiscarded).toBe(1);
+    expect(calls[0]?.op).toBe("discard");
+  });
+
   it("auto-completes yesterday's session AT ITS LAST SET", async () => {
     const s = session();
     const last = "2026-08-26T19:12:00.000Z";

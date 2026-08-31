@@ -104,6 +104,10 @@ interface SetSchemeSheetProps {
   exerciseName: string;
   /** Sections already used in this day, offered before the defaults. */
   knownSections?: string[];
+  /** The part of the day this add started from — "Add exercise here" on a
+   *  section heading means the answer is already known, and asking again is
+   *  how an exercise ends up filed afterwards instead of on the way in. */
+  initialSection?: string | null;
   /** Names already in each superset group, so picking a letter can say who it
    *  pairs with rather than leaving the letter to mean nothing. */
   supersetMembers?: Record<number, string[]>;
@@ -118,6 +122,7 @@ interface SetSchemeSheetProps {
 export function SetSchemeSheet({
   exerciseName,
   knownSections = [],
+  initialSection = null,
   supersetMembers,
   unit,
   startKg,
@@ -152,7 +157,7 @@ export function SetSchemeSheet({
   // A session is not a flat list — it is activations, then the main lift, then
   // abs. Naming the part this belongs to is what turns a wall of exercises
   // into a workout someone recognises.
-  const [section, setSection] = useState("");
+  const [section, setSection] = useState(initialSection ?? "");
   // Nobody records 12 reps at 0 kg for a banded glute bridge; they record that
   // they did it. Forcing every movement through weight-and-reps made the warmup
   // half of a session either a lie or unlogged.
@@ -192,7 +197,7 @@ export function SetSchemeSheet({
 
   return (
     <Sheet title={exerciseName} onClose={onCancel} tall>
-      <div className="field-label">SECTION</div>
+      <div className="field-label">PART OF THE DAY</div>
       <div className="seg seg-tight">
         {["", ...knownSections, "Activations", "Abs", "Cooldown"]
           .filter((v, i, a) => a.indexOf(v) === i)
@@ -203,7 +208,7 @@ export function SetSchemeSheet({
               className={`seg-btn ${section === sec ? "seg-on" : ""}`}
               onClick={() => setSection(sec)}
             >
-              {sec === "" ? "MAIN" : sec.toUpperCase()}
+              {sec === "" ? "MAIN WORK" : sec.toUpperCase()}
             </button>
           ))}
       </div>

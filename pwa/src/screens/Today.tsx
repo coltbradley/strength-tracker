@@ -10,6 +10,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -39,6 +40,7 @@ import {
   type WorkoutList,
 } from "../lib/data";
 import { groupRamps } from "../lib/entries";
+import { addDays, startOfWeek, weekDates } from "../lib/calendar";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
@@ -49,7 +51,6 @@ import {
   formatRxTarget,
   formatTodayHeading,
   formatWeekdayLetter,
-  getWeekDates,
   parseLocalDate,
   rxHasNoTm,
   todayLocalIso,
@@ -68,6 +69,56 @@ const GATE_TIMEOUT_MS = 2500;
 
 type WorkoutState =
   "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE";
+
+/** How long the swipe track must sit still before we call it settled. */
+const SETTLE_MS = 120;
+
+/** How long after re-parking the track a settle is treated as our own doing
+ *  rather than a swipe. Belt and braces around the snap-off jump below. */
+const PARK_GUARD_MS = 250;
+
+/**
+ * The three weeks the strip renders: last, the selected one, next.
+ *
+ * A track of real weeks rather than a swipe gesture. The strip sits directly
+ * above a vertically scrolling list, and deciding whether a drag belongs to
+ * the strip or to the page is exactly what a hand-rolled pointer handler gets
+ * wrong; a native scroll container hands that decision to the browser's own
+ * direction locking, which already gets it right on every phone.
+ */
+export function weekPages(selected: string, weekStart: number): string[][] {
+  return [-7, 0, 7].map((n) => weekDates(addDays(selected, n), weekStart));
+}
+
+/**
+ * The day to select when the track settles on `page` (0 = last week,
+ * 1 = the one already selected, 2 = next).
+ *
+ * Swiping moves the SELECTION, not a separate view anchor: the strip is
+ * anchored on the selected day, and a second anchor would let the week on
+ * screen and the day previewed below it disagree. Same weekday, so a swipe
+ * from Wednesday lands on Wednesday.
+ */
+export function weekPageDate(selected: string, page: number): string {
+  return addDays(selected, (page - 1) * 7);
+}
+
+/**
+ * "24–30 AUG", or "31 AUG – 6 SEPT" across a month end.
+ *
+ * The head used to read THIS WEEK unconditionally, which was true while the
+ * strip could only show this week. Now that it swipes, a label that says
+ * "this week" over next month is worse than no label.
+ */
+export function weekRangeLabel(dates: string[]): string {
+  const a = parseLocalDate(dates[0]);
+  const b = parseLocalDate(dates[dates.length - 1]);
+  const month = (d: Date) =>
+    d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase();
+  return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear()
+    ? `${a.getDate()}–${b.getDate()} ${month(b)}`
+    : `${a.getDate()} ${month(a)} – ${b.getDate()} ${month(b)}`;
+}
 
 export function Today() {
   const navigate = useNavigate();
@@ -192,10 +243,81 @@ export function Today() {
   // Anchored on the SELECTED day, not on today, so picking a date in another
   // week from the calendar moves the strip to that week instead of silently
   // showing this one.
-  const weekDates = useMemo(
-    () => getWeekDates(parseLocalDate(selectedDate), weekStart),
+  const pages = useMemo(
+    () => weekPages(selectedDate, weekStart),
     [selectedDate, weekStart],
   );
+  const weekDates = pages[1];
+  const weekAnchor = startOfWeek(selectedDate, weekStart);
+
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const settleRef = useRef(0);
+  const parkedAtRef = useRef(0);
+
+  /**
+   * Put the track back on the middle page, which is always the selected week.
+   *
+   * Snapping is turned OFF for the jump. A swipe leaves the track resting on
+   * page 0 or 2; the week then becomes the selected one and the three pages
+   * re-render around it, and the browser's re-snap drags the scroll back to
+   * the page the finger left on. That scroll settles as another swipe, and
+   * the strip runs away a week at a time — which is exactly what it did.
+   */
+  const park = useCallback((el: HTMLDivElement | null) => {
+    if (el === null || el.clientWidth === 0) return;
+    parkedAtRef.current = Date.now();
+    window.clearTimeout(settleRef.current);
+    el.style.scrollSnapType = "none";
+    el.scrollLeft = el.clientWidth;
+    // Next frame is the right moment (after layout, before paint), but rAF
+    // does not run in a hidden tab and the strip must never come back with
+    // snapping left off — so a timer backstops it.
+    const restore = () => {
+      el.style.scrollSnapType = "";
+    };
+    requestAnimationFrame(restore);
+    window.setTimeout(restore, PARK_GUARD_MS);
+  }, []);
+
+  /** A callback ref as well as the effect below, because the strip mounts
+   *  late — it waits for the plan list — and a mount after the last week
+   *  change would come up showing last week. */
+  const centreTrack = useCallback(
+    (el: HTMLDivElement | null) => {
+      trackRef.current = el;
+      park(el);
+    },
+    [park],
+  );
+
+  useLayoutEffect(() => {
+    park(trackRef.current);
+  }, [weekAnchor, park]);
+
+  useEffect(() => {
+    // A rotation changes the page width; the track has to be re-parked or the
+    // strip comes back resting between two weeks.
+    const onResize = () => park(trackRef.current);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.clearTimeout(settleRef.current);
+    };
+  }, [park]);
+
+  /** Settling, not `scrollend`: iOS Safari only got that event recently and
+   *  this has to work on the phone in the gym. */
+  const onTrackScroll = () => {
+    const el = trackRef.current;
+    if (el === null || el.clientWidth === 0) return;
+    window.clearTimeout(settleRef.current);
+    settleRef.current = window.setTimeout(() => {
+      if (Date.now() - parkedAtRef.current < PARK_GUARD_MS) return;
+      const page = Math.round(el.scrollLeft / el.clientWidth);
+      if (page === 1) return;
+      setSelectedDate((d) => weekPageDate(d, page));
+    }, SETTLE_MS);
+  };
 
   const states = useMemo(() => {
     const map = new Map<string, WorkoutState>();
@@ -513,6 +635,61 @@ export function Today() {
    *  is not something anything would catch. */
   const groupedRx = (workoutId: string) => groupRamps(rx[workoutId] ?? []);
 
+  /** One day of the strip. `live` is false for the weeks either side of the
+   *  selected one: they are drawn but unreachable until swiped to. */
+  const weekCell = (iso: string, live: boolean) => {
+    const w = byDate.get(iso) ?? null;
+    const cellState: WorkoutState | "REST" = w
+      ? (states.get(w.id) ?? "UPCOMING")
+      : "REST";
+    const isToday = iso === today;
+    const isSelected = live && iso === selectedDate;
+    return (
+      <button
+        key={iso}
+        type="button"
+        tabIndex={live ? undefined : -1}
+        aria-current={isSelected ? "date" : undefined}
+        aria-label={`${parseLocalDate(iso).toLocaleDateString("en-GB", {
+          weekday: "long",
+        })} ${parseLocalDate(iso).getDate()}${
+          w
+            ? `, ${
+                cellState === "REST"
+                  ? "rest day"
+                  : stateLabel(cellState as WorkoutState).toLowerCase()
+              }`
+            : ", rest day"
+        }`}
+        className={`week-cell ${isToday ? "week-cell-today" : ""} ${isSelected ? "week-cell-selected" : ""}`}
+        onClick={() => {
+          setSelectedDate(iso);
+          if (w) loadRx(w.id);
+        }}
+      >
+        <span className="week-cell-letter">{formatWeekdayLetter(iso)}</span>
+        <span
+          className={`week-cell-num ${
+            cellState === "MISSED"
+              ? "week-cell-num-missed"
+              : cellState === "SKIPPED"
+                ? "week-cell-num-skipped"
+                : cellState === "REST"
+                  ? "week-cell-num-rest"
+                  : cellState === "UPCOMING"
+                    ? "week-cell-num-upcoming"
+                    : ""
+          }`}
+        >
+          {parseLocalDate(iso).getDate()}
+        </span>
+        <span className="week-cell-mark">
+          {cellState === "DONE" && <span className="week-cell-dot" />}
+        </span>
+      </button>
+    );
+  };
+
   /** Exactly one start affordance may be live at a time. An active session
    *  owns the screen (the RESUME banner is the primary); an unrecovered
    *  orphan owns it next (its card asks resume/finish/discard) — starting a
@@ -744,7 +921,10 @@ export function Today() {
               aria-label="open calendar to pick another day"
               onClick={() => setCalendarOpen(true)}
             >
-              THIS WEEK <span aria-hidden="true">▾</span>
+              {weekDates.includes(today)
+                ? "THIS WEEK"
+                : weekRangeLabel(weekDates)}{" "}
+              <span aria-hidden="true">▾</span>
             </button>
             <span className="section-meta">
               {doneCount} DONE · {workouts.length - doneCount - skippedCount} TO
@@ -757,65 +937,64 @@ export function Today() {
               switch panels, and the half-built tab pattern that was here
               (no tabpanel, no aria-controls, no roving tabindex, no arrow
               keys) told a screen reader to expect all four. Each cell keeps
-              its own spoken label and marks itself with aria-current. */}
-          <div className="week-strip" role="group" aria-label="this week">
-            {weekDates.map((iso) => {
-              const w = byDate.get(iso) ?? null;
-              const cellState: WorkoutState | "REST" = w
-                ? (states.get(w.id) ?? "UPCOMING")
-                : "REST";
-              const isToday = iso === today;
-              const isSelected = iso === selectedDate;
+              its own spoken label and marks itself with aria-current.
+
+              The neighbouring weeks are rendered but hidden from assistive
+              tech and out of the tab order: until you swipe to one it is a
+              preview, and twenty-one tab stops for seven visible days is not
+              the same screen a sighted person is using. */}
+          <div
+            className="week-track"
+            ref={centreTrack}
+            onScroll={onTrackScroll}
+          >
+            {pages.map((dates, i) => {
+              const live = i === 1;
               return (
-                <button
-                  key={iso}
-                  type="button"
-                  aria-current={isSelected ? "date" : undefined}
-                  aria-label={`${parseLocalDate(iso).toLocaleDateString(
-                    "en-GB",
-                    { weekday: "long" },
-                  )} ${parseLocalDate(iso).getDate()}${
-                    w
-                      ? `, ${
-                          cellState === "REST"
-                            ? "rest day"
-                            : stateLabel(
-                                cellState as WorkoutState,
-                              ).toLowerCase()
-                        }`
-                      : ", rest day"
-                  }`}
-                  className={`week-cell ${isToday ? "week-cell-today" : ""} ${isSelected ? "week-cell-selected" : ""}`}
-                  onClick={() => {
-                    setSelectedDate(iso);
-                    if (w) loadRx(w.id);
-                  }}
+                <div
+                  className="week-page"
+                  key={dates[0]}
+                  aria-hidden={live ? undefined : true}
                 >
-                  <span className="week-cell-letter">
-                    {formatWeekdayLetter(iso)}
-                  </span>
-                  <span
-                    className={`week-cell-num ${
-                      cellState === "MISSED"
-                        ? "week-cell-num-missed"
-                        : cellState === "SKIPPED"
-                          ? "week-cell-num-skipped"
-                          : cellState === "REST"
-                            ? "week-cell-num-rest"
-                            : cellState === "UPCOMING"
-                              ? "week-cell-num-upcoming"
-                              : ""
-                    }`}
+                  <div
+                    className="week-strip"
+                    role={live ? "group" : undefined}
+                    aria-label={
+                      live
+                        ? `week beginning ${parseLocalDate(
+                            dates[0],
+                          ).toLocaleDateString("en-GB", {
+                            day: "numeric",
+                            month: "long",
+                          })}`
+                        : undefined
+                    }
                   >
-                    {parseLocalDate(iso).getDate()}
-                  </span>
-                  <span className="week-cell-mark">
-                    {cellState === "DONE" && <span className="week-cell-dot" />}
-                  </span>
-                </button>
+                    {dates.map((iso) => weekCell(iso, live))}
+                  </div>
+                </div>
               );
             })}
           </div>
+
+          {/* Only when it would do something. A control that is already where
+              it takes you is noise, and this one appears exactly when the
+              screen stops being about today. */}
+          {selectedDate !== today && (
+            <div className="week-jump">
+              <button
+                type="button"
+                className="btn btn-secondary week-today"
+                onClick={() => {
+                  setSelectedDate(today);
+                  const w = byDate.get(today);
+                  if (w) loadRx(w.id);
+                }}
+              >
+                {selectedDate > today ? "← Today" : "Today →"}
+              </button>
+            </div>
+          )}
 
           <div className="week-detail">
             {selectedWorkout ? (
