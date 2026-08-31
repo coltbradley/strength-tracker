@@ -1,8 +1,9 @@
 # strength-tracker
 
 A strength log for a coached lifter, with Claude as the programming layer.
-Single-user, open source. The coach programs, Claude parses screenshots and
-analyzes progress, the phone app captures sets. Nothing else.
+Multi-user, open source. The coach programs, Claude parses screenshots and
+analyzes progress, the phone app captures sets — and an in-app coach answers
+questions about your own training, mid-session, from the same tools.
 
 ```
 Coach screenshot ──► Claude Desktop ──► mcp-remote (static bearer, local)
@@ -49,9 +50,10 @@ and [docs/security.md](docs/security.md); the short version:
 
 ```
 supabase/migrations/       schema, RLS, derived-metric views
-supabase/functions/mcp-server/   MCP server (Deno edge function, 12 tools)
+supabase/functions/mcp-server/   MCP server (Deno edge function, 22 tools)
+supabase/functions/coach/        in-app coach (Sonnet + the MCP tools above)
 supabase/seed/             generated exercise seed (873 exercises)
-pwa/                       React + Vite PWA, IndexedDB outbox, 5 screens
+pwa/                       React + Vite PWA, IndexedDB outbox, 6 screens
 scripts/                   seed generator, database validation harness
 docs/                      spec, architecture, decisions, security, setup
 ```

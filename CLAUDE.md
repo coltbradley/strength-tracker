@@ -118,6 +118,68 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   the database, delete stores, or clear storage in an update path. Postgres
   migrations are equally append-only once deployed.
 
+- Planned days have STRUCTURE beyond a flat list, and all of it is expressed
+  as adjacency rather than as new tables. Consecutive prescriptions naming the
+  same exercise are a RAMP; `superset_group` (1=A…4=D) pairs exercises to
+  alternate; `section` is a heading ("Activations", "Abs") that consecutive
+  rows share. A fourth way to say "these rows belong together" needs a
+  decision entry, not a table. The unit of grouping and of reordering is the
+  ENTRY (a ramp, a superset), never one row — moving or sectioning a single
+  row tears those apart, which is a bug class this repo has already had.
+- `prescriptions.tracking` is 'reps' (weight and reps) or 'done' (a tick, for
+  activations and mobility). A tick writes a REAL row in `sets`: reps 0 at
+  load 0, both already legal. Never invent a second completion record — no
+  view, chart or MCP tool would know how to read it. Volume and e1RM exclude
+  it through the filters they already have; do NOT add a `tracking` filter to
+  those views, which would couple the analysis to the plan the way
+  `v_adherence` deliberately does not.
+- A TEMPLATE is a planned day with no date (`is_template`), not a table. It
+  can never carry a `scheduled_date` (checked), and every plan read goes
+  through `v_plan_workouts`, which drops templates AND days whose program is
+  discarded. Filter there, never at the call site: a filter you have to
+  remember is one someone will forget.
+- `programs` are soft-deleted (`discarded_at`), like sessions. Nothing an LLM
+  can write is hard-deleted. The one exception is `upsert_program`'s
+  compensating rollback, which removes a fragment of a failed write that
+  nobody ever saw.
+- Notes have four homes and they are not interchangeable: `planned_workouts.notes`
+  is the COACH's words from a parse and `plan_note` is the user's own (a parse
+  must never touch it); `prescriptions.notes` is per-exercise-per-day;
+  `set_notes` is one logged set; `exercise_notes` is a standing cue for a
+  MOVEMENT, keyed (user_id, exercise_id) because `exercises` is a shared
+  seeded library that never grows a per-user column.
+- `coach_memory` holds standing facts about the person (injury, constraint,
+  preference, context) — not goals, which `goals` measures against real sets.
+  It reaches the coach through the per-turn CONTEXT BLOCK, never a tool call:
+  memory that must be fetched is memory that gets forgotten. It is deletable,
+  unlike the training record, because a fact that stopped being true makes
+  every future answer worse.
+
+## The coach (supabase/functions/coach)
+
+- An edge function calling the Anthropic API with `claude-sonnet-5`, giving it
+  the EXISTING MCP server as its tool surface via the MCP connector. One
+  authorization boundary, not two. The API key is a Supabase secret and never
+  reaches the browser; the caller authenticates with their Supabase session.
+- The MCP connector needs a plaintext bearer and `mcp_tokens` stores only
+  digests, so the function mints one per turn with a short `expires_at`.
+  Permanent tokens (anything a person pastes into a client) have `expires_at`
+  NULL and must keep working untouched.
+- `delete_program` and `delete_exercise` are disabled for the coach at the
+  connector layer. Claude Desktop keeps them.
+- Uploaded files are JSON-encoded with their provenance, never wrapped in a
+  concatenated delimiter a CSV could close from the inside. Model output is
+  rendered to ELEMENTS, never `dangerouslySetInnerHTML` — that path would turn
+  prompt injection into script injection.
+- A turn is completed and RECORDED whether or not the client is still
+  listening, against a client-chosen `turn_id`, so closing the app mid-answer
+  loses nothing. Usage is written in a `finally`, or an aborted turn is billed
+  and invisible to the quota.
+- `coach_usage` records tokens, cost, latency, tools AND the prompt and
+  response text. That last part is a product decision, not a technical detail:
+  whoever runs the deployment can read the conversation. `COACH_LOG_CONTENT=off`
+  disables it.
+
 ## Commands
 
 ```bash

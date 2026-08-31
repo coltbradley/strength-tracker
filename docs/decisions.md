@@ -1252,3 +1252,43 @@ the composer's bottom edge sits at 472 against a keyboard starting at 492.
 
 The thread also re-pins to the bottom on a visualViewport resize, or the answer
 being replied to scrolls away the moment the box is tapped.
+
+## Two bugs from the same misreading of a gesture
+
+`useDragList` read `e.currentTarget` inside its long-press timeout. React sets
+that to null once the handler returns, so the drag threw a TypeError after
+`setDragging` and before taking pointer capture — leaving the row mid-drag with
+no capture, which on a phone reads as the page having locked up. That was the
+"can't navigate out of the plan editor" report. The element is held in a
+variable now.
+
+Capture was also never RELEASED. `useFabDrag` had a `release()`; the list hook
+did not, and a capture that outlives its drag sends every later pointer event
+to that row — the same frozen-page symptom by a different route. It is released
+first and unconditionally in `finish()`.
+
+Worth noting the pattern: both hooks implement the same gesture, and the bug
+existed only in the one written second, in the one place the two implementations
+differed.
+
+## Weights drifted off the pound grid
+
+Loads are stored in kg and stepped by the DISPLAY unit's increment, so in lb
+mode the step is five pounds expressed as 2.26796 kg. Added to a kg-authored
+100 kg that gave 220.5 → 225.5 → 230.5 lb: the value kept the half-pound of its
+kilogram origin forever and never reached a number anyone loads on a bar.
+
+`Stepper` now snaps to a multiple of the step rather than adding to it, so the
+first press lands on 225 and every one after stays round. Opt-in (`snap`),
+because reps and seconds are already integers in the unit they are shown in,
+and a no-op in kg mode where the value is already on the grid.
+
+The same bug had a second face, invisible unless you use a screen reader: the
+spoken label rendered the raw delta, announcing "increase load by
+2.2679618500000003" — internal units and a float, to the one person who cannot
+see the screen to work out what was meant. Steps carry an `announce` string in
+the user's own unit now.
+
+Typing was always exact and still is: 50 lb round-trips through 22.6796 kg back
+to 50 lb. Only the stepper was wrong, which is why it survived the round-trip
+test that was written when per-side loads landed.
