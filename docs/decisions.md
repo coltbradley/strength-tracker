@@ -1329,3 +1329,102 @@ editor never read a different day. And the drag is clamped to the rank band
 rather than being allowed anywhere: letting someone drag a cooldown to the top
 and then silently ranking it back down is a UI that argues with the person
 using it.
+
+## An edited library exercise is 'edited', not 'custom'
+
+`exercises.source` was carrying two unrelated facts: which seed may overwrite
+the row, and whether the row is shared. Editing a seeded exercise only ever
+meant to change the second one — the edit must survive a re-seed — and it was
+expressed by re-tagging the row 'custom', which before multi-user meant nothing
+more than "no seed owns this".
+
+`20260827180000_multi_user` then gave 'custom' a second meaning: private to one
+person, via `exercise_owners`. The two rules silently contradicted each other
+from that day. A re-tagged row satisfied neither branch of `exercises_read`
+(`source <> 'custom'` was false, and no owner row existed, because the claim
+trigger fires on INSERT and the MCP path is the service role with no
+auth.uid()), so it became readable by NOBODY. And `v_resolved_prescriptions`
+inner-joins `exercises`, so every prescription naming that movement quietly
+left the plan.
+
+'edited' gives the first fact its own value. Nothing about the policies had to
+change: all six of them, and `assertVisible` in the MCP server, already branch
+on `= 'custom'` vs `<> 'custom'`, and 'edited' lands on the correct side of
+every one. A CHECK now closes the vocabulary, because RLS branching on a free
+text column meant a typo — 'Custom', 'custum' — published a private row.
+
+Rejected: copy-on-write (leave the seeded row alone, insert a private copy).
+It reads well until you notice that every prescription, set, training max and
+goal still points at the ORIGINAL id, so the edit applies to nothing that
+references it. Rejected too: writing the owner row on re-tag, which would make
+fixing a typo in the shared library take that movement away from everyone else.
+
+## Main work is a label on a run, not a block of its own
+
+A day whose sections named themselves while its main body did not read as a
+nameless stretch, then ABS, then another nameless stretch. The section
+interrupted the day instead of dividing it, and nothing said where the main
+work began or ended.
+
+The obvious fix — gather the unsectioned entries into a MAIN WORK block — is
+wrong, and it is worth writing down why. `moveEntry` relies on an unsectioned
+exercise BEING its own block; that is exactly what lets the arrows walk it
+through the whole day rather than trapping it between two headings. Gathering
+them would confine every main-work exercise and silently change what those
+buttons do, which is a much bigger change than the one being asked for.
+
+So the heading is a label drawn above each RUN of unsectioned blocks, and only
+once the day has a named part somewhere — a day with one part does not need to
+be told what the part is. A run that resumes after a named section gets its own
+heading rather than being folded back into the first: two MAIN WORK headings is
+the honest picture of a day that really does go main, then abs, then main, and
+it shows the person why their day looks odd instead of quietly reordering it.
+
+The plan editor and the session screen apply the same rule. Two screens
+describing different days is the bug the whole sections module exists to stop.
+
+## A section renames itself, and can move without a drag
+
+Two smaller corrections in the same flow.
+
+The section panel had a Rename button on a screen whose own `saveRx` comment
+says a Save button was "the odd one out" — the day's name, its date and its
+note all commit by themselves. It now commits when the panel closes, exactly as
+a row commits when it collapses. NOT on blur, which was tried first: tapping
+"Add exercise here" blurs that input, so committing there closes the panel out
+from under the tap.
+
+And a part could only be reordered by pressing and holding its heading. The
+exercise rows already had arrows ALONGSIDE their drag; sections had drag alone,
+which is undiscoverable and fails WCAG 2.5.7. `moveBlock` gives them the same
+two buttons, clamped to the same rank band as the drag, so a cooldown still
+refuses to go above the main body — by disabling the button rather than by
+springing back.
+
+Deliberately NOT added: swipe gestures. The list already carries a
+press-and-hold drag, and a horizontal swipe on rows that also scroll vertically
+is the standard way to make both feel unreliable — with chalky hands, mid
+workout, on a list whose destructive action removes part of a plan. Arrows plus
+drag gives one visible affordance and one accessible one, which is the whole
+job.
+
+## A service worker that waits still has to be noticed
+
+`registerType: "autoUpdate"` with `registerSW({immediate: true})` reloads the
+open page the moment a new build is found. Mid-set that discards the staged
+reps, the load and any half-typed note — logged sets are safe in the outbox,
+the rest of the screen is not. So the worker was changed to "prompt", which
+installs and waits.
+
+Deferring every update to the next visibilitychange→hidden, with no periodic
+check, was then too far the other way. The browser only looks for a new worker
+when the page registers; an installed PWA can go a long time without a clean
+background-and-return; and a shipped build sat unnoticed while the person using
+it wondered where the feature had gone. That is a worse bug than the one being
+fixed.
+
+Split into noticing and applying. It checks on every return to the foreground
+and hourly while open, and applies IMMEDIATELY when no session is in progress —
+reloading Today or History costs nothing. Only mid-session does it wait, and
+only until the app is next hidden. If it cannot tell which, it assumes
+mid-session: a late update is a nuisance, an interrupted set is lost work.

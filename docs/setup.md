@@ -233,8 +233,8 @@ server setting there would be a third write-ownership class — see CLAUDE.md).
 | Thing                                               | Shared?                   |
 | --------------------------------------------------- | ------------------------- |
 | Sets, sessions, programs, training maxes, goals     | no                        |
-| Custom exercises (`source = 'custom'`)              | no                        |
-| Seeded exercise library (free-exercise-db, curated) | yes                       |
+| Custom exercises (`source = 'custom'`)              | no, one owner each        |
+| Seeded library (free-exercise-db, curated, edited)  | yes                       |
 | `app_config.tz` (household default zone)            | yes, overridable per user |
 | MCP tokens                                          | no, one identity each     |
 | PWA device settings (plates, bars, rest, units)     | per device, not per user  |

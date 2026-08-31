@@ -30,7 +30,17 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   last-write-wins) — the sessions.notes mutability class, never a way to
   edit the set itself.
 - `sessions` are soft-deleted only (`discarded_at`); no delete policy exists.
-  A discarded session leaves every view but stays in Postgres.
+  A discarded session leaves every view but stays in Postgres. So are
+  `programs` and, since 20260901030000, `planned_workouts` — one soft-delete
+  idiom, one column name, three tables. A HARD delete of a planned day
+  cascaded to its prescriptions and, through `on delete set null`, severed the
+  link from every set ever logged against them: the sets survived but what the
+  plan ASKED for did not, and `sets` being append-only, nothing could restore
+  it. Prescriptions deliberately have NO discarded_at of their own — a
+  prescription has no life outside its day, and a second nullable timestamp
+  would mean every read filtering on two. A `before delete` trigger refuses to
+  delete a prescription that has sets against it instead; one nothing has been
+  logged against still deletes freely, which is the ordinary edit case.
 - Planned tables (`programs`/`planned_workouts`/`prescriptions`) are written
   by BOTH the MCP server (service role, program parsing) and the PWA (RLS
   owner policies, plan editor). The PWA can now CREATE a day too, not just
@@ -42,6 +52,14 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   `plan_note` is the user's own and the parse must not touch it.
   `prescriptions.superset_group` (1=A…) marks supersets; consecutive
   same-exercise prescriptions are a ramp and render as one grouped entry.
+  `prescriptions.section` names a PART of the day. MAIN WORK is the null
+  section and is rendered as a LABEL on each run of unsectioned blocks, never
+  as a block of its own: `moveEntry` relies on an unsectioned exercise BEING
+  its own block, which is what lets the arrows walk it through the whole day,
+  and gathering main work into one block would confine it and silently change
+  what those arrows do. The label appears only once the day has a named part —
+  a day with one part needs no heading — and the plan editor and the session
+  screen must apply the same rule, or the two describe different days.
   delete_program removes a plan (confirmed ones only with the explicit flag
   after user approval); logged sessions/sets always survive it.
 - Programs written by Claude land unconfirmed (`confirmed_at IS NULL`) and
@@ -51,9 +69,20 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   set-derived view reads `v_live_sets` (voids and discards excluded) — never
   `sets` directly.
 - Exercise library sources: 'free-exercise-db' (generated seed), 'curated'
-  (hand-maintained seed), 'custom' (MCP add_exercise / PWA). Each seed only
-  updates its own source's rows; update_exercise re-tags edited library rows
-  as 'custom' so re-seeds can't revert them. delete_exercise removes ONLY
+  (hand-maintained seed), 'edited' (a seeded row a human changed), 'custom'
+  (MCP add_exercise / PWA). The column carries TWO facts and the vocabulary
+  keeps them apart: which seed may overwrite the row, and whether it is
+  shared. Only 'custom' is private. Every policy and every MCP guard branches
+  on `= 'custom'` vs `<> 'custom'`, so the other three land on the shared side
+  without any of them needing to know the difference, and a CHECK closes the
+  set because a typo here ('Custom') would publish a private row.
+  Each seed only updates its own source's rows; update_exercise re-tags an
+  edited SEEDED row 'edited' so re-seeds can't revert it, and it stays shared.
+  (It re-tagged to 'custom' until 20260901010000: that made the row private,
+  and private to NOBODY, because the claim trigger fires on insert and the MCP
+  path is the service role with no auth.uid(). The row became readable by no
+  one, and v_resolved_prescriptions inner-joins exercises, so every
+  prescription naming it silently left the plan.) delete_exercise removes ONLY
   custom exercises that nothing references (FKs enforce it); seeded or
   referenced exercises are never deleted — history is never orphaned.
   `exercises` never grows a per-user column, and never a column the generated
@@ -91,7 +120,17 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 - Every queued write carries the id of the user who made it. The flusher HOLDS
   another user's items rather than replaying them (payloads leave `user_id` to
   the DB default, so replaying as the wrong user would misattribute a set
-  permanently — `sets` is append-only). Held, never dropped.
+  permanently — `sets` is append-only). Held, never dropped. An UNKNOWN
+  identity holds too: `getCurrentUserId()` returns null for "signed out" and
+  for "not known yet" alike, and "not known yet" is the state the app BOOTS
+  in — start() flushes after two IndexedDB round trips while identity is a
+  network token refresh. Treating null as permission is how one person's set
+  reaches another's log. Because holding is only safe if something un-holds
+  it, `start()` also re-runs the queue when identity arrives.
+- A 401 whose refresh THREW is not a 401 whose refresh returned false. Only
+  the second is an answer; the first means we never found out, and must stay
+  retryable. The refresh is attempted once per flush, so treating a timeout as
+  a verdict dead-letters the whole queue for a transient condition.
 - The device cache belongs to one user, tracked by a localStorage marker, and
   is cleared when that changes. Cache keys are NOT namespaced by user on
   purpose: one marker has one place to be wrong, forty key builders do not.
@@ -116,7 +155,18 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   ("strength-log") holds unsynced sets in the outbox. Version bumps must be
   strictly additive (see the comment in `pwa/src/lib/db.ts`); never rename
   the database, delete stores, or clear storage in an update path. Postgres
-  migrations are equally append-only once deployed.
+  migrations are equally append-only once deployed. The same rule governs the
+  SERVICE WORKER: `registerType` is "prompt", never "autoUpdate", because
+  autoUpdate plus `registerSW({immediate:true})` reloads the open page the
+  moment a build lands — mid-set that takes the staged reps, the load and any
+  half-typed note. But a waiting worker also has to be NOTICED: the browser
+  only looks on registration, so main.tsx checks on every return to the
+  foreground and hourly, and applies immediately when no session is open,
+  deferring to the next hidden only when one is. Deferring without checking
+  is how a shipped build sits unnoticed for days; that has happened once.
+- The outbox is the only copy of an unsynced set, and WebKit clears IndexedDB
+  after about a week idle, so `navigator.storage.persist()` is requested at
+  startup. Best-effort and never awaited on the boot path.
 
 - Planned days have STRUCTURE beyond a flat list, and all of it is expressed
   as adjacency rather than as new tables. Consecutive prescriptions naming the

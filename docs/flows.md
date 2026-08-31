@@ -269,6 +269,25 @@ so a workout built before sections existed can be organised afterwards. The
 sections already used in a day are offered first, with Activations / Abs /
 Cooldown as defaults.
 
+There is no "add a section" button, and that is structural rather than an
+omission: `section` is a column on a prescription, so a part cannot exist
+without an exercise in it. You make one by filing an exercise under a name, and
+then add into it from the heading.
+
+**MAIN WORK** is the null section. It gets a heading too, but only once the day
+has a named part somewhere — a day with one part does not need to be told what
+the part is — and it is drawn above each RUN of unsectioned exercises rather
+than gathering them into a block (decisions.md says why). So a day that goes
+main, then abs, then main shows two MAIN WORK headings, which is the honest
+picture rather than a silent reorder.
+
+Tapping a heading opens its panel: rename (which commits when the panel closes,
+like every other field on that screen), add an exercise directly into the part,
+move the whole part up or down within its rank band, or remove the heading —
+which leaves its exercises in the day, in order, as main work. The heading is
+also a drag handle, but the arrows are the discoverable half and the accessible
+one.
+
 **Tick-only** movements (`tracking = 'done'`) drop the weight and rep controls
 entirely: one tap per set, "DONE 2 OF 3". It still writes a real row in `sets`
 — reps 0 at load 0, both already legal — because a second kind of completion
@@ -326,9 +345,18 @@ work without a connection, unlike the rest of the app.
 ## Adding an exercise mid-session
 
 Same sheet as the plan editor, reached from "Add exercise" during a session:
-how many sets, reps, rest, weight per set, warmup or working. Declare it, then
-tick it off — the screen counts "LOG SET 2 OF 4" against what you declared,
-exactly as it does against a coach's prescription.
+how many sets, reps, rest, weight per set, warmup or working, which part of the
+day it belongs to, and whether it is logged by weight-and-reps or by ticking it
+off. Declare it, then tick it off — the screen counts "LOG SET 2 OF 4" against
+what you declared, exactly as it does against a coach's prescription.
+
+Anything sayable while planning means the same thing said on the gym floor. The
+sheet is offered the sections THIS day already uses, in plan order, and naming
+a superset letter says who it pairs with. Both were missing until 20260831:
+adding a warmup mid-workout offered only the generic defaults, every letter
+meant nothing, and — worse — the section and the tracking mode were collected
+and then dropped on the way to the entry, so choosing "just tick it off" still
+produced a load stepper and a reps stepper.
 
 The declaration is device-local and never reaches `prescriptions`, which
 belongs to planned days. It is synthesised into the same bracket shape the
@@ -379,3 +407,11 @@ rather than thanking someone for a report it dropped.
   real use asks "what did I do Tuesday".
 - No settings sync across devices, and no per-set RPE, duration or
   bodyweight-plus-load logging (see decisions.md for each).
+- No swipe gestures anywhere. The lists already carry a press-and-hold drag,
+  and a horizontal swipe on rows that also scroll vertically makes both feel
+  unreliable — with chalky hands, mid workout, on a list whose destructive
+  action removes part of a plan. Reordering is arrows plus drag: one visible
+  affordance, one accessible one.
+- No "add a section" button. `section` is a column on a prescription, so a
+  part cannot exist without an exercise in it; you make one by filing an
+  exercise under a name.
