@@ -27,9 +27,15 @@ Phone (PWA, offline-first) ──► Supabase Postgres (Auth + RLS + views)
 ## Data model in one paragraph
 
 `exercises` is a shared library seeded from free-exercise-db plus a curated
-seed (source-tagged so each seed only updates its own rows). Seeded rows are
-shared by every user; a `source = 'custom'` row belongs to one person via the
-`exercise_owners` side table. PLANNED tables
+seed (source-tagged so each seed only updates its own rows). `source` carries
+two independent facts and the vocabulary keeps them apart: which seed may
+overwrite the row, and whether it is shared. `free-exercise-db` and `curated`
+are seeds; `edited` is a seeded row a human has changed, still shared but
+owned by no seed; `custom` is private to one person via the `exercise_owners`
+side table. Only `custom` is private — every policy branches on `= 'custom'`
+vs `<> 'custom'`, so the other three land on the shared side without any
+policy needing to know about them. A CHECK closes the set, because a typo in
+this column (`Custom`, `custum`) would publish a private row. PLANNED tables
 (`programs` → `planned_workouts` → `prescriptions`, incl. `scheduled_date`,
 `plan_note`, `skipped_at`, `superset_group`) are written by Claude via MCP
 AND the PWA's plan editor; Claude's programs land unconfirmed until
@@ -91,8 +97,12 @@ Write:
   sessions/sets always survive
 - `set_training_max(exercise_id, value_kg, effective_date?)`
 - `set_goal(exercise_id, target_e1rm_kg, target_date?)`
-- `add_exercise(...)` / `update_exercise(...)`: library management; edits
-  re-tag rows 'custom' so re-seeds can't revert them
+- `add_exercise(...)` / `update_exercise(...)`: library management; editing a
+  seeded row re-tags it 'edited' so re-seeds can't revert it, and it stays
+  shared. (It re-tagged to 'custom' until 20260901010000: that made the row
+  private, and private to nobody, since the claim trigger fires on insert and
+  the MCP path is the service role with no auth.uid(). The row became readable
+  by no one and every prescription naming it left the plan.)
 - `delete_exercise(id)`: custom + unreferenced only (FKs enforce it)
 
 Claude cannot write `sessions`, `sets`, `set_voids`, or `set_notes`. Only

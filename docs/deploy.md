@@ -15,6 +15,11 @@ cd pwa && npm run build && npm test -- --run && cd -
 
 CI runs the same jobs on push; running them first just saves a round trip.
 
+Note `npm run build`, not `tsc --noEmit`. `pwa/tsconfig.json` is a solution
+file (`files: []` plus references), so `tsc --noEmit` resolves zero files,
+prints nothing and exits 0 — a green that means only that it found nothing to
+check. `npm run typecheck` (`tsc -b --force`) is the honest one.
+
 ## Database changed (new migration in supabase/migrations/)
 
 ```bash
@@ -80,6 +85,15 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
    sees their own log and none of anyone else's.
 
 ## Known snags (learned the hard way)
+
+- A commit is not a deploy, and the two halves go out separately. The PWA
+  ships from a Pages build on push; a migration needs `supabase db push` and
+  an edge function needs `supabase functions deploy`, both by hand. Shipping
+  PWA code that writes a column whose migration has not been pushed yet fails
+  every write until someone runs it — that has happened once already, with
+  `prescriptions.set_type`. Push the migration FIRST, then the code that
+  depends on it: the schema tolerates a column nothing writes, the app does
+  not tolerate writing a column that is not there.
 
 - `alter database ... set` for custom GUCs is superuser-only on managed
   Postgres, so timezones live in tables instead:

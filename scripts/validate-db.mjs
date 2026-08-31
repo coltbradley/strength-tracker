@@ -763,6 +763,48 @@ await check("inserting a custom exercise claims it automatically", async () => {
   assertEq(seen.rows[0].n, 0, "not visible to anyone else");
 });
 
+await check("an edited library row stays shared, and no seed may revert it", async () => {
+  // The bug this replaced: update_exercise re-tagged an edited seeded row
+  // 'custom' so a re-seed could not revert it, but multi-user had made
+  // 'custom' mean "belongs to one person" — and the claim trigger fires on
+  // insert only, while the MCP path is the service role with no auth.uid().
+  // The row satisfied neither branch of exercises_read and became readable by
+  // NOBODY, taking every prescription naming it out of the plan with it.
+  await db.exec(
+    `update exercises set name = 'Barbell Back Squat', source = 'edited'
+      where id = 'Barbell_Squat'`,
+  );
+  const mine = await asUser(OWNER, `select name from exercises where id = 'Barbell_Squat'`);
+  assertEq(mine.rows.length, 1, "the editor can still see it");
+  assertEq(mine.rows[0].name, "Barbell Back Squat", "and sees the edit");
+  const theirs = await asUser(OTHER, `select count(*)::int as n from exercises where id = 'Barbell_Squat'`);
+  assertEq(theirs.rows[0].n, 1, "so can everyone else — it is still a library row");
+  const owned = await db.query(
+    `select count(*)::int as n from exercise_owners where exercise_id = 'Barbell_Squat'`,
+  );
+  assertEq(owned.rows[0].n, 0, "and it belongs to nobody");
+  // still not editable or deletable from the PWA: both policies want 'custom'
+  const upd = await asUser(OTHER, `update exercises set name = 'X' where id = 'Barbell_Squat'`);
+  assertEq(upd.affectedRows ?? 0, 0, "an edited row is no more writable than a seeded one");
+  await db.exec(`update exercises set source = 'free-exercise-db', name = 'Barbell Squat'
+                  where id = 'Barbell_Squat'`);
+});
+
+await check("source is a closed vocabulary, because RLS branches on it", async () => {
+  // A typo used to publish a private row: `source <> 'custom'` is true for
+  // 'Custom' and 'custum' alike.
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into exercises (id, name, primary_muscles, source)
+       values ('Typo_Lift', 'Typo Lift', array['chest'], 'Custom')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assertEq(rejected, true, "a source outside the four known values is refused");
+});
+
 await check("a custom exercise can only be edited or deleted by its owner", async () => {
   const foreignUpd = await asUser(
     OTHER,
