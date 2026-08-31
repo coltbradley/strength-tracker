@@ -95,6 +95,23 @@ export async function invalidateForSessionClose(): Promise<void> {
   ]);
 }
 
+/** Postgres `restrict_violation`: a before-delete trigger refused the row. */
+const RESTRICT_VIOLATION = "23001";
+
+/**
+ * The database declined an edit for a reason the PERSON can act on, as
+ * opposed to a failure. Callers show `message` as ordinary guidance and do
+ * not report it as an exception: it is the system working, and filing it to
+ * Sentry would bury real breakage under people editing their plans.
+ */
+export class PlanEditRefused extends Error {
+  readonly refused = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "PlanEditRefused";
+  }
+}
+
 function throwIf(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
 }
@@ -256,10 +273,25 @@ export async function duplicatePlannedWorkout(
   return newId;
 }
 
+/**
+ * Remove a planned day from every view WITHOUT destroying what was logged
+ * against it.
+ *
+ * This was a hard delete, and prescriptions cascade from planned_workouts
+ * while `sets.prescription_id` is `on delete set null` — so deleting a day
+ * permanently severed sets that had already been logged against it from the
+ * plan they fulfilled. Adherence history went with them, and `sets` is
+ * append-only, so nothing restored it. The plan editor reached that on the
+ * ordinary edit path.
+ *
+ * Soft delete, same name and shape as `sessions.discarded_at` and
+ * `programs.discarded_at`, so the schema has one idiom for this and not
+ * three.
+ */
 export async function deletePlannedWorkout(id: string): Promise<void> {
   const { error } = await supabase
     .from("planned_workouts")
-    .delete()
+    .update({ discarded_at: new Date().toISOString() })
     .eq("id", id);
   throwIf(error);
   await invalidatePlanCaches(id);
@@ -300,11 +332,31 @@ export async function setPrescriptionSection(
   await invalidatePlanCaches(plannedWorkoutId);
 }
 
+/**
+ * Remove ONE exercise from a planned day. Still a hard delete: a prescription
+ * has no life outside its day, and giving it its own `discarded_at` would
+ * make every read filter on two nullable timestamps to spare a row nobody
+ * refers to.
+ *
+ * The gap that leaves — deleting a prescription somebody has already trained
+ * against — is closed by a `before delete` trigger in the database rather
+ * than by a second column. It raises `restrict_violation`, which is a
+ * SITUATION and not a failure: the person is trying to edit away an exercise
+ * they have logged sets against, and the thing they actually want is to
+ * discard the day. Say that, rather than showing them a Postgres string.
+ */
 export async function deletePrescription(
   id: string,
   plannedWorkoutId: string,
 ): Promise<void> {
   const { error } = await supabase.from("prescriptions").delete().eq("id", id);
+  if (error && (error as { code?: string }).code === RESTRICT_VIOLATION) {
+    throw new PlanEditRefused(
+      "You've already logged sets against this exercise, so removing it " +
+        "would cut them loose from the day they belong to. Remove the whole " +
+        "day instead, or leave this here — what you logged stays either way.",
+    );
+  }
   throwIf(error);
   await invalidatePlanCaches(plannedWorkoutId);
 }

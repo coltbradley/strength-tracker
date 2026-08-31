@@ -18,6 +18,7 @@ import {
   saveWorkoutAsTemplate,
   deletePlannedWorkout,
   deletePrescription,
+  PlanEditRefused,
   duplicatePlannedWorkout,
   getExercises,
   getPlannedWorkouts,
@@ -536,7 +537,19 @@ export function Plan() {
 
   const removeRx = (r: ResolvedPrescriptionRow) =>
     void run("remove exercise", async () => {
-      await deletePrescription(r.id, workout.id);
+      try {
+        await deletePrescription(r.id, workout.id);
+      } catch (e) {
+        // The database refusing to cut logged sets loose from their day is
+        // the system working, not breaking. Say what happened and stop —
+        // reporting it would file an ordinary edit as an exception.
+        if (e instanceof PlanEditRefused) {
+          setConfirming(null);
+          toast(e.message, "error");
+          return;
+        }
+        throw e;
+      }
       setConfirming(null);
       setEditingRx(null);
       toast(`${r.exercise_name} removed`);
