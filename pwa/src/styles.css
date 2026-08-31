@@ -2980,6 +2980,18 @@
 
   /* The heading is a button (it opens rename / add / remove) and the drag
      handle for the whole part, so it is a full tap target, not a caption. */
+  /* MAIN WORK. The same type as a named part's heading, but not a control:
+     the main body has no name to change, nothing to add itself to, and no
+     heading to remove. Quieter than .plan-section-head on purpose — it is
+     there to say where you are, not to invite a tap. */
+  .plan-main-head {
+    padding: var(--s-6) 0 var(--s-4);
+  }
+
+  .plan-main-head .plan-section-name {
+    color: var(--text-dim);
+  }
+
   .plan-section-head {
     touch-action: pan-y;
     display: grid;

@@ -4,7 +4,9 @@
 // (planning happens at home); each action saves immediately and confirms
 // with a toast so there is never an unsaved-state question.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment, useCallback, useEffect, useMemo, useRef, useState
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
@@ -41,6 +43,7 @@ import {
   planBlocks,
   reorderBlocks,
   reorderEntries,
+  moveBlock,
   sectionUnit,
   type PlanBlock,
   type PlanEntry,
@@ -731,8 +734,32 @@ export function Plan() {
           </div>
         )}
         {shownBlocks.map((block, bi) => (
+          <Fragment key={block.key}>
+            {/* MAIN WORK, above the first block of each run of unsectioned
+                ones, once the day has any named part at all.
+
+                Without it the day read as a nameless stretch, then ABS, then
+                another nameless stretch: a section INTERRUPTED the day instead
+                of dividing it, and nothing said where the main work began or
+                ended. A flat day still gets no heading — a day with one part
+                does not need to be told what the part is.
+
+                A LABEL on a run, deliberately, and not a block of its own.
+                `moveEntry` relies on an unsectioned exercise BEING its own
+                block; that is what lets the arrows walk it through the whole
+                day, and gathering main work into one block would confine it
+                and silently change what those arrows do. A run that resumes
+                after a named part gets its own heading rather than being
+                folded into the first — two headings is the honest picture of a
+                day that really does go main, then abs, then main. */}
+            {block.section === null &&
+              knownSections.length > 0 &&
+              shownBlocks[bi - 1]?.section !== null && (
+                <div className="plan-main-head">
+                  <span className="plan-section-name">{MAIN_LABEL}</span>
+                </div>
+              )}
           <div
-            key={block.key}
             className={[
               "plan-block",
               block.section !== null ? "plan-block-named" : "",
@@ -756,11 +783,16 @@ export function Plan() {
                   className="plan-section-head"
                   {...blockDrag.handlers(block.key, bi)}
                   onClick={() => {
-                    setSectionName(block.section ?? "");
                     setConfirming(null);
-                    setSectionOpen(
-                      sectionOpen === block.key ? null : block.key,
-                    );
+                    if (sectionOpen === block.key) {
+                      // closing: commit the name the way a row commits
+                      if (normalizeSection(sectionName) !== block.section)
+                        renameSection(block, sectionName);
+                      else setSectionOpen(null);
+                      return;
+                    }
+                    setSectionName(block.section ?? "");
+                    setSectionOpen(block.key);
                   }}
                 >
                   <span className="plan-section-name">
@@ -776,6 +808,12 @@ export function Plan() {
                 </button>
                 {sectionOpen === block.key && (
                   <div className="plan-section-detail">
+                    {/* Commits when the panel closes, exactly as a row commits
+                        when it collapses (see saveRx). A deliberate Rename
+                        button was the one control on this screen that threw the
+                        edit away if you forgot it. NOT on blur: tapping "Add
+                        exercise here" blurs this input, and committing there
+                        would close the panel out from under the tap. */}
                     <input
                       className="input"
                       aria-label="section name"
@@ -783,6 +821,9 @@ export function Plan() {
                       onChange={(e) =>
                         setSectionName(e.target.value.slice(0, 40))
                       }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") renameSection(block, sectionName);
+                      }}
                     />
                     <div className="detail-actions">
                       {/* Adding INTO a part is the action this panel exists
@@ -800,13 +841,37 @@ export function Plan() {
                       >
                         Add exercise here
                       </button>
+                      {/* ↑/↓ beside the drag, exactly as the exercise rows
+                          have. Holding a heading to drag it is not something
+                          anyone discovers, and drag with no alternative fails
+                          WCAG 2.5.7. Same band as the drag, so a part can
+                          never be moved somewhere the next render ranks it
+                          straight back out of. */}
                       <button
                         type="button"
                         className="btn btn-secondary"
-                        disabled={busy}
-                        onClick={() => renameSection(block, sectionName)}
+                        disabled={
+                          busy || moveBlock(blocks, block.key, -1) === null
+                        }
+                        onClick={() => {
+                          const next = moveBlock(blocks, block.key, -1);
+                          if (next) storeLayout(next);
+                        }}
                       >
-                        Rename
+                        ↑ Move up
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={
+                          busy || moveBlock(blocks, block.key, 1) === null
+                        }
+                        onClick={() => {
+                          const next = moveBlock(blocks, block.key, 1);
+                          if (next) storeLayout(next);
+                        }}
+                      >
+                        ↓ Move down
                       </button>
                       <button
                         type="button"
@@ -826,7 +891,7 @@ export function Plan() {
                     <div className="microcopy">
                       {confirming === block.key
                         ? "The heading goes; its exercises stay in the day, in this order, as main work."
-                        : "Hold the heading to drag the whole part. To take one exercise out, change its section."}
+                        : "The name saves when you close this. Hold the heading to drag the whole part. To take one exercise out, change its section."}
                     </div>
                   </div>
                 )}
@@ -1317,6 +1382,7 @@ export function Plan() {
               );
             })}
           </div>
+          </Fragment>
         ))}
         <button
           type="button"

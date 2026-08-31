@@ -423,6 +423,12 @@ export function Session() {
   // A1/A2 tags and a bracket rail
   const supersetInfo = useMemo(() => supersetInfoOf(entries), [entries]);
 
+  /** Does this day have any named part? If not, it needs no headings at all. */
+  const hasSections = useMemo(
+    () => entries.some((e) => (e.brackets[0]?.section ?? null) !== null),
+    [entries],
+  );
+
   /**
    * What the plan editor knows about this day, offered to the mid-session add
    * sheet so the two screens answer the same question the same way.
@@ -1027,8 +1033,15 @@ export function Session() {
             const sectionOf = (e: ExerciseEntry | undefined) =>
               e?.brackets[0]?.section ?? null;
             const section = sectionOf(entry);
-            const showSection =
-              section !== null && section !== sectionOf(entries[entryIndex - 1]);
+            const prevSection = sectionOf(entries[entryIndex - 1]);
+            const showSection = section !== null && section !== prevSection;
+            // MAIN WORK, on the same rule the plan editor uses: only once the
+            // day has a named part somewhere, and above the first exercise of
+            // each unsectioned run. A flat day gains no heading at all.
+            const showMain =
+              section === null &&
+              hasSections &&
+              (entryIndex === 0 || prevSection !== null);
 
             const isOpen = entry.key === openKey;
             const prescribed = entry.brackets.length > 0;
@@ -1047,6 +1060,11 @@ export function Session() {
                 {showSection && (
                   <div className="section-head wk-section-head">
                     <span className="field-label">{section.toUpperCase()}</span>
+                  </div>
+                )}
+                {showMain && (
+                  <div className="section-head wk-section-head wk-main-head">
+                    <span className="field-label">MAIN WORK</span>
                   </div>
                 )}
               <div

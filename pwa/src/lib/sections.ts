@@ -290,6 +290,37 @@ export function blockBand(
 }
 
 /**
+ * Move a whole part one step, within its rank band.
+ *
+ * The heading is already a drag handle, but a control you have to press and
+ * hold to discover is one most people never find — and a drag with no
+ * alternative fails WCAG 2.5.7, which the exercise rows got right with ↑/↓ and
+ * sections did not. Same band as the drag (`blockBand`), so the buttons can
+ * never put a part somewhere the next render would rank it straight back out
+ * of.
+ *
+ * Returns null when there is nowhere to go, which is also what disables the
+ * button.
+ */
+export function moveBlock(
+  blocks: PlanBlock[],
+  key: string,
+  dir: -1 | 1,
+): PlanBlock[] | null {
+  const i = blocks.findIndex((b) => b.key === key);
+  if (i < 0) return null;
+  const band = blockBand(blocks, key);
+  if (band === null) return null;
+  const j = i + dir;
+  if (j < band[0] || j > band[1]) return null;
+  const next = [...blocks];
+  const a = next[i]!;
+  next[i] = next[j]!;
+  next[j] = a;
+  return next;
+}
+
+/**
  * Move one exercise a step, without ever splitting or leaving its section.
  *
  * Inside a section it swaps with the neighbouring exercise. An exercise that

@@ -5,6 +5,7 @@ import {
   canonicalRowIds,
   entryBand,
   entryKeys,
+  moveBlock,
   moveEntry,
   planBlocks,
   planEntries,
@@ -401,5 +402,56 @@ describe("moveEntry", () => {
 
   it("returns null for an entry that is not there", () => {
     expect(moveEntry(planBlocks(squatFocus()), "nope", 1)).toBeNull();
+  });
+});
+
+describe("moveBlock — a part moves without a drag", () => {
+  // Holding a heading to drag it is undiscoverable, and drag with no
+  // alternative fails WCAG 2.5.7. Same band as the drag, so the buttons can
+  // never put a part where the next render would rank it straight back out of.
+  const day = () =>
+    planBlocks([
+      rx({ exercise_id: "squat", exercise_name: "Squat", section: null }),
+      rx({ exercise_id: "bench", exercise_name: "Bench", section: null }),
+      rx({ exercise_id: "crunch", exercise_name: "Crunch", section: "Abs" }),
+      rx({ exercise_id: "stretch", exercise_name: "Stretch", section: "Cooldown" }),
+    ]);
+
+  it("swaps a part with its neighbour inside the rank band", () => {
+    const blocks = day();
+    const abs = blocks.find((b) => b.section === "Abs")!;
+    const moved = moveBlock(blocks, abs.key, -1);
+    expect(moved).not.toBeNull();
+    expect(moved!.map((b) => b.section)).toEqual([
+      null,
+      "Abs",
+      null,
+      "Cooldown",
+    ]);
+  });
+
+  it("refuses to move a cooldown above the main body", () => {
+    // sectionRank would rank it straight back down; a move that silently
+    // undoes itself is worse than one that will not go.
+    const blocks = day();
+    const cool = blocks.find((b) => b.section === "Cooldown")!;
+    expect(moveBlock(blocks, cool.key, -1)).toBeNull();
+    expect(moveBlock(blocks, cool.key, 1)).toBeNull();
+  });
+
+  it("returns null at either end, which is what disables the button", () => {
+    const blocks = day();
+    expect(moveBlock(blocks, blocks[0]!.key, -1)).toBeNull();
+    expect(moveBlock(blocks, "sec:Nope", 1)).toBeNull();
+  });
+
+  it("does not disturb what is inside a part", () => {
+    const blocks = day();
+    const abs = blocks.find((b) => b.section === "Abs")!;
+    const moved = moveBlock(blocks, abs.key, -1)!;
+    const stillAbs = moved.find((b) => b.section === "Abs")!;
+    expect(stillAbs.entries.map((e) => e.rows[0]!.exercise_name)).toEqual([
+      "Crunch",
+    ]);
   });
 });
