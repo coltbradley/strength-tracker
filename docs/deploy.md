@@ -8,11 +8,12 @@ additive — nothing destroys data.
 
 ```bash
 node scripts/validate-db.mjs                      # migrations + views + RLS in PGlite
+node scripts/check-selects.mjs                    # every SELECTed column exists
 cd supabase/functions/mcp-server && deno check index.ts && cd -
 cd pwa && npm run build && npm test -- --run && cd -
 ```
 
-CI runs the same three jobs on push; running them first just saves a round trip.
+CI runs the same jobs on push; running them first just saves a round trip.
 
 ## Database changed (new migration in supabase/migrations/)
 

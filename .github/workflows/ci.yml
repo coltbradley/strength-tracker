@@ -20,6 +20,11 @@ jobs:
       - run: node scripts/build-exercise-seed.mjs
       - run: npm --prefix scripts ci
       - run: node scripts/validate-db.mjs
+      # Every column the code SELECTs must exist. get_program shipped reading
+      # programs.starts_on, which has never existed: it typechecks (PostgREST
+      # select strings are just strings) and only fails when that one tool is
+      # actually called.
+      - run: node scripts/check-selects.mjs
 
   mcp-server:
     name: edge function typecheck + tests (deno)

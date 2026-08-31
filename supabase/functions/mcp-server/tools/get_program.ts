@@ -80,7 +80,7 @@ export function registerGetProgram(
       guard(ctx, "get_program", async () => {
         let q = db.client
           .from("programs")
-          .select("id, name, starts_on, confirmed_at, created_at")
+          .select("id, name, source_note, confirmed_at, created_at")
           .eq("user_id", db.ownerId)
           .is("discarded_at", null)
           .order("created_at", { ascending: false })
@@ -90,7 +90,7 @@ export function registerGetProgram(
         const programs = must(await q, "programs") as unknown as {
           id: string;
           name: string;
-          starts_on: string | null;
+          source_note: string | null;
           confirmed_at: string | null;
           created_at: string;
         }[];
@@ -154,7 +154,11 @@ export function registerGetProgram(
             program: {
               id: program.id,
               name: program.name,
-              starts_on: program.starts_on,
+              // Where the program came from — a parsed coach screenshot, the
+              // app's own editor. `programs` has no start date; days carry
+              // their own scheduled_date.
+              source_note: program.source_note,
+              created_at: program.created_at,
               confirmed: program.confirmed_at !== null,
             },
             workouts: workouts.map((w) => ({
