@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
+import { NumberPad, type PadRequest } from "../components/NumberPad";
+import { NewExerciseSheet } from "../components/NewExerciseSheet";
 import { getSetting } from "../lib/settings";
 import {
   SetSchemeSheet,
@@ -15,6 +17,7 @@ import {
 import { Note } from "../components/Note";
 import {
   addPrescriptionGroups,
+  reorderPrescriptions,
   saveWorkoutAsTemplate,
   deletePlannedWorkout,
   deletePrescription,
@@ -39,8 +42,9 @@ import {
 } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
+import { useDragList } from "../hooks/useDragList";
 import { ExercisePicker } from "../components/ExercisePicker";
-import { stepKg, toDisplay } from "../lib/units";
+import { fromDisplay, stepKg, toDisplay } from "../lib/units";
 import type {
   ExerciseRow,
   PlannedWorkoutRow,
@@ -151,6 +155,10 @@ export function Plan() {
   const [adding, setAdding] = useState<ExerciseRow | null>(null);
   /** null = not saving; a string = the name being typed */
   const [templateName, setTemplateName] = useState<string | null>(null);
+  /** Tap a value to type it, in the row editor as well as the add sheet. */
+  const [pad, setPad] = useState<PadRequest | null>(null);
+  /** name typed in the picker that matched nothing they wanted */
+  const [newName, setNewName] = useState<string | null>(null);
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
   const [duplicateDate, setDuplicateDate] = useState<string>("");
@@ -231,6 +239,38 @@ export function Plan() {
       });
   }, [searchOpen, allExercises.length]);
 
+  /** Who is already in each superset group, so the add sheet can say what a
+   *  letter pairs with instead of leaving it to mean nothing. */
+  const supersetMembers = useMemo(() => {
+    const m: Record<number, string[]> = {};
+    for (const r of rx ?? []) {
+      if (r.superset_group === null) continue;
+      (m[r.superset_group] ??= []).push(r.exercise_name);
+    }
+    return m;
+  }, [rx]);
+
+  /** Long-press a row and drag it. The ↑/↓ buttons stay: they are the
+   *  keyboard and screen-reader path, and dragging is not available to
+   *  either. */
+  // Hooks must run before the early returns below, so the drop handler cannot
+  // close over `run`/`reload` (defined after them). It calls through a ref that
+  // the render body fills in — the alternative is hoisting half the component.
+  const onDropRef = useRef<(ids: string[]) => void>(() => undefined);
+  const drag = useDragList(
+    (rx ?? []).map((r) => r.id),
+    (nextIds) => onDropRef.current(nextIds),
+  );
+
+  /** The rows in the order being dragged, not the order last loaded. */
+  const orderedRx = useMemo(() => {
+    const byId = new Map((rx ?? []).map((r) => [r.id, r]));
+    return drag.order
+      .map((id) => byId.get(id))
+      .filter((r): r is ResolvedPrescriptionRow => Boolean(r));
+  }, [rx, drag.order]);
+
+
   if (!id) return null;
   if (!list) return <div className="screen muted">Loading…</div>;
   if (!workout)
@@ -265,6 +305,12 @@ export function Plan() {
    * set-group is almost always near the last one. Otherwise the device's
    * fallback load, which is what the session screen would suggest anyway.
    */
+  onDropRef.current = (nextIds) =>
+    void run("reorder exercises", async () => {
+      await reorderPrescriptions(workout.id, nextIds, rx ?? []);
+      reload();
+    });
+
   const startKgFor = (exerciseId: string): number => {
     const mine = (rx ?? []).filter((r) => r.exercise_id === exerciseId);
     const last = mine[mine.length - 1];
@@ -443,14 +489,24 @@ export function Plan() {
           <span className="section-meta">{rx?.length ?? 0}</span>
         </div>
         {rx === null && <p className="muted">Loading…</p>}
-        {(rx ?? []).map((r, i) => {
+        {orderedRx.map((r, i) => {
           const editing = editingRx === r.id && draft;
-          const ss = supersetAt(rx ?? [], i);
+          const ss = supersetAt(orderedRx, i);
           return (
             <div
               key={r.id}
-              className={`week-item${ss ? " ss-member" : ""}${ss?.first ? " ss-first" : ""}${ss?.last ? " ss-last" : ""}`}
+              className={[
+                "week-item",
+                ss ? "ss-member" : "",
+                ss?.first ? "ss-first" : "",
+                ss?.last ? "ss-last" : "",
+                drag.dragging === r.id ? "row-dragging" : "",
+                drag.dragging !== null && drag.overIndex === i ? "row-over" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               data-rx={r.id}
+              {...drag.handlers(r.id, i)}
             >
               {/* Labelled once, at the top of the run, instead of a letter
                   repeated on every row. "Superset A · 2 exercises" says what is
@@ -510,6 +566,16 @@ export function Plan() {
                   <Stepper
                     label="sets"
                     compact
+                    onTapValue={() =>
+                      setPad({
+                        label: `SETS`,
+                        action: "SET",
+                        initial: String(draft.sets),
+                        allowDecimal: false,
+                        onCommit: (v) => setDraft({ ...draft, sets: Math.min(20, Math.max(1, Math.round(v))) }),
+                        onCancel: () => setPad(null),
+                      })
+                    }
                     display={`${draft.sets} ${draft.sets === 1 ? "set" : "sets"}`}
                     value={draft.sets}
                     min={1}
@@ -525,6 +591,16 @@ export function Plan() {
                   <Stepper
                     label="reps min"
                     compact
+                    onTapValue={() =>
+                      setPad({
+                        label: `REPS MIN`,
+                        action: "SET",
+                        initial: String(draft.reps_min),
+                        allowDecimal: false,
+                        onCommit: (v) => setDraft({ ...draft, reps_min: Math.min(100, Math.max(1, Math.round(v))) }),
+                        onCancel: () => setPad(null),
+                      })
+                    }
                     display={`${draft.reps_min} reps min`}
                     value={draft.reps_min}
                     min={1}
@@ -540,6 +616,16 @@ export function Plan() {
                   <Stepper
                     label="reps max"
                     compact
+                    onTapValue={() =>
+                      setPad({
+                        label: `REPS MAX`,
+                        action: "SET",
+                        initial: String(Math.max(draft.reps_min, draft.reps_max)),
+                        allowDecimal: false,
+                        onCommit: (v) => setDraft({ ...draft, reps_max: Math.min(100, Math.max(draft.reps_min, Math.round(v))) }),
+                        onCancel: () => setPad(null),
+                      })
+                    }
                     display={`${Math.max(draft.reps_min, draft.reps_max)} reps max`}
                     value={Math.max(draft.reps_min, draft.reps_max)}
                     min={draft.reps_min}
@@ -575,6 +661,16 @@ export function Plan() {
                     <Stepper
                       label="load"
                       compact
+                      onTapValue={() =>
+                        setPad({
+                          label: `LOAD IN ${unit.toUpperCase()}`,
+                          action: "SET",
+                          initial: String(toDisplay(draft.load_kg, unit)),
+                          allowDecimal: true,
+                          onCommit: (v) => setDraft({ ...draft, load_kg: Math.min(999, Math.max(0.5, fromDisplay(v, unit))) }),
+                          onCancel: () => setPad(null),
+                        })
+                      }
                       display={loadDraftLabel}
                       subText={formatStoredTwin(draft.load_kg, unit)}
                       value={draft.load_kg}
@@ -591,6 +687,16 @@ export function Plan() {
                     <Stepper
                       label="percent of training max"
                       compact
+                      onTapValue={() =>
+                        setPad({
+                          label: `PERCENT OF TRAINING MAX`,
+                          action: "SET",
+                          initial: String(draft.load_pct),
+                          allowDecimal: true,
+                          onCommit: (v) => setDraft({ ...draft, load_pct: Math.min(200, Math.max(2.5, v)) }),
+                          onCancel: () => setPad(null),
+                        })
+                      }
                       display={loadDraftLabel}
                       value={draft.load_pct}
                       min={2.5}
@@ -607,6 +713,15 @@ export function Plan() {
                   <div className="section-head">
                     <span className="field-label">SUPERSET</span>
                   </div>
+                  {/* A bare "None A B C D" said nothing about what a letter
+                      meant or that it pairs this exercise with ANOTHER one.
+                      The letter is a group name: putting two exercises in the
+                      same group is the whole feature, and the editor never
+                      said so or showed you who you had joined. */}
+                  <div className="microcopy">
+                    Put two exercises in the same group to alternate between
+                    them, resting once at the end rather than after each.
+                  </div>
                   <div className="seg seg-types">
                     {SUPERSET_CHOICES.map(([value, label]) => (
                       <button
@@ -619,6 +734,21 @@ export function Plan() {
                       </button>
                     ))}
                   </div>
+                  {draft.superset !== 0 &&
+                    (() => {
+                      const mates = (rx ?? []).filter(
+                        (o) =>
+                          o.id !== r.id && o.superset_group === draft.superset,
+                      );
+                      const letter = String.fromCharCode(64 + draft.superset);
+                      return (
+                        <div className="ss-pairing">
+                          {mates.length === 0
+                            ? `Group ${letter} — nothing else is in it yet. Put another exercise in ${letter} to pair them.`
+                            : `Alternates with ${mates.map((m) => m.exercise_name).join(", ")}.`}
+                        </div>
+                      );
+                    })()}
 
                   <div className="seg seg-types">
                     <button
@@ -936,13 +1066,49 @@ export function Plan() {
             setSearchOpen(false);
             setAdding(ex);
           }}
+          onAddNew={(q) => {
+            setSearchOpen(false);
+            setNewName(q);
+          }}
           onClose={() => setSearchOpen(false)}
+        />
+      )}
+
+      {pad && (
+        <NumberPad
+          req={{
+            ...pad,
+            onCommit: (v) => {
+              pad.onCommit(v);
+              setPad(null);
+            },
+          }}
+        />
+      )}
+
+      {newName !== null && (
+        <NewExerciseSheet
+          initialName={newName}
+          exercises={allExercises}
+          onPickExisting={(ex) => {
+            setNewName(null);
+            setAdding(ex);
+          }}
+          onCreated={(ex) => {
+            setAllExercises((prev) => [...prev, ex]);
+            setNewName(null);
+            // Straight into the scheme sheet: they came here to add it to the
+            // day, not to curate a library.
+            setAdding(ex);
+          }}
+          onClose={() => setNewName(null)}
         />
       )}
 
       {adding && (
         <SetSchemeSheet
           exerciseName={adding.name}
+          supersetMembers={supersetMembers}
           unit={unit}
           startKg={startKgFor(adding.id)}
           busy={busy}

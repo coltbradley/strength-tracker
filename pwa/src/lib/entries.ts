@@ -38,6 +38,8 @@ export interface DeclaredGroup {
   load_kg: number | null;
   set_type: string;
   rest_seconds: number;
+  /** 0 = not in a superset; 1-4 = group A-D */
+  superset_group?: number;
 }
 
 /** An exercise added mid-session that the plan did not prescribe. */
@@ -144,7 +146,10 @@ function declaredToBracket(
     tm_kg: null,
     resolved_load_kg: g.load_kg,
     plate_load_kg: g.load_kg,
-    superset_group: null,
+    superset_group:
+      g.superset_group !== undefined && g.superset_group > 0
+        ? g.superset_group
+        : null,
     set_type: g.set_type as ResolvedPrescriptionRow["set_type"],
   };
 }

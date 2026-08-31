@@ -285,6 +285,58 @@ export async function deletePrescription(
   await invalidatePlanCaches(plannedWorkoutId);
 }
 
+/**
+ * Add an exercise to the library from the app.
+ *
+ * The MCP tool has always been able to do this; the person holding the phone
+ * could not, so a movement the seed happens not to carry (or carries under a
+ * name nobody searches for — a dumbbell lateral raise is filed as "Side
+ * Lateral Raise") was simply untrackable from the gym floor.
+ *
+ * source = 'custom' keeps it out of the way of the generated seed, which only
+ * ever updates its own rows. Ownership is claimed by an `after insert` trigger
+ * from auth.uid() — this is the RLS path, so unlike the service-role MCP path
+ * there is no owner row to write by hand.
+ */
+export async function addCustomExercise(input: {
+  name: string;
+  primary_muscles: string[];
+  equipment: string | null;
+  mechanic: "compound" | "isolation" | null;
+  category: string;
+}): Promise<ExerciseRow> {
+  const name = input.name.trim();
+  if (name.length === 0) throw new Error("An exercise needs a name");
+  const id = name.replace(/[^0-9a-zA-Z]+/g, "_").replace(/^_+|_+$/g, "");
+  if (id.length === 0) throw new Error("That name has no letters or numbers");
+
+  const row = {
+    id,
+    name,
+    primary_muscles: input.primary_muscles,
+    secondary_muscles: [],
+    equipment: input.equipment,
+    mechanic: input.mechanic,
+    force: null,
+    category: input.category,
+    level: "intermediate",
+    source: "custom",
+  };
+  const { error } = await supabase.from("exercises").insert(row);
+  if (error) {
+    // 23505: the slug is taken. Saying which is more useful than the code,
+    // because the taker is usually the thing they were looking for.
+    if (error.code === "23505") {
+      throw new Error(
+        `"${name}" already exists in the library — search for it instead.`,
+      );
+    }
+    throw new Error(error.message);
+  }
+  await cacheDelete(cacheKeys.exercises);
+  return row as ExerciseRow;
+}
+
 // ---- workout templates -----------------------------------------------------
 // A template is a planned day with no date and is_template set. It never
 // reaches the calendar (the DB forbids a dated template, and v_plan_workouts
@@ -510,6 +562,7 @@ export async function addPrescriptionGroups(
     load_kg: number | null;
     set_type: SetType;
     rest_seconds: number;
+    superset_group: number;
   }[],
   existing: ResolvedPrescriptionRow[],
 ): Promise<string | null> {
@@ -528,6 +581,7 @@ export async function addPrescriptionGroups(
     rest_seconds: g.rest_seconds,
     notes: null,
     set_type: g.set_type,
+    superset_group: g.superset_group === 0 ? null : g.superset_group,
   }));
   const { error } = await supabase.from("prescriptions").insert(rows);
   throwIf(error);
@@ -545,6 +599,51 @@ export async function addPrescriptionGroups(
  * neighbour takes the vacated slot, then the mover lands. Same shape as
  * swapWorkoutOrder does for day_index.
  */
+/**
+ * Reorder a whole day at once, from a dragged order.
+ *
+ * `unique (planned_workout_id, position)` means positions cannot simply be
+ * reassigned in place — the first UPDATE would collide with a row still
+ * holding its target number. So every row parks above the range first, then
+ * comes back down into its new slot. Same trick movePrescription uses for a
+ * swap of two, generalised to n.
+ *
+ * Rows whose position is already correct are skipped, so dropping a row back
+ * where it came from writes nothing.
+ */
+export async function reorderPrescriptions(
+  plannedWorkoutId: string,
+  orderedIds: string[],
+  existing: ResolvedPrescriptionRow[],
+): Promise<void> {
+  const byId = new Map(existing.map((r) => [r.id, r]));
+  const target = orderedIds
+    .map((id, index) => ({ row: byId.get(id), index }))
+    .filter((x): x is { row: ResolvedPrescriptionRow; index: number } =>
+      Boolean(x.row),
+    )
+    .filter((x) => x.row.position !== x.index);
+  if (target.length === 0) return;
+
+  const park = existing.reduce((m, r) => Math.max(m, r.position), 0) + 1;
+  const step = async (id: string, position: number) => {
+    const { error } = await supabase
+      .from("prescriptions")
+      .update({ position })
+      .eq("id", id);
+    throwIf(error);
+  };
+
+  // Park everything that moves, then land it. Two passes, never a collision.
+  for (let i = 0; i < target.length; i++) {
+    await step(target[i]!.row.id, park + i);
+  }
+  for (const t of target) {
+    await step(t.row.id, t.index);
+  }
+  await invalidatePlanCaches(plannedWorkoutId);
+}
+
 export async function movePrescription(
   rxId: string,
   plannedWorkoutId: string,

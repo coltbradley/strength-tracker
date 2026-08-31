@@ -14,6 +14,7 @@ describe("groupSets", () => {
         load_kg: 100,
         set_type: "working",
         rest_seconds: 120,
+        superset_group: 0,
       },
     ]);
   });
@@ -87,5 +88,17 @@ describe("snapToUnit", () => {
   it("never snaps to zero", () => {
     expect(snapToUnit(0.1, "kg")).toBeGreaterThan(0);
     expect(snapToUnit(0, "lb")).toBeGreaterThan(0);
+  });
+});
+
+describe("superset group", () => {
+  it("defaults to none, so a plain add is not silently paired", () => {
+    expect(groupSets([w(100)], 5, false, REST)[0]!.superset_group).toBe(0);
+  });
+
+  it("applies the chosen group to every row of the scheme", () => {
+    const out = groupSets([w(60, true), w(100), w(100)], 5, false, REST, 2);
+    expect(out).toHaveLength(2);
+    expect(out.every((g) => g.superset_group === 2)).toBe(true);
   });
 });

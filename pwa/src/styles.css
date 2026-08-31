@@ -2850,6 +2850,56 @@
     padding: 0 3px;
   }
 
+  /* -- drag to reorder ----------------------------------------------------
+   * The row must own the whole gesture once it is held, or the list scrolls
+   * out from under the finger mid-drag. */
+  .week-item {
+    touch-action: pan-y;
+  }
+
+  .row-dragging {
+    opacity: 0.9;
+    background: var(--bg-input);
+    box-shadow: 0 3px 10px rgb(var(--ink-rgb) / 0.22);
+    touch-action: none;
+    position: relative;
+    z-index: var(--z-rail);
+  }
+
+  .row-over {
+    box-shadow: inset 0 2px 0 var(--accent);
+  }
+
+  /* Live confirmation of what a superset letter has actually joined. */
+  .ss-pairing {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    color: var(--accent-dim);
+    margin-top: var(--s-4);
+  }
+
+  /* -- the duplicate check when adding an exercise ------------------------
+   * The most consequential warning in the app: two rows for one movement
+   * split its history and break the load prefill for both, invisibly, until
+   * a chart has a hole in it weeks later. */
+  .dupe-warn {
+    border: var(--rule-strong);
+    border-radius: var(--radius);
+    padding: var(--s-5) var(--s-6);
+    margin-bottom: var(--s-6);
+    background: var(--bg-raised);
+  }
+
+  .dupe-row {
+    width: 100%;
+    padding: var(--s-4) 0;
+  }
+
+  .add-new-row {
+    margin-top: var(--s-6);
+    text-align: left;
+  }
+
   /* -- coach chat ----------------------------------------------------------
    * A chat, not a form: the thread takes the room and scrolls, the composer is
    * pinned under it and never moves. Both inside the sheet's own height. */

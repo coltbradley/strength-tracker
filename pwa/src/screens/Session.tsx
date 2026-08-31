@@ -35,6 +35,7 @@ import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
+import { NewExerciseSheet } from "../components/NewExerciseSheet";
 import { prefersReducedMotion, useKeyboardInset } from "../components/Sheet";
 import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import {
@@ -136,6 +137,8 @@ export function Session() {
   const [extras, setExtras] = useState<ExtraExercise[]>([]);
   /** exercise chosen mid-session, awaiting its declared scheme */
   const [declaring, setDeclaring] = useState<ExerciseRow | null>(null);
+  /** name typed in the picker that matched nothing they wanted */
+  const [newName, setNewName] = useState<string | null>(null);
   const [sets, setSets] = useState<SetInsert[]>([]);
   const [setsLoaded, setSetsLoaded] = useState(false);
   const [lastActuals, setLastActuals] = useState<LastActuals>({});
@@ -1315,7 +1318,28 @@ export function Session() {
           exercises={allExercises}
           failed={exercisesFailed}
           onPick={(ex) => addExercise(ex)}
+          onAddNew={(q) => {
+            setSheet(null);
+            setNewName(q);
+          }}
           onClose={() => setSheet(null)}
+        />
+      )}
+
+      {newName !== null && (
+        <NewExerciseSheet
+          initialName={newName}
+          exercises={allExercises}
+          onPickExisting={(ex) => {
+            setNewName(null);
+            addExercise(ex);
+          }}
+          onCreated={(ex) => {
+            setAllExercises((prev) => [...prev, ex]);
+            setNewName(null);
+            addExercise(ex);
+          }}
+          onClose={() => setNewName(null)}
         />
       )}
 

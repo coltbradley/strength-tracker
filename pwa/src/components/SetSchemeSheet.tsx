@@ -16,8 +16,9 @@
 import { useState } from "react";
 import { Sheet } from "./Sheet";
 import { Stepper } from "./Stepper";
+import { NumberPad, type PadRequest } from "./NumberPad";
 import { formatClock, formatStoredTwin } from "../lib/format";
-import { stepKg, toDisplay, type Unit } from "../lib/units";
+import { fromDisplay, stepKg, toDisplay, type Unit } from "../lib/units";
 import { getDefaultRestSeconds } from "../lib/settings";
 import type { SetType } from "../lib/types";
 
@@ -29,6 +30,8 @@ export interface SetGroup {
   load_kg: number | null;
   set_type: SetType;
   rest_seconds: number;
+  /** 0 = not in a superset; 1-4 = group A-D */
+  superset_group: number;
 }
 
 /**
@@ -60,6 +63,7 @@ export function groupSets(
   reps: number,
   byFeel: boolean,
   restSeconds: number,
+  supersetGroup = 0,
 ): SetGroup[] {
   const out: SetGroup[] = [];
   for (const s of sets) {
@@ -82,6 +86,7 @@ export function groupSets(
       load_kg: load,
       set_type: type,
       rest_seconds: restSeconds,
+      superset_group: supersetGroup,
     });
   }
   return out;
@@ -89,6 +94,9 @@ export function groupSets(
 
 interface SetSchemeSheetProps {
   exerciseName: string;
+  /** Names already in each superset group, so picking a letter can say who it
+   *  pairs with rather than leaving the letter to mean nothing. */
+  supersetMembers?: Record<number, string[]>;
   unit: Unit;
   /** Best guess at a starting weight — last time's top set, or the fallback. */
   startKg: number;
@@ -99,6 +107,7 @@ interface SetSchemeSheetProps {
 
 export function SetSchemeSheet({
   exerciseName,
+  supersetMembers,
   unit,
   startKg,
   busy,
@@ -120,6 +129,15 @@ export function SetSchemeSheet({
   // "work up to something hard". Keeping it here means the weight steppers can
   // stay simple numbers instead of each carrying an empty state.
   const [byFeel, setByFeel] = useState(false);
+  // Tapping a value types it. Stepping from 20 to 102.5 kg is 33 taps; a
+  // number pad is one. Every stepper in the session screen already offers
+  // this — the planning ones simply never did.
+  const [pad, setPad] = useState<PadRequest | null>(null);
+  // Pairing belongs HERE, not only in the row editor afterwards. Someone
+  // adding "A2" has the pairing in mind at the moment they add it; making them
+  // add the exercise, find the row, expand it and set a letter is three steps
+  // for a decision they had already made.
+  const [superset, setSuperset] = useState(0);
 
   /** Growing copies the last set, which is what "one more set" means. */
   const resize = (n: number) => {
@@ -141,7 +159,8 @@ export function SetSchemeSheet({
   const matchAll = () =>
     setSets((prev) => prev.map((s) => ({ ...s, loadKg: prev[0]!.loadKg })));
 
-  const groups = groupSets(sets, reps, byFeel, rest);
+  const groups = groupSets(sets, reps, byFeel, rest, superset);
+  const supersetMates = supersetMembers?.[superset] ?? [];
   const working = sets.filter((s) => !s.warmup).length;
 
   return (
@@ -149,6 +168,17 @@ export function SetSchemeSheet({
       <div className="field-label">HOW MANY SETS?</div>
       <Stepper
         label="sets"
+        onTapValue={() =>
+          setPad({
+            label: "HOW MANY SETS",
+            action: "SET",
+            initial: String(sets.length),
+            allowDecimal: false,
+            onCommit: (v) =>
+              resize(Math.min(MAX_SETS, Math.max(1, Math.round(v)))),
+            onCancel: () => setPad(null),
+          })
+        }
         display={`${sets.length} ${sets.length === 1 ? "set" : "sets"}`}
         subText={
           working === sets.length
@@ -169,6 +199,16 @@ export function SetSchemeSheet({
       <div className="field-label">REPS PER SET</div>
       <Stepper
         label="reps"
+        onTapValue={() =>
+          setPad({
+            label: "REPS PER SET",
+            action: "SET",
+            initial: String(reps),
+            allowDecimal: false,
+            onCommit: (v) => setReps(Math.min(100, Math.max(1, Math.round(v)))),
+            onCancel: () => setPad(null),
+          })
+        }
         display={`${reps} ${reps === 1 ? "rep" : "reps"}`}
         value={reps}
         min={1}
@@ -183,6 +223,17 @@ export function SetSchemeSheet({
       <div className="field-label">REST BETWEEN SETS</div>
       <Stepper
         label="rest"
+        onTapValue={() =>
+          setPad({
+            label: "REST BETWEEN SETS · SECONDS",
+            action: "SET",
+            initial: String(rest),
+            allowDecimal: false,
+            onCommit: (v) =>
+              setRest(Math.min(3600, Math.max(0, Math.round(v)))),
+            onCancel: () => setPad(null),
+          })
+        }
         display={formatClock(rest)}
         subText={rest === 0 ? "no rest" : undefined}
         value={rest}
@@ -194,6 +245,31 @@ export function SetSchemeSheet({
           { label: "+30s", delta: 30 },
         ]}
       />
+
+      <div className="field-label">SUPERSET</div>
+      <div className="microcopy">
+        Put two exercises in the same group to alternate between them, resting
+        once at the end rather than after each.
+      </div>
+      <div className="seg">
+        {[0, 1, 2, 3, 4].map((g) => (
+          <button
+            key={g}
+            type="button"
+            className={`seg-btn ${superset === g ? "seg-on" : ""}`}
+            onClick={() => setSuperset(g)}
+          >
+            {g === 0 ? "NONE" : String.fromCharCode(64 + g)}
+          </button>
+        ))}
+      </div>
+      {superset !== 0 && (
+        <div className="ss-pairing">
+          {supersetMates.length === 0
+            ? `Group ${String.fromCharCode(64 + superset)} — nothing else is in it yet.`
+            : `Alternates with ${supersetMates.join(", ")}.`}
+        </div>
+      )}
 
       <div className="field-label">WEIGHT</div>
       <div className="seg">
@@ -244,6 +320,19 @@ export function SetSchemeSheet({
               <Stepper
                 label={`set ${i + 1} load`}
                 compact
+                onTapValue={() =>
+                  setPad({
+                    label: `SET ${i + 1} · LOAD IN ${unit.toUpperCase()}`,
+                    action: "SET LOAD",
+                    initial: String(toDisplay(s.loadKg, unit)),
+                    allowDecimal: true,
+                    onCommit: (v) =>
+                      patch(i, {
+                        loadKg: Math.min(999, Math.max(0.5, fromDisplay(v, unit))),
+                      }),
+                    onCancel: () => setPad(null),
+                  })
+                }
                 display={`${toDisplay(s.loadKg, unit)} ${unit}`}
                 subText={formatStoredTwin(s.loadKg, unit)}
                 value={s.loadKg}
@@ -270,6 +359,18 @@ export function SetSchemeSheet({
           ? "Adding…"
           : `Add ${sets.length} ${sets.length === 1 ? "set" : "sets"}`}
       </button>
+      {pad && (
+        <NumberPad
+          req={{
+            ...pad,
+            onCommit: (v) => {
+              pad.onCommit(v);
+              setPad(null);
+            },
+          }}
+        />
+      )}
+
       {groups.length > 1 && (
         <div className="microcopy">
           Saved as {groups.length} entries because the weight or type changes

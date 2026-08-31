@@ -79,6 +79,8 @@ export interface PrescriptionInsert {
   load_entry?: LoadEntry | null;
   /** warmup / working / backoff; omit to take the column default ('working') */
   set_type?: SetType;
+  /** 1=A … 4=D; null = not part of a superset */
+  superset_group?: number | null;
 }
 
 export interface PrescriptionPatch {

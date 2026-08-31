@@ -15,6 +15,7 @@
 
 import { useState } from "react";
 import { Sheet } from "./Sheet";
+import { rank } from "../lib/fuzzy";
 import type { ExerciseRow } from "../lib/types";
 
 export interface ExercisePickerProps {
@@ -25,6 +26,10 @@ export interface ExercisePickerProps {
   failed?: boolean;
   /** Optional short badge for a row, e.g. "LOGGED". */
   badge?: (ex: ExerciseRow) => string | null;
+  /** Offered when a search finds nothing, or nothing right: the library will
+   *  never have everything, and a movement it lacks is untrackable. Omit to
+   *  leave the picker read-only (History has nothing to add an exercise TO). */
+  onAddNew?: (query: string) => void;
   /** With an empty query, list badged exercises first (History leads with
    *  the lifts it actually has data for). */
   preferBadged?: boolean;
@@ -41,12 +46,16 @@ export function ExercisePicker({
   badge,
   preferBadged,
   onPick,
+  onAddNew,
   onClose,
 }: ExercisePickerProps) {
   const [search, setSearch] = useState("");
 
   const q = search.trim().toLowerCase();
-  const matches = exercises.filter((e) => e.name.toLowerCase().includes(q));
+  // Ranked, not filtered by substring. `includes` misses the way people
+  // actually type: "rdl" for Romanian Deadlift, "bulg split" for Barbell
+  // Bulgarian Split Squat, one typo in "bech press". See lib/fuzzy.ts.
+  const matches = rank(exercises, search, (e) => e.name);
   const ordered =
     q === "" && preferBadged && badge
       ? [
@@ -104,6 +113,17 @@ export function ExercisePicker({
             </button>
           );
         })}
+        {onAddNew && q !== "" && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-block add-new-row"
+            onClick={() => onAddNew(search.trim())}
+          >
+            {shown.length === 0
+              ? `Add “${search.trim()}” as a new exercise`
+              : `Not here? Add “${search.trim()}”`}
+          </button>
+        )}
         {exercises.length === 0 && (
           <p className="muted">
             {failed
