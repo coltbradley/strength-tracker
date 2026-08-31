@@ -589,9 +589,14 @@ export function Session() {
         : (currentBracket?.id ?? null),
       set_index: nextIndex,
       set_type: setType,
+      // A tick is a real row in `sets`: 0 reps at 0 load, both already legal.
+      // The alternative is a second kind of completion record that no view, no
+      // chart and no MCP tool knows how to read — and volume and e1RM already
+      // ignore it, through the filters they have always had rather than a new
+      // coupling to the plan.
       // ALWAYS the total system load; load_entry records how it was typed
-      load_kg: Math.round(totalLoadKg * 100) / 100,
-      reps,
+      load_kg: isTick(openEntry) ? 0 : Math.round(totalLoadKg * 100) / 100,
+      reps: isTick(openEntry) ? 0 : reps,
       performed_at: new Date().toISOString(),
       rest_seconds_actual: recordableRest(),
       load_entry: loadEntryForSet(loadEntry, totalLoadKg),
@@ -890,9 +895,18 @@ export function Session() {
     ];
   };
 
+  /** A movement logged by ticking it off rather than by weight and reps. */
+  const isTick = (entry: ExerciseEntry | null): boolean =>
+    entry?.brackets[0]?.tracking === "done";
+
   /** "LOG WARMUP SET", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan */
   const logLabel = (entry: ExerciseEntry): string => {
     if (!setsLoaded) return "LOADING…";
+    if (isTick(entry)) {
+      const n = workingCount(entry) + 1;
+      const total = totalSets(entry);
+      return total > 0 && n <= total ? `DONE ${n} OF ${total}` : "MARK DONE";
+    }
     if (setType === "warmup") return "LOG WARMUP SET";
     const n = workingCount(entry) + 1;
     if (entry.brackets.length === 0) return `LOG SET ${n}`;
@@ -1078,6 +1092,19 @@ export function Session() {
                       ))}
                     </div>
 
+                    {/* A tick has no numbers to set. Showing a reps stepper
+                        and a load stepper for a banded glute bridge is the
+                        thing that made people stop logging the warmup half of
+                        a session at all. */}
+                    {isTick(entry) ? (
+                      <section className="rule-section">
+                        <p className="microcopy">
+                          No numbers for this one — tap below each time you
+                          finish a set.
+                        </p>
+                      </section>
+                    ) : (
+                      <>
                     <section className="rule-section">
                       <div className="section-head">
                         <span className="field-label">REPS</span>
@@ -1145,6 +1172,8 @@ export function Session() {
                         steps={loadSteps(entry.exercise_id, unit)}
                       />
                     </section>
+                      </>
+                    )}
 
                     {/* once the plan is met, NEXT leads and extra sets recede */}
                     <button

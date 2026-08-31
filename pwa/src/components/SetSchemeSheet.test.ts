@@ -15,6 +15,8 @@ describe("groupSets", () => {
         set_type: "working",
         rest_seconds: 120,
         superset_group: 0,
+        section: null,
+        tracking: "reps",
       },
     ]);
   });
@@ -100,5 +102,29 @@ describe("superset group", () => {
     const out = groupSets([w(60, true), w(100), w(100)], 5, false, REST, 2);
     expect(out).toHaveLength(2);
     expect(out.every((g) => g.superset_group === 2)).toBe(true);
+  });
+});
+
+describe("sections and tick-only tracking", () => {
+  it("carries the section onto every row of the scheme", () => {
+    const out = groupSets([w(20, true), w(40)], 10, false, REST, 0, "Activations");
+    expect(out.every((g) => g.section === "Activations")).toBe(true);
+  });
+
+  it("no section means the main body, not the string 'main'", () => {
+    expect(groupSets([w(40)], 10, false, REST)[0]!.section).toBeNull();
+  });
+
+  it("a tick-only movement prescribes no weight", () => {
+    // byFeel is forced on for tracking 'done' by the sheet; the grouping must
+    // then write null rather than a number nobody will look at.
+    const out = groupSets([w(40), w(40)], 10, true, REST, 0, "Activations", "done");
+    expect(out).toHaveLength(1);
+    expect(out[0]!.load_kg).toBeNull();
+    expect(out[0]!.tracking).toBe("done");
+  });
+
+  it("defaults to reps, so nothing existing changes meaning", () => {
+    expect(groupSets([w(40)], 10, false, REST)[0]!.tracking).toBe("reps");
   });
 });

@@ -20,7 +20,7 @@ import { NumberPad, type PadRequest } from "./NumberPad";
 import { formatClock, formatStoredTwin } from "../lib/format";
 import { fromDisplay, stepKg, toDisplay, type Unit } from "../lib/units";
 import { getDefaultRestSeconds } from "../lib/settings";
-import type { SetType } from "../lib/types";
+import type { SetType, TrackingMode } from "../lib/types";
 
 /** One prescription row to be written: N identical sets at one load. */
 export interface SetGroup {
@@ -32,6 +32,10 @@ export interface SetGroup {
   rest_seconds: number;
   /** 0 = not in a superset; 1-4 = group A-D */
   superset_group: number;
+  /** heading this sits under; null = the main body of the workout */
+  section: string | null;
+  /** how it is logged */
+  tracking: TrackingMode;
 }
 
 /**
@@ -64,6 +68,8 @@ export function groupSets(
   byFeel: boolean,
   restSeconds: number,
   supersetGroup = 0,
+  section: string | null = null,
+  tracking: TrackingMode = "reps",
 ): SetGroup[] {
   const out: SetGroup[] = [];
   for (const s of sets) {
@@ -87,6 +93,8 @@ export function groupSets(
       set_type: type,
       rest_seconds: restSeconds,
       superset_group: supersetGroup,
+      section,
+      tracking,
     });
   }
   return out;
@@ -94,6 +102,8 @@ export function groupSets(
 
 interface SetSchemeSheetProps {
   exerciseName: string;
+  /** Sections already used in this day, offered before the defaults. */
+  knownSections?: string[];
   /** Names already in each superset group, so picking a letter can say who it
    *  pairs with rather than leaving the letter to mean nothing. */
   supersetMembers?: Record<number, string[]>;
@@ -107,6 +117,7 @@ interface SetSchemeSheetProps {
 
 export function SetSchemeSheet({
   exerciseName,
+  knownSections = [],
   supersetMembers,
   unit,
   startKg,
@@ -138,6 +149,14 @@ export function SetSchemeSheet({
   // add the exercise, find the row, expand it and set a letter is three steps
   // for a decision they had already made.
   const [superset, setSuperset] = useState(0);
+  // A session is not a flat list — it is activations, then the main lift, then
+  // abs. Naming the part this belongs to is what turns a wall of exercises
+  // into a workout someone recognises.
+  const [section, setSection] = useState("");
+  // Nobody records 12 reps at 0 kg for a banded glute bridge; they record that
+  // they did it. Forcing every movement through weight-and-reps made the warmup
+  // half of a session either a lie or unlogged.
+  const [tracking, setTracking] = useState<TrackingMode>("reps");
 
   /** Growing copies the last set, which is what "one more set" means. */
   const resize = (n: number) => {
@@ -159,12 +178,68 @@ export function SetSchemeSheet({
   const matchAll = () =>
     setSets((prev) => prev.map((s) => ({ ...s, loadKg: prev[0]!.loadKg })));
 
-  const groups = groupSets(sets, reps, byFeel, rest, superset);
+  const groups = groupSets(
+    sets,
+    reps,
+    byFeel || tracking === "done",
+    rest,
+    superset,
+    section.trim() === "" ? null : section.trim(),
+    tracking,
+  );
   const supersetMates = supersetMembers?.[superset] ?? [];
   const working = sets.filter((s) => !s.warmup).length;
 
   return (
     <Sheet title={exerciseName} onClose={onCancel} tall>
+      <div className="field-label">SECTION</div>
+      <div className="seg">
+        {["", ...knownSections, "Activations", "Abs", "Cooldown"]
+          .filter((v, i, a) => a.indexOf(v) === i)
+          .map((sec) => (
+            <button
+              key={sec || "none"}
+              type="button"
+              className={`seg-btn ${section === sec ? "seg-on" : ""}`}
+              onClick={() => setSection(sec)}
+            >
+              {sec === "" ? "MAIN" : sec.toUpperCase()}
+            </button>
+          ))}
+      </div>
+      <input
+        className="input"
+        aria-label="section name"
+        placeholder="Or type a section name"
+        value={section}
+        onChange={(e) => setSection(e.target.value.slice(0, 40))}
+      />
+
+      <div className="field-label">HOW IT IS LOGGED</div>
+      <div className="seg">
+        <button
+          type="button"
+          className={`seg-btn ${tracking === "reps" ? "seg-on" : ""}`}
+          onClick={() => setTracking("reps")}
+        >
+          WEIGHT & REPS
+        </button>
+        <button
+          type="button"
+          className={`seg-btn ${tracking === "done" ? "seg-on" : ""}`}
+          onClick={() => setTracking("done")}
+        >
+          JUST TICK IT OFF
+        </button>
+      </div>
+      {tracking === "done" && (
+        <div className="microcopy">
+          One tap per set, no numbers. For activations, mobility and anything
+          you would not weigh. It still counts as done, and stays out of your
+          volume and e1RM.
+        </div>
+      )}
+
       <div className="field-label">HOW MANY SETS?</div>
       <Stepper
         label="sets"
@@ -271,6 +346,8 @@ export function SetSchemeSheet({
         </div>
       )}
 
+      {tracking === "reps" && (
+        <>
       <div className="field-label">WEIGHT</div>
       <div className="seg">
         <button
@@ -301,6 +378,8 @@ export function SetSchemeSheet({
           </button>
         )
       )}
+        </>
+      )}
 
       <ol className="scheme-list">
         {sets.map((s, i) => (
@@ -316,7 +395,7 @@ export function SetSchemeSheet({
                 {s.warmup ? "WARMUP" : "WORKING"}
               </button>
             </div>
-            {!byFeel && (
+            {!byFeel && tracking === "reps" && (
               <Stepper
                 label={`set ${i + 1} load`}
                 compact

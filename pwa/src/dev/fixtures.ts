@@ -173,6 +173,10 @@ interface RxSpec {
   load_entry?: "total" | "per_side" | null;
   /** warmup / working / backoff; absent = the column default, 'working' */
   set_type?: "warmup" | "working" | "backoff";
+  /** heading this row sits under; absent = the main body */
+  section?: string | null;
+  /** 'reps' (default) or 'done', a completion tick */
+  tracking?: "reps" | "done";
 }
 
 function rxRows(workoutId: string, specs: RxSpec[]): Row[] {
@@ -192,6 +196,8 @@ function rxRows(workoutId: string, specs: RxSpec[]): Row[] {
     superset_group: s.superset_group ?? null,
     load_entry: s.load_entry ?? null,
     set_type: s.set_type ?? "working",
+    section: s.section ?? null,
+    tracking: s.tracking ?? "reps",
     created_at: at(dayIso(new Date()), 8),
   }));
 }

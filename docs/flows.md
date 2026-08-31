@@ -255,11 +255,40 @@ bodyweight and by-feel rows, and any exercise with no logged history.
 The confirmation says how many changed — "4 of 9 weights updated from your last
 sessions" — because a silent refresh is indistinguishable from no refresh.
 
+## Sections and tick-only movements
+
+A session is not a flat list. It is activations, then the main lift, then abs,
+and the parts behave differently: nobody records 12 reps at 0 kg for a banded
+glute bridge, they record that they did it. Forcing every movement through
+weight-and-reps made the warmup half of a session either a lie or unlogged.
+
+**Sections** are a name on a prescription, not a table. Consecutive rows
+sharing one render under a heading — the same shape supersets use, and the same
+shape a ramp uses. Set it when adding an exercise or later in the row editor,
+so a workout built before sections existed can be organised afterwards. The
+sections already used in a day are offered first, with Activations / Abs /
+Cooldown as defaults.
+
+**Tick-only** movements (`tracking = 'done'`) drop the weight and rep controls
+entirely: one tap per set, "DONE 2 OF 3". It still writes a real row in `sets`
+— reps 0 at load 0, both already legal — because a second kind of completion
+record is one no view, no chart and no MCP tool knows how to read. Volume and
+e1RM ignore it through the filters they already had, not through a new
+coupling to the plan.
+
+Claude can set both: `upsert_program` takes `section` and `tracking`, and the
+review table shows them.
+
 ## Asking the coach
 
 A chat icon floats beside the bug icon, on every screen including mid-session —
 which is the point, since "should I drop this set?" is asked with a bar loaded.
 Both live in one draggable dock: press and hold, drag, release.
+
+Its answers render as formatted text — bold, lists, headings — parsed into
+elements rather than HTML, because the text comes from a model that has just
+read an uploaded screenshot and someone's CSV. Nothing in that path touches
+innerHTML, so there is nothing to sanitise.
 
 It sees the log and the plan through the same MCP tools every other client
 uses, plus a live context block the app builds from its own cache each turn

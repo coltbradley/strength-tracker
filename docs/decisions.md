@@ -1127,3 +1127,42 @@ this month.
 
 Pricing lives in the view rather than a stored column: re-pricing is then one
 CREATE OR REPLACE and never a backfill that rewrites what history cost.
+
+## Sections are a name, not a table
+
+A third grouping concept with its own table would be a third way to express
+"these rows belong together", alongside superset_group and the repeated
+exercise_id that makes a ramp. So a section is `prescriptions.section`, and
+consecutive rows sharing one render under a heading exactly as the other two
+do. Editable on existing rows, so a workout built before sections existed can
+be organised afterwards.
+
+`tracking` ('reps' | 'done') is the other half. A tick still writes a real row
+in `sets` — reps 0 at load 0, both already legal — rather than inventing a
+second kind of completion record that no view, no chart and no MCP tool knows
+how to read. And crucially the analytics need no change: a 0-rep set
+contributes 0 tonnage and sits outside e1RM's 1-8 rep window already. Adding a
+`tracking` filter to those views would couple the analysis to the plan, which
+is the same mistake v_adherence exists to avoid.
+
+## The row editor saves itself
+
+Every other field on the plan screen commits on blur — the name, the date, the
+note. One section demanding a deliberate Save was the odd one out, and
+forgetting it silently discarded the edit. Collapsing a row now saves it, the
+button says Done, and Cancel says "Discard changes" so the destructive one is
+the one that is labelled. A no-op edit writes nothing and says nothing: opening
+a row and closing it should not claim to have updated anything.
+
+## Rendering a model's markdown
+
+Coach answers arrived full of asterisks. The fix is a parser to a STRUCTURE and
+a component that emits elements — never `dangerouslySetInnerHTML`. The text
+comes from a model that has just read an uploaded screenshot and someone's CSV;
+routing that through innerHTML would turn prompt injection into script
+injection. Nothing in the path touches HTML, so there is nothing to sanitise.
+
+No dependency: the service worker precaches the whole bundle for offline use,
+and a markdown library is larger than the rest of the chat. The parser covers
+what actually appears and nothing else, with tests for what must NOT be
+formatting — "3*5" is a set scheme, not italics.

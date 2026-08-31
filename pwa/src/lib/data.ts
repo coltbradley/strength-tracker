@@ -29,6 +29,7 @@ import type {
   SessionBestE1rmRow,
   SetInsert,
   SetType,
+  TrackingMode,
   TrainingMaxRow,
   WeeklyVolumeRow,
 } from "./types";
@@ -563,6 +564,8 @@ export async function addPrescriptionGroups(
     set_type: SetType;
     rest_seconds: number;
     superset_group: number;
+    section: string | null;
+    tracking: TrackingMode;
   }[],
   existing: ResolvedPrescriptionRow[],
 ): Promise<string | null> {
@@ -582,6 +585,8 @@ export async function addPrescriptionGroups(
     notes: null,
     set_type: g.set_type,
     superset_group: g.superset_group === 0 ? null : g.superset_group,
+    section: g.section,
+    tracking: g.tracking,
   }));
   const { error } = await supabase.from("prescriptions").insert(rows);
   throwIf(error);

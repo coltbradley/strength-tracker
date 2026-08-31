@@ -14,6 +14,7 @@
 // and keeps whatever arrived, because the tokens are already spent either way.
 import { useEffect, useRef, useState } from "react";
 import { Sheet } from "./Sheet";
+import { Markdown } from "./Markdown";
 import {
   ACCEPTED_FILES,
   askCoach,
@@ -272,7 +273,14 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
                 ))}
               </div>
             )}
-            <div className="coach-text">{m.text}</div>
+            {/* The lifter's own turns are plain text they typed; only the
+                coach writes markdown. Rendering both through the parser would
+                turn a question containing an asterisk into formatting. */}
+            {m.role === "assistant" ? (
+              <Markdown source={m.text} />
+            ) : (
+              <div className="coach-text">{m.text}</div>
+            )}
             {m.streaming && (
               <div className="coach-status">
                 {m.tool

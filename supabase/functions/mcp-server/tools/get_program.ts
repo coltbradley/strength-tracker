@@ -24,6 +24,8 @@ interface PrescriptionRow {
   exercise_id: string;
   exercise_name: string;
   set_type: string;
+  section: string | null;
+  tracking: string;
   sets: number;
   reps_min: number;
   reps_max: number;
@@ -62,6 +64,9 @@ export function registerGetProgram(
         "Prescriptions carry set_type ('warmup' | 'working' | 'backoff'); " +
         "consecutive rows naming the same exercise are one ramp (e.g. a warmup " +
         "build-up into a top set) and the app renders them as a single entry. " +
+        "`section` groups consecutive rows under a heading ('Activations', " +
+        "'Abs'); `tracking` is 'reps' or 'done', where 'done' is a completion " +
+        "tick for movements nobody counts. " +
         "`notes` on a day is the COACH's words from a parse; `plan_note` is " +
         "the user's own and must never be overwritten by a parse.",
       inputSchema: {
@@ -127,7 +132,7 @@ export function registerGetProgram(
                   .from("v_resolved_prescriptions")
                   .select(
                     "id, planned_workout_id, position, exercise_id, exercise_name, " +
-                      "set_type, sets, reps_min, reps_max, load_kg, load_pct_tm, " +
+                      "set_type, section, tracking, sets, reps_min, reps_max, load_kg, load_pct_tm, " +
                       "resolved_load_kg, load_entry, rest_seconds, superset_group, notes",
                   )
                   .eq("user_id", db.ownerId)

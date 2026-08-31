@@ -47,6 +47,7 @@ import { ExercisePicker } from "../components/ExercisePicker";
 import { fromDisplay, stepKg, toDisplay } from "../lib/units";
 import type {
   ExerciseRow,
+  TrackingMode,
   PlannedWorkoutRow,
   PrescriptionPatch,
   ResolvedPrescriptionRow,
@@ -65,6 +66,9 @@ interface RxDraft {
   hasRest: boolean;
   /** 0 = not in a superset; 1-4 = group A-D */
   superset: number;
+  /** "" = the main body of the workout */
+  section: string;
+  tracking: TrackingMode;
 }
 
 /**
@@ -87,6 +91,22 @@ function rampWith(rows: ResolvedPrescriptionRow[], i: number): boolean {
  * is performed. Rows in a group now share a left rail and the run is labelled
  * once at its top, so a pair reads as a pair.
  */
+/**
+ * Where row `i` sits in its section run.
+ *
+ * Same shape as supersetAt, deliberately: a section, a superset and a ramp are
+ * all "these consecutive rows belong together", and rendering them three
+ * different ways would make a workout harder to read, not easier.
+ */
+function sectionAt(
+  rows: ResolvedPrescriptionRow[],
+  i: number,
+): { name: string; first: boolean } | null {
+  const sec = rows[i]?.section ?? null;
+  if (sec === null || sec.trim() === "") return null;
+  return { name: sec, first: (rows[i - 1]?.section ?? null) !== sec };
+}
+
 function supersetAt(
   rows: ResolvedPrescriptionRow[],
   i: number,
@@ -111,7 +131,27 @@ function draftFrom(r: ResolvedPrescriptionRow): RxDraft {
     rest_seconds: r.rest_seconds ?? 180,
     hasRest: r.rest_seconds !== null,
     superset: r.superset_group ?? 0,
+    section: r.section ?? "",
+    tracking: r.tracking ?? "reps",
   };
+}
+
+/** Did the draft actually change anything? */
+function unchanged(
+  r: ResolvedPrescriptionRow,
+  p: PrescriptionPatch,
+): boolean {
+  return (
+    p.sets === r.sets &&
+    p.reps_min === r.reps_min &&
+    p.reps_max === r.reps_max &&
+    (p.load_kg ?? null) === (r.load_kg ?? null) &&
+    (p.load_pct_tm ?? null) === (r.load_pct_tm ?? null) &&
+    (p.rest_seconds ?? null) === (r.rest_seconds ?? null) &&
+    (p.superset_group ?? null) === (r.superset_group ?? null) &&
+    (p.section ?? null) === (r.section ?? null) &&
+    (p.tracking ?? "reps") === (r.tracking ?? "reps")
+  );
 }
 
 function patchFrom(d: RxDraft): PrescriptionPatch {
@@ -123,6 +163,8 @@ function patchFrom(d: RxDraft): PrescriptionPatch {
     load_pct_tm: d.mode === "pct" ? d.load_pct : null,
     rest_seconds: d.hasRest ? d.rest_seconds : null,
     superset_group: d.superset === 0 ? null : d.superset,
+    section: d.section.trim() === "" ? null : d.section.trim(),
+    tracking: d.tracking,
   };
 }
 
@@ -311,6 +353,15 @@ export function Plan() {
       reload();
     });
 
+  /** Sections already used in this day, so naming one twice is a tap. */
+  const knownSections = [
+    ...new Set(
+      (rx ?? [])
+        .map((r) => r.section)
+        .filter((x): x is string => Boolean(x && x.trim())),
+    ),
+  ];
+
   const startKgFor = (exerciseId: string): number => {
     const mine = (rx ?? []).filter((r) => r.exercise_id === exerciseId);
     const last = mine[mine.length - 1];
@@ -376,13 +427,35 @@ export function Plan() {
       navigate("/");
     });
 
-  const saveRx = (r: ResolvedPrescriptionRow) => {
-    if (!draft) return;
-    void run("save exercise", async () => {
-      await updatePrescription(r.id, workout.id, patchFrom(draft));
-      setEditingRx(null);
-      setDraft(null);
-      toast("Exercise updated");
+  /**
+   * Commit an edited row.
+   *
+   * Called on collapse rather than from a Save button. Everything else on this
+   * screen saves as you go — the name, the date, the note all commit on blur —
+   * so one section demanding a deliberate Save was the odd one out, and
+   * forgetting it silently discarded the edit.
+   *
+   * `keepOpen` is for the reorder buttons, which must not close the row they
+   * just moved.
+   */
+  const saveRx = (r: ResolvedPrescriptionRow, keepOpen = false) => {
+    if (!draft) return Promise.resolve();
+    const patch = patchFrom(draft);
+    // Nothing changed: skip the write and the toast entirely, or merely opening
+    // a row and closing it claims to have updated it.
+    if (unchanged(r, patch)) {
+      if (!keepOpen) {
+        setEditingRx(null);
+        setDraft(null);
+      }
+      return Promise.resolve();
+    }
+    return run("save exercise", async () => {
+      await updatePrescription(r.id, workout.id, patch);
+      if (!keepOpen) {
+        setEditingRx(null);
+        setDraft(null);
+      }
       reload();
     });
   };
@@ -433,6 +506,10 @@ export function Plan() {
 
   const moveRx = (r: ResolvedPrescriptionRow, dir: -1 | 1) =>
     void run("reorder exercise", async () => {
+      // Commit first: moving a row used to discard whatever was typed in it.
+      if (editingRx === r.id && draft) {
+        await updatePrescription(r.id, workout.id, patchFrom(draft));
+      }
       await movePrescription(r.id, workout.id, dir, rx ?? []);
       reload();
     });
@@ -492,6 +569,7 @@ export function Plan() {
         {orderedRx.map((r, i) => {
           const editing = editingRx === r.id && draft;
           const ss = supersetAt(orderedRx, i);
+          const sec = sectionAt(orderedRx, i);
           return (
             <div
               key={r.id}
@@ -511,6 +589,9 @@ export function Plan() {
               {/* Labelled once, at the top of the run, instead of a letter
                   repeated on every row. "Superset A · 2 exercises" says what is
                   actually true; "A · " on two separate rows did not. */}
+              {sec?.first && (
+                <div className="section-head-row">{sec.name.toUpperCase()}</div>
+              )}
               {ss?.first && (
                 <div className="ss-head">
                   SUPERSET {String.fromCharCode(64 + ss.group)}
@@ -528,8 +609,7 @@ export function Plan() {
                 className="week-row week-row-rx"
                 onClick={() => {
                   if (editingRx === r.id) {
-                    setEditingRx(null);
-                    setDraft(null);
+                    void saveRx(r);
                   } else {
                     setEditingRx(r.id);
                     setDraft(draftFrom(r));
@@ -544,6 +624,9 @@ export function Plan() {
                   )}
                 </span>
                 <span className="week-state">
+                  {r.tracking === "done" && (
+                    <span className="rx-done">TICK · </span>
+                  )}
                   {/* Warmup is worth saying on the collapsed row: it is the
                       difference between "you owe 5 working sets" and 3. */}
                   {r.set_type !== undefined && r.set_type !== "working" && (
@@ -711,6 +794,55 @@ export function Plan() {
 
                   {/* exercises sharing a letter run together as a superset (A1/A2) */}
                   <div className="section-head">
+                    <span className="field-label">SECTION</span>
+                  </div>
+                  <div className="seg seg-types">
+                    {["", ...knownSections, "Activations", "Abs", "Cooldown"]
+                      .filter((v, j, a) => a.indexOf(v) === j)
+                      .map((secName) => (
+                        <button
+                          key={secName || "none"}
+                          type="button"
+                          className={`seg-btn ${draft.section === secName ? "seg-on" : ""}`}
+                          onClick={() =>
+                            setDraft({ ...draft, section: secName })
+                          }
+                        >
+                          {secName === "" ? "MAIN" : secName.toUpperCase()}
+                        </button>
+                      ))}
+                  </div>
+                  <input
+                    className="input"
+                    aria-label="section name"
+                    placeholder="Or type a section name"
+                    value={draft.section}
+                    onChange={(e) =>
+                      setDraft({ ...draft, section: e.target.value.slice(0, 40) })
+                    }
+                  />
+
+                  <div className="section-head">
+                    <span className="field-label">HOW IT IS LOGGED</span>
+                  </div>
+                  <div className="seg seg-types">
+                    <button
+                      type="button"
+                      className={`seg-btn ${draft.tracking === "reps" ? "seg-on" : ""}`}
+                      onClick={() => setDraft({ ...draft, tracking: "reps" })}
+                    >
+                      WEIGHT & REPS
+                    </button>
+                    <button
+                      type="button"
+                      className={`seg-btn ${draft.tracking === "done" ? "seg-on" : ""}`}
+                      onClick={() => setDraft({ ...draft, tracking: "done" })}
+                    >
+                      JUST TICK IT OFF
+                    </button>
+                  </div>
+
+                  <div className="section-head">
                     <span className="field-label">SUPERSET</span>
                   </div>
                   {/* A bare "None A B C D" said nothing about what a letter
@@ -813,13 +945,15 @@ export function Plan() {
                   </div>
 
                   <div className="detail-actions">
+                    {/* Saves on collapse; this is the same action with a
+                        label, for anyone who wants to press something. */}
                     <button
                       type="button"
                       className="btn btn-primary"
                       disabled={busy}
-                      onClick={() => saveRx(r)}
+                      onClick={() => void saveRx(r)}
                     >
-                      Save
+                      Done
                     </button>
                     <button
                       type="button"
@@ -829,7 +963,7 @@ export function Plan() {
                         setDraft(null);
                       }}
                     >
-                      Cancel
+                      Discard changes
                     </button>
                     {/* DELETE, not Remove: this drops the prescription from
                         the database. Session's UNDO ADD is the reversible one. */}
@@ -1109,6 +1243,7 @@ export function Plan() {
         <SetSchemeSheet
           exerciseName={adding.name}
           supersetMembers={supersetMembers}
+          knownSections={knownSections}
           unit={unit}
           startKg={startKgFor(adding.id)}
           busy={busy}

@@ -3,6 +3,9 @@
 
 export type SetType = "warmup" | "working" | "backoff";
 
+/** How a movement is logged: weight and reps, or just "done". */
+export type TrackingMode = "reps" | "done";
+
 /**
  * How a load was ENTERED. `load_kg` is always the TOTAL system load — the
  * whole weight moved in one rep — so every view, chart and MCP read stays
@@ -81,6 +84,10 @@ export interface PrescriptionInsert {
   set_type?: SetType;
   /** 1=A … 4=D; null = not part of a superset */
   superset_group?: number | null;
+  /** heading this row sits under ("Activations"); null = the main body */
+  section?: string | null;
+  /** 'reps' = load and reps; 'done' = a completion tick */
+  tracking?: TrackingMode;
 }
 
 export interface PrescriptionPatch {
@@ -93,6 +100,8 @@ export interface PrescriptionPatch {
   position?: number;
   superset_group?: number | null;
   load_entry?: LoadEntry | null;
+  section?: string | null;
+  tracking?: TrackingMode;
 }
 
 export interface ResolvedPrescriptionRow {
@@ -122,6 +131,12 @@ export interface ResolvedPrescriptionRow {
    *  rows cached before the column existed simply omit it, and an absent
    *  value must read as 'working', never as unknown. */
   set_type?: SetType;
+  /** Heading this row sits under. Null or absent = the main body of the
+   *  workout, which needs no heading. */
+  section?: string | null;
+  /** How it is logged. Absent reads as 'reps', which is what every row was
+   *  before the column existed. */
+  tracking?: TrackingMode;
 }
 
 // Insert shape; user_id is filled by the DB default (auth.uid()).

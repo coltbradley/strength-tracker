@@ -1026,5 +1026,64 @@ await check("v_plan_workouts still hides templates as well", async () => {
   await db.exec(`delete from planned_workouts where label = 'Tpl'`);
 });
 
+console.log("\nsections and tracking mode:");
+
+await check("section is optional and length-bounded", async () => {
+  const w = `(select id from planned_workouts where not is_template limit 1)`;
+  const e = `(select id from exercises limit 1)`;
+  await db.exec(
+    `insert into prescriptions (user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, section)
+     values ('${OWNER}', ${w}, ${e}, 800, 3, 8, 8, 'Activations')`,
+  );
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into prescriptions (user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, section)
+       values ('${OWNER}', ${w}, ${e}, 801, 3, 8, 8, '   ')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("a blank section name was accepted");
+});
+
+await check("tracking defaults to reps, so nothing existing changes meaning", async () => {
+  const r = await db.query(
+    `select count(*)::int as n, count(*) filter (where tracking = 'reps')::int as reps
+       from prescriptions`,
+  );
+  assertEq(r.rows[0].n, r.rows[0].reps, "every existing prescription is 'reps'");
+});
+
+await check("v_resolved_prescriptions exposes section and tracking", async () => {
+  const r = await db.query(
+    `select section, tracking from v_resolved_prescriptions where section = 'Activations'`,
+  );
+  assertEq(r.rows.length, 1, "the sectioned row is visible");
+  assertEq(r.rows[0].tracking, "reps", "and carries its tracking mode");
+});
+
+await check("a 'done' set is a real set and pollutes no analytics", async () => {
+  // reps 0 at load 0 is already legal; the point is that volume and e1RM
+  // ignore it through their EXISTING filters, with no new coupling.
+  const sess = await db.query(`select id, user_id from sessions limit 1`);
+  const s = sess.rows[0];
+  const before = await db.query(
+    `select coalesce(sum(tonnage_kg),0)::float as t from v_weekly_volume`,
+  );
+  await db.exec(
+    `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps)
+     values (gen_random_uuid(), '${s.user_id}', '${s.id}', (select id from exercises limit 1), 99, 'working', 0, 0)`,
+  );
+  const after = await db.query(
+    `select coalesce(sum(tonnage_kg),0)::float as t from v_weekly_volume`,
+  );
+  assertEq(after.rows[0].t, before.rows[0].t, "tonnage unchanged");
+  const e = await db.query(
+    `select count(*)::int as n from v_e1rm where reps = 0`,
+  );
+  assertEq(e.rows[0].n, 0, "and no e1RM row");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

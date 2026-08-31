@@ -31,6 +31,29 @@ const prescriptionSchema = z
       .min(1)
       .max(20)
       .describe("Number of prescribed sets."),
+    section: z
+      .string()
+      .min(1)
+      .max(40)
+      .optional()
+      .describe(
+        "Heading this exercise sits under — 'Activations', 'Abs', " +
+          "'Cooldown', or whatever the coach called it. Consecutive " +
+          "prescriptions sharing a section render as one titled block, so " +
+          "keep them adjacent in `position`. Omit for the main body of the " +
+          "workout, which needs no heading. Use the coach's own wording; do " +
+          "not invent sections they did not write.",
+      ),
+    tracking: z
+      .enum(["reps", "done"])
+      .optional()
+      .describe(
+        "How it is logged. 'reps' (the default) is weight and reps. 'done' " +
+          "is a completion tick, for movements nobody counts — band " +
+          "activations, mobility drills, anything the coach wrote without a " +
+          "load or a rep target. A 'done' set records reps 0 at load 0 and " +
+          "stays out of volume and e1RM.",
+      ),
     set_type: z
       .enum(["warmup", "working", "backoff"])
       .optional()
@@ -405,6 +428,9 @@ export function registerUpsertProgram(
               load_entry: p.load_entry ?? null,
               // Column default is 'working'; omit rather than write a guess.
               ...(p.set_type === undefined ? {} : { set_type: p.set_type }),
+              section: p.section ?? null,
+              // Column default is 'reps'; omit rather than write a guess.
+              ...(p.tracking === undefined ? {} : { tracking: p.tracking }),
             })),
           );
           const { error: rxError } = await db.client
@@ -458,8 +484,8 @@ export function registerUpsertProgram(
         const lines = [
           `## Program written: ${program.name}`,
           "",
-          "| Day | Date | Label | # | Exercise | SS | Type | Sets x Reps | Load | Rest |",
-          "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+          "| Day | Date | Label | Section | # | Exercise | SS | Type | Sets x Reps | Load | Rest |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ];
         for (const w of [...program.workouts].sort(
           (a, b) => a.day_index - b.day_index,
@@ -468,13 +494,15 @@ export function registerUpsertProgram(
             (a, b) => a.position - b.position,
           )) {
             lines.push(
-              `| ${w.day_index} | ${w.scheduled_date ?? ""} | ${w.label ?? ""} | ${p.position} | ${p.exercise_id} ` +
+              `| ${w.day_index} | ${w.scheduled_date ?? ""} | ${w.label ?? ""} ` +
+                `| ${p.section ?? ""} | ${p.position} | ${p.exercise_id} ` +
                 // The superset group is the thing most worth catching in
                 // review: a mis-parsed A1/A2 pairing changes how the session is
                 // actually performed, and it was written but never shown back.
                 `| ${p.superset_group == null ? "" : String.fromCharCode(64 + p.superset_group)} ` +
                 `| ${p.set_type ?? "working"} ` +
-                `| ${formatRepRange(p.sets, p.reps_min, p.reps_max)} | ${loadLabel(p, tms)} ` +
+                `| ${p.tracking === "done" ? "tick" : formatRepRange(p.sets, p.reps_min, p.reps_max)} ` +
+                `| ${p.tracking === "done" ? "" : loadLabel(p, tms)} ` +
                 `| ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,
             );
           }
