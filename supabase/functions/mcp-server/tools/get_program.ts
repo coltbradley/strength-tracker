@@ -108,12 +108,14 @@ export function registerGetProgram(
 
         const workouts = must(
           await db.client
-            .from("planned_workouts")
+            // v_plan_workouts excludes saved templates, which are dateless
+            // planned days and are not part of the plan.
+            .from("v_plan_workouts")
             .select("id, day_index, label, scheduled_date, notes, plan_note")
             .eq("user_id", db.ownerId)
             .eq("program_id", program.id)
             .order("day_index", { ascending: true }),
-          "planned_workouts",
+          "v_plan_workouts",
         ) as unknown as WorkoutRow[];
 
         const rx =

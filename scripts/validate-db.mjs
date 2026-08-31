@@ -871,5 +871,119 @@ await check("adherence still gates on the ACTUAL set, not the plan", async () =>
   await db.exec(`update prescriptions set set_type = 'working'`);
 });
 
+console.log("\nworkout templates (a saved day with no date):");
+
+await check("a template cannot carry a scheduled date", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into planned_workouts (user_id, program_id, day_index, label, is_template, scheduled_date)
+       values ('${OWNER}', (select id from programs limit 1), 900, 'bad', true, current_date)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("a dated template was accepted");
+});
+
+await check("v_plan_workouts hides templates from every plan read", async () => {
+  await db.exec(
+    `insert into planned_workouts (user_id, program_id, day_index, label, is_template)
+     values ('${OWNER}', (select id from programs limit 1), 901, 'Push A', true)`,
+  );
+  const all = await db.query(
+    `select count(*)::int as n from planned_workouts where label = 'Push A'`,
+  );
+  assertEq(all.rows[0].n, 1, "the row exists");
+  const plan = await db.query(
+    `select count(*)::int as n from v_plan_workouts where label = 'Push A'`,
+  );
+  assertEq(plan.rows[0].n, 0, "and the plan view does not see it");
+});
+
+await check("a template still owns prescriptions like any other day", async () => {
+  await db.exec(
+    `insert into prescriptions (user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_kg, set_type)
+     values ('${OWNER}',
+             (select id from planned_workouts where label = 'Push A'),
+             (select id from exercises limit 1), 0, 3, 5, 5, 60, 'working')`,
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_resolved_prescriptions
+      where planned_workout_id = (select id from planned_workouts where label = 'Push A')`,
+  );
+  assertEq(r.rows[0].n, 1, "prescriptions resolve for a template too");
+});
+
+await check("deleting a template takes its prescriptions, not any session", async () => {
+  const before = await db.query(`select count(*)::int as n from sessions`);
+  await db.exec(`delete from planned_workouts where label = 'Push A'`);
+  const rx = await db.query(
+    `select count(*)::int as n from prescriptions
+      where planned_workout_id not in (select id from planned_workouts)`,
+  );
+  assertEq(rx.rows[0].n, 0, "no orphaned prescriptions");
+  const after = await db.query(`select count(*)::int as n from sessions`);
+  assertEq(after.rows[0].n, before.rows[0].n, "sessions untouched");
+});
+
+console.log("\nfeedback (Claude's channel for what it could not do):");
+
+await check("kind is a closed set", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into feedback (user_id, kind, title) values ('${OWNER}', 'idea', 'nope')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("an unknown kind was accepted");
+});
+
+await check("a blank title is rejected", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into feedback (user_id, kind, title) values ('${OWNER}', 'feature', '   ')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("a whitespace title was accepted");
+});
+
+await check("an entry is filed and resolves without being deleted", async () => {
+  await db.exec(
+    `insert into feedback (user_id, kind, title, context)
+     values ('${OWNER}', 'data_gap', 'Cannot express AMRAP sets', 'coach wrote 3x5 + AMRAP')`,
+  );
+  await db.exec(
+    `update feedback set resolved_at = now() where title = 'Cannot express AMRAP sets'`,
+  );
+  const r = await db.query(
+    `select count(*)::int as n, count(resolved_at)::int as done from feedback
+      where title = 'Cannot express AMRAP sets'`,
+  );
+  assertEq(r.rows[0].n, 1, "the row survives resolution");
+  assertEq(r.rows[0].done, 1, "and is marked resolved");
+});
+
+await check("feedback is private to its owner", async () => {
+  const pol = await db.query(
+    `select count(*)::int as n from pg_policies
+      where tablename = 'feedback' and cmd = 'DELETE'`,
+  );
+  assertEq(pol.rows[0].n, 0, "no delete policy: asking is a record");
+});
+
+await check("deleting a user takes their feedback with them", async () => {
+  await db.exec(`insert into auth.users (id, email) values ('00000000-0000-4000-8000-00000000000a', 'fb@example.test');
+                 insert into feedback (user_id, kind, title) values ('00000000-0000-4000-8000-00000000000a', 'bug', 'temp');
+                 delete from auth.users where id = '00000000-0000-4000-8000-00000000000a';`);
+  const r = await db.query(`select count(*)::int as n from feedback where title = 'temp'`);
+  assertEq(r.rows[0].n, 0, "feedback cascades");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

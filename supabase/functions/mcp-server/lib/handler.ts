@@ -28,6 +28,7 @@ import type { RequestContext } from "./errors.ts";
 import { log } from "./log.ts";
 import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
+import { registerFeedback } from "../tools/feedback.ts";
 import { registerGetGoalProgress } from "../tools/get_goal_progress.ts";
 import { registerGetLiftHistory } from "../tools/get_lift_history.ts";
 import { registerGetProgram } from "../tools/get_program.ts";
@@ -57,6 +58,7 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerSetTrainingMax(server, db, ctx);
   registerSetGoal(server, db, ctx);
   registerManageExercises(server, db, ctx);
+  registerFeedback(server, db, ctx);
   return server;
 }
 

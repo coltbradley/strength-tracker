@@ -15,6 +15,7 @@ import {
 import { Note } from "../components/Note";
 import {
   addPrescriptionGroups,
+  saveWorkoutAsTemplate,
   deletePlannedWorkout,
   deletePrescription,
   duplicatePlannedWorkout,
@@ -148,6 +149,8 @@ export function Plan() {
   const [searchOpen, setSearchOpen] = useState(false);
   /** Exercise chosen in the picker, awaiting its set scheme. */
   const [adding, setAdding] = useState<ExerciseRow | null>(null);
+  /** null = not saving; a string = the name being typed */
+  const [templateName, setTemplateName] = useState<string | null>(null);
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
   const [duplicateDate, setDuplicateDate] = useState<string>("");
@@ -386,6 +389,14 @@ export function Plan() {
     void run("reorder exercise", async () => {
       await movePrescription(r.id, workout.id, dir, rx ?? []);
       reload();
+    });
+
+  const saveTemplate = () =>
+    void run("save template", async () => {
+      const name = (templateName ?? "").trim() || workoutName(workout);
+      await saveWorkoutAsTemplate(workout, name, rx ?? []);
+      setTemplateName(null);
+      toast(`Saved "${name}" — add it to any day from Today`);
     });
 
   const saveLabel = () =>
@@ -818,6 +829,55 @@ export function Plan() {
           onBlur={() => noteDirty && saveNote()}
         />
         <div className="microcopy">Saved automatically.</div>
+      </section>
+
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">SAVE AS TEMPLATE</span>
+        </div>
+        {templateName === null ? (
+          <button
+            type="button"
+            className="btn btn-secondary btn-block"
+            disabled={busy || (rx ?? []).length === 0}
+            onClick={() => setTemplateName(workoutName(workout))}
+          >
+            Save this workout
+          </button>
+        ) : (
+          <>
+            <input
+              className="input"
+              value={templateName}
+              aria-label="template name"
+              placeholder="Push A"
+              autoFocus
+              onChange={(e) => setTemplateName(e.target.value)}
+            />
+            <div className="detail-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setTemplateName(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={saveTemplate}
+              >
+                Save
+              </button>
+            </div>
+          </>
+        )}
+        <div className="microcopy">
+          Keeps this workout to reuse on any day. When you add it, the weights
+          come from the last time you actually did each exercise, not from
+          today’s numbers.
+        </div>
       </section>
 
       <section className="rule-section">

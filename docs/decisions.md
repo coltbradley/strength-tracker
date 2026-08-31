@@ -921,3 +921,44 @@ to sets in get_lift_history, and to sets in get_recent_sessions.
 unanswerable without already knowing which exercises were trained.
 `include_sets` returns the actual work — exercise, warmup vs working, load,
 reps, note — capped at 400 rows with a truncation flag.
+
+## A template is a planned day without a date
+
+The alternative was a parallel table pair — workout_templates plus
+template_prescriptions — duplicating the whole prescription shape and cutting
+the plan editor and the MCP off from it. A template is the same thing as a
+planned day minus the date, so it is one: `planned_workouts.is_template`, and
+prescriptions hang off it unchanged.
+
+The cost of that choice is leakage — a template appearing on the calendar — and
+two things contain it. A template can never carry a scheduled_date (a check
+constraint), so every date-keyed read already excludes them. And
+`v_plan_workouts` exists so the dateless reads have something to select from
+that cannot include one; the PWA's plan read and the MCP's get_program both go
+through it rather than filtering at each call site, because a filter you have
+to remember is a filter someone will forget.
+
+Applying a template refreshes loads from the last set actually logged. The
+naive version — overwrite every row with the last actual — flattens ramps:
+60/85/112.5 becomes 110/110/110, three identical sets where a warmup build-up
+used to be. So the unit of refresh is the ramp. A run of consecutive rows
+naming one exercise is rescaled proportionally, the top set landing exactly on
+the weight that was lifted rather than on a rounded product of it. %TM rows are
+skipped entirely: they are already relative to a training max that moves on its
+own, and replacing one with an absolute number severs that link silently.
+
+## Claude can file what it could not do
+
+Every tool either read the log or wrote a plan. None of them had anywhere to
+put the thing that happens constantly: a coach screenshot describing something
+the schema cannot express, a metric the user asked for that no view computes, a
+shape the parser had to flatten. That went into a chat message and died there.
+
+`feedback` is the table that outlives the conversation, with submit / list /
+resolve tools. Three deliberate constraints. `kind` is a closed set and `title`
+is capped at 200 characters, because the value here is being readable at a
+glance months later, not being able to hold anything — this is not a general
+note store, and the tool description says so. There is no delete policy:
+resolving answers a request, and the record of having asked stays. And the tool
+tells the assistant to say what it filed, because a request the user never
+hears about is the same as no request at all.

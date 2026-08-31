@@ -14,6 +14,7 @@ import {
 } from "./db";
 import { reportError } from "./errors";
 import { uuid } from "./uuid";
+import { countRefreshed, refreshedLoads } from "./templateLoads";
 import type {
   AdherenceRow,
   ExerciseRow,
@@ -130,8 +131,11 @@ export async function getPlannedWorkouts(): Promise<{
     throwIf(pErr);
     const progs = (programs ?? []) as ProgramRow[];
     if (progs.length === 0) return { programs: [], workouts: [] };
+    // v_plan_workouts, not planned_workouts: templates are dateless planned
+    // days and would otherwise land in the DAY 1..N fallback list, which is
+    // the one place on Today that renders days without a date.
     const { data: workouts, error: wErr } = await supabase
-      .from("planned_workouts")
+      .from("v_plan_workouts")
       .select(
         "id,program_id,day_index,label,notes,scheduled_date,plan_note,skipped_at",
       )
@@ -276,6 +280,209 @@ export async function deletePrescription(
   const { error } = await supabase.from("prescriptions").delete().eq("id", id);
   throwIf(error);
   await invalidatePlanCaches(plannedWorkoutId);
+}
+
+// ---- workout templates -----------------------------------------------------
+// A template is a planned day with no date and is_template set. It never
+// reaches the calendar (the DB forbids a dated template, and v_plan_workouts
+// drops them), and it owns prescriptions like any other day, so the plan
+// editor and the MCP see one shape.
+
+export interface TemplateRow {
+  id: string;
+  label: string | null;
+  exercise_count: number;
+}
+
+/**
+ * The saved workouts, newest first.
+ *
+ * Two queries rather than a `prescriptions(count)` embed: the embedded
+ * aggregate is a PostgREST extension, and counting a handful of rows in JS is
+ * both portable and free at this size.
+ */
+export async function getTemplates(): Promise<TemplateRow[]> {
+  const { data, error } = await supabase
+    .from("planned_workouts")
+    .select("id,label")
+    .eq("is_template", true)
+    .order("day_index", { ascending: false });
+  throwIf(error);
+  const rows = (data ?? []) as { id: string; label: string | null }[];
+  if (rows.length === 0) return [];
+
+  const { data: rx, error: rxErr } = await supabase
+    .from("prescriptions")
+    .select("planned_workout_id")
+    .in(
+      "planned_workout_id",
+      rows.map((r) => r.id),
+    );
+  throwIf(rxErr);
+  const counts = new Map<string, number>();
+  for (const r of (rx ?? []) as { planned_workout_id: string }[])
+    counts.set(r.planned_workout_id, (counts.get(r.planned_workout_id) ?? 0) + 1);
+
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.label,
+    exercise_count: counts.get(r.id) ?? 0,
+  }));
+}
+
+/**
+ * Save a planned day as a reusable template: a dateless copy of the day and
+ * every prescription on it.
+ *
+ * The copy is deliberate rather than a reference. A template you saved in
+ * March should not change because you edited March's Tuesday in April, and a
+ * day applied FROM a template should not follow the template afterwards.
+ */
+export async function saveWorkoutAsTemplate(
+  workout: PlannedWorkoutRow,
+  name: string,
+  rx: ResolvedPrescriptionRow[],
+): Promise<string> {
+  const { data: maxRows, error: mErr } = await supabase
+    .from("planned_workouts")
+    .select("day_index")
+    .eq("program_id", workout.program_id)
+    .order("day_index", { ascending: false })
+    .limit(1);
+  throwIf(mErr);
+  const dayIndex =
+    ((maxRows ?? [])[0] as { day_index: number } | undefined)?.day_index ?? -1;
+
+  const id = uuid();
+  const { error } = await supabase.from("planned_workouts").insert({
+    id,
+    program_id: workout.program_id,
+    day_index: dayIndex + 1,
+    label: name,
+    is_template: true,
+    scheduled_date: null,
+  });
+  throwIf(error);
+
+  if (rx.length > 0) {
+    const rows: PrescriptionInsert[] = rx.map((r, i) => ({
+      id: uuid(),
+      planned_workout_id: id,
+      exercise_id: r.exercise_id,
+      position: i,
+      sets: r.sets,
+      reps_min: r.reps_min,
+      reps_max: r.reps_max,
+      load_kg: r.load_kg,
+      load_pct_tm: r.load_pct_tm,
+      rest_seconds: r.rest_seconds,
+      notes: r.notes,
+      set_type: r.set_type ?? "working",
+    }));
+    const { error: rxErr } = await supabase.from("prescriptions").insert(rows);
+    throwIf(rxErr);
+  }
+  await invalidatePlanCaches();
+  return id;
+}
+
+export interface AppliedTemplate {
+  workoutId: string;
+  /** exercises whose load came from a logged set rather than the template */
+  refreshed: number;
+  total: number;
+}
+
+/**
+ * Drop a template onto a date.
+ *
+ * Loads come from what was LAST ACTUALLY LIFTED for each exercise, not from
+ * the numbers frozen into the template. A template saved three months ago
+ * would otherwise walk your strength backwards every time you used it, which
+ * is the opposite of what saving a session for reuse is for.
+ *
+ * Two deliberate exclusions. A %TM prescription is left alone: it is already
+ * relative to a training max that moves on its own, and overwriting it with an
+ * absolute number would break that link. A warmup is left alone too — warmups
+ * are chosen relative to the day's top set, and the last warmup you happened
+ * to log is not a better guess than what the template says.
+ */
+export async function applyTemplate(
+  templateId: string,
+  programId: string,
+  date: string,
+  lastActuals: LastActuals,
+): Promise<AppliedTemplate> {
+  const { data: tpl, error: tErr } = await supabase
+    .from("planned_workouts")
+    .select("label")
+    .eq("id", templateId)
+    .single();
+  throwIf(tErr);
+
+  const { data: rxRows, error: rErr } = await supabase
+    .from("prescriptions")
+    .select(
+      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,set_type,superset_group,load_entry",
+    )
+    .eq("planned_workout_id", templateId)
+    .order("position");
+  throwIf(rErr);
+
+  const { data: maxRows, error: mErr } = await supabase
+    .from("planned_workouts")
+    .select("day_index")
+    .eq("program_id", programId)
+    .order("day_index", { ascending: false })
+    .limit(1);
+  throwIf(mErr);
+  const dayIndex =
+    ((maxRows ?? [])[0] as { day_index: number } | undefined)?.day_index ?? -1;
+
+  const workoutId = uuid();
+  const { error: wErr } = await supabase.from("planned_workouts").insert({
+    id: workoutId,
+    program_id: programId,
+    day_index: dayIndex + 1,
+    label: (tpl as { label: string | null } | null)?.label ?? null,
+    scheduled_date: date,
+    is_template: false,
+  });
+  throwIf(wErr);
+
+  const src = (rxRows ?? []) as unknown as (PrescriptionInsert & {
+    superset_group: number | null;
+    load_entry: LoadEntry | null;
+    set_type: SetType;
+  })[];
+  // The unit of refresh is the RAMP, not the row: overwriting every row with
+  // the last actual turns a 60/85/112.5 build-up into three identical sets.
+  // See lib/templateLoads.ts for the rule and what it deliberately skips.
+  const next = refreshedLoads(src, lastActuals);
+  const refreshed = countRefreshed(next);
+  const rows = src.map((r, i) => ({
+    ...r,
+    id: uuid(),
+    planned_workout_id: workoutId,
+    load_kg: next[i] ?? r.load_kg,
+  }));
+  if (rows.length > 0) {
+    const { error: iErr } = await supabase.from("prescriptions").insert(rows);
+    throwIf(iErr);
+  }
+  await invalidatePlanCaches(workoutId);
+  return { workoutId, refreshed, total: rows.length };
+}
+
+/** Delete a saved template. Days applied from it are copies and survive. */
+export async function deleteTemplate(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("planned_workouts")
+    .delete()
+    .eq("id", id)
+    .eq("is_template", true);
+  throwIf(error);
+  await invalidatePlanCaches();
 }
 
 /**

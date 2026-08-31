@@ -360,7 +360,17 @@ function vGoalProgress(s: DemoStore): Row[] {
   });
 }
 
+/**
+ * v_plan_workouts (20260831020000_workout_templates.sql): the plannable days.
+ * A saved template is a dateless planned_workout, and this is what keeps it
+ * off the calendar and out of the DAY 1..N fallback.
+ */
+function vPlanWorkouts(s: DemoStore): Row[] {
+  return (s.planned_workouts ?? []).filter((w) => w.is_template !== true);
+}
+
 const VIEWS: Record<string, (s: DemoStore) => Row[]> = {
+  v_plan_workouts: vPlanWorkouts,
   v_live_sets: vLiveSets,
   v_current_tm: vCurrentTm,
   v_resolved_prescriptions: vResolvedPrescriptions,

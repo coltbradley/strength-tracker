@@ -233,6 +233,28 @@ entry, and the sheet tells you which is about to happen before you commit
 same enum `sets.set_type` has always used, so a plan can now say what the log
 could always say.
 
+## Saving a workout to use again
+
+"Save this workout" in the plan editor keeps a day as a named template: a
+dateless copy of it and every prescription on it. A copy, not a reference — a
+template saved in March must not change because you edited March's Tuesday in
+April, and a day made FROM one must not follow it afterwards.
+
+From Today, an empty day offers "Use a saved workout". Picking one creates a
+real day on that date, and **the weights come from what you last actually
+lifted, not from the numbers frozen into the template**. A template saved three
+months ago would otherwise walk your strength backwards every time you used it.
+
+The unit of refresh is the RAMP, not the row. Overwriting every row with the
+last actual turns a 60/85/112.5 build-up into three identical sets, so a run of
+consecutive rows naming the same exercise is rescaled proportionally: the top
+set lands exactly on the weight that was lifted, and the rest keep their shape
+under it. Left alone: %TM rows (already relative to a moving training max),
+bodyweight and by-feel rows, and any exercise with no logged history.
+
+The confirmation says how many changed — "4 of 9 weights updated from your last
+sessions" — because a silent refresh is indistinguishable from no refresh.
+
 ## Reporting a problem
 
 A bug glyph floats over Today and History — never during a session, where it

@@ -20,8 +20,11 @@ import {
   CalendarSheet,
   type CalendarDay,
 } from "../components/CalendarSheet";
+import { TemplateSheet } from "../components/TemplateSheet";
 import {
+  applyTemplate,
   createPlannedWorkout,
+  deleteTemplate,
   getDoneWorkoutIds,
   getExercises,
   getLastActuals,
@@ -78,6 +81,7 @@ export function Today() {
   // week strip selection + LATER-list accordion
   const [selectedDate, setSelectedDate] = useState<string>(todayLocalIso());
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [laterExpanded, setLaterExpanded] = useState<string | null>(null);
   // undated-program fallback keeps the old expandable ruled list
@@ -313,6 +317,51 @@ export function Today() {
       .then((id) => navigate(`/plan/${id}`))
       .catch((e: unknown) => reportError(e, "plan a day"))
       .finally(() => setCreating(false));
+  };
+
+  /**
+   * Drop a saved workout onto the selected day. The loads are refreshed from
+   * the last set actually logged for each exercise, which is the whole point
+   * of the feature, so the toast says how many were refreshed rather than
+   * leaving the person to spot it.
+   */
+  const useTemplate = (templateId: string, name: string) => {
+    if (creating) return;
+    setCreating(true);
+    void (async () => {
+      try {
+        const actuals = (await getLastActuals()).data;
+        // A template needs a program to live in. Reuse the confirmed one when
+        // there is one; otherwise make the day first (which creates a program)
+        // and read its program_id back.
+        let pid = program?.id ?? null;
+        if (pid === null) {
+          const seedId = await createPlannedWorkout(selectedDate, "");
+          const fresh = await getPlannedWorkouts();
+          pid =
+            fresh.data.workouts.find((w) => w.id === seedId)?.program_id ??
+            null;
+          if (pid === null) throw new Error("could not resolve a program");
+        }
+        const res = await applyTemplate(
+          templateId,
+          pid,
+          selectedDate,
+          actuals,
+        );
+        setTemplatesOpen(false);
+        toast(
+          res.refreshed > 0
+            ? `${name} added — ${res.refreshed} of ${res.total} weights updated from your last sessions`
+            : `${name} added — no logged history yet, so the saved weights were kept`,
+        );
+        navigate(`/plan/${res.workoutId}`);
+      } catch (e) {
+        reportError(e, "use template");
+      } finally {
+        setCreating(false);
+      }
+    })();
   };
 
   const start = async (workout: PlannedWorkoutRow | null) => {
@@ -801,6 +850,17 @@ export function Today() {
                 >
                   {creating ? "Creating…" : "Plan this day"}
                 </button>
+                {/* The other way to fill an empty day: one you already built.
+                    Sits under "Plan this day" rather than beside it, because
+                    from scratch is the answer before any template exists. */}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-block"
+                  disabled={creating}
+                  onClick={() => setTemplatesOpen(true)}
+                >
+                  Use a saved workout
+                </button>
               </>
             )}
           </div>
@@ -921,6 +981,23 @@ export function Today() {
         >
           Start empty session
         </button>
+      )}
+
+      {templatesOpen && (
+        <TemplateSheet
+          dateLabel={formatPlannedDate(selectedDate)}
+          busy={creating}
+          onApply={(t) => useTemplate(t.id, t.label ?? "Workout")}
+          onDelete={(t) => {
+            void deleteTemplate(t.id)
+              .then(() => {
+                setTemplatesOpen(false);
+                toast(`Deleted "${t.label ?? "Untitled"}"`);
+              })
+              .catch((e: unknown) => reportError(e, "delete template"));
+          }}
+          onClose={() => setTemplatesOpen(false)}
+        />
       )}
 
       {calendarOpen && (
