@@ -40,8 +40,16 @@ export function rxLoadKg(rx: ResolvedPrescriptionRow): number | null {
  * this one — three hand-rolled variants had drifted apart (`×`/`@` vs
  * `×`/`·`) and read as three different apps.
  *
- * "3×5", "3×5 @ 115 lb", or "3×5 @ 80% TM" when only a percentage of an
- * (unset) training max is known — that last case pairs with `rxHasNoTm`.
+ * "3×5", "3×5 @ 115 lb", "3×5 @ 30 lb/side", or "3×5 @ 80% TM" when only a
+ * percentage of an (unset) training max is known — that last case pairs with
+ * `rxHasNoTm`.
+ *
+ * A per-side prescription is quoted PER SIDE, which is the number the coach
+ * wrote and the number on the dumbbell. `load_kg` is always the TOTAL, so
+ * rendering it raw showed a pair of 30s as "60 kg" on Today and on the session
+ * target line — while the stepper directly beneath showed 30, and History's
+ * own formatter showed 30/side. Three surfaces, two answers, and the wrong one
+ * is a plausible instruction to pick up double.
  */
 export function formatRxTarget(
   rx: ResolvedPrescriptionRow,
@@ -49,7 +57,11 @@ export function formatRxTarget(
 ): string {
   const base = `${rx.sets}×${formatRepRange(rx.reps_min, rx.reps_max)}`;
   const load = rxLoadKg(rx);
-  if (load !== null) return `${base} @ ${toDisplay(load, unit)} ${unit}`;
+  if (load !== null) {
+    return rx.load_entry === "per_side"
+      ? `${base} @ ${toDisplay(load / 2, unit)} ${unit}/side`
+      : `${base} @ ${toDisplay(load, unit)} ${unit}`;
+  }
   if (rx.load_pct_tm !== null) return `${base} @ ${rx.load_pct_tm}% TM`;
   return base;
 }

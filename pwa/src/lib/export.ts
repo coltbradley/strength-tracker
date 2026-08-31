@@ -37,6 +37,10 @@ export interface ExportSet {
   reps: number;
   performed_at: string;
   rest_seconds_actual: number | null;
+  /** How the load was TYPED: 'total', 'per_side', or null for UNKNOWN.
+   *  load_kg is always the total, so without this a pair of 30 kg dumbbells
+   *  and a 60 kg barbell are indistinguishable in the user's own archive. */
+  load_entry: string | null;
 }
 
 export interface ExportBundle {
@@ -52,10 +56,21 @@ export interface ExportBundle {
 
 const SESSION_COLUMNS =
   "id,planned_workout_id,started_at,ended_at,session_rpe,bodyweight_kg,notes";
+// load_entry is NOT optional here. load_kg is always the total system load,
+// and load_entry is the only record of how the lifter actually typed it — the
+// difference between "a pair of 30s" and "60 on a bar". This is the canonical
+// archive; dropping it makes that unrecoverable, and `sets` is append-only so
+// it can never be reconstructed.
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry";
 
-/** Page through a PostgREST relation until it stops returning full pages. */
+/** Page through a PostgREST relation until it stops returning full pages.
+ *
+ *  Every caller MUST pass a total order. `range()` is LIMIT/OFFSET, and
+ *  without an ORDER BY Postgres makes no promise that two queries walk the
+ *  rows in the same sequence — so past one page, rows can repeat and rows can
+ *  vanish. In an export that is meant to be the user's own complete archive,
+ *  vanishing is the bad one, and it is silent. */
 async function fetchAll<T>(
   build: (
     from: number,
@@ -81,7 +96,9 @@ export async function buildExport(appVersion: string): Promise<ExportBundle> {
       .from("sessions")
       .select(SESSION_COLUMNS)
       .is("discarded_at", null)
+      // started_at alone is not unique, and a tie can shuffle between pages
       .order("started_at")
+      .order("id")
       .range(from, to),
   );
 
@@ -89,12 +106,19 @@ export async function buildExport(appVersion: string): Promise<ExportBundle> {
     supabase
       .from("v_live_sets")
       .select(SET_COLUMNS)
+      // two sets can share a timestamp; id breaks the tie so the walk is stable
       .order("performed_at")
+      .order("id")
       .range(from, to),
   );
 
   const notes = await fetchAll<{ set_id: string; note: string }>((from, to) =>
-    supabase.from("set_notes").select("set_id,note").range(from, to),
+    supabase
+      .from("set_notes")
+      .select("set_id,note")
+      // set_id is the primary key here, so this is a total order
+      .order("set_id")
+      .range(from, to),
   );
 
   const { data: exercises } = await getExercises();

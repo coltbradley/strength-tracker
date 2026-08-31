@@ -43,6 +43,16 @@ export function score(name: string, query: string): number {
   if (nameWords.some((w) => w.startsWith(q))) return 800 - lower.length;
   if (lower.includes(q)) return 700 - lower.length;
 
+  // Everything below matches on WORDS, and words() keeps only [a-z0-9]. A
+  // query made entirely of other characters — "深蹲", "🔥", "???" — tokenizes
+  // to the empty array, and `[].every(...)` is true, so the one-typo branch at
+  // the bottom returned a positive score for every exercise in the library:
+  // 873 results, and no "add a new exercise" prompt, because that only appears
+  // when a search finds nothing. The literal comparisons above run first and
+  // are script-agnostic, so a custom exercise actually named 深蹲 is still
+  // found by typing it.
+  if (qWords.length === 0) return 0;
+
   // Initials: "bbs" -> Barbell Bulgarian Squat.
   const init = initials(nameWords);
   if (init === q) return 650;

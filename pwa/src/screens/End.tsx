@@ -87,6 +87,8 @@ export function End() {
   const discardArmed = armed === "discard";
   // the draft is persisted on unmount, but not once the session is closed
   const closedRef = useRef(false);
+  /** re-entrancy guard for end(); a ref, because state is batched */
+  const endingRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = active?.id ?? null;
   const draftRef = useRef<EndDraft | null>(null);
@@ -240,13 +242,28 @@ export function End() {
   };
 
   const end = async () => {
+    // A ref, not state: React batches a state update, so a genuine double-tap
+    // (or a tap that lands twice through a slow frame) reads the old value and
+    // runs the whole close twice — two queued updates, markPlannedDayDone
+    // twice, two navigations.
+    if (endingRef.current) return;
+    endingRef.current = true;
     try {
       await outbox.enqueue({
         kind: "update",
         table: "sessions",
         id: active.id,
         patch: {
-          ended_at: new Date().toISOString(),
+          // `sessions` carries `check (ended_at >= started_at)`, and this is
+          // the wall clock, which is not guaranteed to agree with the one that
+          // stamped started_at — a phone whose time drifts back, or a session
+          // adopted from another device. A violation is a 23514, which the
+          // outbox classifies as dead: the close would sit in the queue
+          // failing forever, with the session still open. syncOpenSessions
+          // already clamps for exactly this reason; so does this now.
+          ended_at: new Date(
+            Math.max(Date.now(), Date.parse(active.started_at) || 0),
+          ).toISOString(),
           session_rpe: rpe,
           bodyweight_kg: bwOpen ? Math.round(bwKg * 10) / 10 : null,
           notes: note.trim() === "" ? null : note.trim(),
@@ -267,6 +284,9 @@ export function End() {
       );
       navigate("/", { replace: true });
     } catch (e) {
+      // let them try again: the failure may be transient, and the session is
+      // still open
+      endingRef.current = false;
       reportError(e, "end session");
     }
   };

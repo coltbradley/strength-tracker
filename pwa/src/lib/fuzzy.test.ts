@@ -75,3 +75,24 @@ describe("what must NOT match", () => {
     expect(rank(LIBRARY, "kettlebell swing", (x) => x)).toEqual([]);
   });
 });
+
+describe("a query with no word characters", () => {
+  // words() keeps only [a-z0-9], so these tokenize to nothing. [].every() is
+  // true, which used to hand a positive score to the entire library and hide
+  // the "add a new exercise" prompt behind 873 irrelevant results.
+  it.each(["深蹲", "🔥", "???", "---", "!!"])("%s matches nothing", (q) => {
+    expect(score("Barbell Squat", q)).toBe(0);
+    expect(score("Bench Press", q)).toBe(0);
+  });
+
+  it("still finds a custom exercise actually named in that script", () => {
+    // the literal comparisons run before the word-based ones
+    expect(score("深蹲", "深蹲")).toBeGreaterThan(0);
+    expect(score("Squat 深蹲", "深蹲")).toBeGreaterThan(0);
+  });
+
+  it("an empty query still matches everything, as the picker expects", () => {
+    expect(score("Barbell Squat", "")).toBeGreaterThan(0);
+    expect(score("Barbell Squat", "   ")).toBeGreaterThan(0);
+  });
+});

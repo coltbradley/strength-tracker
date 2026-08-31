@@ -16,10 +16,19 @@ import { RestTimer, type ActiveRest } from "./RestTimer";
 
 const noop = () => {};
 
-/** A rest that started far enough back to already be over. */
+/** A rest that started far enough back to already be over.
+ *
+ *  `startedAt` IS the rest's identity, so every call must produce a distinct
+ *  one. The separation is a whole minute per call rather than a millisecond
+ *  because it has to be bigger than any time that can pass BETWEEN two calls:
+ *  at `- nth` a single millisecond of real elapsed time cancelled the offset
+ *  exactly, both rests got the same startedAt, the second announcement was
+ *  correctly suppressed, and this file failed about one run in three. */
+let nth = 0;
 function overdue(targetSeconds = 60): ActiveRest {
+  nth += 1;
   return {
-    startedAt: Date.now() - (targetSeconds + 30) * 1000,
+    startedAt: Date.now() - (targetSeconds + 30) * 1000 - nth * 60_000,
     targetSeconds,
     forLabel: "Barbell Row set 2",
   };
