@@ -451,6 +451,7 @@ export function SetSchemeSheet({
         type="button"
         className="btn btn-primary"
         disabled={busy}
+        aria-busy={busy}
         onClick={() => onSave(groups)}
       >
         {busy

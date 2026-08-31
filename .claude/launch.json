@@ -4,14 +4,38 @@
     {
       "name": "pwa-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "pwa", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "pwa",
+        "run",
+        "dev"
+      ],
       "port": 5173
     },
     {
       "name": "pwa-demo",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "pwa", "run", "demo"],
+      "runtimeArgs": [
+        "--prefix",
+        "pwa",
+        "run",
+        "demo"
+      ],
       "port": 5199
+    },
+    {
+      "name": "pwa-demo-alt",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "pwa",
+        "run",
+        "demo",
+        "--",
+        "--port",
+        "5210"
+      ],
+      "port": 5210
     }
   ]
 }

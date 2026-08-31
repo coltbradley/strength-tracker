@@ -224,7 +224,9 @@
     --tap-md: 48px;
     --tap-key: 56px;
     --tap-log: 68px;
-    --tap-sm: 36px;
+    /* NOTE: no --tap-sm. There was one, at 36px, referenced by nothing — and
+     36px is under the 44px floor, so the only thing it could ever have done
+     was let a future control fall below it. */
 
     /* -- lines, radii, depth ---------------------------------------------- */
     --bw-hair: 1px;
@@ -324,6 +326,28 @@
   textarea,
   [role="button"] {
     touch-action: manipulation;
+  }
+
+  /* Every tap gets an acknowledgement.
+   *
+   * The rule above kills the platform's own tap highlight — correctly, it is
+   * a blue box that has nothing to do with this palette — but nothing replaced
+   * it, and only a handful of controls defined :active of their own. So the
+   * -5/+5 steppers, the segmented buttons, the chips, the week cells, the void
+   * and skip actions and every non-primary button did nothing at all when
+   * pressed. On a phone, mid-set, with the screen the only feedback channel
+   * there is, "did that register?" is answered by tapping again — and a second
+   * tap on a log button is a duplicated set.
+   *
+   * :where() keeps specificity at zero, so any component that wants its own
+   * pressed state still wins without !important.
+   *
+   * Opacity is deliberate: it composites on the GPU, so it cannot cause the
+   * layout thrash a padding or border change would, and it reads identically
+   * on every one of these controls without knowing what colour any of them is.
+   */
+  :where(button, a, [role="button"], summary):active:not(:disabled) {
+    opacity: 0.72;
   }
 
   /* Nothing in this file sets `outline: none`, so the UA ring survives — but
@@ -727,6 +751,14 @@
   .btn:disabled {
     opacity: 0.55;
     cursor: default;
+  }
+
+  /* A button that says "Creating…" is BUSY, not unavailable. It is disabled
+     only to stop a second tap, and it is carrying the only status the user
+     has. 1.4.3 exempts disabled controls; it does not exempt this. At 0.55 the
+     label computed to 3.24:1 on a filled button and 2.16:1 on a ghost. */
+  .btn:disabled[aria-busy="true"] {
+    opacity: 1;
   }
 
   /* ---- micro-label controls ----
@@ -2065,7 +2097,10 @@
   }
 
   .chart-bar {
-    fill: var(--rule-color);
+    /* --rule-color is 1.51:1 — fine for a hairline, not for the data itself.
+       A chart bar IS the information, so it is held to 1.4.11's 3:1 like any
+       other meaningful non-text content. --control-border-color is 3.08:1. */
+    fill: var(--control-border-color);
   }
 
   .chart-bar-last {
@@ -2288,7 +2323,10 @@
 
   .wk-name-skipped {
     text-decoration: line-through;
-    opacity: 0.55;
+    /* opacity 0.55 put this at 3.24:1, under the 4.5:1 body-text floor. The
+       line-through already carries "skipped"; dimming it below legibility was
+       saying the same thing twice and charging the reader for it. */
+    color: var(--text-dim);
   }
 
   .wk-target {
@@ -2448,7 +2486,8 @@
 
   .week-cell-num-skipped {
     text-decoration: line-through;
-    opacity: 0.5;
+    /* was opacity 0.5 — 2.85:1. Same reasoning as .wk-name-skipped. */
+    color: var(--text-dim);
   }
 
   .week-cell-num-rest {
@@ -2729,11 +2768,16 @@
   /* Padding days stay legible rather than invisible: a greyed-out 31st is
    * still a date you might mean to tap. */
   .cal-cell-out .cal-cell-n {
-    color: rgb(var(--ink-rgb) / 0.35);
+    /* 0.35 alpha computes to 2.00:1. These are the previous/next month's day
+       numbers — quiet, but still numbers someone has to read to tap the right
+       one. --text-dim is the dimmest thing in the system that clears AA. */
+    color: var(--text-dim);
   }
 
   .cal-cell-today {
-    border-color: var(--rule-strong-color);
+    /* --rule-strong-color is 1.71:1, and this border is the ONLY thing marking
+       today on the calendar — losing it loses the reader's place. 3.08:1. */
+    border-color: var(--control-border-color);
     font-weight: 700;
   }
 
@@ -2937,6 +2981,7 @@
   /* The heading is a button (it opens rename / add / remove) and the drag
      handle for the whole part, so it is a full tap target, not a caption. */
   .plan-section-head {
+    touch-action: pan-y;
     display: grid;
     grid-template-columns: 1fr auto var(--s-7);
     gap: var(--s-5);
@@ -2985,6 +3030,13 @@
 
   .plan-block-named {
     padding-bottom: var(--s-6);
+  }
+
+  /* The row above already ends on a hairline; the heading's own rule stacked
+     on top of it drew two lines with a gap between them. One rule, the strong
+     one, marks the break. */
+  .plan-block:has(+ .plan-block-named) .week-item:last-child {
+    border-bottom: 0;
   }
 
   /* A tick-only movement: no numbers to show, so the row says what it is. */
@@ -3162,7 +3214,9 @@
    * scheme sheet asks seven questions and full-size segments made it 1475px
    * of scroll on a 633px sheet. */
   .seg-tight .seg-btn {
-    min-height: 38px;
+    /* was 38px, under the 44px floor every other control in this file honours
+       — and these are chalky-handed taps between sets */
+    min-height: var(--tap-min);
     padding: 0 var(--s-5);
     font-size: var(--fs-micro);
   }

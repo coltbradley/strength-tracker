@@ -192,6 +192,7 @@ export function NewExerciseSheet({
         type="button"
         className="btn btn-primary btn-block"
         disabled={busy || name.trim().length === 0}
+        aria-busy={busy}
         onClick={save}
       >
         {busy

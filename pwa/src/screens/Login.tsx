@@ -150,6 +150,7 @@ export function Login() {
             type="submit"
             className="btn btn-primary"
             disabled={busy || email.length === 0}
+            aria-busy={busy}
           >
             {busy ? "Sending…" : "Email me a code"}
           </button>

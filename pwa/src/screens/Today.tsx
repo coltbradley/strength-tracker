@@ -1025,6 +1025,7 @@ export function Today() {
                   type="button"
                   className="btn btn-secondary btn-block"
                   disabled={creating}
+                  aria-busy={creating}
                   onClick={() => planDay(selectedDate)}
                 >
                   {creating ? "Creating…" : "Plan this day"}
@@ -1035,6 +1036,9 @@ export function Today() {
                 <button
                   type="button"
                   className="btn btn-ghost btn-block"
+                  /* disabled WHILE creating, but not itself busy: its label
+                     never changes, so aria-busy here would be a claim the
+                     button does not make. */
                   disabled={creating}
                   onClick={() => setTemplatesOpen(true)}
                 >
@@ -1145,6 +1149,7 @@ export function Today() {
             type="button"
             className="btn btn-secondary btn-block"
             disabled={creating}
+            aria-busy={creating}
             onClick={() => planDay(todayLocalIso())}
           >
             {creating ? "Creating…" : "Plan a workout"}

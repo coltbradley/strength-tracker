@@ -816,6 +816,11 @@ export function Session() {
   if (!active) return null;
 
   const entrySets = openEntry ? setsForEntry(openEntry) : [];
+  // The set just logged — the only one whose note affordance is spelled out.
+  const newestSetId =
+    entrySets.length === 0
+      ? null
+      : entrySets.reduce((a, b) => (b.set_index > a.set_index ? b : a)).id;
   const exerciseSets = openEntry ? setsForExercise(openEntry.exercise_id) : [];
 
   // plate maths is always about the whole loaded implement
@@ -1290,7 +1295,15 @@ export function Session() {
                                   >
                                     {setNotes[s.id]}
                                   </button>
-                                ) : (
+                                ) : s.id === newestSetId ? (
+                                  /* + NOTE on the NEWEST set only. A set that
+                                     already HAS a note still shows it (the
+                                     branch above), and an older one can still
+                                     be annotated by tapping its row — but five
+                                     logged sets meant five rows of empty note
+                                     chrome, which roughly doubled the height of
+                                     this section for an action almost nobody
+                                     takes on a set from twenty minutes ago. */
                                   <button
                                     type="button"
                                     className="set-note-add"
@@ -1298,13 +1311,31 @@ export function Session() {
                                   >
                                     + NOTE
                                   </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="set-note-add set-note-add-quiet"
+                                    aria-label={`add a note to set ${s.set_index + 1}`}
+                                    onClick={() => openNote(s.id)}
+                                  >
+                                    +
+                                  </button>
                                 )}
                               </div>
                             ))}
                         </div>
-                        <div className="microcopy">
-                          Wrong number? Void the set (✕) and log the right one.
-                        </div>
+                        {/* Shown on the FIRST set of a session only. It taught
+                            something worth knowing once — sets are corrected by
+                            voiding, not editing — and then repeated itself under
+                            every open exercise, in every session, forever. By
+                            the third week it was furniture. The ✕ carries its
+                            own label; this is the sentence that explains why
+                            there is no pencil. */}
+                        {entrySets.length === 1 && (
+                          <div className="microcopy">
+                            Wrong number? Void the set (✕) and log the right one.
+                          </div>
+                        )}
                       </section>
                     )}
                   </div>

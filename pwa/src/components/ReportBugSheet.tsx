@@ -148,6 +148,7 @@ export function ReportBugSheet({
         type="button"
         className="btn btn-primary"
         disabled={busy || text.trim().length < 3}
+        aria-busy={busy}
         onClick={submit}
       >
         {busy ? "Sending…" : "Send report"}
