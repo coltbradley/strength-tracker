@@ -299,6 +299,7 @@ export async function addPrescriptionGroups(
     reps_max: number;
     load_kg: number | null;
     set_type: SetType;
+    rest_seconds: number;
   }[],
   existing: ResolvedPrescriptionRow[],
 ): Promise<string | null> {
@@ -314,7 +315,7 @@ export async function addPrescriptionGroups(
     reps_max: g.reps_max,
     load_kg: g.load_kg,
     load_pct_tm: null,
-    rest_seconds: null,
+    rest_seconds: g.rest_seconds,
     notes: null,
     set_type: g.set_type,
   }));

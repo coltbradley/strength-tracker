@@ -16,8 +16,9 @@
 import { useState } from "react";
 import { Sheet } from "./Sheet";
 import { Stepper } from "./Stepper";
-import { formatStoredTwin } from "../lib/format";
+import { formatClock, formatStoredTwin } from "../lib/format";
 import { stepKg, toDisplay, type Unit } from "../lib/units";
+import { getDefaultRestSeconds } from "../lib/settings";
 import type { SetType } from "../lib/types";
 
 /** One prescription row to be written: N identical sets at one load. */
@@ -27,6 +28,20 @@ export interface SetGroup {
   reps_max: number;
   load_kg: number | null;
   set_type: SetType;
+  rest_seconds: number;
+}
+
+/**
+ * A starting weight that is a round number in the unit the person is LOOKING
+ * at. The device fallback is 20 kg, which is a clean default in kg mode and
+ * reads as "44.1 lb" in lb mode — a number nobody has ever loaded on a bar.
+ * Snapping to the display unit's own step turns that into 45 lb, and leaves kg
+ * mode exactly where it was.
+ */
+export function snapToUnit(kg: number, unit: Unit): number {
+  const step = stepKg(unit, false);
+  if (!(step > 0)) return kg;
+  return Math.max(step, Math.round(kg / step) * step);
 }
 
 interface PlannedSet {
@@ -42,9 +57,9 @@ const MAX_SETS = 20;
  */
 export function groupSets(
   sets: PlannedSet[],
-  repsMin: number,
-  repsMax: number,
+  reps: number,
   byFeel: boolean,
+  restSeconds: number,
 ): SetGroup[] {
   const out: SetGroup[] = [];
   for (const s of sets) {
@@ -55,12 +70,18 @@ export function groupSets(
       last.sets += 1;
       continue;
     }
+    // reps_min === reps_max: authoring in the app is one number. The RANGE
+    // still exists in the schema and the row editor, because a coach writing
+    // "8-12" means it — but nobody sitting down to plan their own session
+    // thinks in ranges, and asking for two numbers to get one was friction
+    // for every single exercise.
     out.push({
       sets: 1,
-      reps_min: repsMin,
-      reps_max: Math.max(repsMin, repsMax),
+      reps_min: reps,
+      reps_max: reps,
       load_kg: load,
       set_type: type,
+      rest_seconds: restSeconds,
     });
   }
   return out;
@@ -84,11 +105,17 @@ export function SetSchemeSheet({
   onCancel,
   onSave,
 }: SetSchemeSheetProps) {
+  // Snapped once, at mount, so every stepper and the "make every set X"
+  // shortcut start from the same round number.
+  const [start] = useState(() => snapToUnit(startKg, unit));
   const [sets, setSets] = useState<PlannedSet[]>(() =>
-    Array.from({ length: 3 }, () => ({ loadKg: startKg, warmup: false })),
+    Array.from({ length: 3 }, () => ({ loadKg: start, warmup: false })),
   );
-  const [repsMin, setRepsMin] = useState(8);
-  const [repsMax, setRepsMax] = useState(8);
+  const [reps, setReps] = useState(8);
+  // Rest between sets. Seeded from the device default so the common case is
+  // already right, and always written: the person filling this in IS the coach
+  // here, so what they picked is a real prescription, not a missing one.
+  const [rest, setRest] = useState(() => getDefaultRestSeconds());
   // "By feel" is a real prescription, not a missing one — the coach saying
   // "work up to something hard". Keeping it here means the weight steppers can
   // stay simple numbers instead of each carrying an empty state.
@@ -98,7 +125,7 @@ export function SetSchemeSheet({
   const resize = (n: number) => {
     setSets((prev) => {
       if (n <= prev.length) return prev.slice(0, Math.max(1, n));
-      const last = prev[prev.length - 1] ?? { loadKg: startKg, warmup: false };
+      const last = prev[prev.length - 1] ?? { loadKg: start, warmup: false };
       return [
         ...prev,
         ...Array.from({ length: n - prev.length }, () => ({ ...last })),
@@ -114,7 +141,7 @@ export function SetSchemeSheet({
   const matchAll = () =>
     setSets((prev) => prev.map((s) => ({ ...s, loadKg: prev[0]!.loadKg })));
 
-  const groups = groupSets(sets, repsMin, repsMax, byFeel);
+  const groups = groupSets(sets, reps, byFeel, rest);
   const working = sets.filter((s) => !s.warmup).length;
 
   return (
@@ -139,39 +166,34 @@ export function SetSchemeSheet({
         ]}
       />
 
-      <div className="field-label">REPS</div>
-      <div className="scheme-reps">
-        <Stepper
-          label="reps min"
-          compact
-          display={`${repsMin} min`}
-          value={repsMin}
-          min={1}
-          max={100}
-          onChange={(v) => {
-            const n = Math.round(v);
-            setRepsMin(n);
-            if (n > repsMax) setRepsMax(n);
-          }}
-          steps={[
-            { label: "−", delta: -1 },
-            { label: "+", delta: 1 },
-          ]}
-        />
-        <Stepper
-          label="reps max"
-          compact
-          display={`${repsMax} max`}
-          value={repsMax}
-          min={repsMin}
-          max={100}
-          onChange={(v) => setRepsMax(Math.round(v))}
-          steps={[
-            { label: "−", delta: -1 },
-            { label: "+", delta: 1 },
-          ]}
-        />
-      </div>
+      <div className="field-label">REPS PER SET</div>
+      <Stepper
+        label="reps"
+        display={`${reps} ${reps === 1 ? "rep" : "reps"}`}
+        value={reps}
+        min={1}
+        max={100}
+        onChange={(v) => setReps(Math.round(v))}
+        steps={[
+          { label: "−", delta: -1 },
+          { label: "+", delta: 1 },
+        ]}
+      />
+
+      <div className="field-label">REST BETWEEN SETS</div>
+      <Stepper
+        label="rest"
+        display={formatClock(rest)}
+        subText={rest === 0 ? "no rest" : undefined}
+        value={rest}
+        min={0}
+        max={3600}
+        onChange={(v) => setRest(Math.round(v))}
+        steps={[
+          { label: "−30s", delta: -30 },
+          { label: "+30s", delta: 30 },
+        ]}
+      />
 
       <div className="field-label">WEIGHT</div>
       <div className="seg">

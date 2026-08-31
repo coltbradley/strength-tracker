@@ -206,10 +206,21 @@ Add exercise → pick it → the set scheme sheet asks the three things a workou
 is made of, in the order a person thinks of them:
 
 1. **How many sets.** A stepper, default 3. Growing copies the last set.
-2. **Reps.** One min/max range for the whole scheme.
-3. **Weight, per set, and warmup or working.** One row per set, each with its
+2. **Reps per set.** ONE number, not a range. The range still exists in the
+   schema and in the row editor, because a coach writing "8-12" means it — but
+   nobody planning their own session thinks in ranges, and asking for two
+   numbers to get one was friction on every exercise.
+3. **Rest between sets.** Seeded from the device default and always written:
+   the person filling this in is the coach, so what they picked is a real
+   prescription, not a missing one.
+4. **Weight, per set, and warmup or working.** One row per set, each with its
    own load stepper and a WORKING/WARMUP chip. "Make every set X" is there for
    the straight 5x5, so that case stays two taps rather than five.
+
+Starting weights are snapped to a round number in the unit being LOOKED at.
+The device fallback is 20 kg, which is clean in kg mode and reads as "44.1 lb"
+in lb mode — a number nobody has loaded on a bar. Snapping to the display
+unit's own step makes that 45 lb and leaves kg mode untouched.
 
 On save, consecutive sets that agree on BOTH load and type collapse into one
 prescription row. "3 sets of 100" is one row; "60 warmup, 80 warmup, 100, 100"

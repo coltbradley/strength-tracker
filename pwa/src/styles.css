@@ -2543,21 +2543,6 @@
    * One row per planned set: its number, whether it is a warmup, and what it
    * weighs. The list is an <ol> because the order IS the meaning — set 1 is
    * the first set performed. */
-  /* Two compact steppers side by side overflow 375px — each is a value plus
-   * two tap-target buttons. Stacked by default, paired only where there is
-   * room for both. */
-  .scheme-reps {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: var(--s-4);
-  }
-
-  @media (min-width: 520px) {
-    .scheme-reps {
-      grid-template-columns: 1fr 1fr;
-    }
-  }
-
   .scheme-list {
     list-style: none;
     margin: var(--s-6) 0 0;
