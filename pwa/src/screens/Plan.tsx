@@ -7,9 +7,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
+import { getSetting } from "../lib/settings";
+import {
+  SetSchemeSheet,
+  type SetGroup,
+} from "../components/SetSchemeSheet";
 import { Note } from "../components/Note";
 import {
-  addPrescription,
+  addPrescriptionGroups,
   deletePlannedWorkout,
   deletePrescription,
   duplicatePlannedWorkout,
@@ -121,6 +126,8 @@ export function Plan() {
   const [draft, setDraft] = useState<RxDraft | null>(null);
   const [confirming, setConfirming] = useArmed(); // destructive action key
   const [searchOpen, setSearchOpen] = useState(false);
+  /** Exercise chosen in the picker, awaiting its set scheme. */
+  const [adding, setAdding] = useState<ExerciseRow | null>(null);
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
   const [duplicateDate, setDuplicateDate] = useState<string>("");
@@ -229,6 +236,18 @@ export function Plan() {
     }
   };
 
+  /**
+   * A starting weight for the scheme sheet's steppers. An existing row for the
+   * same exercise in this day wins — that is the ramp case, where the next
+   * set-group is almost always near the last one. Otherwise the device's
+   * fallback load, which is what the session screen would suggest anyway.
+   */
+  const startKgFor = (exerciseId: string): number => {
+    const mine = (rx ?? []).filter((r) => r.exercise_id === exerciseId);
+    const last = mine[mine.length - 1];
+    return last?.resolved_load_kg ?? getSetting("fallbackLoadKg");
+  };
+
   const saveDate = (value: string) =>
     void run("save date", async () => {
       if ((workout.scheduled_date ?? "") === value) {
@@ -308,7 +327,13 @@ export function Plan() {
       reload();
     });
 
-  const addExercise = (ex: ExerciseRow) =>
+  /**
+   * Picking an exercise no longer writes a row. It opens the set scheme sheet,
+   * which asks how many sets, what each weighs and which are warmups — the
+   * three things a workout is actually made of. The old path dropped a bare
+   * 3x8-by-feel row into the day and left you to find the editor.
+   */
+  const saveScheme = (ex: ExerciseRow, groups: SetGroup[]) =>
     void run("add exercise", async () => {
       // Consecutive prescriptions for the SAME exercise are a ramp: Today
       // renders them as one grouped entry ("3×5 · 3×3"), while this editor
@@ -318,13 +343,21 @@ export function Plan() {
       const last = (rx ?? [])[(rx ?? []).length - 1];
       const startsRamp = last !== undefined && last.exercise_id === ex.id;
 
-      const newId = await addPrescription(workout.id, ex.id, rx ?? []);
-      openAfterReload.current = newId;
-      setSearchOpen(false);
+      const newId = await addPrescriptionGroups(
+        workout.id,
+        ex.id,
+        groups,
+        rx ?? [],
+      );
+      // Only auto-expand a single-row add. A ramp is already fully specified
+      // by the sheet; opening its first row would suggest it is not.
+      if (groups.length === 1) openAfterReload.current = newId;
+      setAdding(null);
+      const total = groups.reduce((n, g) => n + g.sets, 0);
       toast(
         startsRamp
-          ? `${ex.name} added as a second set-group — these run as one ramp`
-          : `${ex.name} added — set it up below`,
+          ? `${ex.name} added — it joins the ramp above it`
+          : `${ex.name}: ${total} ${total === 1 ? "set" : "sets"} added`,
       );
       reload();
     });
@@ -404,6 +437,13 @@ export function Plan() {
                   )}
                 </span>
                 <span className="week-state">
+                  {/* Warmup is worth saying on the collapsed row: it is the
+                      difference between "you owe 5 working sets" and 3. */}
+                  {r.set_type !== undefined && r.set_type !== "working" && (
+                    <span className="rx-type">
+                      {r.set_type.toUpperCase()}
+                    </span>
+                  )}
                   {r.superset_group !== null
                     ? `${String.fromCharCode(64 + r.superset_group)} · `
                     : ""}
@@ -778,8 +818,22 @@ export function Plan() {
           title="ADD EXERCISE"
           exercises={allExercises}
           failed={exercisesFailed}
-          onPick={(ex) => addExercise(ex)}
+          onPick={(ex) => {
+            setSearchOpen(false);
+            setAdding(ex);
+          }}
           onClose={() => setSearchOpen(false)}
+        />
+      )}
+
+      {adding && (
+        <SetSchemeSheet
+          exerciseName={adding.name}
+          unit={unit}
+          startKg={startKgFor(adding.id)}
+          busy={busy}
+          onCancel={() => setAdding(null)}
+          onSave={(groups) => saveScheme(adding, groups)}
         />
       )}
     </div>

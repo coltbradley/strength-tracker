@@ -171,6 +171,8 @@ interface RxSpec {
   superset_group?: number | null;
   /** how load_kg is expressed; load_kg itself is always the TOTAL */
   load_entry?: "total" | "per_side" | null;
+  /** warmup / working / backoff; absent = the column default, 'working' */
+  set_type?: "warmup" | "working" | "backoff";
 }
 
 function rxRows(workoutId: string, specs: RxSpec[]): Row[] {
@@ -189,6 +191,7 @@ function rxRows(workoutId: string, specs: RxSpec[]): Row[] {
     notes: s.notes ?? null,
     superset_group: s.superset_group ?? null,
     load_entry: s.load_entry ?? null,
+    set_type: s.set_type ?? "working",
     created_at: at(dayIso(new Date()), 8),
   }));
 }

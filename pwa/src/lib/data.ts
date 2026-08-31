@@ -27,6 +27,7 @@ import type {
   ResolvedPrescriptionRow,
   SessionBestE1rmRow,
   SetInsert,
+  SetType,
   TrainingMaxRow,
   WeeklyVolumeRow,
 } from "./types";
@@ -278,37 +279,49 @@ export async function deletePrescription(
 }
 
 /**
- * Append an exercise to a planned day and return its new id, so the caller can
- * open the editor on it immediately. Returning the id is the point: adding an
- * exercise and then having to hunt for the row you just made was the whole
- * complaint about this flow.
+ * Write a whole set scheme at once: one prescription row per group, appended
+ * in order.
  *
- * The defaults are a starting point, not a guess to live with — 3x8 by feel is
- * the least surprising thing to land on before the editor opens.
+ * Groups come from the add-exercise sheet, which asks how many sets, what each
+ * weighs and which are warmups, then collapses runs that agree. Consecutive
+ * rows naming the same exercise are the ramp convention (CLAUDE.md), so a
+ * warmup build-up into a top set is several rows here and ONE grouped entry on
+ * Today — which is what the coach meant when they wrote it on the whiteboard.
+ *
+ * Inserted as a single statement so a day never ends up holding half a scheme.
  */
-export async function addPrescription(
+export async function addPrescriptionGroups(
   plannedWorkoutId: string,
   exerciseId: string,
+  groups: {
+    sets: number;
+    reps_min: number;
+    reps_max: number;
+    load_kg: number | null;
+    set_type: SetType;
+  }[],
   existing: ResolvedPrescriptionRow[],
-): Promise<string> {
-  const position = existing.reduce((m, r) => Math.max(m, r.position), -1) + 1;
-  const row: PrescriptionInsert = {
+): Promise<string | null> {
+  if (groups.length === 0) return null;
+  const base = existing.reduce((m, r) => Math.max(m, r.position), -1) + 1;
+  const rows: PrescriptionInsert[] = groups.map((g, i) => ({
     id: uuid(),
     planned_workout_id: plannedWorkoutId,
     exercise_id: exerciseId,
-    position,
-    sets: 3,
-    reps_min: 8,
-    reps_max: 8,
-    load_kg: null, // "by feel" until edited
+    position: base + i,
+    sets: g.sets,
+    reps_min: g.reps_min,
+    reps_max: g.reps_max,
+    load_kg: g.load_kg,
     load_pct_tm: null,
     rest_seconds: null,
     notes: null,
-  };
-  const { error } = await supabase.from("prescriptions").insert(row);
+    set_type: g.set_type,
+  }));
+  const { error } = await supabase.from("prescriptions").insert(rows);
   throwIf(error);
   await invalidatePlanCaches(plannedWorkoutId);
-  return row.id;
+  return rows[0]!.id;
 }
 
 /**

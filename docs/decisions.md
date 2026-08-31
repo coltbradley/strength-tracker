@@ -877,3 +877,47 @@ Now: "Email me a code" → "We sent a 6-digit code to <email>". The paste-a-link
 path stays in the code, undocumented, so a deployment on the stock Supabase
 template still works — but it is no longer offered, because two advertised ways
 to sign in is what made the screen confusing in the first place.
+
+## Warmups belong in the plan, and adding an exercise became a question
+
+`sets.set_type` has existed since the first migration; `prescriptions` had no
+equivalent. A coach's "two light sets, then three working" could only be
+written as a ramp of consecutive rows with different loads and no way to say
+which of them were warmups — so the lifter re-decided that on the gym floor,
+from memory, every session. One additive column with the safe default
+('working', which every existing row already was) closes it.
+
+`v_adherence` is deliberately NOT changed. It gates on the ACTUAL set's
+set_type, which is the honest gate: what the lifter did is what counts, and a
+warmup they chose to treat as a working set still counts as one. Filtering on
+the PLAN's set_type would let a mislabelled prescription silently delete real
+work from the analysis. The harness pins that.
+
+Adding an exercise used to insert a bare 3x8-by-feel row and leave you to find
+the editor. It now opens a sheet that asks how many sets, what each weighs, and
+which are warmups. Per-set weight is not a new shape — it is the existing ramp
+convention, reached from the front instead of by adding the same exercise three
+times and knowing that meant something. Consecutive sets agreeing on load AND
+type collapse back into one row on save, so a straight 5x5 stays one
+prescription; the sheet says which is about to happen before you commit.
+
+## The MCP surface could write a plan but never read one
+
+Three holes, all of them the same shape: Claude could act but not look.
+
+`get_program` did not exist. upsert_program replaces a program wholesale, so
+editing a day meant rewriting it from memory — which is how prescriptions
+disappear. There was also no way to answer "what am I doing Thursday" without
+asking the user to read it off their phone. The tool returns the current
+program with every day, its coach notes and the user's own plan_note, and every
+prescription including set_type.
+
+`set_notes` was invisible. It is the only qualitative record in the system —
+"left shoulder twinged", "bar speed died" — and an analysis could report a
+clean rep scheme on a session the lifter had flagged as painful. Now attached
+to sets in get_lift_history, and to sets in get_recent_sessions.
+
+`get_recent_sessions` returned counts, not sets. "How did yesterday go" was
+unanswerable without already knowing which exercises were trained.
+`include_sets` returns the actual work — exercise, warmup vs working, load,
+reps, note — capped at 400 rows with a truncation flag.

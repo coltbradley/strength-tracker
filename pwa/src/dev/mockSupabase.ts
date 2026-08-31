@@ -184,6 +184,9 @@ function vResolvedPrescriptions(s: DemoStore): Row[] {
           resolved === null ? null : Math.round(resolved / 2.5) * 2.5,
         superset_group: p.superset_group,
         load_entry: p.load_entry ?? null,
+        // Column default is 'working' (20260830120000_prescription_set_type),
+        // so an unset fixture must read as working, never as undefined.
+        set_type: p.set_type ?? "working",
       },
     ];
   });

@@ -200,6 +200,28 @@ no settings table in Postgres (see decisions.md). Sections:
   and points at Sync now, or at the sync pill when items are permanently
   failed.
 
+## Building a workout in the app
+
+Add exercise → pick it → the set scheme sheet asks the three things a workout
+is made of, in the order a person thinks of them:
+
+1. **How many sets.** A stepper, default 3. Growing copies the last set.
+2. **Reps.** One min/max range for the whole scheme.
+3. **Weight, per set, and warmup or working.** One row per set, each with its
+   own load stepper and a WORKING/WARMUP chip. "Make every set X" is there for
+   the straight 5x5, so that case stays two taps rather than five.
+
+On save, consecutive sets that agree on BOTH load and type collapse into one
+prescription row. "3 sets of 100" is one row; "60 warmup, 80 warmup, 100, 100"
+is three. That is the ramp convention (CLAUDE.md) reached from the front: the
+editor keeps the rows separate and editable, Today renders them as one grouped
+entry, and the sheet tells you which is about to happen before you commit
+("Saved as 3 entries… they run as one ramp").
+
+`prescriptions.set_type` is what makes the warmup half of that real. It is the
+same enum `sets.set_type` has always used, so a plan can now say what the log
+could always say.
+
 ## Reporting a problem
 
 A bug glyph floats over Today and History — never during a session, where it

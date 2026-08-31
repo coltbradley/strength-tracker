@@ -821,5 +821,55 @@ await check("deleting a user takes their tokens, config and ownership with them"
   assertEq(c.rows[0].n, 0, "config cascades");
 });
 
+console.log("\nprescription set_type (warmups live in the plan, not just the log):");
+
+await check("existing prescriptions default to working, never null", async () => {
+  const r = await db.query(
+    `select count(*)::int as n, count(*) filter (where set_type = 'working')::int as working
+       from prescriptions`,
+  );
+  assertEq(r.rows[0].n, r.rows[0].working, "every seeded prescription is working");
+});
+
+await check("v_resolved_prescriptions exposes set_type", async () => {
+  const r = await db.query(`select set_type from v_resolved_prescriptions limit 1`);
+  assertEq(r.rows[0].set_type, "working", "view carries the column through");
+});
+
+await check("a prescription can be marked warmup", async () => {
+  await db.exec(
+    `update prescriptions set set_type = 'warmup'
+      where id = (select id from prescriptions order by id limit 1)`,
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_resolved_prescriptions where set_type = 'warmup'`,
+  );
+  assertEq(r.rows[0].n, 1, "the view reflects it");
+  await db.exec(`update prescriptions set set_type = 'working' where set_type = 'warmup'`);
+});
+
+await check("set_type on a prescription is constrained to the enum", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `update prescriptions set set_type = 'cooldown'
+        where id = (select id from prescriptions order by id limit 1)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("an unknown set_type was accepted");
+});
+
+await check("adherence still gates on the ACTUAL set, not the plan", async () => {
+  // Marking the PLAN a warmup must not delete real work from the analysis:
+  // what the lifter did is what counts.
+  const before = await db.query(`select count(*)::int as n from v_adherence`);
+  await db.exec(`update prescriptions set set_type = 'warmup'`);
+  const after = await db.query(`select count(*)::int as n from v_adherence`);
+  assertEq(after.rows[0].n, before.rows[0].n, "adherence row count is unchanged");
+  await db.exec(`update prescriptions set set_type = 'working'`);
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

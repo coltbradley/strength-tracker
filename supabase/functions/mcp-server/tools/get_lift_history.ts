@@ -53,7 +53,10 @@ export function registerGetLiftHistory(
         "Full training history for one exercise: raw logged sets, " +
         "best-e1RM-per-session series (Epley, working sets, 1-8 reps), " +
         "prescribed-vs-achieved adherence rows, rest-before-set times, and the " +
-        "current training max if one exists. Sections are chronological " +
+        "current training max if one exists. A set carries a `note` field when " +
+        "the lifter wrote one about that set ('left shoulder twinged', 'bar " +
+        "speed died') — the only qualitative record in the system, and worth " +
+        "reading before calling a session clean. Sections are chronological " +
         "(oldest first) except sets (newest first) and capped at the newest " +
         "rows: sets 500, e1rm_series 365, adherence 500, rest 500; each " +
         "section has a truncated flag that is true when its cap was hit " +
@@ -118,8 +121,37 @@ export function registerGetLiftHistory(
                 .order("performed_at", { ascending: false })
                 .limit(500),
               "sets",
+            ) as unknown as { id: string }[];
+
+            // Set notes: what the lifter typed about THAT set — "left shoulder
+            // twinged", "bar speed died", "easy". They are the only qualitative
+            // record in the system and were invisible here, so an analysis
+            // could report a clean rep-scheme on a session the lifter had
+            // flagged as painful. Fetched separately rather than joined
+            // because set_notes hangs off `sets` and v_live_sets is a view;
+            // PostgREST cannot embed through it.
+            const noteRows =
+              rows.length === 0
+                ? []
+                : (must(
+                    await db.client
+                      .from("set_notes")
+                      .select("set_id, note")
+                      .eq("user_id", db.ownerId)
+                      .in(
+                        "set_id",
+                        rows.map((r) => r.id),
+                      ),
+                    "set_notes",
+                  ) as unknown as { set_id: string; note: string }[]);
+            const noteBySet = new Map(
+              noteRows.map((n) => [n.set_id, n.note] as const),
             );
-            return { rows, truncated: rows.length === 500 };
+            const withNotes = rows.map((r) => {
+              const note = noteBySet.get(r.id);
+              return note === undefined ? r : { ...r, note };
+            });
+            return { rows: withNotes, truncated: rows.length === 500 };
           })(),
           newestFirst(
             base(

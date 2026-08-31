@@ -31,6 +31,17 @@ const prescriptionSchema = z
       .min(1)
       .max(20)
       .describe("Number of prescribed sets."),
+    set_type: z
+      .enum(["warmup", "working", "backoff"])
+      .optional()
+      .describe(
+        "What this set-group IS. Defaults to 'working'. Use 'warmup' for the " +
+          "coach's explicit warmup or ramp-up sets ('warm up to', 'build to', " +
+          "'2 light sets first') and 'backoff' for volume sets after a top " +
+          "single ('then 3x5 @80%'). Warmup groups do not count toward the " +
+          "day's working-set target. When the coach does not say, leave it " +
+          "unset rather than guessing — 'working' is the honest default.",
+      ),
     reps_min: z
       .number()
       .int()
@@ -388,6 +399,8 @@ export function registerUpsertProgram(
               notes: p.notes ?? null,
               superset_group: p.superset_group ?? null,
               load_entry: p.load_entry ?? null,
+              // Column default is 'working'; omit rather than write a guess.
+              ...(p.set_type === undefined ? {} : { set_type: p.set_type }),
             })),
           );
           const { error: rxError } = await db.client
@@ -439,8 +452,8 @@ export function registerUpsertProgram(
         const lines = [
           `## Program written: ${program.name}`,
           "",
-          "| Day | Date | Label | # | Exercise | Sets x Reps | Load | Rest |",
-          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+          "| Day | Date | Label | # | Exercise | Type | Sets x Reps | Load | Rest |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ];
         for (const w of [...program.workouts].sort(
           (a, b) => a.day_index - b.day_index,
@@ -450,6 +463,7 @@ export function registerUpsertProgram(
           )) {
             lines.push(
               `| ${w.day_index} | ${w.scheduled_date ?? ""} | ${w.label ?? ""} | ${p.position} | ${p.exercise_id} ` +
+                `| ${p.set_type ?? "working"} ` +
                 `| ${formatRepRange(p.sets, p.reps_min, p.reps_max)} | ${loadLabel(p, tms)} ` +
                 `| ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,
             );

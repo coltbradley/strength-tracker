@@ -30,6 +30,7 @@ import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
 import { registerGetGoalProgress } from "../tools/get_goal_progress.ts";
 import { registerGetLiftHistory } from "../tools/get_lift_history.ts";
+import { registerGetProgram } from "../tools/get_program.ts";
 import { registerGetRecentSessions } from "../tools/get_recent_sessions.ts";
 import { registerManageExercises } from "../tools/manage_exercises.ts";
 import { registerSearchExercises } from "../tools/search_exercises.ts";
@@ -49,6 +50,7 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerGetGoalProgress(server, db, ctx);
   // Write tools. NEVER add tools that write sessions or sets: those tables
   // belong to the PWA (see CLAUDE.md hard rules).
+  registerGetProgram(server, db, ctx);
   registerUpsertProgram(server, db, ctx);
   registerConfirmProgram(server, db, ctx);
   registerDeleteProgram(server, db, ctx);

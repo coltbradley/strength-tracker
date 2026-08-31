@@ -77,6 +77,8 @@ export interface PrescriptionInsert {
   notes: string | null;
   /** total-vs-per-side convention for load_kg; omit when not asserted */
   load_entry?: LoadEntry | null;
+  /** warmup / working / backoff; omit to take the column default ('working') */
+  set_type?: SetType;
 }
 
 export interface PrescriptionPatch {
@@ -114,6 +116,10 @@ export interface ResolvedPrescriptionRow {
    *  Optional because prescriptions cached offline before this field, and
    *  select lists that predate it, simply omit it. */
   load_entry?: LoadEntry | null;
+  /** warmup / working / backoff. Optional for the same reason as load_entry:
+   *  rows cached before the column existed simply omit it, and an absent
+   *  value must read as 'working', never as unknown. */
+  set_type?: SetType;
 }
 
 // Insert shape; user_id is filled by the DB default (auth.uid()).
