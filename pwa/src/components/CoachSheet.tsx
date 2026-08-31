@@ -17,8 +17,12 @@ import { Sheet } from "./Sheet";
 import {
   ACCEPTED_FILES,
   askCoach,
+  getCoachSpend,
+  newTurnId,
   readAttachment,
+  recoverAnswer,
   type CoachAttachment,
+  type CoachSpend,
   type CoachTurn,
 } from "../lib/coach";
 import { reportError, toast } from "../lib/errors";
@@ -34,6 +38,9 @@ interface Msg extends CoachTurn {
   tool?: string | null;
   /** adaptive thinking is running and no text has arrived yet */
   thinking?: boolean;
+  /** the id this turn was asked under, so an answer this device did not stay
+   *  connected for can be fetched back */
+  turnId?: string;
 }
 
 function loadThread(): Msg[] {
@@ -54,6 +61,10 @@ function saveThread(msgs: Msg[]): void {
     const light = msgs.slice(-MAX_TURNS).map((m) => ({
       role: m.role,
       text: m.text,
+      ...(m.turnId ? { turnId: m.turnId } : {}),
+      // Kept deliberately: on reopen this is how the app knows an answer was
+      // still being written when the phone locked, and goes to fetch it.
+      ...(m.streaming ? { streaming: true } : {}),
       ...(m.attachments?.length
         ? { attachments: m.attachments.map((a) => ({ ...a, data: "" })) }
         : {}),
@@ -69,6 +80,7 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<CoachAttachment[]>([]);
   const [busy, setBusy] = useState(false);
+  const [spend, setSpend] = useState<CoachSpend | null>(null);
   const abort = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -77,7 +89,50 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [msgs]);
 
+  // An answer this device was not connected for. The phone locks mid-answer,
+  // or the app is closed; the function finishes the turn regardless and stores
+  // it. On reopen, go and get what was missed rather than leaving a truncated
+  // reply on screen with no way to tell it is truncated.
+  useEffect(() => {
+    const last = msgs[msgs.length - 1];
+    if (!last?.streaming || !last.turnId || busy) return;
+    let cancelled = false;
+    void recoverAnswer(last.turnId).then((text) => {
+      if (cancelled) return;
+      setMsgs((prev) =>
+        prev.map((m, i) =>
+          i === prev.length - 1
+            ? {
+                ...m,
+                streaming: false,
+                tool: null,
+                thinking: false,
+                text:
+                  text ??
+                  (m.text ||
+                    "(That answer was interrupted and didn't finish. Ask again.)"),
+              }
+            : m,
+        ),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Runs once per sheet open; msgs is intentionally not a dependency or the
+    // recovery would re-fire on every streamed chunk.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => saveThread(msgs), [msgs]);
+
+  // What this has cost. Shown rather than merely recorded: the person asking
+  // is not the person paying, and a number nobody sees is a number nobody
+  // acts on. Refreshed when a turn finishes, not on every streamed chunk.
+  useEffect(() => {
+    if (busy) return;
+    void getCoachSpend().then(setSpend);
+  }, [busy]);
 
   // Grow with the text rather than making someone write a paragraph through a
   // two-line slot. Capped so the thread above never disappears entirely.
@@ -114,8 +169,12 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
     };
     // The placeholder assistant turn goes in immediately so the thread never
     // looks like it swallowed the question.
+    const turnId = newTurnId();
     const history = [...msgs, mine];
-    setMsgs([...history, { role: "assistant", text: "", streaming: true }]);
+    setMsgs([
+      ...history,
+      { role: "assistant", text: "", streaming: true, turnId },
+    ]);
     setDraft("");
     setFiles([]);
     setBusy(true);
@@ -164,6 +223,7 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
         },
       },
       ctrl.signal,
+      turnId,
     );
   };
 
@@ -246,6 +306,13 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
       {/* The textarea gets the full width on its own row; the controls sit
           under it. Side by side, a 44px attach button and an "Ask" button left
           the input at 213px of a 375px screen, wrapping every four words. */}
+      {spend !== null && spend.costMonth > 0 && (
+        <div className="coach-spend">
+          {spend.turnsToday} today · ${spend.costToday.toFixed(2)} today · $
+          {spend.costMonth.toFixed(2)} this month
+        </div>
+      )}
+
       <div className="coach-compose">
         <textarea
           ref={inputRef}

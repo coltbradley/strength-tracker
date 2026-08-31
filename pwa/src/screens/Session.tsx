@@ -49,12 +49,17 @@ import {
 import {
   bracketFor,
   buildEntries,
+  isLocalBracket,
   setsForEntry as setsForEntryOf,
   supersetInfo as supersetInfoOf,
   totalSets,
   type ExerciseEntry,
   type ExtraExercise,
 } from "../lib/entries";
+import {
+  SetSchemeSheet,
+  type SetGroup,
+} from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { getPrefillFallback, prefillSet } from "../lib/prefill";
@@ -129,6 +134,8 @@ export function Session() {
   );
   const [rx, setRx] = useState<ResolvedPrescriptionRow[]>([]);
   const [extras, setExtras] = useState<ExtraExercise[]>([]);
+  /** exercise chosen mid-session, awaiting its declared scheme */
+  const [declaring, setDeclaring] = useState<ExerciseRow | null>(null);
   const [sets, setSets] = useState<SetInsert[]>([]);
   const [setsLoaded, setSetsLoaded] = useState(false);
   const [lastActuals, setLastActuals] = useState<LastActuals>({});
@@ -569,8 +576,14 @@ export function Session() {
       session_id: sessionId,
       exercise_id: openEntry.exercise_id,
       // the set links to the BRACKET it fulfills, so adherence analytics see
-      // the coach's actual scheme (warmups link to the upcoming bracket)
-      prescription_id: currentBracket?.id ?? null,
+      // the coach's actual scheme (warmups link to the upcoming bracket).
+      // A LOCALLY declared bracket is not a prescription row — it exists only
+      // in this device's cache — and prescription_id is a foreign key, so it
+      // must go in as null or the insert fails and the offline queue retries
+      // it forever.
+      prescription_id: isLocalBracket(currentBracket?.id)
+        ? null
+        : (currentBracket?.id ?? null),
       set_index: nextIndex,
       set_type: setType,
       // ALWAYS the total system load; load_entry records how it was typed
@@ -612,7 +625,14 @@ export function Session() {
     setSheet(null);
   };
 
-  const addExercise = async (ex: ExerciseRow) => {
+  /**
+   * Picking an exercise mid-session opens the same scheme sheet the plan
+   * editor uses: how many sets, what each weighs, which are warmups. Declaring
+   * it up front is what turns "LOG SET 3" into "LOG SET 3 OF 5" for something
+   * the plan never mentioned — the screen counts down against the declaration
+   * exactly as it does against a coach's.
+   */
+  const addExercise = (ex: ExerciseRow) => {
     if (!sessionId) return;
     const existing = entries.find((e) => e.exercise_id === ex.id);
     if (existing) {
@@ -620,11 +640,20 @@ export function Session() {
       setSheet(null);
       return;
     }
-    const nextExtras = [...extras, { exercise_id: ex.id, name: ex.name }];
+    setSheet(null);
+    setDeclaring(ex);
+  };
+
+  const saveDeclared = async (ex: ExerciseRow, groups: SetGroup[]) => {
+    if (!sessionId) return;
+    const nextExtras: ExtraExercise[] = [
+      ...extras,
+      { exercise_id: ex.id, name: ex.name, scheme: groups },
+    ];
     setExtras(nextExtras);
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
+    setDeclaring(null);
     setOpenKey(`extra:${ex.id}`);
-    setSheet(null);
   };
 
   /** Void a logged set: hide it from every view via an append-only
@@ -1285,8 +1314,21 @@ export function Session() {
           title="ADD EXERCISE"
           exercises={allExercises}
           failed={exercisesFailed}
-          onPick={(ex) => void addExercise(ex)}
+          onPick={(ex) => addExercise(ex)}
           onClose={() => setSheet(null)}
+        />
+      )}
+
+      {declaring && (
+        <SetSchemeSheet
+          exerciseName={declaring.name}
+          unit={unit}
+          startKg={
+            lastActuals[declaring.id]?.load_kg ?? getPrefillFallback().loadKg
+          }
+          busy={false}
+          onCancel={() => setDeclaring(null)}
+          onSave={(groups) => void saveDeclared(declaring, groups)}
         />
       )}
 

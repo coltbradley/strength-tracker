@@ -302,6 +302,8 @@ function toContent(turn: Turn): unknown {
 async function record(a: {
   db: ReturnType<typeof serviceClient>;
   userId: string;
+  /** the id the CLIENT chose, so it can find this turn again */
+  turnId: string | null;
   turns: Turn[];
   answer: string;
   tools: string[];
@@ -337,6 +339,7 @@ async function record(a: {
   try {
     await a.db.from("coach_usage").insert({
       user_id: a.userId,
+      turn_id: a.turnId,
       model: MODEL,
       input_tokens: a.usage.input,
       output_tokens: a.usage.output,
@@ -380,7 +383,7 @@ Deno.serve(async (req) => {
     return json({ error: "That message is too large to send." }, 413);
   }
 
-  let body: { turns?: Turn[]; unit?: string; context?: string };
+  let body: { turns?: Turn[]; unit?: string; turn_id?: string };
   try {
     body = await req.json();
   } catch {
@@ -444,10 +447,27 @@ Deno.serve(async (req) => {
 
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: string, data: unknown) =>
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+      // Enqueue is BEST EFFORT. When the phone locks or the app is closed
+      // mid-answer the stream is gone and every enqueue throws — and letting
+      // that propagate used to abort generation partway, so the turn was
+      // billed and the answer never existed anywhere.
+      //
+      // Now the client leaving is not an error. Generation runs to completion
+      // and the whole answer is written to coach_usage against the turn_id the
+      // client chose, which is how the app picks it up when it comes back.
+      let listening = true;
+      const send = (event: string, data: unknown) => {
+        if (!listening) return;
+        try {
+          controller.enqueue(
+            encoder.encode(
+              `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+            ),
+          );
+        } catch {
+          listening = false;
+        }
+      };
       try {
         const messages = turns.map((t) => ({
           role: t.role,
@@ -554,6 +574,7 @@ Deno.serve(async (req) => {
         await record({
           db,
           userId,
+          turnId: typeof body.turn_id === "string" ? body.turn_id : null,
           turns,
           answer,
           tools,
@@ -562,7 +583,11 @@ Deno.serve(async (req) => {
           failed,
           startedAt,
         });
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // already closed by the client going away
+        }
       }
     },
   });

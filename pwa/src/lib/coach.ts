@@ -6,6 +6,7 @@
 // after a ten-second silence.
 
 import { supabase } from "./supabase";
+import { uuid } from "./uuid";
 import { getUnit } from "./settings";
 import { buildCoachContext } from "./coachContext";
 import { reportError } from "./errors";
@@ -54,6 +55,8 @@ export async function askCoach(
   turns: CoachTurn[],
   events: CoachEvents,
   signal?: AbortSignal,
+  /** Client-chosen id for this turn, so a dropped connection is recoverable. */
+  turnId?: string,
 ): Promise<void> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -87,7 +90,11 @@ export async function askCoach(
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ turns: withContext, unit: getUnit() }),
+      body: JSON.stringify({
+        turns: withContext,
+        unit: getUnit(),
+        turn_id: turnId,
+      }),
       signal,
     });
   } catch (e) {
@@ -183,6 +190,62 @@ function reportSilently(err: unknown, context: string): void {
   } catch {
     // reporting must never be the thing that breaks the chat
   }
+}
+
+/** A new turn id. The client picks it BEFORE asking, or it has nothing to
+ *  look the answer up by afterwards. */
+export function newTurnId(): string {
+  return uuid();
+}
+
+/**
+ * The answer to a turn this device did not stay connected for.
+ *
+ * The function finishes and records every turn whether or not anyone is
+ * listening, so an answer interrupted by the phone locking is not lost — it is
+ * sitting in coach_usage under the id the client chose. Returns null while the
+ * turn is still running, or if it never landed.
+ */
+export async function recoverAnswer(turnId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("coach_usage")
+    .select("response, refused")
+    .eq("turn_id", turnId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as { response: string | null; refused: string | null };
+  if (row.refused) return `(${row.refused})`;
+  return row.response && row.response.length > 0 ? row.response : null;
+}
+
+export interface CoachSpend {
+  turnsToday: number;
+  costToday: number;
+  costMonth: number;
+}
+
+/**
+ * What the coach has cost, per the owner-readable spend view.
+ *
+ * Read from the rolled-up view rather than the ledger: a client should never
+ * page every turn it has ever taken to add up a number.
+ */
+export async function getCoachSpend(): Promise<CoachSpend | null> {
+  const since = new Date(Date.now() - 30 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const { data, error } = await supabase
+    .from("v_coach_spend_daily")
+    .select("day, turns, cost_usd")
+    .gte("day", since);
+  if (error || !data) return null;
+  const rows = data as { day: string; turns: number; cost_usd: number }[];
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    turnsToday: rows.find((r) => r.day === today)?.turns ?? 0,
+    costToday: rows.find((r) => r.day === today)?.cost_usd ?? 0,
+    costMonth: rows.reduce((n, r) => n + Number(r.cost_usd ?? 0), 0),
+  };
 }
 
 /** What the file picker accepts, and what each type becomes on the wire. */

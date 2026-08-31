@@ -1079,3 +1079,51 @@ first gets dropped by accident.
 Restoring is a SQL update, not a UI. That is deliberate: undoing a deletion is
 a rare, deliberate act, and a restore button is a second way to change the plan
 for a case that should be measured in "once".
+
+## A coach turn outlives the app
+
+Someone asks a question mid-set, the phone locks, and the answer was gone. Not
+just undelivered — abandoned: `controller.enqueue` throws once the stream is
+dead, that threw out of the generation loop, and the turn was billed for
+whatever it had produced with nothing to show for it.
+
+Enqueue is now best-effort and a departing client is not an error. Generation
+runs to completion and the whole answer is written to `coach_usage` against a
+`turn_id` the CLIENT chose before asking — client-generated for the same reason
+set and session ids are: it has to know the id before the round trip, or it has
+nothing to ask for afterwards. On reopen, an assistant turn still marked
+streaming is looked up and filled in.
+
+Verified by hanging up three seconds in: the client received zero bytes, and
+the server still finished a 571-token answer, `stop_reason: end_turn`, recorded
+in full.
+
+## Declared schemes for unplanned exercises
+
+Adding an exercise mid-session gives it the same sheet the plan editor uses,
+and the declaration is synthesised into the bracket shape the session screen
+already reads — so "LOG SET 2 OF 4", the load prefill and the warmup handling
+all come free from the code that already does it for a planned exercise.
+
+Two things that had to be right, and one of them I got wrong first.
+
+`sets.prescription_id` is a foreign key. A synthesized bracket id in it fails
+the insert, and on the offline queue it fails forever, so a locally declared
+bracket writes NULL. That part I anticipated.
+
+What I did not: `setsForEntry` attributes sets by bracket id whenever an entry
+has brackets. Writing NULL therefore meant a declared entry owned none of its
+own sets, and the counter sat at "SET 1 OF 4" however many went in. Caught by
+using it, not by reading it. A locally declared entry now claims by exercise,
+like an undeclared extra — the brackets are a target, not an attribution key.
+
+## What the coach costs is shown, not just recorded
+
+Tokens were already in `coach_usage`; nobody reads tokens. `v_coach_cost`
+prices them (Sonnet 5 list, cache writes 1.25x input, reads 0.1x) and
+`v_coach_spend_daily` rolls them up per user per day, so a client never pages
+the ledger to add up a number. The sheet shows turns today, spend today, spend
+this month.
+
+Pricing lives in the view rather than a stored column: re-pricing is then one
+CREATE OR REPLACE and never a backfill that rewrites what history cost.

@@ -3,6 +3,7 @@ import {
   bracketFor,
   buildEntries,
   groupRamps,
+  isLocalBracket,
   isOrphanSet,
   setsForEntry,
   supersetInfo,
@@ -259,5 +260,128 @@ describe("supersetInfo", () => {
   it("letters groups from 1 = A", () => {
     expect(supersetLetter(1)).toBe("A");
     expect(supersetLetter(2)).toBe("B");
+  });
+});
+
+describe("declared schemes for mid-session extras", () => {
+  const ex = [{ id: "curl", name: "Hammer Curl" }];
+
+  it("an extra with no scheme has no target, as before", () => {
+    const [entry] = buildEntries([], [{ exercise_id: "curl", name: "Hammer Curl" }], [], ex);
+    expect(entry!.brackets).toEqual([]);
+  });
+
+  it("a declared scheme becomes brackets the session can count against", () => {
+    const [entry] = buildEntries(
+      [],
+      [
+        {
+          exercise_id: "curl",
+          name: "Hammer Curl",
+          scheme: [
+            { sets: 1, reps_min: 12, reps_max: 12, load_kg: 10, set_type: "warmup", rest_seconds: 60 },
+            { sets: 3, reps_min: 8, reps_max: 8, load_kg: 20, set_type: "working", rest_seconds: 90 },
+          ],
+        },
+      ],
+      [],
+      ex,
+    );
+    expect(entry!.brackets).toHaveLength(2);
+    expect(totalSets(entry!)).toBe(4);
+    expect(entry!.brackets[0]!.set_type).toBe("warmup");
+    expect(entry!.brackets[1]!.resolved_load_kg).toBe(20);
+  });
+
+  it("marks its brackets local, so no set links them as a prescription", () => {
+    // sets.prescription_id is a foreign key. A synthesized id in it fails the
+    // insert, and on the offline queue it fails forever.
+    const [entry] = buildEntries(
+      [],
+      [
+        {
+          exercise_id: "curl",
+          name: "Hammer Curl",
+          scheme: [
+            { sets: 3, reps_min: 8, reps_max: 8, load_kg: 20, set_type: "working", rest_seconds: 90 },
+          ],
+        },
+      ],
+      [],
+      ex,
+    );
+    expect(entry!.brackets.every((b) => isLocalBracket(b.id))).toBe(true);
+    expect(isLocalBracket("a1b2c3d4-0000-4000-8000-000000000000")).toBe(false);
+    expect(isLocalBracket(null)).toBe(false);
+  });
+
+  it("a real prescription for the same exercise wins over the extra", () => {
+    const rx = [
+      {
+        id: "rx-1",
+        planned_workout_id: "w",
+        exercise_id: "curl",
+        exercise_name: "Hammer Curl",
+        position: 0,
+        sets: 3,
+        reps_min: 8,
+        reps_max: 8,
+        rest_seconds: null,
+        notes: null,
+        load_kg: 25,
+        load_pct_tm: null,
+        tm_kg: null,
+        resolved_load_kg: 25,
+        plate_load_kg: 25,
+        superset_group: null,
+      },
+    ] as never;
+    const entries = buildEntries(
+      rx,
+      [{ exercise_id: "curl", name: "Hammer Curl", scheme: [
+        { sets: 9, reps_min: 1, reps_max: 1, load_kg: 1, set_type: "working", rest_seconds: 1 },
+      ] }],
+      [],
+      ex,
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.brackets[0]!.id).toBe("rx-1");
+  });
+});
+
+describe("a declared scheme still owns the sets logged against it", () => {
+  const ex = [{ id: "curl", name: "Hammer Curl" }];
+  const extra = {
+    exercise_id: "curl",
+    name: "Hammer Curl",
+    scheme: [
+      { sets: 4, reps_min: 8, reps_max: 8, load_kg: 20, set_type: "working", rest_seconds: 90 },
+    ],
+  };
+  const set = (id: string) =>
+    ({
+      id,
+      session_id: "s",
+      exercise_id: "curl",
+      // null on purpose: prescription_id is a foreign key and a declared
+      // bracket is not a row in prescriptions
+      prescription_id: null,
+      set_index: 0,
+      set_type: "working",
+      load_kg: 20,
+      reps: 8,
+      performed_at: "2026-08-31T10:00:00Z",
+    }) as never;
+
+  it("counts its own sets rather than matching on bracket ids", () => {
+    const [entry] = buildEntries([], [extra], [set("a"), set("b")], ex);
+    expect(setsForEntry(entry!, [set("a"), set("b")], [], new Set())).toHaveLength(2);
+  });
+
+  it("so the target counts down instead of sticking at set 1", () => {
+    const [entry] = buildEntries([], [extra], [set("a")], ex);
+    const done = setsForEntry(entry!, [set("a")], [], new Set()).length;
+    expect(totalSets(entry!)).toBe(4);
+    expect(done).toBe(1);
   });
 });

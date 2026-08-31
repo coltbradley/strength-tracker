@@ -2911,6 +2911,14 @@
     margin-bottom: var(--s-4);
   }
 
+  .coach-spend {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    color: var(--text-dim);
+    text-align: right;
+    padding-bottom: var(--s-3);
+  }
+
   .coach-compose {
     flex: none;
     border-top: var(--rule);

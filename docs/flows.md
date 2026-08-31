@@ -281,8 +281,37 @@ Photos, PDFs, CSVs and text files can be attached. They are passed as data with
 their provenance marked; a screenshot telling the coach to do something is a
 picture of text, not an instruction.
 
+A turn survives the app closing. The function finishes and records every turn
+whether or not anyone is still listening, against an id the client chose before
+asking — so a question asked mid-set and interrupted by the phone locking is
+waiting when the app reopens, rather than showing a truncated reply with no way
+to tell it is truncated.
+
+What it costs is shown in the sheet: turns today, spend today, spend this
+month. Recorded either way, but the person asking is not the person paying, and
+a number nobody sees is a number nobody acts on.
+
 Offline, the coach button is dimmed and says why. It is an API call and cannot
 work without a connection, unlike the rest of the app.
+
+## Adding an exercise mid-session
+
+Same sheet as the plan editor, reached from "Add exercise" during a session:
+how many sets, reps, rest, weight per set, warmup or working. Declare it, then
+tick it off — the screen counts "LOG SET 2 OF 4" against what you declared,
+exactly as it does against a coach's prescription.
+
+The declaration is device-local and never reaches `prescriptions`, which
+belongs to planned days. It is synthesised into the same bracket shape the
+session screen already reads, so the target, the load prefill and the warmup
+handling all come from the code that already does it for a planned exercise.
+
+Two things that has to get right. Sets logged against a declared scheme carry
+`prescription_id` NULL, because that column is a foreign key and a synthesized
+id would fail the insert and then fail forever on the offline queue. And a
+declared entry claims its sets BY EXERCISE rather than by bracket id — matching
+on ids would attribute nothing, and the counter would sit at "SET 1 OF 4" no
+matter how many sets went in.
 
 ## Reporting a problem
 

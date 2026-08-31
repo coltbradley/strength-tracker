@@ -26,10 +26,43 @@ export interface ExerciseEntry {
   brackets: ResolvedPrescriptionRow[];
 }
 
+/**
+ * A set-group declared mid-session for an exercise the plan did not prescribe.
+ * Same shape the plan editor writes, but device-local: it never reaches
+ * `prescriptions`, which belongs to planned days.
+ */
+export interface DeclaredGroup {
+  sets: number;
+  reps_min: number;
+  reps_max: number;
+  load_kg: number | null;
+  set_type: string;
+  rest_seconds: number;
+}
+
 /** An exercise added mid-session that the plan did not prescribe. */
 export interface ExtraExercise {
   exercise_id: string;
   name: string;
+  /** What was declared when it was added: "3 sets of 10 at 60, first a
+   *  warmup". Absent for extras added before this existed, and for anything
+   *  added without a scheme — those simply have no target, as before. */
+  scheme?: DeclaredGroup[];
+}
+
+/**
+ * A bracket id that is NOT a real prescription.
+ *
+ * Declared groups are synthesised into brackets so every target the session
+ * screen already computes — "SET 2 OF 5", the load prefill, the warmup marker
+ * — works for an unplanned exercise with no new code. But `sets.prescription_id`
+ * is a foreign key, so a set must never link to one of these: the insert would
+ * fail, and on the offline queue it would fail forever.
+ */
+export const LOCAL_BRACKET = "local:";
+
+export function isLocalBracket(id: string | null | undefined): boolean {
+  return typeof id === "string" && id.startsWith(LOCAL_BRACKET);
 }
 
 /**
@@ -84,6 +117,39 @@ export function isOrphanSet(s: SetInsert, knownRxIds: Set<string>): boolean {
 }
 
 /**
+ * A declared group as the row shape the session screen reads.
+ *
+ * Every field the screen touches is filled; the rest are the nulls an
+ * unresolved prescription would carry anyway. The id marks it local so a set
+ * logged against it links to no prescription at all.
+ */
+function declaredToBracket(
+  g: DeclaredGroup,
+  e: ExtraExercise,
+  i: number,
+): ResolvedPrescriptionRow {
+  return {
+    id: `${LOCAL_BRACKET}${e.exercise_id}:${i}`,
+    planned_workout_id: "",
+    exercise_id: e.exercise_id,
+    exercise_name: e.name,
+    position: i,
+    sets: g.sets,
+    reps_min: g.reps_min,
+    reps_max: g.reps_max,
+    rest_seconds: g.rest_seconds,
+    notes: null,
+    load_kg: g.load_kg,
+    load_pct_tm: null,
+    tm_kg: null,
+    resolved_load_kg: g.load_kg,
+    plate_load_kg: g.load_kg,
+    superset_group: null,
+    set_type: g.set_type as ResolvedPrescriptionRow["set_type"],
+  };
+}
+
+/**
  * The accordion list for a session: prescribed entries (ramps collapsed),
  * then mid-session extras, then a synthesized entry for any exercise that
  * has orphan sets and no home yet (lost extras cache, plan edited
@@ -108,7 +174,12 @@ export function buildEntries(
       key: `extra:${e.exercise_id}`,
       exercise_id: e.exercise_id,
       name: e.name,
-      brackets: [],
+      // A declared scheme becomes brackets, so the target, the prefill and the
+      // warmup handling all come from the code that already does it for a
+      // planned exercise. No scheme = no brackets = "LOG SET n", as before.
+      brackets: (e.scheme ?? []).map((g, i) =>
+        declaredToBracket(g, e, i),
+      ),
     }));
   for (const e of extraEntries) covered.add(e.exercise_id);
   const knownRxIds = new Set(rx.map((r) => r.id));
@@ -143,7 +214,15 @@ export function setsForEntry(
   rx: ResolvedPrescriptionRow[],
   knownRxIds: Set<string>,
 ): SetInsert[] {
-  if (entry.brackets.length > 0) {
+  // A locally DECLARED scheme is a target, not an attribution key. Its
+  // brackets exist only in this device's cache and its sets carry
+  // prescription_id null on purpose (the column is a foreign key), so it must
+  // claim by exercise like an undeclared extra — matching on bracket ids would
+  // attribute nothing and the counter would sit at "SET 1 OF 4" forever.
+  const declaredLocally =
+    entry.brackets.length > 0 && entry.brackets.every((b) => isLocalBracket(b.id));
+
+  if (entry.brackets.length > 0 && !declaredLocally) {
     const ids = new Set(entry.brackets.map((b) => b.id));
     const claimsOrphans =
       rx.find((r) => r.exercise_id === entry.exercise_id)?.id === entry.key;
