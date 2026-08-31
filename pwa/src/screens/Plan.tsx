@@ -750,10 +750,11 @@ export function Plan() {
                 dissolved — a section you can only edit one row at a time is
                 not a thing, it is a column value. */}
             {block.section !== null && (
-              <div {...blockDrag.handlers(block.key, bi)}>
+              <>
                 <button
                   type="button"
                   className="plan-section-head"
+                  {...blockDrag.handlers(block.key, bi)}
                   onClick={() => {
                     setSectionName(block.section ?? "");
                     setConfirming(null);
@@ -829,7 +830,7 @@ export function Plan() {
                     </div>
                   </div>
                 )}
-              </div>
+              </>
             )}
             {block.entries.map((entry) => {
               const ei = entries.findIndex((e) => e.key === entry.key);
