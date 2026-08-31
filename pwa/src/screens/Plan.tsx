@@ -75,6 +75,26 @@ function rampWith(rows: ResolvedPrescriptionRow[], i: number): boolean {
   return rows[i - 1]?.exercise_id === id || rows[i + 1]?.exercise_id === id;
 }
 
+/**
+ * Where row `i` sits in its superset run. A superset was rendered as a bare
+ * "A · " prefix on each row, which says the pairing exists without showing
+ * WHICH rows are paired — the one thing that actually changes how the session
+ * is performed. Rows in a group now share a left rail and the run is labelled
+ * once at its top, so a pair reads as a pair.
+ */
+function supersetAt(
+  rows: ResolvedPrescriptionRow[],
+  i: number,
+): { group: number; first: boolean; last: boolean } | null {
+  const g = rows[i]?.superset_group ?? null;
+  if (g === null) return null;
+  return {
+    group: g,
+    first: (rows[i - 1]?.superset_group ?? null) !== g,
+    last: (rows[i + 1]?.superset_group ?? null) !== g,
+  };
+}
+
 function draftFrom(r: ResolvedPrescriptionRow): RxDraft {
   return {
     sets: r.sets,
@@ -414,8 +434,28 @@ export function Plan() {
         {rx === null && <p className="muted">Loading…</p>}
         {(rx ?? []).map((r, i) => {
           const editing = editingRx === r.id && draft;
+          const ss = supersetAt(rx ?? [], i);
           return (
-            <div key={r.id} className="week-item" data-rx={r.id}>
+            <div
+              key={r.id}
+              className={`week-item${ss ? " ss-member" : ""}${ss?.first ? " ss-first" : ""}${ss?.last ? " ss-last" : ""}`}
+              data-rx={r.id}
+            >
+              {/* Labelled once, at the top of the run, instead of a letter
+                  repeated on every row. "Superset A · 2 exercises" says what is
+                  actually true; "A · " on two separate rows did not. */}
+              {ss?.first && (
+                <div className="ss-head">
+                  SUPERSET {String.fromCharCode(64 + ss.group)}
+                  <span className="ss-head-note">
+                    {" · "}
+                    {(rx ?? []).filter(
+                      (o) => o.superset_group === ss.group,
+                    ).length}{" "}
+                    exercises, alternated
+                  </span>
+                </div>
+              )}
               <button
                 type="button"
                 className="week-row week-row-rx"
@@ -444,9 +484,7 @@ export function Plan() {
                       {r.set_type.toUpperCase()}
                     </span>
                   )}
-                  {r.superset_group !== null
-                    ? `${String.fromCharCode(64 + r.superset_group)} · `
-                    : ""}
+
                   {r.sets} × {formatRepRange(r.reps_min, r.reps_max)}
                   {r.load_kg !== null
                     ? ` · ${toDisplay(r.load_kg, unit)} ${unit}`
@@ -687,6 +725,22 @@ export function Plan() {
         >
           Add exercise
         </button>
+
+        {/* The planning sequence had no end. You added exercises one at a time
+            and then just... stopped, with no signal that the day was done or
+            that any of it had saved. Everything below this point (date, note,
+            duplicate, delete) is an adjustment, not a step, so the finishing
+            action belongs here rather than at the very bottom of the screen. */}
+        <button
+          type="button"
+          className="btn btn-primary btn-block plan-done"
+          onClick={() => navigate("/")}
+        >
+          Done planning
+        </button>
+        <div className="microcopy">
+          Everything here saves as you go. This just takes you back to Today.
+        </div>
       </section>
 
       <section className="rule-section">
