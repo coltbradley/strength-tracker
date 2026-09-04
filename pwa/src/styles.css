@@ -1258,6 +1258,26 @@
     color: var(--danger);
   }
 
+  /* The numbers are the correction target. The hit area is padded out
+   * without moving the row (negative margin cancels the padding), and the
+   * set being corrected is marked on the number itself — the one thing on
+   * the row that is about to change. */
+  .set-load-editable {
+    padding: var(--s-3) 0;
+    margin: calc(-1 * var(--s-3)) 0;
+  }
+
+  .logged-set-editing .set-load {
+    color: var(--accent-dim);
+    text-decoration: underline;
+    text-decoration-thickness: var(--bw);
+    text-underline-offset: 0.2em;
+  }
+
+  .correcting-note {
+    color: var(--accent-dim);
+  }
+
   /* ---- stepper: the value is the control ----
    * NOTE: the base layer implements the prototype's section structure directly
    * (.rule-section owns the top rule; the load row is −5/+5/−1/+1 in document

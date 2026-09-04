@@ -1428,3 +1428,29 @@ and hourly while open, and applies IMMEDIATELY when no session is in progress �
 reloading Today or History costs nothing. Only mid-session does it wait, and
 only until the app is next hidden. If it cannot tell which, it assumes
 mid-session: a late update is a nuisance, an interrupted set is lost work.
+
+## A logged set can be corrected, and the correction keeps its place
+
+Sets are append-only and a wrong number was fixed by voiding the set and
+logging it again. That is still the only write path — but "log it again" gave
+the replacement the NEXT index, so a mistyped set 2 came back as set 5, the
+LOGGED list read in the order the typo was noticed, and `rest_seconds_actual`
+on the replacement measured the time spent noticing rather than the rest
+before the set. The microcopy that explained "there is no pencil" was
+explaining a gap, not a decision.
+
+Tapping a logged set now moves its numbers into the steppers, LOG becomes
+SAVE SET N and a Cancel puts the staged values back. Save appends the new row
+with the OLD row's `set_index`, `performed_at`, `rest_seconds_actual` and
+`prescription_id`, then voids the old one (`pwa/src/lib/corrections.ts`).
+Only load, reps and set type change. A no-op edit writes nothing, as in the
+plan editor. The set's note follows it to the new id. The rest clock is not
+touched — the set still happened when it happened.
+
+Insert BEFORE void in the outbox: if the queue dies between the two, the log
+briefly holds a duplicate rather than a hole, and a duplicate is visible.
+Nothing about the schema changed: no `set_voids.replaced_by` column, because
+the pair is already legible in the data (same index, one voided) and a link
+column would be one more thing every view had to know to ignore. History
+still voids only; corrections happen while the workout is in progress, where
+the steppers are.

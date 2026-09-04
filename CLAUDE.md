@@ -26,6 +26,10 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 - `sets` is append-only. No update/delete paths anywhere (RLS enforces this).
   Corrections are voids: an insert into `set_voids` (itself append-only)
   hides a set from every view. Never add an update or delete policy.
+  "Editing" a logged set in the PWA is a void PLUS a new row at the same
+  `set_index` with the same `performed_at`, rest and prescription
+  (`pwa/src/lib/corrections.ts`); only load, reps and type change. Never
+  give it the next index: that is how a corrected set 2 became set 5.
   `set_notes` is the one editable set-adjacent row (a user annotation,
   last-write-wins) — the sessions.notes mutability class, never a way to
   edit the set itself.

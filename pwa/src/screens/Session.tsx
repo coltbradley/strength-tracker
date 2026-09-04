@@ -67,6 +67,7 @@ import {
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
+import { correctedSet, isNoopCorrection } from "../lib/corrections";
 import { getPrefillFallback, prefillSet } from "../lib/prefill";
 import { split } from "../lib/plates";
 import {
@@ -165,6 +166,13 @@ export function Session() {
   const [voids, setVoids] = useState<Set<string>>(new Set());
   const [skips, setSkips] = useState<Set<string>>(new Set());
   const [voidArm, setVoidArm] = useArmed();
+  // The set being CORRECTED, with the stepper values it displaced so Cancel
+  // can put them back. A correction is a void plus a new row at the same
+  // index (lib/corrections.ts); this is only the screen's side of it.
+  const [editing, setEditing] = useState<{
+    set: SetInsert;
+    staged: { entryKg: number; reps: number; setType: SetType };
+  } | null>(null);
 
   // per-set notes (set_id -> note); "" = cleared
   const [setNotes, setSetNotes] = useState<Record<string, string>>({});
@@ -489,6 +497,8 @@ export function Session() {
   // ---- accordion -----------------------------------------------------------
 
   const toggleOpen = (key: string) => {
+    // a half-made correction does not follow you to another exercise
+    if (editing) cancelCorrection();
     setOpenKey((prev) => (prev === key ? null : key));
   };
 
@@ -711,11 +721,109 @@ export function Session() {
     setOpenKey(`extra:${ex.id}`);
   };
 
+  // ---- corrections ---------------------------------------------------------
+
+  /** Tap a logged set: its numbers move into the steppers, LOG becomes
+   *  SAVE SET N. The old row is untouched until Save. */
+  const startCorrection = (s: SetInsert) => {
+    if (editing?.set.id === s.id) return;
+    setVoidArm(null);
+    setNoteEditingId(null);
+    // Only the first tap displaces the staged values; re-tapping a different
+    // set mid-correction must still restore what was there BEFORE editing.
+    const staged = editing?.staged ?? { entryKg, reps, setType };
+    setEditing({ set: s, staged });
+    // load_kg is the TOTAL; show it in whatever convention the exercise is
+    // in NOW, so Save — which totals the entry by that same convention —
+    // round-trips exactly even if the toggle was flipped since the set.
+    setEntryKg(Math.round(enteredKg(s.load_kg, loadEntry) * 100) / 100);
+    setReps(s.reps);
+    setSetType(s.set_type);
+  };
+
+  const cancelCorrection = () => {
+    if (!editing) return;
+    setEntryKg(editing.staged.entryKg);
+    setReps(editing.staged.reps);
+    setSetType(editing.staged.setType);
+    setEditing(null);
+  };
+
+  /** Void the old row and append its replacement at the same set_index.
+   *  Nothing about WHEN the set happened changes: performed_at, the rest
+   *  before it and the rest clock after it all stand. */
+  const saveCorrection = () => {
+    if (!editing || !sessionId || logLocked) return;
+    const old = editing.set;
+    const correction = {
+      load_kg: Math.round(totalLoadKg * 100) / 100,
+      reps,
+      set_type: setType,
+      load_entry: loadEntryForSet(loadEntry, totalLoadKg),
+    };
+    if (isNoopCorrection(old, correction)) {
+      cancelCorrection();
+      return;
+    }
+    setLogLocked(true);
+    window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
+    const next = correctedSet(old, correction);
+
+    const nextVoids = new Set(voids);
+    nextVoids.add(old.id);
+    setVoids(nextVoids);
+    cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
+      (e: unknown) => reportError(e, "cache voids"),
+    );
+    const nextSets = applySets((prev) =>
+      prev.map((x) => (x.id === old.id ? next : x)),
+    );
+    cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
+      reportError(e, "cache session sets"),
+    );
+    // Insert BEFORE void. If the queue dies between the two, the log holds a
+    // duplicate set rather than a missing one — and a duplicate is visible,
+    // so it gets fixed.
+    outbox
+      .enqueue({ kind: "insert", table: "sets", payload: next })
+      .then(() =>
+        outbox.enqueue({
+          kind: "insert",
+          table: "set_voids",
+          payload: { set_id: old.id },
+        }),
+      )
+      .catch((e: unknown) => reportError(e, "correct set"));
+    // the note is about the set, and the set now has a new id
+    const note = setNotes[old.id];
+    if (note) {
+      const nextNotes = { ...setNotes, [next.id]: note };
+      setSetNotes(nextNotes);
+      cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
+        () => undefined,
+      );
+      outbox
+        .enqueue({
+          kind: "insert",
+          table: "set_notes",
+          payload: { set_id: next.id, note },
+        })
+        .catch((e: unknown) => reportError(e, "carry set note"));
+    }
+
+    setEntryKg(editing.staged.entryKg);
+    setReps(editing.staged.reps);
+    setSetType(editing.staged.setType);
+    setEditing(null);
+    toast(`Set ${old.set_index + 1} corrected`);
+  };
+
   /** Void a logged set: hide it from every view via an append-only
    *  set_voids insert. The row itself is never edited or deleted. */
   const voidSet = (s: SetInsert) => {
     if (!sessionId) return;
     setVoidArm(null);
+    if (editing?.set.id === s.id) cancelCorrection();
     // voiding the set that started the current rest cancels the clock —
     // the rest was being measured from a set that no longer counts
     const startedClock = setsRef.current.every(
@@ -1182,6 +1290,22 @@ export function Session() {
                       </div>
                     )}
 
+                    {editing && (
+                      <div className="microcopy correcting-note">
+                        Correcting set {editing.set.set_index + 1} · was{" "}
+                        {toDisplay(
+                          enteredKg(
+                            editing.set.load_kg,
+                            editing.set.load_entry ?? "total",
+                          ),
+                          unit,
+                        )}{" "}
+                        {unit}
+                        {editing.set.load_entry === "per_side" ? "/side" : ""}{" "}
+                        × {editing.set.reps}
+                      </div>
+                    )}
+
                     <div className="seg seg-types">
                       {SET_TYPES.map((t) => (
                         <button
@@ -1286,14 +1410,26 @@ export function Session() {
                         have to work out which one the app meant. */}
                     <button
                       type="button"
-                      className={`btn ${planMet ? "btn-outline-ink" : "btn-primary"} btn-log`}
+                      className={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
                       disabled={logLocked || !setsLoaded}
-                      onClick={logSet}
+                      onClick={editing ? saveCorrection : logSet}
                     >
-                      {logLabel(entry)}
+                      {editing
+                        ? `SAVE SET ${editing.set.set_index + 1}`
+                        : logLabel(entry)}
                     </button>
 
-                    {nextEntry && (
+                    {editing && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-block"
+                        onClick={cancelCorrection}
+                      >
+                        Cancel correction
+                      </button>
+                    )}
+
+                    {nextEntry && !editing && (
                       <button
                         type="button"
                         className={`btn ${planMet ? "btn-primary" : "btn-outline-ink"} btn-block`}
@@ -1325,6 +1461,13 @@ export function Session() {
                                   onVoid={() => voidSet(s)}
                                   voidArmed={voidArm === s.id}
                                   onArmVoid={() => setVoidArm(s.id)}
+                                  /* a tick has no numbers to correct */
+                                  onEdit={
+                                    isTick(entry)
+                                      ? undefined
+                                      : () => startCorrection(s)
+                                  }
+                                  editing={editing?.set.id === s.id}
                                 />
                                 {noteEditingId === s.id ? (
                                   <div className="set-note-editor">
@@ -1409,15 +1552,15 @@ export function Session() {
                             ))}
                         </div>
                         {/* Shown on the FIRST set of a session only. It taught
-                            something worth knowing once — sets are corrected by
-                            voiding, not editing — and then repeated itself under
-                            every open exercise, in every session, forever. By
-                            the third week it was furniture. The ✕ carries its
-                            own label; this is the sentence that explains why
-                            there is no pencil. */}
+                            something worth knowing once — the set itself is
+                            the tap target, ✕ removes — and then repeated
+                            itself under every open exercise, in every
+                            session, forever. By the third week it was
+                            furniture. */}
                         {entrySets.length === 1 && (
                           <div className="microcopy">
-                            Wrong number? Void the set (✕) and log the right one.
+                            Wrong number? Tap the set to correct it, or ✕ to
+                            remove it.
                           </div>
                         )}
                       </section>

@@ -3,8 +3,8 @@
 // TOTAL, so the one thing this component must never do is read a per-side set
 // back as the doubled number the column holds.
 
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SetRow } from "./SetRow";
 import type { LoadEntry, SetInsert } from "../lib/types";
 
@@ -46,5 +46,27 @@ describe("SetRow", () => {
   it("converts the per-side value, not the total, into lb", () => {
     render(<SetRow set={set(40, "per_side")} unit="lb" />);
     expect(screen.getByText(/44\.1 lb\/side × 8/)).toBeTruthy();
+  });
+
+  it("has no correction control unless one is offered (History)", () => {
+    render(<SetRow set={set(100, "total")} unit="kg" />);
+    expect(screen.queryByRole("button", { name: /correct set/ })).toBeNull();
+  });
+
+  it("makes the numbers the tap target for a correction", () => {
+    const onEdit = vi.fn();
+    render(<SetRow set={set(100, "total")} unit="kg" onEdit={onEdit} />);
+    fireEvent.click(screen.getByRole("button", { name: "correct set 1" }));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("says which set is being corrected", () => {
+    const { container } = render(
+      <SetRow set={set(100, "total")} unit="kg" onEdit={() => {}} editing />,
+    );
+    expect(container.querySelector(".logged-set-editing")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "correct set 1" }).getAttribute("aria-pressed"),
+    ).toBe("true");
   });
 });
