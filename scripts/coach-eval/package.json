@@ -1,0 +1,12 @@
+{
+  "name": "coach-eval",
+  "private": true,
+  "type": "module",
+  "description": "Replay eval for the in-app coach: real MCP server on a PGlite-backed PostgREST, graded by end-state checks and an Opus judge.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.123.0",
+    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-socket": "0.2.11",
+    "zod": "^3.25.76"
+  }
+}

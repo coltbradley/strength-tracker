@@ -130,17 +130,40 @@ already existed.
       rendering instead of silently disagreeing.
 - [x] An undated day says it is off the calendar.
 
-## Phase 4: first real use
+## Phase 4: first real use (happened 2026-09-01 to 09-03)
 
 - [ ] Log training maxes via Claude (set_training_max).
-- [ ] Paste a coach screenshot, confirm parse, upsert + confirm program.
-- [ ] Log one real gym session on the phone, offline at least part of it.
-- [ ] Review adherence output with Claude. Expect set-entry UX rework.
+- [x] Build a program through the coach chat, upsert + confirm. Note this was
+      NOT the pasted-screenshot flow the spec imagined: the second user asked
+      the in-app coach to design her days from scratch. Self-coached-with-Claude
+      is a second persona the spec never named.
+- [x] Log real gym sessions on the phone. Three complete sessions, 41 sets,
+      every set linked to a prescription, zero voids.
+- [ ] Review adherence output with Claude.
+
+What that first real use exposed is audited and planned in
+[superpowers/plans/2026-09-04-gaps-roadmap.md](superpowers/plans/2026-09-04-gaps-roadmap.md),
+which has a PICK UP HERE section at the top. Highlights: dumbbell prescriptions
+prefill at half (the plan editor never wrote `load_entry`), the coach clones a
+confirmed program instead of editing it, and the rest timer cannot get
+attention on a locked iPhone.
+
+## Phase 5: measuring the coach
+
+- [x] A replay eval for the coach (`scripts/coach-eval/`): real MCP server,
+      real transcripts, end-state checks. Built and smoke-tested.
+- [ ] Run it. It has never been run against a model; it decides whether the
+      coach stays on `sonnet-low`.
 
 ## Out of scope (per spec)
 
-Social, nutrition, running data, RIR,
-per-set subjective ratings, set editing of any kind.
+Social, nutrition, running data, RIR, per-set subjective ratings.
+
+Set EDITING remains out of scope in the sense the spec meant it: no row in
+`sets` is ever mutated. A mid-session correction is a void plus a replacement
+at the same index (`pwa/src/lib/corrections.ts`), which is the append-only
+rule, not an exception to it. Per-set RPE is proposed for reversal in the
+roadmap's Phase 2 with an eval to back it.
 
 Considered in the polish round and declined for now (see `.audit/PLAN.md`
 and feature-gaps G1/G2/G6): time-based sets (planks, carries), e1RM for
