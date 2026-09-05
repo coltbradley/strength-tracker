@@ -1776,3 +1776,71 @@ the program clone reproduces no matter who is driving, and found a second gap
 the audit had missed in the empty-day rewrite. Both point at
 `update_planned_workout`, which is why that tool came before any model change.
 The API-driven run stays as the verification of the model question itself.
+
+## Per-set RPE goes in, reversing a non-goal
+
+`docs/spec.md` listed "RIR or per-set subjective ratings" among the non-goals.
+That was written before the app had a coach reading the log, and it is now the
+wrong call: RPE is the number autoregulation runs on, and without it "8 reps at
+RPE 9" and "8 reps at RPE 6" are the same row and opposite instructions. It is
+also the third most-wanted feature among coached lifters in the research.
+
+`sets.rpe` is numeric, 5 to 10, half points only. Below 5 is noise — nobody
+usefully distinguishes a 3 from a 4 after the fact — and the chip row starts
+higher still, at 6.5, because the values a lifter actually reaches for are the
+top of the scale. The half-point check exists because numeric(3,1) would
+otherwise accept 7.3, a precision nobody means and no view could interpret.
+
+Nullable forever, and that is load-bearing rather than lenient. `sets` is
+append-only, so an unrated set can only be rated by voiding it and relogging;
+if anything downstream ever required an RPE, every set logged before this
+migration would be permanently invalid. Null means unrated, never incomplete,
+and no empty state may imply the lifter forgot something.
+
+## Time-tracked work gets its own column, not `reps` reinterpreted
+
+The plan said a `time` row would store its seconds in `reps`, on the reasoning
+that a second numeric column would make every view branch. Both halves turned
+out to be wrong.
+
+It does not fit. `reps` is checked `between 0 and 100`, so a three minute carry
+is not representable at all, and widening that check to make room would weaken
+a real guard on ordinary sets for the sake of a value that is not reps.
+
+It is also not free. A 45 second farmer's carry at 64 kg would fall inside
+`v_e1rm`'s `reps between 1 and 8` window the moment it was short enough, and
+inside `v_weekly_volume`'s tonnage as 64 x 45. Seconds would be silently priced
+as repetitions, in exactly the two views the whole analysis rests on.
+
+`sets.duration_seconds` makes nothing branch instead. A time set writes reps 0,
+which is what a completion tick already does, so every existing filter excludes
+it through a predicate it already has, and `load_kg` keeps meaning the total
+system load, so a weighted carry records both what was carried and for how
+long. No view mentions `tracking`, and none should: the analysis must not
+depend on what the plan asked for.
+
+## Bodyweight is editable, and a set is not
+
+`bodyweight_log` carries select, insert, update AND delete policies, which no
+other table in this repo does. That is not a softening of the append-only rule,
+it is the rule applied to a different kind of row.
+
+A set is a training record. Other rows point at it, views derive from it, and a
+correction has to stay visible, which is why `set_voids` exists rather than an
+UPDATE. A weigh-in has no dependents, no void mechanism and no historical value
+once it is known to be wrong: a mistyped 700 would otherwise sit in the trend
+forever with no way to say so.
+
+`sessions.bodyweight_kg` stays exactly as it is. The two sources are reconciled
+in `v_bodyweight` rather than by migrating the old column away, because a month
+of real use wrote it zero times but that is a discoverability failure on the End
+screen, not evidence the column was wrong.
+
+## A week reports two counts, never an adherence percentage
+
+`v_weekly_summary` exposes `planned_days` and `planned_days_done` separately and
+deliberately does not divide them. A week nobody planned has no adherence at
+all, and a ratio renders that as zero, which reads as total failure rather than
+as nothing having been asked. Draft days are not counted as owed either: a day
+with no prescriptions is one someone abandoned in the plan editor, and the week
+strip already refuses to call that a missed workout.
