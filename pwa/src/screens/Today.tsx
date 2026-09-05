@@ -1,7 +1,9 @@
 // Today: the week as a calendar. A Mon–Sun strip shows which days carry
 // work and their state (done / skipped / missed / today / rest); tapping a
-// day previews it inline below without losing the week. Start is gated to
-// today's workout; everything else is editable via the plan editor.
+// day previews it inline below without losing the week. Today's workout gets
+// the primary Start; a day scheduled elsewhere can still be trained from its
+// preview card without the plan being rewritten to match. Everything else is
+// editable via the plan editor.
 // Anything scheduled outside this week (or undated) lives in a compact
 // LATER list. Programs with no dates at all keep the original ruled list —
 // a calendar needs dates.
@@ -17,10 +19,7 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { Note } from "../components/Note";
-import {
-  CalendarSheet,
-  type CalendarDay,
-} from "../components/CalendarSheet";
+import { CalendarSheet, type CalendarDay } from "../components/CalendarSheet";
 import { TemplateSheet } from "../components/TemplateSheet";
 import {
   applyTemplate,
@@ -147,6 +146,48 @@ export function workoutStates(
     }
   }
   return map;
+}
+
+/**
+ * Whether a day's preview card offers to be trained RIGHT NOW, on a date the
+ * plan does not put it on.
+ *
+ * A session used to be welded to today's planned day: doing Wednesday's work
+ * on Tuesday meant either "Move to today", which rewrites `scheduled_date` and
+ * destroys what the coach actually asked for, or an empty session with no
+ * targets and no adherence rows. Neither is what happened. The lifter did
+ * Wednesday's session, on Tuesday.
+ *
+ * Nothing about `start()` needs the day to be today. It stamps the session's
+ * `planned_workout_id` and DONE-ness is read back from that pointer, not from
+ * a date comparison — so a session started this way lights its own day up as
+ * done and leaves the calendar untouched. (A planned day is DONE only once its
+ * session has `ended_at`; that is unaffected here, and an open session started
+ * this way shows the same in-progress microcopy as any other.)
+ *
+ * What this function is really for is the exclusions, which is why it is a
+ * named predicate rather than an inline `||`:
+ *
+ *  - DONE and SKIPPED are facts about what already happened. Re-running a done
+ *    day is "Start again" and belongs to today's card only; offering it from a
+ *    day in another week would quietly append a second session to a finished
+ *    one from a screen that is not about today.
+ *  - DRAFT is a day with nothing programmed into it (`exercise_count === 0`).
+ *    Starting one produces exactly the empty, targetless session this feature
+ *    exists to avoid; "add exercises in Edit" is the honest answer.
+ *  - TODAY already has the primary "Start session". A second start control on
+ *    the same card is two buttons that do the same thing.
+ *  - NO DATE is deliberately excluded too. This action's whole claim is "the
+ *    plan is fine, I am ahead or behind" — a day with no date is not ahead of
+ *    or behind anything, and giving it a date IS the fix, so "Reschedule to
+ *    today" stays its only offer.
+ *
+ * It intentionally does not consult `anyDates`: a day is a day. In an undated
+ * DAY 1..N program the same gap exists (day 3 before day 2) and the same
+ * answer works, whereas rescheduling there is meaningless and is gated off.
+ */
+export function canDoWorkoutNow(state: WorkoutState): boolean {
+  return state === "UPCOMING" || state === "MISSED";
 }
 
 export function weekPageDate(selected: string, page: number): string {
@@ -560,12 +601,7 @@ export function Today() {
             null;
           if (pid === null) throw new Error("could not resolve a program");
         }
-        const res = await applyTemplate(
-          templateId,
-          pid,
-          selectedDate,
-          actuals,
-        );
+        const res = await applyTemplate(templateId, pid, selectedDate, actuals);
         setTemplatesOpen(false);
         toast(
           res.refreshed > 0
@@ -802,6 +838,16 @@ export function Today() {
     // undated programs have no calendar gate at all, so any done workout can
     // be re-run there; dated programs restart only from today's card
     const isTodaysCard = w.scheduled_date === today || !anyDates;
+    // Named once because three things read it: the button, and the microcopy
+    // that only makes sense while the button it contrasts with is on screen.
+    // Rescheduling is meaningless in an undated DAY 1..N program, which is
+    // exactly the case where "Do this workout now" stands alone.
+    const canReschedule =
+      canStart &&
+      (state === "MISSED" ||
+        state === "NO DATE" ||
+        (state === "UPCOMING" && anyDates));
+    const canDoNow = canStart && canDoWorkoutNow(state);
     return (
       <>
         {canStart && state === "TODAY" && (
@@ -828,21 +874,51 @@ export function Today() {
             Start again
           </button>
         )}
-        {canStart &&
-          (state === "MISSED" ||
-            state === "NO DATE" ||
-            (state === "UPCOMING" && anyDates)) && (
-            <button
-              type="button"
-              className="btn btn-outline-ink btn-block"
-              onClick={() => moveToToday(w)}
-            >
-              Move to today
-            </button>
-          )}
+        {/* Train a day the calendar puts somewhere else, without moving it.
+            Gated on `canStart` exactly as today's Start is: while
+            reconciliation is still deciding whether a session is already open,
+            no start affordance anywhere on this screen is live, and an active
+            session or an unrecovered orphan closes all of them — starting a
+            second concurrent session from a preview card is no more
+            recoverable than starting one from today's.
+
+            Outline, not primary, on purpose. Today's card and an expanded
+            LATER row can be on screen together, and today's Start has to stay
+            the only primary; this is the deliberate detour, not the default. */}
+        {canDoNow && (
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => void start(w)}
+          >
+            Do this workout now
+          </button>
+        )}
+        {canReschedule && (
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => moveToToday(w)}
+          >
+            Reschedule to today
+          </button>
+        )}
+        {/* The two actions above look alike and mean opposite things, so say
+            which is which rather than trusting the labels to carry it.
+            Rescheduling asserts the PLAN was wrong and rewrites the date the
+            coach wrote; doing it now asserts the plan is right and the lifter
+            is off it. Only when BOTH are on offer: naming a control that is
+            not on the card (an undated program cannot reschedule, a NO DATE
+            day cannot be done ahead) is worse than saying nothing. */}
+        {canDoNow && canReschedule && (
+          <div className="microcopy">
+            Do it now if you’re ahead or behind — the day keeps its date and
+            still counts as done. Reschedule only if the date itself was wrong.
+          </div>
+        )}
         {state === "NO DATE" && (
           <div className="microcopy">
-            No date set — move it to today, or pick a day in Edit.
+            No date set — reschedule it to today, or pick a day in Edit.
           </div>
         )}
         {state === "DRAFT" && (

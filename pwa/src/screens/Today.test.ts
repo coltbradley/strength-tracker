@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  canDoWorkoutNow,
   weekPageDate,
   weekPages,
   weekRangeLabel,
@@ -129,7 +130,10 @@ describe("workoutStates", () => {
     // A session logged against a day nobody programmed is still a session.
     const w = day({ exercise_count: 0 });
     expect(states([w], new Set(["w1"])).get("w1")).toBe("DONE");
-    const skipped = day({ exercise_count: 0, skipped_at: "2026-08-30T07:30:00Z" });
+    const skipped = day({
+      exercise_count: 0,
+      skipped_at: "2026-08-30T07:30:00Z",
+    });
     expect(states([skipped]).get("w1")).toBe("SKIPPED");
   });
 
@@ -146,5 +150,43 @@ describe("workoutStates", () => {
     const b = day({ id: "b", scheduled_date: null });
     const m = workoutStates([a, b], new Set(), false, TODAY);
     expect([m.get("a"), m.get("b")]).toEqual(["TODAY", "UPCOMING"]);
+  });
+});
+
+// A session used to be welded to today's planned day, so training Wednesday's
+// work on Tuesday cost you either the coach's date or the targets. The state
+// map is what decides which days can be trained off their own date, and every
+// case that must NOT offer it is a different kind of damage, so pin them all.
+describe("canDoWorkoutNow", () => {
+  it("offers a day scheduled later this week", () => {
+    expect(canDoWorkoutNow("UPCOMING")).toBe(true);
+  });
+
+  it("offers a day whose date has already gone by", () => {
+    // The lifter is behind, not absent — the plan is still what the coach wrote.
+    expect(canDoWorkoutNow("MISSED")).toBe(true);
+  });
+
+  it("does not double up on today's own card", () => {
+    // TODAY already carries the primary "Start session".
+    expect(canDoWorkoutNow("TODAY")).toBe(false);
+  });
+
+  it("never re-runs a day from its own card", () => {
+    // "Start again" is today's card only; appending a second session to a
+    // finished day from another week is not something anyone asked for.
+    expect(canDoWorkoutNow("DONE")).toBe(false);
+    expect(canDoWorkoutNow("SKIPPED")).toBe(false);
+  });
+
+  it("does not start a day with nothing programmed into it", () => {
+    // Starting a DRAFT produces exactly the targetless, adherence-free empty
+    // session this action exists to avoid.
+    expect(canDoWorkoutNow("DRAFT")).toBe(false);
+  });
+
+  it("leaves an undated day to be rescheduled instead", () => {
+    // "Ahead or behind" needs a schedule to be ahead of or behind.
+    expect(canDoWorkoutNow("NO DATE")).toBe(false);
   });
 });
