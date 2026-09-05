@@ -68,6 +68,28 @@ export interface Outbox {
   /** Session ids with a queued (unsynced) sessions update — e.g. an ended_at
    *  or discarded_at patch that hasn't reached the server yet. */
   pendingSessionUpdateIds(): Promise<Set<string>>;
+  /**
+   * Set ids with a queued (unsynced) void. The user removed the set; the
+   * server may not know yet, so a read of `v_live_sets` still returns it and
+   * would put it back on screen. Screens that render server rows subtract
+   * this set to stay honest offline.
+   *
+   * Dead ones are included, like `pendingSets` and `pendingSessionUpdateIds`:
+   * a void that failed to replay has still been ASKED for, and resurrecting
+   * the row is the one answer the user already rejected. It stays hidden
+   * until retryDead() lands it or the item is dealt with in SyncStatus.
+   */
+  pendingVoidIds(): Promise<Set<string>>;
+  /**
+   * Session ids with a queued (unsynced) DISCARD specifically — a strict
+   * subset of pendingSessionUpdateIds. The two are not interchangeable and
+   * the difference is not cosmetic: an ended_at patch queued offline means
+   * the session finished and its sets must keep showing in history, while a
+   * discarded_at patch means the whole day should be gone. Filtering history
+   * on "has any pending sessions update" would make a session vanish from
+   * history for the sole crime of having been finished offline.
+   */
+  pendingDiscardIds(): Promise<Set<string>>;
   /** Wire up app-start + 'online' triggers. */
   start(): void;
 }
@@ -423,6 +445,43 @@ export function createOutbox({
             ): op is Extract<OutboxOp, { kind: "update"; table: "sessions" }> =>
               op.kind === "update" && op.table === "sessions",
           )
+          .map((op) => op.id),
+      );
+    },
+
+    async pendingVoidIds() {
+      const db = await getDb();
+      const rows = await readAll(db);
+      return new Set(
+        rows
+          .map((r) => r.item.op)
+          .filter(
+            (
+              op,
+            ): op is Extract<
+              OutboxOp,
+              { kind: "insert"; table: "set_voids" }
+            > => op.kind === "insert" && op.table === "set_voids",
+          )
+          .map((op) => op.payload.set_id),
+      );
+    },
+
+    async pendingDiscardIds() {
+      const db = await getDb();
+      const rows = await readAll(db);
+      return new Set(
+        rows
+          .map((r) => r.item.op)
+          .filter(
+            (
+              op,
+            ): op is Extract<OutboxOp, { kind: "update"; table: "sessions" }> =>
+              op.kind === "update" && op.table === "sessions",
+          )
+          // an end patch and a discard patch share a table and an id; only the
+          // shape tells them apart
+          .filter((op) => "discarded_at" in op.patch)
           .map((op) => op.id),
       );
     },

@@ -150,14 +150,29 @@ export function History() {
           getRecentSets(selected),
         ]);
         if (cancelled) return;
+        // A void and a discard are queued writes, so the server can still be
+        // returning rows we have already been told to remove — offline for as
+        // long as the queue waits, and for one round trip even online. The
+        // sets came from v_live_sets, which knows only what has landed; the
+        // outbox knows what was asked for. Subtracting one from the other is
+        // what keeps a removed set from reappearing under its own "Set
+        // removed" toast.
+        const [voided, discarded] = await Promise.all([
+          outbox.pendingVoidIds(),
+          outbox.pendingDiscardIds(),
+        ]);
+        if (cancelled) return;
+        const live = rec.data.filter(
+          (s) => !voided.has(s.id) && !discarded.has(s.session_id),
+        );
         setSeries(e1.data);
         setVolume(vol.data);
         setGoal(g.data);
-        setRecent(rec.data);
+        setRecent(live);
         setFromCache(e1.fromCache || vol.fromCache || rec.fromCache);
         // post-workout notes + sRPE for the visible sessions; cached so
         // notes read back offline too
-        const ids = [...new Set(rec.data.map((s) => s.session_id))];
+        const ids = [...new Set(live.map((s) => s.session_id))];
         getSessionMeta(selected, ids)
           .then((m) => {
             if (!cancelled) setMeta(m.data);
@@ -177,7 +192,7 @@ export function History() {
           });
         getSetNotesForExercise(
           selected,
-          rec.data.map((s) => s.id),
+          live.map((s) => s.id),
         )
           .then((n) => {
             if (!cancelled) setNotes(n.data);
@@ -214,6 +229,15 @@ export function History() {
       });
       setRecent((prev) => prev.filter((x) => x.id !== s.id));
       setVoidArm(null);
+      // enqueue() returns as soon as the item is in IndexedDB — the network
+      // insert behind it is fire-and-forget. Bumping the reload here put the
+      // set_voids POST and the v_live_sets GET in a race, and when the GET won
+      // the response still contained the set: it came back on screen, under
+      // its own "Set removed" toast, and was written into the cache. Wait for
+      // the queue to be walked so the void is on the server before we ask the
+      // server what is live. Offline this is a no-op and the pending-void
+      // filter in the refetch carries it instead.
+      await outbox.flush();
       await invalidateForSetChange();
       setReloadTick((t) => t + 1);
       toast("Set removed");
@@ -234,6 +258,9 @@ export function History() {
       });
       setRecent((prev) => prev.filter((s) => s.session_id !== sessionId));
       setDiscardArm(null);
+      // same race as voidPastSet: the queued patch has to reach the server
+      // before the refetch asks it what is still live
+      await outbox.flush();
       // the discard touches EVERY exercise trained that day, not just the one
       // on screen — clear the whole per-exercise cache family so stale
       // offline reads can't resurrect it

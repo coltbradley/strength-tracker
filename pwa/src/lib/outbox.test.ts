@@ -425,6 +425,93 @@ describe("outbox", () => {
     expect(pending).toEqual([setA, setB]);
     expect(await outbox.pendingSets("other-session")).toEqual([]);
   });
+
+  it("pendingVoidIds returns the set ids of queued voids", async () => {
+    const { transport } = makeTransport();
+    const outbox = build(transport);
+
+    await seed(outbox, [
+      { kind: "insert", table: "sets", payload: setA },
+      { kind: "insert", table: "set_voids", payload: { set_id: setA.id } },
+      // a set_notes insert shares the set_id shape and must not be counted:
+      // annotating a set is not removing it
+      {
+        kind: "insert",
+        table: "set_notes",
+        payload: { set_id: setB.id, note: "felt heavy" },
+      },
+    ]);
+
+    expect(await outbox.pendingVoidIds()).toEqual(new Set([setA.id]));
+  });
+
+  it("pendingVoidIds keeps dead-lettered voids — the user still asked", async () => {
+    // consistent with pendingSets and pendingSessionUpdateIds, neither of
+    // which filters on status: a void that failed to replay has still been
+    // asked for, and putting the set back on screen is the one answer the
+    // user already rejected.
+    const { transport } = makeTransport([rlsErr]);
+    const outbox = build(transport);
+
+    await seed(outbox, [
+      { kind: "insert", table: "set_voids", payload: { set_id: setA.id } },
+    ]);
+    online = true;
+    await outbox.flush();
+    expect(outbox.getStatus().dead).toBe(1);
+
+    expect(await outbox.pendingVoidIds()).toEqual(new Set([setA.id]));
+  });
+
+  it("pendingVoidIds is empty when nothing is queued", async () => {
+    const { transport } = makeTransport();
+    const outbox = build(transport);
+
+    expect(await outbox.pendingVoidIds()).toEqual(new Set());
+
+    // and empty again once a queued void has actually landed
+    await seed(outbox, [
+      { kind: "insert", table: "set_voids", payload: { set_id: setA.id } },
+    ]);
+    online = true;
+    await outbox.flush();
+    expect(await outbox.pendingVoidIds()).toEqual(new Set());
+  });
+
+  it("pendingDiscardIds counts discards but not ends", async () => {
+    const { transport } = makeTransport();
+    const outbox = build(transport);
+
+    await seed(outbox, [
+      {
+        kind: "update",
+        table: "sessions",
+        id: session.id,
+        patch: {
+          ended_at: "2026-08-25T11:00:00.000Z",
+          session_rpe: null,
+          bodyweight_kg: null,
+          notes: null,
+        },
+      },
+      {
+        kind: "update",
+        table: "sessions",
+        id: "99999999-9999-4999-8999-999999999999",
+        patch: { discarded_at: "2026-08-25T11:05:00.000Z" },
+      },
+    ]);
+
+    // both are queued sessions updates...
+    expect(await outbox.pendingSessionUpdateIds()).toEqual(
+      new Set([session.id, "99999999-9999-4999-8999-999999999999"]),
+    );
+    // ...but only one of them says the day should disappear. A session
+    // finished offline must keep showing in history.
+    expect(await outbox.pendingDiscardIds()).toEqual(
+      new Set(["99999999-9999-4999-8999-999999999999"]),
+    );
+  });
 });
 
 // Multi-user. Queued payloads leave `user_id` to the database default
