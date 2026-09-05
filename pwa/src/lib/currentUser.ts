@@ -10,7 +10,9 @@
 // decision must use the session itself; this only answers "whose data is this
 // device holding right now", which is a local bookkeeping question.
 
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import { readPersistedUserId } from "./persistedSession";
 
 let userId: string | null = null;
 const listeners = new Set<(id: string | null) => void>();
@@ -24,8 +26,17 @@ function set(next: string | null): void {
 // Self-initialising on import: main.tsx starts the outbox during module
 // evaluation, so waiting for a component to mount would leave the first
 // queued write unstamped.
-void supabase.auth.getSession().then(({ data }) => {
-  set(data.session?.user?.id ?? null);
+void supabase.auth.getSession().then(({ data, error }) => {
+  // Same distinction useAuth makes: a null session with a RETRYABLE error is
+  // "we could not ask", not "nobody". Reporting nobody here holds every
+  // queued write — correct when identity is genuinely unknown, wrong when the
+  // device knows perfectly well whose it is and only the network is down.
+  set(
+    data.session?.user?.id ??
+      (error && isAuthRetryableFetchError(error)
+        ? readPersistedUserId()
+        : null),
+  );
 });
 supabase.auth.onAuthStateChange((_event, session) => {
   set(session?.user?.id ?? null);

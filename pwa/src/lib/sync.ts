@@ -2,6 +2,7 @@
 // surfaces the PostgREST error code and HTTP status so the outbox can
 // classify failures (retry vs dead-letter vs fix-and-retry).
 
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import { getDb } from "./db";
 import { getCurrentUserId, onUserChange } from "./currentUser";
@@ -43,9 +44,19 @@ const transport: OutboxTransport = {
     return toTransportError(error, status ?? null);
   },
   async refreshAuth() {
-    // getSession() refreshes an expired token when a refresh token exists
+    // getSession() refreshes an expired token when a refresh token exists.
+    //
+    // The distinction the outbox depends on: returning FALSE means the server
+    // answered and there is no valid session, so the item is dead. THROWING
+    // means we never found out. getSession() does not throw on a network
+    // failure — it returns `session: null` with a retryable error, which is
+    // the same shape as a real sign-out — so without this test the outbox's
+    // "unreachable, keep it pending" branch could never fire and a timeout on
+    // gym wifi dead-lettered a whole session's worth of sets.
     const { data, error } = await supabase.auth.getSession();
-    return !error && data.session !== null;
+    if (data.session !== null) return true;
+    if (error && isAuthRetryableFetchError(error)) throw error;
+    return false;
   },
 };
 
