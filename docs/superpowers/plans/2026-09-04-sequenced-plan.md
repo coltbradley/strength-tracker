@@ -140,20 +140,40 @@ have hidden a session for the crime of being finished offline (1d); and the
 outbox's own "unreachable, keep it pending" branch, comment and all, could
 never once have fired against the real transport (1a).
 
-## Wave 2: safe to run (2.75 days)
+## Wave 2: safe to run (2.75 days) — DONE 2026-09-04
 
-Cheap, bounded, and it protects the wallet and the other user. Ship as one
-migration plus one edge deploy.
+Cheap, bounded, and it protects the wallet and the other user.
 
-| #   | Work                                                                                                                                                          | Days |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| 2a  | `coach_usage` insert errors are read; `turn_id` validated as a UUID before the turn starts. Closes the quota bypass that bills the owner's key without limit. | 0.5  |
-| 2b  | Migration: drop `programs_delete`, `pw_delete`, `exercise_owners_delete`. Soft delete has been the only intended path since August.                           | 0.25 |
-| 2c  | Per-turn coach tokens revoked in a `finally`, plus a weekly prune. 27 expired rows are sitting there.                                                         | 0.25 |
-| 2d  | Close sign-up, or gate the coach on an allowlist. Open sign-up plus a per-user quota means any stranger with the URL gets 150 turns a day on the owner's key. | 0.25 |
-| 2e  | `exercises.name` length and character limits; `update_exercise` disabled for the coach. A renamed shared exercise reaches every other user's model context.   | 0.5  |
-| 2f  | Long turns return 413 instead of vanishing; `unit` whitelisted to kg/lb; attachment `kind`/`media_type`/`data` type-checked.                                  | 0.5  |
-| 2g  | Sentry in both edge functions. Today a coach failure is invisible unless someone queries Supabase analytics, which was down during the audit.                 | 0.5  |
+| # | Work | Days | Status |
+|---|---|---|---|
+| 2a | `coach_usage` insert errors read; `turn_id` validated; a duplicate refused before tokens are spent. | 0.5 | **done** (`37b9eb4`) |
+| 2b | Migration dropping `programs_delete` and `exercise_owners_delete`; `pw_delete` narrowed to templates. | 0.25 | **done** (`c673c37`) |
+| 2c | Per-turn coach tokens revoked in a `finally`. | 0.25 | **done** (`37b9eb4`) |
+| 2d | `COACH_ALLOWED_USERS` gate, plus the dashboard step documented. | 0.25 | **done** (`ae1677a`) |
+| 2e | `exercises.name` bounded; `update_exercise` disabled for the coach. | 0.5 | **done** (`c673c37`, `37b9eb4`) |
+| 2f | 413 on long turns; `unit` whitelisted; attachment shapes validated. | 0.5 | **done** (`37b9eb4`) |
+| 2g | Sentry in both edge functions, inert without a DSN, tags only. | 0.5 | **done** (`ae1677a`) |
+
+Two things came out of the work that the plan had wrong.
+
+**`pw_delete` had to be narrowed, not dropped.** The PWA hard-deletes saved
+templates, and RLS refuses by returning zero rows rather than an error, so
+dropping the policy outright would have made the template delete button
+silently do nothing. A template is dateless by constraint and nothing can be
+logged against its own prescriptions, so it carries none of the cascade risk
+the drop was for.
+
+**The cache TTL stays at an hour.** Wave 4a proposed five minutes on the
+evidence of one planning conversation whose turns were a minute or two apart.
+That is the wrong sample: the gap this cache exists for is the one between
+sets, and a five-minute window is measured from the start of the request. The
+comment already in the code made the better argument.
+
+**Decision 1 is applied** (`e18a2a3`): the coach runs `claude-opus-5` at effort
+`low`, and the monthly cap dropped from 2M to 800k tokens to hold the same
+dollar ceiling, since the cap is denominated in tokens and its value in money
+moves with the model. The API eval remains the cheap way to check whether
+Sonnet would have matched it.
 
 ## Wave 3: the set loop (4.5 days)
 
