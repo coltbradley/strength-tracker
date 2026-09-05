@@ -45,6 +45,7 @@ const FILES = [
     .map((f) => join("supabase/functions/mcp-server/lib", f)),
   "pwa/src/lib/data.ts",
   "pwa/src/lib/coach.ts",
+  "pwa/src/lib/review.ts",
 ];
 
 /**
