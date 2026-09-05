@@ -257,6 +257,12 @@ export const cacheKeys = {
   sessionVoids: (sessionId: string) => `sessionVoids:${sessionId}`,
   /** entry keys the user marked skipped in this session */
   sessionSkips: (sessionId: string) => `sessionSkips:${sessionId}`,
+  /** mid-session exercise substitutions, entry key -> the movement actually
+   *  performed. Session-scoped and device-local like extras and skips, and in
+   *  no invalidation family for the same reason they are in none: it is a
+   *  fact about today's performance, not a projection of anything on the
+   *  server, so nothing a set or a session close does can stale it. */
+  sessionSwaps: (sessionId: string) => `sessionSwaps:${sessionId}`,
   /** live rest-timer state, so Home round-trips / reloads don't lose it */
   sessionRest: (sessionId: string) => `sessionRest:${sessionId}`,
   /** per-set notes for the in-flight session, set_id -> note */

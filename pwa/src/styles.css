@@ -778,6 +778,7 @@
   .rest-adjust,
   .rest-timer-dismiss,
   .drawer-action,
+  .swap-action,
   .set-void,
   .back-link,
   .set-note-add,
@@ -1284,6 +1285,24 @@
 
   .correcting-note {
     color: var(--accent-dim);
+  }
+
+  /* An exercise being done in place of the one the plan named. Same voice as
+     the correction note above — both say "this open exercise is temporarily
+     not what it looks like" — and the same accent, which is AA for this size
+     and weight but never for body copy. */
+  .swap-note {
+    color: var(--accent-dim);
+  }
+
+  /* SWAP / UNDO SWAP: the small mono actions from the .drawer-action family,
+     laid on one row under the open exercise rather than beside a collapsed
+     one. Gap is --s-5 so the two 44px hit boxes cannot touch. */
+  .swap-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s-5);
+    margin-top: var(--s-5);
   }
 
   /* ---- stepper: the value is the control ----
@@ -2304,6 +2323,57 @@
     font-weight: 700;
     letter-spacing: var(--track-2);
     color: var(--accent-dim);
+  }
+
+  /* ---- first-run card (empty Today) ---- */
+
+  /* Same bordered-card idiom as .orphan-card above, and deliberately NOT a
+   * .rule-section: this is a one-time visitor, not permanent furniture, so it
+   * carries its own boundary instead of joining the screen's ruled rhythm and
+   * leaving a stray rule behind the day it is dismissed. */
+  .first-run {
+    border: var(--bw) solid var(--rule-strong-color);
+    border-radius: var(--radius);
+    padding: var(--s-6) var(--s-7);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .first-run-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+  }
+
+  /* Flush right inside the card: .btn's --gutter padding is for a full-width
+   * button, and here it just pushes Dismiss away from the edge it aligns to.
+   * The 52px min-height (and so the tap target) is untouched. */
+  .first-run-dismiss {
+    padding: 0 0 0 var(--s-6);
+  }
+
+  /* Question and control on one line while they both fit, stacked when they do
+   * not: two 44px keys plus a full sentence collide at 320px. */
+  .first-run-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    margin-top: var(--s-5);
+  }
+
+  .first-run-q,
+  .first-run-body {
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+  }
+
+  /* Prose, so it is set in --text and never in --accent: #bd5410 is 4.08:1,
+   * which is AA for large text and UI and NOT for body copy this size. */
+  .first-run-body {
+    margin-top: var(--s-7);
   }
 
   /* ---- in-session accordion (replaces the modal drawer) ---- */

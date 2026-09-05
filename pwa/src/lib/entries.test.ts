@@ -5,6 +5,7 @@ import {
   groupRamps,
   isLocalBracket,
   isOrphanSet,
+  plannedExerciseId,
   setsForEntry,
   supersetInfo,
   supersetLetter,
@@ -15,6 +16,7 @@ import {
   warmupSets,
   workingSets,
   type ExerciseEntry,
+  type Substitution,
 } from "./entries";
 import type { ResolvedPrescriptionRow, SetInsert } from "./types";
 
@@ -663,5 +665,199 @@ describe("a declared scheme still owns the sets logged against it", () => {
     const done = setsForEntry(entry!, [set("a")], [], new Set()).length;
     expect(workingSets(entry!)).toBe(4);
     expect(done).toBe(1);
+  });
+});
+
+// ---- mid-session substitution ----------------------------------------------
+// The cable station was taken, so the tricep extension happened with a
+// dumbbell. The real session note read "Had to switch tricep cable with
+// dumbbell overhead extension" — prose, because the sets themselves had
+// nowhere to say it, so the record claims cable extensions that never
+// happened and `sets` is append-only.
+//
+// The split under test: `exercise_id` follows the MOVEMENT (History and e1RM
+// describe what was lifted) while the brackets — and therefore the
+// `prescription_id` a set is stamped with — stay the PLAN (`v_adherence`
+// still credits the slot, because it reads the prescription link and
+// deliberately does not re-check which exercise that prescription names).
+
+describe("mid-session exercise substitution", () => {
+  const CABLE = "cable_tricep";
+  const DUMBBELL = "db_overhead";
+  const planned = (over: Partial<ResolvedPrescriptionRow> = {}) =>
+    rx({
+      exercise_id: CABLE,
+      exercise_name: "Cable Tricep Extension",
+      sets: 3,
+      reps_min: 8,
+      reps_max: 10,
+      rest_seconds: 90,
+      ...over,
+    });
+  const swap = (over: Partial<Substitution> = {}): Substitution => ({
+    exercise_id: DUMBBELL,
+    name: "DB Overhead Extension",
+    planned_exercise_id: CABLE,
+    planned_name: "Cable Tricep Extension",
+    ...over,
+  });
+
+  it("reports the CHOSEN exercise and the PLANNED prescription id", () => {
+    const p = planned();
+    const [entry] = buildEntries([p], [], [], [], { [p.id]: swap() });
+    // what was lifted
+    expect(entry!.exercise_id).toBe(DUMBBELL);
+    expect(entry!.name).toBe("DB Overhead Extension");
+    expect(entry!.substitutedFor).toEqual({
+      exercise_id: CABLE,
+      name: "Cable Tricep Extension",
+    });
+    // what the plan asked for: the bracket a logged set links to is
+    // untouched, which is what keeps the adherence credit
+    expect(entry!.brackets.map((b) => b.id)).toEqual([p.id]);
+    expect(bracketFor(entry!, 0)?.id).toBe(p.id);
+    expect(bracketFor(entry!, 0)?.exercise_id).toBe(CABLE);
+    // and the entry keeps its identity: the key is the accordion's, the
+    // skips cache's and the substitution cache's own handle on this slot
+    expect(entry!.key).toBe(p.id);
+    expect(plannedExerciseId(entry!)).toBe(CABLE);
+  });
+
+  it("keeps the plan's targets — the movement changed, not the prescription", () => {
+    const warm = planned({ sets: 1, set_type: "warmup" });
+    const work = planned({ sets: 3, set_type: "working" });
+    const [entry] = buildEntries([warm, work], [], [], [], {
+      [warm.id]: swap(),
+    });
+    expect(entry!.exercise_id).toBe(DUMBBELL);
+    expect(workingSets(entry!)).toBe(3);
+    expect(warmupSets(entry!)).toBe(1);
+    expect(targetSets(entry!)).toBe(3);
+    expect(entry!.brackets[1]!.reps_max).toBe(10);
+    expect(entry!.brackets[1]!.rest_seconds).toBe(90);
+  });
+
+  it("counts done-ness the same way, from sets naming the chosen exercise", () => {
+    const p = planned();
+    const logged = [0, 1, 2].map((i) =>
+      set({
+        exercise_id: DUMBBELL,
+        prescription_id: p.id,
+        set_index: i,
+        set_type: "working",
+      }),
+    );
+    const known = new Set([p.id]);
+    const [entry] = buildEntries([p], [], logged, [], { [p.id]: swap() });
+    const own = setsForEntry(entry!, logged, [p], known);
+    expect(own).toHaveLength(3);
+    expect(progressSets(entry!, own)).toBe(3);
+    expect(entryMet(entry!, own)).toBe(true);
+    // two of three is still two of three
+    const partial = logged.slice(0, 2);
+    const [half] = buildEntries([p], [], partial, [], { [p.id]: swap() });
+    expect(entryMet(half!, setsForEntry(half!, partial, [p], known))).toBe(
+      false,
+    );
+  });
+
+  it("still shows the sets logged BEFORE the swap", () => {
+    // she did set 1 on the cable, then the station was taken. Both sets were
+    // done in this slot and both must stay visible: an invisible set cannot
+    // be voided or corrected, and re-logging it duplicates it forever.
+    const p = planned();
+    const before = set({ exercise_id: CABLE, prescription_id: p.id });
+    const after = set({ exercise_id: DUMBBELL, prescription_id: p.id });
+    const all = [before, after];
+    const known = new Set([p.id]);
+    const entries = buildEntries([p], [], all, [], { [p.id]: swap() });
+    expect(entries).toHaveLength(1);
+    expect(setsForEntry(entries[0]!, all, [p], known)).toEqual(all);
+  });
+
+  it("claims a loose set of EITHER exercise, and synthesizes no second home", () => {
+    const p = planned();
+    const loose = set({ exercise_id: DUMBBELL, prescription_id: null });
+    const known = new Set([p.id]);
+    const entries = buildEntries([p], [], [loose], [], { [p.id]: swap() });
+    expect(entries.map((e) => e.key)).toEqual([p.id]);
+    expect(setsForEntry(entries[0]!, [loose], [p], known)).toEqual([loose]);
+  });
+
+  it("keeps its superset tag and its section", () => {
+    const a1 = planned({ superset_group: 1, section: "Arms" });
+    const a2 = rx({
+      exercise_id: "curl",
+      exercise_name: "Curl",
+      superset_group: 1,
+      section: "Arms",
+    });
+    const entries = buildEntries([a1, a2], [], [], [], { [a1.id]: swap() });
+    expect(entries[0]!.exercise_id).toBe(DUMBBELL);
+    // both come from brackets[0], which a substitution never touches
+    expect(entries[0]!.brackets[0]!.section).toBe("Arms");
+    expect(entries[0]!.brackets[0]!.superset_group).toBe(1);
+    const info = supersetInfo(entries);
+    expect(info.get(a1.id)).toEqual({ tag: "A1", first: true, last: false });
+    expect(info.get(a2.id)).toEqual({ tag: "A2", first: false, last: true });
+    // and it still leads its own round
+    expect(supersetPartner(entries, a1.id, () => false)?.key).toBe(a2.id);
+  });
+
+  it("keeps a ramp collapsed into ONE entry", () => {
+    const a = planned({ sets: 1, reps_min: 12, reps_max: 15 });
+    const b = planned({ sets: 3, reps_min: 8, reps_max: 10 });
+    const entries = buildEntries([a, b], [], [], [], { [a.id]: swap() });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.brackets).toHaveLength(2);
+    expect(entries[0]!.exercise_id).toBe(DUMBBELL);
+    expect(workingSets(entries[0]!)).toBe(4);
+  });
+
+  it("ignores a substitution whose planned exercise is no longer there", () => {
+    // the coach re-parsed the day and this prescription id now names
+    // something else. A lapsed swap is harmless; a swap that relabels a
+    // movement the lifter never chose is not.
+    const p = rx({ exercise_id: "squat", exercise_name: "Back Squat" });
+    const [entry] = buildEntries([p], [], [], [], { [p.id]: swap() });
+    expect(entry!.exercise_id).toBe("squat");
+    expect(entry!.substitutedFor).toBeUndefined();
+  });
+
+  it("substitutes a mid-session extra too, keeping its declared target", () => {
+    const extra = {
+      exercise_id: CABLE,
+      name: "Cable Tricep Extension",
+      scheme: [
+        {
+          sets: 3,
+          reps_min: 8,
+          reps_max: 10,
+          load_kg: 20,
+          set_type: "working",
+          rest_seconds: 90,
+        },
+      ],
+    };
+    const logged = set({ exercise_id: DUMBBELL, prescription_id: null });
+    const entries = buildEntries([], [extra], [logged], [], {
+      [`extra:${CABLE}`]: swap(),
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.exercise_id).toBe(DUMBBELL);
+    expect(workingSets(entries[0]!)).toBe(3);
+    // a declared bracket is not a prescription row, so its sets carry a null
+    // link and are claimed by exercise — under either name
+    expect(setsForEntry(entries[0]!, [logged], [], new Set())).toEqual([
+      logged,
+    ]);
+  });
+
+  it("leaves every entry alone when nothing is swapped", () => {
+    const p = planned();
+    const [entry] = buildEntries([p], [], [], []);
+    expect(entry!.exercise_id).toBe(CABLE);
+    expect(entry!.substitutedFor).toBeUndefined();
+    expect(plannedExerciseId(entry!)).toBe(CABLE);
   });
 });

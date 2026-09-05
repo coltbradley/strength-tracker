@@ -61,6 +61,7 @@ import {
   setsForEntry as setsForEntryOf,
   supersetInfo as supersetInfoOf,
   entryMet,
+  plannedExerciseId,
   progressSets,
   supersetPartner as supersetPartnerOf,
   targetSets,
@@ -69,6 +70,7 @@ import {
   type BracketKind,
   type ExerciseEntry,
   type ExtraExercise,
+  type Substitutions,
 } from "../lib/entries";
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
@@ -148,10 +150,28 @@ export function Session() {
   );
   const [rx, setRx] = useState<ResolvedPrescriptionRow[]>([]);
   const [extras, setExtras] = useState<ExtraExercise[]>([]);
+  /**
+   * Exercises being done in place of the ones the plan named, entry key ->
+   * substitution. Device-local and session-scoped, the same class of fact as
+   * `extras` and `skips`: today the cable station was taken, which says
+   * nothing about the plan and must never be written back into it.
+   *
+   * The split this produces — see `ExerciseEntry.substitutedFor` — is that
+   * `sets.exercise_id` becomes the movement actually lifted while
+   * `sets.prescription_id` stays the planned bracket. History and e1RM
+   * therefore describe what happened, and `v_adherence` still credits the
+   * slot the plan asked for.
+   */
+  const [subs, setSubs] = useState<Substitutions>({});
   /** exercise chosen mid-session, awaiting its declared scheme */
   const [declaring, setDeclaring] = useState<ExerciseRow | null>(null);
   /** name typed in the picker that matched nothing they wanted */
   const [newName, setNewName] = useState<string | null>(null);
+  /** what the picker (and the create sheet behind it) is FOR: adding an
+   *  exercise the plan never mentioned, or swapping the open one. Same two
+   *  sheets, two destinations — a substitute the library lacks must not
+   *  dead-end any more than an addition does. */
+  const [picking, setPicking] = useState<"add" | "swap">("add");
   const [sets, setSets] = useState<SetInsert[]>([]);
   const [setsLoaded, setSetsLoaded] = useState(false);
   // The bootstrap RAN and FAILED — which is not the same state as "hasn't
@@ -201,7 +221,7 @@ export function Session() {
   // the one keyboard-covered surface that is not a sheet: the per-set note
   // editor sits deep in the scroller with its Save/Cancel row underneath
   const kbInset = useKeyboardInset();
-  const [sheet, setSheet] = useState<"search" | "plates" | null>(null);
+  const [sheet, setSheet] = useState<"search" | "swap" | "plates" | null>(null);
   const [pad, setPad] = useState<PadSpec | null>(null);
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
@@ -209,9 +229,11 @@ export function Session() {
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // The bootstrap load can come up empty (first run, offline, cold cache);
-  // opening the search sheet retries rather than showing a lying spinner.
+  // opening a picker retries rather than showing a lying spinner. Both
+  // pickers, because a swap needs the library exactly as much as an add does.
   useEffect(() => {
-    if (sheet !== "search" || allExercises.length > 0) return;
+    if ((sheet !== "search" && sheet !== "swap") || allExercises.length > 0)
+      return;
     let cancelled = false;
     setExercisesFailed(false);
     getExercises()
@@ -275,6 +297,7 @@ export function Session() {
           extrasCached,
           voidsCached,
           skipsCached,
+          subsCached,
           restCached,
           notesCached,
           actuals,
@@ -284,6 +307,7 @@ export function Session() {
           cacheGet<ExtraExercise[]>(cacheKeys.sessionExtras(a.id)),
           cacheGet<string[]>(cacheKeys.sessionVoids(a.id)),
           cacheGet<string[]>(cacheKeys.sessionSkips(a.id)),
+          cacheGet<Substitutions>(cacheKeys.sessionSwaps(a.id)),
           cacheGet<RestCache>(cacheKeys.sessionRest(a.id)),
           cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(a.id)),
           getLastActuals(a.id).catch(() => ({ data: {} as LastActuals })),
@@ -326,6 +350,7 @@ export function Session() {
         const voided = new Set(voidsCached ?? []);
         setVoids(voided);
         setSkips(new Set(skipsCached ?? []));
+        setSubs(subsCached ?? {});
         setSetNotes(notesCached ?? {});
         setLastActuals(actuals.data);
         setEquipMap(
@@ -425,8 +450,8 @@ export function Session() {
   // ramps collapsed, extras appended, orphan sets given a home — see
   // lib/entries.ts, where the rules are pure and unit-tested
   const entries: ExerciseEntry[] = useMemo(
-    () => buildEntries(rx, extras, sets, allExercises),
-    [rx, extras, sets, allExercises],
+    () => buildEntries(rx, extras, sets, allExercises, subs),
+    [rx, extras, sets, allExercises, subs],
   );
 
   const openEntry = useMemo(
@@ -627,9 +652,17 @@ export function Session() {
   // The kind is part of the key: toggling WARMUP on a day whose plan has no
   // warmup bracket lands on the same bracket, and the lifter should still
   // get that bracket's numbers back rather than a stale staged load.
+  //
+  // So is the exercise, which is otherwise fixed for an entry and is not once
+  // a swap can change it: the bracket and the key both stay put through a
+  // substitution, so without this the dumbbell work would sit there staged
+  // with the cable's prescribed load.
   const prefillKey = openEntry
-    ? `${openEntry.key}:${currentBracket?.id ?? "free"}:${stagedKind}`
+    ? `${openEntry.key}:${openEntry.exercise_id}:${currentBracket?.id ?? "free"}:${stagedKind}`
     : null;
+
+  /** Is this slot being performed with a movement the plan did not name? */
+  const swapped = openEntry?.substitutedFor !== undefined;
 
   // ---- per-side convention -------------------------------------------------
 
@@ -639,7 +672,12 @@ export function Session() {
   // database always stores.
   const loadEntryInput = {
     override: exercisePref.loadEntry,
-    prescribed: currentBracket?.load_entry ?? null,
+    // The coach's convention describes the movement the coach named. A cable
+    // stack is a total; the pair of dumbbells standing in for it is not, and
+    // inheriting "total" from the prescription would store one hand's weight
+    // as the whole system load. Dropped on a swap so the chain falls through
+    // to this exercise's own equipment, which is what actually got lifted.
+    prescribed: swapped ? null : (currentBracket?.load_entry ?? null),
     equipment,
     name: openEntry?.name ?? "",
   };
@@ -693,12 +731,20 @@ export function Session() {
     const p = prefillSet({
       prescription: bracket
         ? {
-            resolved_load_kg: bracket.resolved_load_kg,
+            // A substitution keeps the coach's REPS and loses the coach's
+            // LOAD. The rep target is a training instruction and survives the
+            // movement change — 3×8 is still 3×8 — but 25 kg on a cable stack
+            // is not 25 kg of dumbbell, and prefilling it would hand the
+            // lifter a number from a machine they are not standing at. Nulled
+            // here, so the chain falls through to this movement's own last
+            // set and then to its last session (`lastActuals` is keyed by
+            // exercise, and the entry now names the chosen one).
+            resolved_load_kg: swapped ? null : bracket.resolved_load_kg,
             // plate_load_kg rounds the TOTAL to 2.5 kg, which is the wrong
             // granularity for a pair (2.5 kg per hand is a 5 kg step), so a
             // per-side movement prefills from the unrounded resolved load —
             // see the migration header.
-            plate_load_kg: perSide ? null : bracket.plate_load_kg,
+            plate_load_kg: perSide || swapped ? null : bracket.plate_load_kg,
             reps_min: bracket.reps_min,
             reps_max: bracket.reps_max,
           }
@@ -775,6 +821,14 @@ export function Session() {
     const set: SetInsert = {
       id: uuid(),
       session_id: sessionId,
+      // The movement ACTUALLY PERFORMED. On a substituted entry that is the
+      // exercise the lifter swapped in, not the one the plan named — which is
+      // the whole point: History, e1RM and volume must describe what was
+      // lifted. The prescription link below is unaffected by that and stays
+      // the planned bracket; the two halves are deliberately different
+      // questions ("what did you do" vs "which slot was it"), and collapsing
+      // them into one is the mistake this comment exists to prevent. See
+      // `ExerciseEntry.substitutedFor`.
       exercise_id: openEntry.exercise_id,
       // the set links to the BRACKET it fulfills, so adherence analytics see
       // the coach's actual scheme (warmups link to the upcoming bracket).
@@ -847,9 +901,14 @@ export function Session() {
     setSetType(warmupsLogged < warmupSets(openEntry) ? "warmup" : "working");
   };
 
-  const openSheet = (kind: "search" | "plates") => {
+  const openSheet = (kind: "search" | "swap" | "plates") => {
     setSheet(kind);
     setPad(null);
+    // Which door was opened is recorded HERE rather than at each call site, so
+    // the create-exercise sheet behind the picker can never send a substitute
+    // to the end of the list because somebody forgot to say so.
+    if (kind === "search") setPicking("add");
+    if (kind === "swap") setPicking("swap");
   };
 
   const openPad = (kind: PadKind, fromPlates = false) => {
@@ -1044,8 +1103,11 @@ export function Session() {
   /** Extras with no logged sets can be removed outright (session-local). */
   const removeExtra = async (entry: ExerciseEntry) => {
     if (!sessionId || entry.brackets.length > 0) return;
+    // The PLANNED id: `extras` is what was added, and a swap does not rewrite
+    // it any more than it rewrites a prescription. Matching on the performed
+    // exercise would quietly remove nothing at all.
     const nextExtras = extras.filter(
-      (e) => e.exercise_id !== entry.exercise_id,
+      (e) => e.exercise_id !== plannedExerciseId(entry),
     );
     setExtras(nextExtras);
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
@@ -1055,7 +1117,91 @@ export function Session() {
       nextSkips.delete(entry.key);
       persistSkips(nextSkips);
     }
+    // and any lingering swap, for the same reason: the entry key is derived
+    // from the exercise, so re-adding it would inherit the old substitution
+    if (subs[entry.key]) {
+      const nextSubs = { ...subs };
+      delete nextSubs[entry.key];
+      persistSubs(nextSubs);
+    }
     if (openKey === entry.key) setOpenKey(null);
+  };
+
+  // ---- substitutions -------------------------------------------------------
+  // The cable station is taken, so the tricep extension happens with a
+  // dumbbell. Before this the only options were to log the dumbbell work under
+  // the cable's name — a false record, permanently, because `sets` is
+  // append-only — or to write it in prose that no view, chart or MCP tool can
+  // read. A real user did the second: "Had to switch tricep cable with
+  // dumbbell overhead extension".
+
+  const persistSubs = (next: Substitutions) => {
+    setSubs(next);
+    if (sessionId)
+      cacheSet(cacheKeys.sessionSwaps(sessionId), next).catch((e: unknown) =>
+        reportError(e, "cache substitutions"),
+      );
+  };
+
+  /** Sets logged against the SWAP itself — the ones that already name the
+   *  chosen exercise. Sets logged before the swap name the planned one and
+   *  are not these. */
+  const swappedSets = useCallback(
+    (entry: ExerciseEntry) =>
+      entry.substitutedFor === undefined
+        ? []
+        : setsForEntry(entry).filter(
+            (s) => s.exercise_id === entry.exercise_id,
+          ),
+    [setsForEntry],
+  );
+
+  /**
+   * A swap is frozen once something has been logged against it.
+   *
+   * Those sets are append-only and already name the chosen exercise: undoing
+   * would leave the entry claiming to be the planned movement while the rows
+   * under it say otherwise, and nothing can rewrite them. Before the first
+   * such set the swap is pure intent, so it is freely undone and freely
+   * changed again.
+   */
+  const swapFrozen = useCallback(
+    (entry: ExerciseEntry) => swappedSets(entry).length > 0,
+    [swappedSets],
+  );
+
+  /** Perform this slot with a different movement. Picking the planned
+   *  exercise back is the undo — one door in, the same door out. */
+  const swapExercise = (entry: ExerciseEntry, ex: ExerciseRow) => {
+    if (!sessionId || swapFrozen(entry)) return;
+    const plannedId = plannedExerciseId(entry);
+    const plannedName = entry.substitutedFor?.name ?? entry.name;
+    const next = { ...subs };
+    if (ex.id === plannedId) delete next[entry.key];
+    else
+      next[entry.key] = {
+        exercise_id: ex.id,
+        name: ex.name,
+        planned_exercise_id: plannedId,
+        planned_name: plannedName,
+      };
+    persistSubs(next);
+    setSheet(null);
+  };
+
+  const undoSwap = (entry: ExerciseEntry) => {
+    if (!sessionId || swapFrozen(entry)) return;
+    const next = { ...subs };
+    delete next[entry.key];
+    persistSubs(next);
+  };
+
+  /** An exercise chosen from a picker, or created because the library lacked
+   *  it: it either joins the day or takes over the open entry's movement,
+   *  depending on which picker was opened. */
+  const pickedExercise = (ex: ExerciseRow) => {
+    if (picking === "swap" && openEntry) swapExercise(openEntry, ex);
+    else addExercise(ex);
   };
 
   // ---- per-set notes -------------------------------------------------------
@@ -1152,11 +1298,17 @@ export function Session() {
 
   const entrySets = openEntry ? setsForEntry(openEntry) : [];
   // The set just logged — the only one whose note affordance is spelled out.
+  // The clock breaks the tie, because a swapped entry holds two runs of
+  // set_index, each counting from 0 (the index is scoped per exercise).
   const newestSetId =
     entrySets.length === 0
       ? null
-      : entrySets.reduce((a, b) => (b.set_index > a.set_index ? b : a)).id;
-  const exerciseSets = openEntry ? setsForExercise(openEntry.exercise_id) : [];
+      : entrySets.reduce((a, b) =>
+          b.set_index > a.set_index ||
+          (b.set_index === a.set_index && b.performed_at > a.performed_at)
+            ? b
+            : a,
+        ).id;
 
   // plate maths is always about the whole loaded implement
   const hint = plateable
@@ -1208,14 +1360,23 @@ export function Session() {
     return `Last time · ${body}`;
   };
 
-  /** rest AFTER a given set: next exercise-set's stored value, or live timer */
+  /** rest AFTER a given set: next exercise-set's stored value, or live timer.
+   *
+   *  Scoped to the set's OWN exercise, not the entry's: set_index counts per
+   *  exercise, so a swapped entry holds two runs that both start at 0 and
+   *  "the set after this one" must never be read across them. Identical to
+   *  the old behaviour when nothing was swapped, where the two are the same
+   *  list. The live clock belongs to the newest set of all, for the same
+   *  reason: each run has a last set, and only one of them just happened. */
   const restAfter = (s: SetInsert): string | null => {
-    const nextSet = exerciseSets.find((x) => x.set_index === s.set_index + 1);
+    const run = setsForExercise(s.exercise_id);
+    const nextSet = run.find((x) => x.set_index === s.set_index + 1);
     if (nextSet)
       return nextSet.rest_seconds_actual !== null
         ? `rest ${formatClock(nextSet.rest_seconds_actual)}`
         : null;
-    const isLast = exerciseSets.every((x) => x.set_index <= s.set_index);
+    const isLast =
+      s.id === newestSetId && run.every((x) => x.set_index <= s.set_index);
     if (isLast && restRef.current) {
       const el = restElapsedSeconds();
       if (el !== null && el <= MAX_REST_SECONDS)
@@ -1420,6 +1581,15 @@ export function Session() {
                           {entry.name}
                         </span>
                         <span className="wk-target">
+                          {/* A swapped entry says so on the collapsed row and
+                              names what was planned: the row's title is now a
+                              movement the coach never wrote, and the lifter
+                              has to be able to see that at a glance and put
+                              it back. The target beside it is unchanged,
+                              because the plan is. */}
+                          {entry.substitutedFor && !skipped
+                            ? `INSTEAD OF ${entry.substitutedFor.name.toUpperCase()} · `
+                            : ""}
                           {skipped
                             ? "SKIPPED"
                             : prescribed
@@ -1490,9 +1660,55 @@ export function Session() {
                         )}
                       </span>
 
+                      {/* "Last time" is the CHOSEN movement's own history:
+                          `entry.exercise_id` is what is being lifted, and
+                          `lastActuals` is keyed by exercise, so the swap
+                          moves this line with it and never quotes the
+                          planned movement's numbers at a different one. */}
                       {lastTime(entry.exercise_id) && (
                         <div className="microcopy">
                           {lastTime(entry.exercise_id)}
+                        </div>
+                      )}
+
+                      {entry.substitutedFor && (
+                        <div className="microcopy swap-note">
+                          Instead of {entry.substitutedFor.name}. The plan’s
+                          target still counts here.
+                          {swapFrozen(entry)
+                            ? " Sets are logged against it, so it stays."
+                            : ""}
+                        </div>
+                      )}
+
+                      {/* Only while nothing has been logged against the swap.
+                          Those sets name the chosen exercise and are
+                          append-only, so there is nothing left here to undo —
+                          see `swapFrozen`. Not mid-correction either: the set
+                          being corrected keeps the exercise it was logged
+                          under, and offering to change the movement in the
+                          same breath only invites the reader to think
+                          otherwise. */}
+                      {!swapFrozen(entry) && !editing && (
+                        <div className="swap-actions">
+                          <button
+                            type="button"
+                            className="swap-action"
+                            onClick={() => openSheet("swap")}
+                          >
+                            {entry.substitutedFor
+                              ? "SWAP AGAIN"
+                              : "SWAP EXERCISE"}
+                          </button>
+                          {entry.substitutedFor && (
+                            <button
+                              type="button"
+                              className="swap-action"
+                              onClick={() => undoSwap(entry)}
+                            >
+                              UNDO SWAP
+                            </button>
+                          )}
                         </div>
                       )}
 
@@ -1672,7 +1888,16 @@ export function Session() {
                           <div className="logged-sets">
                             {entrySets
                               .slice()
-                              .sort((a, b) => b.set_index - a.set_index)
+                              // set_index is scoped per EXERCISE, so after a
+                              // swap two movements in one entry both count
+                              // from 0 and the index alone no longer orders
+                              // them. When it ties, the clock decides — the
+                              // newest set belongs at the top either way.
+                              .sort(
+                                (a, b) =>
+                                  b.set_index - a.set_index ||
+                                  b.performed_at.localeCompare(a.performed_at),
+                              )
                               .map((s) => (
                                 <div key={s.id} className="logged-set-wrap">
                                   <SetRow
@@ -1860,18 +2085,34 @@ export function Session() {
         />
       )}
 
+      {/* The same picker, aimed at the open exercise instead of at the end of
+          the list. Picking the planned movement back out of it is the undo. */}
+      {sheet === "swap" && openEntry && (
+        <ExercisePicker
+          title="SWAP EXERCISE"
+          exercises={allExercises}
+          failed={exercisesFailed}
+          onPick={(ex) => swapExercise(openEntry, ex)}
+          onAddNew={(q) => {
+            setSheet(null);
+            setNewName(q);
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
       {newName !== null && (
         <NewExerciseSheet
           initialName={newName}
           exercises={allExercises}
           onPickExisting={(ex) => {
             setNewName(null);
-            addExercise(ex);
+            pickedExercise(ex);
           }}
           onCreated={(ex) => {
             setAllExercises((prev) => [...prev, ex]);
             setNewName(null);
-            addExercise(ex);
+            pickedExercise(ex);
           }}
           onClose={() => setNewName(null)}
         />

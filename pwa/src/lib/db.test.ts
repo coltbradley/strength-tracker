@@ -44,6 +44,7 @@ const ALL_KEYS: string[] = [
   cacheKeys.sessionSets(SESS),
   cacheKeys.sessionVoids(SESS),
   cacheKeys.sessionSkips(SESS),
+  cacheKeys.sessionSwaps(SESS),
   cacheKeys.sessionRest(SESS),
   cacheKeys.sessionSetNotes(SESS),
   cacheKeys.sessionEndDraft(SESS),
@@ -82,6 +83,7 @@ const UNTOUCHED = [
   cacheKeys.sessionSets(SESS),
   cacheKeys.sessionSetNotes(SESS),
   cacheKeys.sessionSkips(SESS),
+  cacheKeys.sessionSwaps(SESS),
   cacheKeys.sessionVoids(SESS),
   cacheKeys.trainingMaxes,
 ].sort();

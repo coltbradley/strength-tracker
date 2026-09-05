@@ -28,6 +28,96 @@ export interface ExerciseEntry {
    *  e.g. 1×8-15, 1×6-8, 3×3-5) — ONE entry, walked through in order.
    *  Empty = unprescribed. */
   brackets: ResolvedPrescriptionRow[];
+  /**
+   * Set when the lifter is doing a DIFFERENT movement in this slot than the
+   * plan named — the cable was taken, so the tricep extension happened with a
+   * dumbbell. `exercise_id` and `name` above are then the exercise ACTUALLY
+   * PERFORMED; this records what was asked for, so the screen can say so and
+   * the swap can be undone.
+   *
+   * `brackets` are deliberately untouched. That is the entire design and it
+   * must not be "fixed":
+   *
+   *  - `exercise_id` is what a logged set records, so History, e1RM and volume
+   *    describe the movement that was actually lifted. A dumbbell overhead
+   *    extension logged under "Cable Tricep Extension" is a false record, and
+   *    `sets` is append-only, so it is a false record forever.
+   *  - `brackets` still carry the PLANNED prescription ids, so the set logged
+   *    here is stamped with the planned `prescription_id` and `v_adherence`
+   *    still credits the slot: the day asked for three sets in this position
+   *    and three sets happened. This is legal precisely because adherence
+   *    reads the prescription LINK and deliberately does not re-check which
+   *    exercise the prescription names — it measures whether the plan was
+   *    followed, not whether the movement matched. Re-pointing the set at
+   *    "no prescription" to keep the two consistent would silently turn a
+   *    completed slot into a missed one.
+   *
+   * Which is to say: the exercise moves, the plan does not. Everything else
+   * that reads an entry — targets, ramps, supersets, sections, rest — reads
+   * `brackets`, and therefore keeps describing the day the coach wrote.
+   */
+  substitutedFor?: { exercise_id: string; name: string };
+}
+
+/**
+ * A mid-session exercise substitution: what is being done instead of what was
+ * planned, for ONE entry.
+ *
+ * Device-local and session-scoped, exactly like `extras` and `skips`: it is a
+ * fact about today's performance, not about the plan, so it never reaches
+ * `prescriptions`. Rewriting the prescription would change what the coach
+ * asked for — in the plan, for every future reader of it — because one machine
+ * was busy on one afternoon.
+ */
+export interface Substitution {
+  /** the exercise actually being performed */
+  exercise_id: string;
+  name: string;
+  /** what the plan named, kept so the entry can show it and undo to it */
+  planned_exercise_id: string;
+  planned_name: string;
+}
+
+/** entry key -> substitution, as cached per session. */
+export type Substitutions = Record<string, Substitution>;
+
+/** The exercise the PLAN named for this slot — the substituted-away one when
+ *  there is a swap, otherwise just the entry's own. Anything matching an entry
+ *  against `rx` wants this, because `rx` is the plan. */
+export function plannedExerciseId(entry: ExerciseEntry): string {
+  return entry.substitutedFor?.exercise_id ?? entry.exercise_id;
+}
+
+/**
+ * Move an entry onto the exercise actually being performed.
+ *
+ * Only `exercise_id` and `name` move. The substitution is ignored unless it
+ * names this entry's own exercise as the planned one: a stale swap left in the
+ * cache after the coach re-parsed the day would otherwise relabel whatever
+ * exercise now sits at that prescription id, which is a lie the lifter never
+ * typed. A lapsed swap is harmless; a wrong one is not.
+ */
+function applySubstitution(
+  entry: ExerciseEntry,
+  sub: Substitution | undefined,
+): ExerciseEntry {
+  if (!sub || sub.planned_exercise_id !== entry.exercise_id) return entry;
+  if (sub.exercise_id === entry.exercise_id) return entry;
+  return {
+    ...entry,
+    exercise_id: sub.exercise_id,
+    name: sub.name,
+    substitutedFor: { exercise_id: entry.exercise_id, name: entry.name },
+  };
+}
+
+/** Both exercise ids an entry answers to: the one being performed and, when
+ *  swapped, the one the plan named. Sets under EITHER belong to this slot. */
+function entryExerciseIds(entry: ExerciseEntry): string[] {
+  const planned = entry.substitutedFor?.exercise_id;
+  return planned === undefined || planned === entry.exercise_id
+    ? [entry.exercise_id]
+    : [entry.exercise_id, planned];
 }
 
 /**
@@ -272,32 +362,53 @@ function declaredToBracket(
  * then mid-session extras, then a synthesized entry for any exercise that
  * has orphan sets and no home yet (lost extras cache, plan edited
  * mid-session, sets logged on another device).
+ *
+ * `subs` is applied LAST, to entries that are already built. Grouping,
+ * ordering, sections and superset runs are all decided from `brackets`, which
+ * a substitution never touches — so swapping a movement cannot move it, split
+ * its ramp, or take it out of its superset.
  */
 export function buildEntries(
   rx: ResolvedPrescriptionRow[],
   extras: ExtraExercise[],
   sets: SetInsert[],
   exercises: { id: string; name: string }[],
+  subs: Substitutions = {},
 ): ExerciseEntry[] {
-  const fromRx: ExerciseEntry[] = groupRamps(rx).map((brackets) => ({
-    key: brackets[0].id,
-    exercise_id: brackets[0].exercise_id,
-    name: brackets[0].exercise_name,
-    brackets,
-  }));
-  const covered = new Set(fromRx.map((f) => f.exercise_id));
+  const fromRx: ExerciseEntry[] = groupRamps(rx).map((brackets) =>
+    applySubstitution(
+      {
+        key: brackets[0].id,
+        exercise_id: brackets[0].exercise_id,
+        name: brackets[0].exercise_name,
+        brackets,
+      },
+      subs[brackets[0].id],
+    ),
+  );
+  // Both ids of a swapped entry count as covered: the slot already renders
+  // the performed exercise AND claims the planned one's loose sets, so
+  // synthesizing a fallback for either would show one set in two places.
+  const covered = new Set(fromRx.flatMap(entryExerciseIds));
   const extraEntries: ExerciseEntry[] = extras
     .filter((e) => !covered.has(e.exercise_id))
-    .map((e) => ({
-      key: `extra:${e.exercise_id}`,
-      exercise_id: e.exercise_id,
-      name: e.name,
-      // A declared scheme becomes brackets, so the target, the prefill and the
-      // warmup handling all come from the code that already does it for a
-      // planned exercise. No scheme = no brackets = "LOG SET n", as before.
-      brackets: (e.scheme ?? []).map((g, i) => declaredToBracket(g, e, i)),
-    }));
-  for (const e of extraEntries) covered.add(e.exercise_id);
+    .map((e) =>
+      applySubstitution(
+        {
+          key: `extra:${e.exercise_id}`,
+          exercise_id: e.exercise_id,
+          name: e.name,
+          // A declared scheme becomes brackets, so the target, the prefill and
+          // the warmup handling all come from the code that already does it for
+          // a planned exercise. No scheme = no brackets = "LOG SET n", as
+          // before.
+          brackets: (e.scheme ?? []).map((g, i) => declaredToBracket(g, e, i)),
+        },
+        subs[`extra:${e.exercise_id}`],
+      ),
+    );
+  for (const e of extraEntries)
+    for (const id of entryExerciseIds(e)) covered.add(id);
   const knownRxIds = new Set(rx.map((r) => r.id));
   const orphanIds = [
     ...new Set(
@@ -323,6 +434,12 @@ export function buildEntries(
  * The FIRST rx entry for an exercise also claims that exercise's orphan
  * sets, so nothing logged can disappear from the UI. An unprescribed entry
  * owns its exercise's orphan sets outright.
+ *
+ * A SUBSTITUTED entry answers to both exercises. The sets logged before the
+ * swap are the planned movement and the ones after it are the chosen movement,
+ * and both were done in this slot — which is also why the bracket match below
+ * needs no special case: every set logged here carries the planned
+ * prescription id whichever exercise it names.
  */
 export function setsForEntry(
   entry: ExerciseEntry,
@@ -330,6 +447,8 @@ export function setsForEntry(
   rx: ResolvedPrescriptionRow[],
   knownRxIds: Set<string>,
 ): SetInsert[] {
+  const ours = entryExerciseIds(entry);
+  const owns = (exerciseId: string) => ours.includes(exerciseId);
   // A locally DECLARED scheme is a target, not an attribution key. Its
   // brackets exist only in this device's cache and its sets carry
   // prescription_id null on purpose (the column is a foreign key), so it must
@@ -341,19 +460,19 @@ export function setsForEntry(
 
   if (entry.brackets.length > 0 && !declaredLocally) {
     const ids = new Set(entry.brackets.map((b) => b.id));
+    // Matched against the PLANNED exercise: `rx` is the plan, and a swap is
+    // not. Asking it about the performed exercise would make the first entry
+    // for a movement stop claiming its own orphans the moment it was swapped.
     const claimsOrphans =
-      rx.find((r) => r.exercise_id === entry.exercise_id)?.id === entry.key;
+      rx.find((r) => r.exercise_id === plannedExerciseId(entry))?.id ===
+      entry.key;
     return sets.filter(
       (s) =>
         (s.prescription_id !== null && ids.has(s.prescription_id)) ||
-        (claimsOrphans &&
-          s.exercise_id === entry.exercise_id &&
-          isOrphanSet(s, knownRxIds)),
+        (claimsOrphans && owns(s.exercise_id) && isOrphanSet(s, knownRxIds)),
     );
   }
-  return sets.filter(
-    (s) => s.exercise_id === entry.exercise_id && isOrphanSet(s, knownRxIds),
-  );
+  return sets.filter((s) => owns(s.exercise_id) && isOrphanSet(s, knownRxIds));
 }
 
 /** A1/A2 tags and bracket-rail position for supersetted entries. */
