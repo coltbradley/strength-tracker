@@ -187,3 +187,32 @@ Deno.test("every lonely group is reported at once, in group order", () => {
   );
   assertEquals(err.message.includes("B_one"), false);
 });
+
+// PostgREST bulk inserts use the UNION of keys across the array and fill a
+// missing key with NULL, not the column default. A single explicit set_type on
+// one row therefore turned every other row's omitted set_type into NULL in a
+// NOT NULL column: three 500s on a real "Lower + Activation" day. The builder
+// must emit BOTH defaulted columns on EVERY row, so the array is homogeneous.
+Deno.test("set_type and tracking are present on every row, defaulted, never omitted", () => {
+  const rows = prescriptionRows(OWNER, DAY, [
+    { ...base, exercise_id: "Band_Walk", set_type: "warmup", tracking: "done" },
+    { ...base, exercise_id: "Barbell_Squat" },
+    { ...base, exercise_id: "Leg_Curl", set_type: "backoff" },
+  ]);
+  assertEquals(
+    rows.map((r) => [r.exercise_id, r.set_type, r.tracking]),
+    [
+      ["Band_Walk", "warmup", "done"],
+      ["Barbell_Squat", "working", "reps"],
+      ["Leg_Curl", "backoff", "reps"],
+    ],
+  );
+  // every row carries the same key set, which is what PostgREST needs
+  const keys = rows.map((r) => Object.keys(r).sort().join(","));
+  assertEquals(new Set(keys).size, 1);
+  for (const r of rows) {
+    assertEquals("set_type" in r, true);
+    assertEquals("tracking" in r, true);
+  }
+});
+

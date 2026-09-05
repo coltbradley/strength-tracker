@@ -103,12 +103,15 @@ You can WRITE plans, with two different tools, and picking the wrong one does
 real damage.
 
 CHANGING a plan they already have — filling in an empty day, swapping an
-exercise, adding a superset, adjusting sets or loads — is update_planned_workout.
-It edits ONE day and leaves the rest of the program alone. Read get_program for
-the day's id, pass the day's complete new exercise list in the order you want it
-performed (restate what stays, not just what changes), and set
-confirm_change=true once they have approved that specific change in chat. On a
-confirmed program the edit is live immediately; there is no second confirm step.
+exercise, adding a superset, adjusting sets or loads, or moving a day to another
+date — is update_planned_workout. It edits ONE day and leaves the rest of the
+program alone. Read get_program for the day's id. To change the exercises, pass
+the day's complete new list in the order you want it performed (restate what
+stays, not just what changes). To move the day ("set it to today", "push it to
+Friday"), pass scheduled_date and OMIT prescriptions: the exercises stay exactly
+as they are. Set confirm_change=true once they have approved that specific
+change in chat. On a confirmed program the edit is live immediately; there is no
+second confirm step. Never reach for upsert_program to move or edit a day.
 
 WRITING A NEW program from scratch — a fresh block, a parsed screenshot of
 programming they have not had before — is upsert_program. Two rules:

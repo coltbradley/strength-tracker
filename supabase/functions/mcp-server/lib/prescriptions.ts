@@ -304,9 +304,19 @@ export function prescriptionRows(
     notes: p.notes ?? null,
     superset_group: p.superset_group ?? null,
     section: p.section ?? null,
-    // Column defaults are 'working' and 'reps'; omit rather than write a guess,
-    // so "the coach did not say" stays distinguishable in the write path.
-    ...(p.set_type === undefined ? {} : { set_type: p.set_type }),
-    ...(p.tracking === undefined ? {} : { tracking: p.tracking }),
+    // ALWAYS present, never omitted. These were spread in only when the caller
+    // said something, on the theory that leaving the key out lets the column
+    // default ('working', 'reps') apply and keeps "the coach did not say" out
+    // of the write path. True for one row. False for the ARRAY both tools
+    // send: PostgREST builds a bulk insert from the union of every row's keys
+    // and fills a row's missing key with NULL, not with the default. So a day
+    // with one explicit 'warmup' activation and eight unset rows wrote eight
+    // explicit nulls into a NOT NULL column — three 500s on a real user's
+    // "Lower + Activation" day, 2026-09-05, request 55debbe7 — and any day
+    // that mixed a 'done' tick with 'reps' rows would have failed the same
+    // way. The default never preserved "unsaid" anyway: the DB stores
+    // 'working' either way. Explicit here, homogeneous keys, no surprise.
+    set_type: p.set_type ?? "working",
+    tracking: p.tracking ?? "reps",
   }));
 }

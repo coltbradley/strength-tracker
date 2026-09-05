@@ -22,6 +22,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
+import { assertIsoDate } from "../lib/dates.ts";
 import {
   guard,
   jsonResult,
@@ -63,15 +64,18 @@ export function registerUpdatePlannedWorkout(
         "Replace the exercises on ONE planned day, leaving the rest of the " +
         "program untouched. This is the tool for editing a plan the user is " +
         "already following: filling in an empty day, swapping an exercise, " +
-        "adding a superset, changing sets or loads. Prefer it over " +
+        "adding a superset, changing sets or loads, or MOVING the day to " +
+        "another date. Prefer it over " +
         "upsert_program for ANY change to an existing program — " +
         "upsert_program rewrites a whole program and cannot touch a confirmed " +
         "one, so using it to edit leaves the user with two competing plans. " +
         "Reserve upsert_program for a genuinely new program.\n\n" +
-        "The day's prescriptions are replaced by the list you pass, in the " +
-        "order you pass them, so restate the exercises you want to KEEP as " +
-        "well as the ones you are changing. Pass an empty list to clear the " +
-        "day. Get the day's id from get_program.\n\n" +
+        "If you pass `prescriptions`, the day's exercises are replaced by that " +
+        "list, in the order you pass them, so restate the exercises you want " +
+        "to KEEP as well as the ones you are changing; an empty list clears " +
+        "the day. Omit `prescriptions` to leave the exercises alone — that is " +
+        "how you move a day ('do it today instead'): pass scheduled_date and " +
+        "nothing else. Get the day's id from get_program.\n\n" +
         "Changing a day on a CONFIRMED program takes effect immediately on " +
         "the user's calendar, so it needs confirm_change=true and their " +
         "approval in chat first.",
@@ -83,9 +87,21 @@ export function registerUpdatePlannedWorkout(
         prescriptions: z
           .array(prescriptionSchema)
           .max(50)
+          .optional()
           .describe(
             "The day's complete new exercise list, in order. Anything you " +
-              "leave out is removed from the day. An empty array clears it.",
+              "leave out is removed from the day. An empty array clears it. " +
+              "OMIT the field entirely to keep the day's exercises as they " +
+              "are (rename, re-note or move the day without restating them).",
+          ),
+        scheduled_date: z
+          .string()
+          .optional()
+          .describe(
+            "Move the day to this calendar date, YYYY-MM-DD in the user's " +
+              "own timezone. Omit to leave it where it is. A day scheduled " +
+              "tomorrow that the user wants to train today is this field and " +
+              "nothing else; the exercises need not be restated.",
           ),
         label: z
           .string()
@@ -145,6 +161,31 @@ export function registerUpdatePlannedWorkout(
           );
         }
 
+        if (
+          args.prescriptions === undefined &&
+          args.label === undefined &&
+          args.notes === undefined &&
+          args.scheduled_date === undefined
+        ) {
+          throw new ToolError(
+            "Nothing to change: pass prescriptions, label, notes or " +
+              "scheduled_date.",
+          );
+        }
+
+        if (args.scheduled_date !== undefined) {
+          // Shape AND existence: 2026-02-30 matches the regex and would land
+          // as an opaque Postgres error, so this names the parameter.
+          assertIsoDate(args.scheduled_date, "scheduled_date");
+          if (day.is_template) {
+            throw new ToolError(
+              "This day is a saved TEMPLATE and has no place on the " +
+                "calendar (a template can never carry a date). Apply it to a " +
+                "day in the app, or edit a dated day instead.",
+            );
+          }
+        }
+
         if (program.confirmed_at !== null && !args.confirm_change) {
           throw new ToolError(
             `'${program.name}' is CONFIRMED — the plan the user is following, ` +
@@ -154,12 +195,20 @@ export function registerUpdatePlannedWorkout(
           );
         }
 
+        // Everything about the exercise list only happens when a list was
+        // passed. A date move or a rename leaves the prescriptions — and
+        // their ids, which logged sets may point at — exactly where they are,
+        // which is also why the trained-day refusal below does not apply to
+        // it: moving a day changes nothing adherence reads.
+        let replaced = 0;
+        if (args.prescriptions !== undefined) {
+        const prescriptions = args.prescriptions;
         // Both plan-writing doors validate identically, on purpose: a day
         // this tool would refuse must not be writable through upsert_program,
         // and vice versa.
-        assertSupersetGroups(args.prescriptions, "this day");
-        await assertExercisesExist(db, args.prescriptions);
-        await resolveTrainingMaxes(db, args.prescriptions);
+        assertSupersetGroups(prescriptions, "this day");
+        await assertExercisesExist(db, prescriptions);
+        await resolveTrainingMaxes(db, prescriptions);
 
         // What is on the day now, and has any of it been trained?
         const existing = must(
@@ -205,7 +254,7 @@ export function registerUpdatePlannedWorkout(
           }
         }
 
-        const rows = prescriptionRows(db.ownerId, day.id, args.prescriptions);
+        const rows = prescriptionRows(db.ownerId, day.id, prescriptions);
 
         // Park -> delete -> land. A failure between statements leaves the day
         // holding both lists, which is visible and fixable on the next call;
@@ -242,10 +291,15 @@ export function registerUpdatePlannedWorkout(
             throw new Error(`position prescriptions: ${error.message}`);
           }
         }
+        replaced = existing.length;
+        }
 
         const dayPatch: Record<string, unknown> = {};
         if (args.label !== undefined) dayPatch.label = args.label;
         if (args.notes !== undefined) dayPatch.notes = args.notes;
+        if (args.scheduled_date !== undefined) {
+          dayPatch.scheduled_date = args.scheduled_date;
+        }
         if (Object.keys(dayPatch).length > 0) {
           const { error } = await db.client
             .from("planned_workouts")
@@ -259,16 +313,21 @@ export function registerUpdatePlannedWorkout(
           updated: true,
           planned_workout_id: day.id,
           label: args.label ?? day.label,
-          scheduled_date: day.scheduled_date,
+          scheduled_date: args.scheduled_date ?? day.scheduled_date,
+          moved_from: args.scheduled_date !== undefined &&
+              args.scheduled_date !== day.scheduled_date
+            ? day.scheduled_date
+            : null,
           is_template: day.is_template,
           program: {
             id: program.id,
             name: program.name,
             confirmed: program.confirmed_at !== null,
           },
-          replaced: existing.length,
-          now: args.prescriptions.length,
-          exercises: args.prescriptions.map((p, i) => ({
+          exercises_replaced: args.prescriptions !== undefined,
+          replaced,
+          now: args.prescriptions?.length ?? null,
+          exercises: (args.prescriptions ?? []).map((p, i) => ({
             position: i,
             exercise_id: p.exercise_id,
             sets: p.sets,
