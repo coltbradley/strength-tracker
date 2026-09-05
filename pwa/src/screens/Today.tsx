@@ -45,6 +45,7 @@ import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { uuid } from "../lib/uuid";
 import { useArmed } from "../hooks/useArmed";
+import { useLocalToday } from "../hooks/useLocalToday";
 import { reportError, toast } from "../lib/errors";
 import {
   formatPlannedDate,
@@ -178,8 +179,14 @@ export function Today() {
   const [active, setActive] = useState<ActiveSession | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
   const [loadError, setLoadError] = useState(false);
+  // The calendar day, LIVE. An installed PWA is resumed, not reloaded: iOS
+  // brings this screen back on Tuesday morning with Monday's render still on
+  // it, and a `today` captured once meant Monday's "Start session" was the
+  // button under the thumb. `sets` is append-only, so a session started
+  // against the wrong planned day is not correctable afterwards.
+  const today = useLocalToday();
   // week strip selection + LATER-list accordion
-  const [selectedDate, setSelectedDate] = useState<string>(todayLocalIso());
+  const [selectedDate, setSelectedDate] = useState<string>(today);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -194,6 +201,29 @@ export function Today() {
   // false until we know whether a session is already open (locally or on the
   // server), so no Start button is live while that is still an open question
   const [startGateOpen, setStartGateOpen] = useState(false);
+
+  /**
+   * Follow the clock — unless the person went somewhere on purpose.
+   *
+   * `selectedDate` carries two meanings that look identical in the state:
+   * "today, because that is where this screen opens" and "this day, because I
+   * tapped it". Re-seeding both would yank the strip out from under someone
+   * reading next Thursday's plan at midnight; re-seeding neither IS the bug —
+   * a screen still sitting on yesterday, still offering yesterday's Start.
+   *
+   * What tells them apart is what the day USED to be. If the selection was
+   * still the old today, this screen was showing "today" and should carry on
+   * showing today. Anything else was a deliberate choice and it stands.
+   * Tapping today's own cell is deliberate too, but it is a choice of TODAY,
+   * so carrying it forward is exactly what that person asked for.
+   */
+  const prevTodayRef = useRef(today);
+  useEffect(() => {
+    const was = prevTodayRef.current;
+    if (was === today) return;
+    prevTodayRef.current = today;
+    setSelectedDate((d) => (d === was ? today : d));
+  }, [today]);
 
   // most recent confirmed program drives the week
   const program = list?.programs[0] ?? null;
@@ -220,7 +250,31 @@ export function Today() {
       });
   }, []);
 
+  /** Mirrors `active` for the reconciliation effect, which must be able to
+   *  read it without taking it as a dependency: re-running the whole
+   *  reconciliation every time a session starts or ends is not what it is
+   *  for. Declared above that effect so the mirror is always the newer
+   *  commit. */
+  const activeRef = useRef<ActiveSession | null>(null);
   useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+  /** False until reconciliation has run once, which is what separates the
+   *  mount run from a midnight re-run. */
+  const reconciledRef = useRef(false);
+
+  useEffect(() => {
+    // Crossing midnight mid-workout is ordinary — a 23:50 start — and this
+    // effect now re-runs when it happens. Reconciliation would then see a
+    // session "started yesterday", auto-complete it at the last logged set
+    // and clear the active pointer out from under someone who is still
+    // lifting. So the DAY-CHANGE re-run stands down while this device holds a
+    // live session; the mount run never does, because an active pointer at
+    // yesterday's session is exactly what a fresh launch has to clear. A
+    // genuinely abandoned session is still caught on the next launch, or the
+    // next time this screen is opened without one in progress.
+    if (reconciledRef.current && activeRef.current !== null) return;
+    reconciledRef.current = true;
     let cancelled = false;
     // A slow network must not hold the gym hostage: if reconciliation has
     // not answered by then, starting is allowed again and a double start
@@ -246,7 +300,7 @@ export function Today() {
         const r = await syncOpenSessions(
           a?.id ?? null,
           (iso) => todayLocalIso(new Date(iso)),
-          todayLocalIso(),
+          today,
           pendingUpdates,
         );
         if (cancelled) return;
@@ -274,7 +328,18 @@ export function Today() {
       cancelled = true;
       window.clearTimeout(gateTimer);
     };
-  }, [reload]);
+    // `today` is a dependency, not a coincidence: crossing midnight is exactly
+    // when yesterday's still-open session has to be auto-completed and the
+    // week's DONE states re-read. Without it, reconciliation ran once at
+    // mount and a resumed app carried yesterday's answer all day.
+    //
+    // The re-run deliberately does NOT close the start gate again. The gate
+    // exists to stop a start before we know whether a session is already open,
+    // and we already know: an open session is held in `active`, which the
+    // re-run leaves alone until it has a better answer. Re-closing it would
+    // disable every Start button for a couple of seconds at midnight, which is
+    // mid-session for anyone training late.
+  }, [reload, today]);
 
   useEffect(() => {
     if (!program || workouts.length === 0) return;
@@ -286,7 +351,6 @@ export function Today() {
       .catch((e: unknown) => reportError(e, "load week state"));
   }, [program, workouts, doneTick]);
 
-  const today = todayLocalIso();
   const anyDates = workouts.some((w) => w.scheduled_date !== null);
   const weekStart = useWeekStartsOn();
   // Anchored on the SELECTED day, not on today, so picking a date in another
@@ -584,9 +648,12 @@ export function Today() {
   const moveToToday = (w: PlannedWorkoutRow) =>
     void (async () => {
       try {
-        await updatePlannedWorkout(w.id, { scheduled_date: todayLocalIso() });
+        // One clock read, used twice: two calls a millisecond apart could
+        // straddle midnight and select a day the workout was not moved to.
+        const iso = todayLocalIso();
+        await updatePlannedWorkout(w.id, { scheduled_date: iso });
         toast("Moved to today");
-        setSelectedDate(todayLocalIso());
+        setSelectedDate(iso);
         reload();
       } catch (e) {
         reportError(e, "move workout to today");
