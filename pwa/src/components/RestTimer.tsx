@@ -2,10 +2,15 @@
 // Counts down to the target, then keeps counting up in burnt ("OVER"):
 // rest is recorded either way when the next set is logged.
 // Notification API is used only if permission was already granted — never
-// prompts.
+// prompts. It is also not enough on its own: an installed iOS web app has no
+// `new Notification(...)` constructor at all, so the tone from lib/restCue.ts
+// is the announcement that actually reaches the lifter there. Both are
+// attempted; both are silent when they cannot happen.
 
 import { useEffect, useRef, useState } from "react";
 import { formatClock } from "../lib/format";
+import { playRestCue } from "../lib/restCue";
+import { getRestSound } from "../lib/settings";
 
 /** "2 min 30 sec" — "2:30" is read as a ratio or a date by most screen
  *  readers, and this string is the only way the remaining time is spoken. */
@@ -67,13 +72,29 @@ export function RestTimer({ rest, onAdjust, onEdit, onDone }: RestTimerProps) {
   useEffect(() => {
     if (!over || startedAt === null) return;
     if (announcedFor.current === startedAt) return;
+    // Marked announced BEFORE either cue is attempted, and for the rest as a
+    // whole rather than per channel. Previously this line sat after the
+    // notification guard, so on a browser that grants no permission the rest
+    // was never recorded as announced — harmless while nothing else happened
+    // here, and a tone on every 400 ms tick now that something does.
+    announcedFor.current = startedAt;
+
+    // The tone first: it is the only cue an installed iOS web app can make,
+    // and it is the one the lifter hears with the phone face-down. The
+    // preference is read here rather than subscribed to — see getRestSound.
+    if (getRestSound()) playRestCue();
+
     if (
       typeof Notification === "undefined" ||
       Notification.permission !== "granted"
     )
       return;
-    announcedFor.current = startedAt;
     try {
+      // Desktop browsers only, in practice. iOS home-screen apps expose
+      // `Notification` and will happily grant permission, then throw here
+      // because only ServiceWorkerRegistration.showNotification is real —
+      // which is why the catch is not decoration and why the tone above is
+      // not a nicety.
       new Notification("Rest over", { body: "Next set." });
     } catch {
       // cosmetic

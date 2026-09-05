@@ -95,6 +95,8 @@ import {
   usePlatesOnHand,
 } from "../hooks/useSettings";
 import { setExerciseLoadEntry } from "../lib/settings";
+import { useWakeLock } from "../hooks/useWakeLock";
+import { unlockRestCue } from "../lib/restCue";
 import {
   enteredKg,
   loadEntryForSet,
@@ -228,6 +230,14 @@ export function Session() {
   }, [sheet]);
 
   const sessionId = active?.id ?? null;
+
+  // Hold the screen awake for exactly as long as a session is open. A rest
+  // interval outlasts every default auto-lock, so without this the strip
+  // counts down on a dark screen and the lifter has to unlock the phone to
+  // find out rest is over. Scoped to the session rather than the app because
+  // browsing history or editing a plan has no claim on somebody's battery.
+  // Entirely best-effort — see the hook.
+  useWakeLock(sessionId !== null);
 
   // Synchronous source of truth for logged sets.
   const setsRef = useRef<SetInsert[]>([]);
@@ -735,6 +745,15 @@ export function Session() {
   // ---- actions -------------------------------------------------------------
 
   const logSet = () => {
+    // FIRST, and before every guard below: iOS only lets an AudioContext start
+    // inside a user gesture, and this tap is the gesture that starts the rest
+    // the cue will end. Running it ahead of the early returns keeps it tied to
+    // the tap rather than to whether the tap turned into a set — a locked-out
+    // double tap is still a gesture, and the unlock is idempotent. Deliberately
+    // NOT gated on the rest-sound preference: someone who turns the tone on
+    // mid-workout should hear the very next rest end, not the one after it.
+    unlockRestCue();
+
     // setsFailed: see the state declaration — an empty `setsRef` we could not
     // verify would number this set 0 on top of whatever is already logged.
     if (!openEntry || !sessionId || logLocked || !setsLoaded || setsFailed)

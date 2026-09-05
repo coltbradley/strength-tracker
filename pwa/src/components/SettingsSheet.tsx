@@ -64,7 +64,6 @@ import { supabase } from "../lib/supabase";
 import { reportError, toast } from "../lib/errors";
 import { APP_VERSION, BUILD_SHA, BUILD_TIME } from "../lib/build";
 
-
 interface SettingsSheetProps {
   open: boolean;
   onClose: () => void;
@@ -159,9 +158,11 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
     Notification.requestPermission()
       .then((p) => {
         setNotifState(p);
+        // "on" was a promise this row cannot keep: the permission is the
+        // browser's answer about permission, not about delivery.
         toast(
           p === "granted"
-            ? "Rest alerts on"
+            ? "Rest alerts allowed — the rest sound is the reliable one"
             : "Rest alerts stay off (browser permission not granted)",
         );
       })
@@ -236,23 +237,52 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
             {group === "gym" && (
               <ExerciseOverrides names={exerciseNames} unit={unit} />
             )}
-            {group === "timing" && notifSupported && (
-              <button
-                type="button"
-                className="sheet-row sheet-row-btn"
-                onClick={askNotif}
-                disabled={notifState === "granted"}
-              >
-                <span>Rest alerts</span>
-                <span className="sheet-row-value">
-                  {notifState === "granted"
-                    ? "ON"
-                    : notifState === "denied"
-                      ? "BLOCKED IN BROWSER"
-                      : "TAP TO ENABLE"}
-                </span>
-              </button>
-            )}
+            {/* This row used to be HIDDEN where notifications are impossible,
+                which read as "nothing to configure here" — and worse, on a
+                browser that exposes the API without delivering anything it
+                reported ON for a cue that could never fire. A settings screen
+                that reports success for something that cannot happen is the
+                one thing it must never do. Both states now say so, and both
+                point at the tone above, which is what actually rings. */}
+            {group === "timing" &&
+              (notifSupported ? (
+                <>
+                  <button
+                    type="button"
+                    className="sheet-row sheet-row-btn"
+                    onClick={askNotif}
+                    disabled={notifState === "granted"}
+                  >
+                    <span>Rest alerts</span>
+                    <span className="sheet-row-value">
+                      {notifState === "granted"
+                        ? "ON"
+                        : notifState === "denied"
+                          ? "BLOCKED IN BROWSER"
+                          : "TAP TO ENABLE"}
+                    </span>
+                  </button>
+                  <div className="microcopy">
+                    A system notification when rest runs out. Some browsers
+                    grant the permission and then deliver nothing — an iPhone
+                    home-screen app is the usual case — so keep the rest sound
+                    on as the cue you can rely on.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="sheet-row">
+                    <span>Rest alerts</span>
+                    <span className="sheet-row-value muted">NOT SUPPORTED</span>
+                  </div>
+                  <div className="microcopy">
+                    This browser has no notification API, so nothing outside the
+                    app can announce the end of rest. The rest sound above is
+                    the alert, and the screen stays awake while a session is
+                    open.
+                  </div>
+                </>
+              ))}
           </section>
         );
       })}

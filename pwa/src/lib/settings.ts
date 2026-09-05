@@ -357,8 +357,7 @@ const SETTINGS = {
     help: "Used when a movement has no prescription and no history at all.",
     control: { kind: "loadPerUnit", min: 0, max: 999 },
     defaults: defaultFallbackLoad,
-    parse: (raw) =>
-      perUnit(raw, (v) => num(v, 0, 999), defaultFallbackLoad),
+    parse: (raw) => perUnit(raw, (v) => num(v, 0, 999), defaultFallbackLoad),
   }),
 
   fallbackReps: def<number>({
@@ -387,6 +386,20 @@ const SETTINGS = {
     parse: (raw) => (typeof raw === "boolean" ? raw : null),
   }),
 
+  // The only end-of-rest cue an installed iOS web app can produce by itself.
+  // `new Notification(...)` does not exist there and `navigator.vibrate` does
+  // not either, so without this the strip runs out in silence on the one
+  // device this app is used on. Defaults ON for that reason: a silent rest
+  // timer is the bug, not the preference.
+  restSound: def<boolean>({
+    group: "timing",
+    label: "Rest sound",
+    help: "A short tone when the clock runs out. Needs the app open, and the iPhone mute switch silences it.",
+    control: { kind: "toggle" },
+    defaults: () => true,
+    parse: (raw) => (typeof raw === "boolean" ? raw : null),
+  }),
+
   /** Moved by long-pressing the button and dragging it; no sheet control. */
   bugButtonPos: def<BugButtonPos>({
     group: "display",
@@ -395,7 +408,8 @@ const SETTINGS = {
     defaults: () => ({ side: "right" as const, y: 1 }),
     parse: (raw) => {
       if (!isRecord(raw)) return null;
-      const side = raw.side === "left" || raw.side === "right" ? raw.side : null;
+      const side =
+        raw.side === "left" || raw.side === "right" ? raw.side : null;
       const y = num(raw.y, 0, 1);
       return side === null || y === null ? null : { side, y };
     },
@@ -842,6 +856,17 @@ export function setDefaultRestSeconds(seconds: number): void {
 
 export function getAutoStartRest(): boolean {
   return getSetting("autoStartRest");
+}
+
+/**
+ * Whether the rest strip should sound a tone when the clock runs out.
+ *
+ * Read at the moment the cue fires rather than subscribed to: the tone is a
+ * one-shot side effect, not rendered state, so a hook here would only cost the
+ * strip a re-render on every toggle without changing what anybody hears.
+ */
+export function getRestSound(): boolean {
+  return getSetting("restSound");
 }
 
 // ---- load steps ------------------------------------------------------------
