@@ -76,6 +76,50 @@ the generated seed are gitignored; `.env.example` documents shape only.
 - **Denial of service**: out of scope; Supabase platform limits apply and
   the data is backed up by the platform.
 
+## Database linter baseline
+
+Supabase's advisors flag things that are wrong in general but sometimes right
+here. This records which is which, so a future reader does not "fix" a
+deliberate one. Re-run them after any migration that touches policies,
+functions or grants.
+
+**Expected, and must stay that way:**
+
+- `rls_enabled_no_policy` on `mcp_tokens` (INFO). RLS is on and there are NO
+  policies, which denies every client outright. Only the service role reads
+  this table, and the service role bypasses RLS, so it needs none. Adding a
+  policy here would not fix a warning, it would open the digest store to
+  whoever the policy admits. Leave it.
+
+**Open, and each one's real severity:**
+
+- `anon_security_definer_function_executable` and its authenticated twin, both
+  on `purge_expired_mcp_tokens()` (WARN). The function is `SECURITY DEFINER`
+  and does pin `search_path`, but `EXECUTE` is granted to `anon` and
+  `authenticated`, so anyone — signed in or not — can call it over PostgREST.
+  What it can do is bounded by its own WHERE clause: it deletes only rows whose
+  `expires_at` is more than a day past, so it destroys no working credential
+  and cannot touch a permanent token (`expires_at is null`) at all. This is an
+  unauthenticated write endpoint, not a credential exposure. The fix is a
+  revoke, not a rewrite:
+
+  ```sql
+  revoke execute on function public.purge_expired_mcp_tokens() from anon, authenticated;
+  ```
+
+- `function_search_path_mutable` on `app_tz` (both overloads),
+  `claim_custom_exercise`, `refuse_orphaning_logged_sets` and
+  `stamp_exercise_edit` (WARN). Hygiene rather than a hole: all four are
+  SECURITY INVOKER, so they run as the caller and there is no privilege to
+  escalate to. The attack this lint exists for needs a definer-rights function.
+  Worth pinning `search_path` when those functions are next touched.
+
+- `auth_leaked_password_protection` and `auth_insufficient_mfa_options` (WARN).
+  Both are about passwords, and this deployment signs in with magic links —
+  there is no password to leak or to second-factor. They become real the day a
+  password provider is enabled, which is the moment to revisit them rather
+  than now.
+
 ## Rules for contributors (and future me)
 
 - Never commit env files, project refs, user uuids, or dashboard URLs.
