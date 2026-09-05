@@ -10,7 +10,11 @@ import type { LoadEntry, SetInsert } from "../lib/types";
 
 afterEach(cleanup);
 
-function set(load_kg: number, load_entry?: LoadEntry | null): SetInsert {
+function set(
+  load_kg: number,
+  load_entry?: LoadEntry | null,
+  rpe?: number | null,
+): SetInsert {
   return {
     id: "s1",
     session_id: "sess",
@@ -23,6 +27,7 @@ function set(load_kg: number, load_entry?: LoadEntry | null): SetInsert {
     performed_at: "2026-08-27T10:00:00.000Z",
     rest_seconds_actual: null,
     load_entry,
+    rpe,
   };
 }
 
@@ -48,6 +53,27 @@ describe("SetRow", () => {
     expect(screen.getByText(/44\.1 lb\/side × 8/)).toBeTruthy();
   });
 
+  it("shows the rating once a set has one", () => {
+    render(<SetRow set={set(100, "total", 8.5)} unit="kg" />);
+    expect(screen.getByText(/100 kg × 8/)).toBeTruthy();
+    expect(screen.getByText(/RPE 8\.5/)).toBeTruthy();
+  });
+
+  it("says nothing about an unrated set, which is most of them", () => {
+    render(<SetRow set={set(100, "total")} unit="kg" />);
+    expect(screen.queryByText(/RPE/)).toBeNull();
+    // and an explicit null is the same silence, not an empty state
+    cleanup();
+    render(<SetRow set={set(100, "total", null)} unit="kg" />);
+    expect(screen.queryByText(/RPE/)).toBeNull();
+  });
+
+  it("keeps the rating inside the correction target", () => {
+    render(<SetRow set={set(100, "total", 9)} unit="kg" onEdit={() => {}} />);
+    const target = screen.getByRole("button", { name: "correct set 1" });
+    expect(target.textContent).toMatch(/RPE 9/);
+  });
+
   it("has no correction control unless one is offered (History)", () => {
     render(<SetRow set={set(100, "total")} unit="kg" />);
     expect(screen.queryByRole("button", { name: /correct set/ })).toBeNull();
@@ -66,7 +92,9 @@ describe("SetRow", () => {
     );
     expect(container.querySelector(".logged-set-editing")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "correct set 1" }).getAttribute("aria-pressed"),
+      screen
+        .getByRole("button", { name: "correct set 1" })
+        .getAttribute("aria-pressed"),
     ).toBe("true");
   });
 });

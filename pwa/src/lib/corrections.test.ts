@@ -27,6 +27,7 @@ describe("correctedSet", () => {
       reps: 4,
       set_type: "working",
       load_entry: "total",
+      rpe: null,
     });
     expect(next.id).not.toBe(old.id);
     expect(next.set_index).toBe(1);
@@ -45,9 +46,47 @@ describe("correctedSet", () => {
       reps: 5,
       set_type: "warmup",
       load_entry: "per_side",
+      rpe: null,
     });
     expect(next.set_type).toBe("warmup");
     expect(next.load_entry).toBe("per_side");
+  });
+
+  it("carries a rating through unchanged", () => {
+    const rated: SetInsert = { ...old, rpe: 8.5 };
+    const next = correctedSet(rated, {
+      load_kg: 102.5,
+      reps: 5,
+      set_type: "working",
+      load_entry: "total",
+      rpe: 8.5,
+    });
+    expect(next.rpe).toBe(8.5);
+  });
+
+  it("rates a set that was logged without one, and clears one that had one", () => {
+    // the only way to rate a set after the fact: `sets` is append-only
+    expect(
+      correctedSet(old, {
+        load_kg: 100,
+        reps: 5,
+        set_type: "working",
+        load_entry: "total",
+        rpe: 9,
+      }).rpe,
+    ).toBe(9);
+    expect(
+      correctedSet(
+        { ...old, rpe: 9 },
+        {
+          load_kg: 100,
+          reps: 5,
+          set_type: "working",
+          load_entry: "total",
+          rpe: null,
+        },
+      ).rpe,
+    ).toBeNull();
   });
 
   it("does not mutate the old row", () => {
@@ -56,6 +95,7 @@ describe("correctedSet", () => {
       reps: 1,
       set_type: "warmup",
       load_entry: null,
+      rpe: 7,
     });
     expect(old.load_kg).toBe(100);
     expect(old.reps).toBe(5);
@@ -64,13 +104,14 @@ describe("correctedSet", () => {
 });
 
 describe("isNoopCorrection", () => {
-  it("is a no-op when load, reps and type all match", () => {
+  it("is a no-op when load, reps, type and rating all match", () => {
     expect(
       isNoopCorrection(old, {
         load_kg: 100,
         reps: 5,
         set_type: "working",
         load_entry: "per_side",
+        rpe: null,
       }),
     ).toBe(true);
   });
@@ -82,6 +123,7 @@ describe("isNoopCorrection", () => {
         reps: 6,
         set_type: "working",
         load_entry: "total",
+        rpe: null,
       }),
     ).toBe(false);
     expect(
@@ -90,6 +132,7 @@ describe("isNoopCorrection", () => {
         reps: 5,
         set_type: "warmup",
         load_entry: "total",
+        rpe: null,
       }),
     ).toBe(false);
     expect(
@@ -98,7 +141,78 @@ describe("isNoopCorrection", () => {
         reps: 5,
         set_type: "working",
         load_entry: "total",
+        rpe: null,
       }),
     ).toBe(false);
+  });
+
+  it("is a change when ONLY the rating differs", () => {
+    // rating an unrated set, and changing a rating, are both real corrections
+    expect(
+      isNoopCorrection(old, {
+        load_kg: 100,
+        reps: 5,
+        set_type: "working",
+        load_entry: "total",
+        rpe: 8,
+      }),
+    ).toBe(false);
+    expect(
+      isNoopCorrection(
+        { ...old, rpe: 8 },
+        {
+          load_kg: 100,
+          reps: 5,
+          set_type: "working",
+          load_entry: "total",
+          rpe: 8.5,
+        },
+      ),
+    ).toBe(false);
+    expect(
+      isNoopCorrection(
+        { ...old, rpe: 8 },
+        {
+          load_kg: 100,
+          reps: 5,
+          set_type: "working",
+          load_entry: "total",
+          rpe: null,
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("is a no-op when the same rating is re-tapped", () => {
+    expect(
+      isNoopCorrection(
+        { ...old, rpe: 8.5 },
+        {
+          load_kg: 100,
+          reps: 5,
+          set_type: "working",
+          load_entry: "total",
+          rpe: 8.5,
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("treats an ABSENT rating as unrated, not as a change", () => {
+    // A row cached before the column, or read through a column list that
+    // predates it, carries `undefined`. `undefined === null` is false, so
+    // without normalising, saving an unrated set unrated would void it and
+    // write a duplicate.
+    const legacy: SetInsert = { ...old };
+    delete legacy.rpe;
+    expect(
+      isNoopCorrection(legacy, {
+        load_kg: 100,
+        reps: 5,
+        set_type: "working",
+        load_entry: "total",
+        rpe: null,
+      }),
+    ).toBe(true);
   });
 });

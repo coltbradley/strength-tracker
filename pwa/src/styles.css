@@ -817,6 +817,7 @@
   .set-note-add,
   .topbar-title,
   .plate-hint,
+  .rpe-reveal,
   .sync-pill,
   .rest-timer-time {
     position: relative;
@@ -831,6 +832,7 @@
   .set-note-add::after,
   .topbar-title::after,
   .plate-hint::after,
+  .rpe-reveal::after,
   .sync-pill::after,
   .rest-timer-time::after {
     content: "";
@@ -1173,16 +1175,30 @@
     padding: var(--s-2) 0 var(--s-4);
   }
 
-  /* Opens the plate calculator from a baseline-aligned .section-head, so it
-   * is hit-extended rather than grown. 6px of bleed; the only other item in
-   * that head is a non-interactive .field-label at the far end. */
-  .plate-hint {
+  /* Micro-label controls that ride in a baseline-aligned .section-head, so
+   * they are hit-extended rather than grown: the plate calculator, the
+   * total/per-side toggle, and the RPE reveal. 6px of bleed. --accent-dim is
+   * 5.59:1 and these are read, not just seen. */
+  .plate-hint,
+  .rpe-reveal {
     --hit-bleed: 6px;
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     font-weight: 700;
     letter-spacing: var(--track-2);
     color: var(--accent-dim);
+  }
+
+  /* The reveal is the LAST item in the load head and the only one that can
+   * sit beside two others (PER SIDE ×2 and the plate hint both appear when a
+   * parse calls a barbell per-side). The head's gap is --s-5 = 10px and the
+   * family rule is that a bleed never exceeds the gap to the next target, so
+   * this one takes 4px: 6 + 4 lands exactly on 10 rather than overlapping its
+   * neighbour's box by 2px. */
+  .rpe-reveal {
+    --hit-bleed: 4px;
+    flex: none;
+    white-space: nowrap;
   }
 
   /* In the plan editor the toggle has no section head to sit in, so it needs
@@ -1238,6 +1254,15 @@
   .set-load {
     font-weight: 600;
     font-size: var(--fs-body);
+  }
+
+  /* The rating shares the load cell rather than taking a column of its own —
+   * see SetRow. It recedes by weight and size only, never by colour: it
+   * inherits the cell's ink, so it follows the accent when the row is the one
+   * being corrected instead of sitting there in a grey that says otherwise. */
+  .set-rpe {
+    font-weight: 400;
+    font-size: var(--fs-meta);
   }
 
   .set-type {

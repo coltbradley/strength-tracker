@@ -49,6 +49,13 @@ export function SetRow({
       {toDisplay(enteredKg(set.load_kg, set.load_entry ?? "total"), unit)}{" "}
       {unit}
       {set.load_entry === "per_side" ? "/side" : ""} × {set.reps}
+      {/* The rating rides INSIDE the numbers rather than in a column of its
+          own. It is one of the things a correction changes, so it belongs in
+          the tap target that starts one — and a per-row column would be
+          present on a rated set and absent on an unrated one, which would
+          knock the type and rest columns out of line down the whole list.
+          Absent when null, which is most sets and is not a gap. */}
+      {set.rpe != null && <span className="set-rpe"> · RPE {set.rpe}</span>}
     </>
   );
   return (

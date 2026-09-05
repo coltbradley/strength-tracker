@@ -25,6 +25,11 @@
 //   movement is ONE side. `sets.load_kg` always stores the total, and
 //   `load_entry` records which it was — the resolution chain and the
 //   arithmetic both live in lib/loadEntry.ts.
+// - RPE is optional and OFF the set loop: the chips do not exist until the
+//   lifter asks for them (per exercise, from the load head, which was already
+//   on screen), and the staged value is cleared after every log. Null is the
+//   ordinary answer. Rating a set after the fact is a correction like any
+//   other, because `sets` is append-only.
 
 import {
   Fragment,
@@ -39,6 +44,7 @@ import { Stepper, type StepDef } from "../components/Stepper";
 import { Note } from "../components/Note";
 import { RestTimer, type ActiveRest } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
+import { RpeChips } from "../components/RpeChips";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
@@ -194,6 +200,21 @@ export function Session() {
   const [entryKg, setEntryKg] = useState(() => getPrefillFallback().loadKg);
   const [reps, setReps] = useState(() => getPrefillFallback().reps);
   const [setType, setSetType] = useState<SetType>("working");
+  /**
+   * The staged rating, and which exercises have asked to see the chips.
+   *
+   * Two pieces of state because they have opposite lifetimes. The chip ROW is
+   * sticky per exercise — asking for it once should not mean asking again
+   * every set — while the VALUE is cleared after every log and on every fresh
+   * open. Load and reps are sticky because they are a plan that repeats; a
+   * rating is an observation of one set, and carrying it forward would invent
+   * data nobody stated, silently, on an append-only table.
+   *
+   * Keyed by exercise rather than by entry: a swap changes the movement, and
+   * how the cable felt says nothing about the dumbbell standing in for it.
+   */
+  const [rpe, setRpe] = useState<number | null>(null);
+  const [rpeAsked, setRpeAsked] = useState<Set<string>>(new Set());
   const [logLocked, setLogLocked] = useState(false);
 
   const [rest, setRest] = useState<ActiveRest | null>(null);
@@ -209,7 +230,12 @@ export function Session() {
   // index (lib/corrections.ts); this is only the screen's side of it.
   const [editing, setEditing] = useState<{
     set: SetInsert;
-    staged: { entryKg: number; reps: number; setType: SetType };
+    staged: {
+      entryKg: number;
+      reps: number;
+      setType: SetType;
+      rpe: number | null;
+    };
   } | null>(null);
 
   // per-set notes (set_id -> note); "" = cleared
@@ -467,6 +493,23 @@ export function Session() {
   const setsForEntry = useCallback(
     (entry: ExerciseEntry) => setsForEntryOf(entry, sets, rx, knownRxIds),
     [sets, rx, knownRxIds],
+  );
+
+  /**
+   * Whether the rating row is on screen for a movement: because somebody
+   * asked for it, or because a set of this movement is already rated.
+   *
+   * The second half is what makes it survive a reload. `rpeAsked` is screen
+   * state and dies with the page, and a lifter who has been rating every set
+   * should not come back from an app switch to find the row gone and her
+   * ratings sitting in LOGGED with no way to add the next one but a rediscovery
+   * tap. Reading it off the sets themselves needs no cache and cannot go stale.
+   */
+  const rpeShown = useCallback(
+    (exerciseId: string) =>
+      rpeAsked.has(exerciseId) ||
+      sets.some((s) => s.exercise_id === exerciseId && s.rpe != null),
+    [rpeAsked, sets],
   );
 
   /** Working sets logged against an entry — the number that answers "am I
@@ -760,7 +803,13 @@ export function Session() {
     // Only on a fresh open. After that the toggle belongs to the lifter (and
     // to logSet, which advances it as the plan's warmups are used up):
     // writing it here on every bracket change would fight a deliberate tap.
-    if (fresh) setSetType(openingKind);
+    // The rating is cleared on the same beat and for the same reason it is
+    // cleared after every log: it is an observation of one set, and how the
+    // last exercise felt is not a claim about this one.
+    if (fresh) {
+      setSetType(openingKind);
+      setRpe(null);
+    }
     // `loadEntry`/`perSide` are deliberately NOT dependencies: flipping the
     // convention mid-entry must not re-prefill over a staged value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -852,6 +901,9 @@ export function Session() {
       performed_at: new Date().toISOString(),
       rest_seconds_actual: recordableRest(),
       load_entry: loadEntryForSet(loadEntry, totalLoadKg),
+      // Null unless this set was rated. A tick has no numbers and no chip
+      // row, so it never carries one either.
+      rpe: isTick(openEntry) ? null : rpe,
     };
     const next = applySets((prev) => [...prev, set]);
     cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
@@ -899,6 +951,11 @@ export function Session() {
       knownRxIds,
     ).filter((s) => s.set_type === "warmup").length;
     setSetType(warmupsLogged < warmupSets(openEntry) ? "warmup" : "working");
+    // The rating does NOT carry to the next set. Load and reps do, because
+    // they are the plan repeating; how hard set 3 felt is not a prediction
+    // about set 4, and a sticky value would quietly attach one lifter's one
+    // honest answer to every row after it.
+    setRpe(null);
   };
 
   const openSheet = (kind: "search" | "swap" | "plates") => {
@@ -957,7 +1014,7 @@ export function Session() {
     setNoteEditingId(null);
     // Only the first tap displaces the staged values; re-tapping a different
     // set mid-correction must still restore what was there BEFORE editing.
-    const staged = editing?.staged ?? { entryKg, reps, setType };
+    const staged = editing?.staged ?? { entryKg, reps, setType, rpe };
     setEditing({ set: s, staged });
     // load_kg is the TOTAL; show it in whatever convention the exercise is
     // in NOW, so Save — which totals the entry by that same convention —
@@ -965,6 +1022,11 @@ export function Session() {
     setEntryKg(Math.round(enteredKg(s.load_kg, loadEntry) * 100) / 100);
     setReps(s.reps);
     setSetType(s.set_type);
+    // A correction is the only way to rate a set after the fact, so the row's
+    // rating comes into the chips exactly as its load and reps do. `rpeShown`
+    // is already true for a rated set; an unrated one still needs the reveal,
+    // which is the same one tap it always was.
+    setRpe(s.rpe ?? null);
   };
 
   const cancelCorrection = () => {
@@ -972,6 +1034,7 @@ export function Session() {
     setEntryKg(editing.staged.entryKg);
     setReps(editing.staged.reps);
     setSetType(editing.staged.setType);
+    setRpe(editing.staged.rpe);
     setEditing(null);
   };
 
@@ -986,6 +1049,7 @@ export function Session() {
       reps,
       set_type: setType,
       load_entry: loadEntryForSet(loadEntry, totalLoadKg),
+      rpe,
     };
     if (isNoopCorrection(old, correction)) {
       cancelCorrection();
@@ -1040,6 +1104,7 @@ export function Session() {
     setEntryKg(editing.staged.entryKg);
     setReps(editing.staged.reps);
     setSetType(editing.staged.setType);
+    setRpe(editing.staged.rpe);
     setEditing(null);
     toast(`Set ${old.set_index + 1} corrected`);
   };
@@ -1807,6 +1872,32 @@ export function Session() {
                                   {hint} ›
                                 </button>
                               )}
+                              {/* The rating's only entrance, and it is
+                                  deliberately not a control of its own: this
+                                  head is already on screen, so a lifter who
+                                  never rates a set sees no extra row and takes
+                                  no extra tap on the way to LOG. It disappears
+                                  once the chips are up (they are their own
+                                  label) and never comes back for this
+                                  movement — asking twice for the same thing is
+                                  the friction the whole feature is avoiding. */}
+                              {!rpeShown(entry.exercise_id) && (
+                                <button
+                                  type="button"
+                                  className="rpe-reveal"
+                                  /* the visible words are inside the name, so
+                                     "tap plus RPE" still works by voice */
+                                  aria-label={`add an RPE rating to ${entry.name}`}
+                                  onClick={() =>
+                                    setRpeAsked(
+                                      (prev) =>
+                                        new Set([...prev, entry.exercise_id]),
+                                    )
+                                  }
+                                >
+                                  + RPE
+                                </button>
+                              )}
                             </div>
                             <Stepper
                               label="load"
@@ -1824,6 +1915,17 @@ export function Session() {
                               steps={loadSteps(entry.exercise_id, unit)}
                             />
                           </section>
+
+                          {/* Below the numbers and above LOG, where the
+                              question actually gets asked. Renders nothing
+                              until this movement's reveal has been tapped —
+                              the gate is inside the component, so there is
+                              one rule rather than one per caller. */}
+                          <RpeChips
+                            shown={rpeShown(entry.exercise_id)}
+                            value={rpe}
+                            onChange={setRpe}
+                          />
                         </>
                       )}
 

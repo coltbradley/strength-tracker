@@ -191,6 +191,16 @@ export interface SetInsert {
    *  (and reads whose column list predates it) simply carry no assertion.
    *  DB rejects "per_side" on a 0 kg bodyweight set. */
   load_entry?: LoadEntry | null;
+  /**
+   * How hard the set felt: 5 to 10 in half points, the scale in lib/rpe.ts.
+   *
+   * Null is the NORMAL case, never an error — rating is one optional tap and
+   * nothing derived may require it. Optional for the same reason as
+   * `load_entry`: rows cached before the column, and reads whose column list
+   * predates it, simply carry nothing. Because `sets` is append-only, an
+   * unrated set can only be rated through a correction.
+   */
+  rpe?: number | null;
 }
 
 /**

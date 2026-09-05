@@ -44,9 +44,14 @@ import type {
  *  explicit total — History then claims the lifter curled 30 kg per hand, and
  *  a prescribed-vs-achieved comparison reads a phantom overshoot, which is the
  *  exact failure the column was added to prevent. It stays NULLABLE on
- *  purpose: null is "not asserted", never "confirmed total". */
+ *  purpose: null is "not asserted", never "confirmed total".
+ *
+ *  `rpe` is here for a narrower reason: the server read WINS in `mergeSets`,
+ *  so a column the projection omits is a column that disappears from the
+ *  screen on the next reload even though Postgres still holds it. Null here
+ *  means unrated, which is the ordinary case and never an error. */
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,rpe";
 
 async function fetchWithCache<T>(
   key: string,
