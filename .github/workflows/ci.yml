@@ -40,7 +40,10 @@ jobs:
       # it needs and points SUPABASE_URL at a closed port to exercise the
       # token-store-unreachable path. It makes no outbound request that can
       # succeed, and never contacts a real project.
-      - run: deno test --allow-env --allow-net lib/
+      # The whole suite, not lib/. Tool tests live in tools/ and were being
+      # written and then never run: a green CI that has not executed the tests
+      # in the diff is worse than no CI, because it is trusted.
+      - run: deno test --allow-env --allow-net
         working-directory: supabase/functions/mcp-server
 
   pwa:

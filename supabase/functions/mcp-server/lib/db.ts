@@ -62,8 +62,16 @@ interface OwnedExerciseRow {
  * The one visibility rule: a shared library row is everybody's, a 'custom' row
  * is only its owner's. Every read of `exercises` in this server goes through
  * this, because the server is the service role and RLS is not there to help.
+ *
+ * Exported for tools that fetch library rows by NAME rather than by id, where
+ * neither helper below fits: resolve_exercises has no ids to check until after
+ * the query that finds them. They get the rule itself instead of writing a
+ * second copy of it that can drift.
  */
-function canSee(row: OwnedExerciseRow, ownerId: string): boolean {
+export function canSeeExercise(
+  row: OwnedExerciseRow,
+  ownerId: string,
+): boolean {
   if (row.source !== "custom") return true;
   const owners = row.exercise_owners;
   const list = owners === null ? [] : Array.isArray(owners) ? owners : [owners];
@@ -94,7 +102,7 @@ export async function visibleExerciseIds(
     .in("id", exerciseIds);
   if (error) throw new Error(`look up exercises: ${error.message}`);
   const rows = (data ?? []) as OwnedExerciseRow[];
-  return new Set(rows.filter((r) => canSee(r, db.ownerId)).map((r) => r.id));
+  return new Set(rows.filter((r) => canSeeExercise(r, db.ownerId)).map((r) => r.id));
 }
 
 /**
@@ -121,7 +129,7 @@ export async function requireExercise(
 
   const row = data as (OwnedExerciseRow & { name: string }) | null;
 
-  if (row === null || !canSee(row, db.ownerId)) {
+  if (row === null || !canSeeExercise(row, db.ownerId)) {
     throw new ToolError(
       `Unknown exercise_id '${exerciseId}'. Call search_exercises to find the correct id slug.`,
     );

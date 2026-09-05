@@ -41,6 +41,7 @@ import { registerGetRecentSessions } from "../tools/get_recent_sessions.ts";
 import { registerGetVolume } from "../tools/get_volume.ts";
 import { registerMemory } from "../tools/memory.ts";
 import { registerManageExercises } from "../tools/manage_exercises.ts";
+import { registerResolveExercises } from "../tools/resolve_exercises.ts";
 import { registerSearchExercises } from "../tools/search_exercises.ts";
 import { registerSetGoal } from "../tools/set_goal.ts";
 import { registerSetTrainingMax } from "../tools/set_training_max.ts";
@@ -54,6 +55,9 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   const db = dbFor(userId);
   // Read tools (readOnlyHint: true).
   registerSearchExercises(server, db, ctx);
+  // The batched counterpart. Registered next to it so the pair is obvious:
+  // one name explored, or many names resolved in a single round trip.
+  registerResolveExercises(server, db, ctx);
   registerGetLiftHistory(server, db, ctx);
   registerGetRecentSessions(server, db, ctx);
   registerGetGoalProgress(server, db, ctx);

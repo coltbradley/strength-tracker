@@ -68,6 +68,10 @@ Deno.test("tools/list advertises every tool with a usable schema", async () => {
   // break for every client that already knows its name.
   for (const expected of [
     "search_exercises",
+    // The batched lookup. Six sequential search_exercises calls for one pull
+    // day is the latency it exists to remove, so a client that has learned to
+    // reach for it must keep finding it.
+    "resolve_exercises",
     "get_lift_history",
     "get_recent_sessions",
     "get_goal_progress",
