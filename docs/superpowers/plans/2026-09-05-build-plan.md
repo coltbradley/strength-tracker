@@ -193,9 +193,22 @@ that `mcp-server` still needs `supabase functions deploy mcp-server
 --no-verify-jwt` from a laptop or the three deploy settings, because its 28
 files do not fit through the tool available here. Then the phone checklist.
 
+**What happened (2026-09-05, after `083f9aa`).** Migrations applied and
+recorded. `push-alerts` failed to bundle twice on a `\u` regex the tool's JSON
+transport decoded into raw control characters; the guard is a code-point loop
+now (`5e3d06f`) and v1 is live. `mcp-server` DID go out, as v22: the 28 files
+did not fit, so the source was bundled with `deno bundle --minify` (100 KB,
+reproducible, sha recorded in deploy.md), pushed to the orphan branch
+`deploy/mcp-server-bundle`, and the deployed entrypoint imports it by commit
+sha. `coach` v11 went out last, as source. The sandbox could not reach the
+function URLs, so the `/health` check is on the phone list rather than done.
+
 ## Phone checklist (Colt, at the end)
 
-1. Report a problem → APP VERSION is the new sha.
+1. Report a problem → APP VERSION is the new sha (`5e3d06f` or later).
+   Also: open the coach and ask anything that needs a tool ("what did I do
+   last session?"); a reply proves `mcp-server` v22 boots and the coach's
+   per-turn token still reaches it.
 2. Settings → "Alert me when the app is closed" → allow → toggle on.
 3. Start a session, log a set with a 60 s rest, lock the phone. Expect a
    notification at ~60 s. Log another set before the rest ends: expect NO

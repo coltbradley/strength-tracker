@@ -2231,3 +2231,37 @@ the RLS, the client's network behaviour and the built worker's shape; what the
 phone checklist has to prove is that Apple's push service accepts the VAPID
 token and that the platform honours `waitUntil` for a sleep of a full rest.
 
+
+## A build artifact on a branch, so the server could ship from a session with no CLI
+
+The rule has been that nothing built is committed: `dist/` is gitignored, the
+generated seed is gitignored, functions deploy from source. On 2026-09-05 the
+whole round (migrations, three functions, the PWA) had to go out from a remote
+session whose only door to production was the Supabase MCP, and its
+`deploy_edge_function` takes file contents inline. `coach` and `push-alerts`
+fit. `mcp-server` is 28 files and 162 KB and did not, and its 100 KB minified
+bundle is too long to retype by hand with any confidence that one byte is not
+wrong.
+
+So the bundle lives on an ORPHAN branch, `deploy/mcp-server-bundle`, one commit
+with the file and a README, and the deployed entrypoint is a shim that imports
+it by that commit's sha. What this preserves: `main` carries no artifact, the
+sha is immutable so the deployed code is exactly the file whose sha256 is in
+deploy.md, the platform bundler snapshots the import at deploy time so the
+running function has no dependency on GitHub, and the very next CLI or workflow
+deploy replaces the shim with source without anyone remembering to undo
+anything. What it costs: the dashboard shows two lines instead of the server,
+so verification is the recorded sha and `/health` rather than a byte-diff, and
+a branch exists whose only purpose is to be pointed at. It is deletable the day
+the three deploy settings exist and `deploy.yml` deploys from source.
+
+The alternative that was NOT taken, retyping the bundle through the tool, was
+rejected for the reason the rule against hand-edited generated files exists in
+the first place: a transcription error in minified code fails at runtime, on
+the phone, in someone's session, and is found by reading a 100 KB line.
+
+The round also found that the tool's JSON transport decodes a `\u` escape
+inside a regex literal into the raw character, which is an unterminated regex
+and a failed bundle. `push-alerts` spells its label guard as a code-point loop
+now, and deploy.md says to keep `\u` out of anything that has to go through
+that door.

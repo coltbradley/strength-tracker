@@ -78,6 +78,43 @@ supabase functions deploy mcp-server --no-verify-jwt
 `--no-verify-jwt` is required every deploy: the function does its own bearer
 auth and the gateway must not demand a Supabase JWT.
 
+### Without the CLI: the Supabase MCP and a pinned bundle
+
+The 2026-09-05 round went out from a remote session with no CLI and no deploy
+settings, through the Supabase MCP's `deploy_edge_function`. That tool takes
+file contents inline. `coach` (4 files) and `push-alerts` (3 files) went
+through as source; `mcp-server` (28 files, 162 KB) did not fit, and a 100 KB
+minified bundle is too long to retype by hand without error. So the DEPLOYED
+`mcp-server` is currently a two-line shim: an `index.ts` that imports the bundle
+by immutable commit sha from the orphan branch `deploy/mcp-server-bundle`
+(`42a3c20`, bundle sha256 `29120c41…`), plus the real `deno.json`. The platform
+bundler snapshots that file at deploy time; the running function never fetches
+it. Deno resolves the bundle's bare specifiers (`zod`, the SDK, supabase-js)
+through the import map like any local module.
+
+To rebuild the bundle and check the sha before pointing a shim at it:
+
+```bash
+cd supabase/functions/mcp-server
+deno bundle index.ts -o /tmp/index.js --platform deno --minify \
+  --external=zod --external="@supabase/supabase-js" \
+  --external="@sentry/deno" --external="@modelcontextprotocol/sdk/*"
+sha256sum /tmp/index.js
+```
+
+Two things this path taught, both permanent:
+
+- The next `supabase functions deploy mcp-server --no-verify-jwt` (by hand or
+  from `deploy.yml`) replaces the shim with the source tree, and nothing else
+  has to change. The dashboard shows a shim until then; `get_edge_function`
+  cannot byte-diff it against the repo, so verify a shim deploy by the bundle
+  sha and the `/health` endpoint instead.
+- The tool carries source as a JSON string, and a backslash-u escape inside a
+  regex literal arrived as the raw control character, which is an unterminated
+  regex and a failed bundle. `push-alerts` now spells its label guard as code
+  points for that reason. Avoid `\u` escapes in anything that has to go through
+  this door; a regex with `\s` or `\d` is fine.
+
 ## Coach changed (supabase/functions/coach/)
 
 ```bash

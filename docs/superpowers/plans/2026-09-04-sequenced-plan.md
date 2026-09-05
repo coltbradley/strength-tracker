@@ -248,19 +248,20 @@ on a measurement, and the monthly cap is paying Opus prices on faith.
 | 6c | MCP gaps: `program_id` and `list_programs`; `confirm_program` on a discarded program; `upsert_program` date and length validation; `resolve_feedback` error type; `search_exercises` quoting. | 1.0 | **done** (`659de92`) |
 | 6d | Indexes on `set_voids`/`set_notes` by user; a `since` predicate in `get_volume`. | 0.5 | not started |
 | 6e | Exercise demos: the seed's two photos and numbered steps behind a HOW TO tap on the session screen. Seed-only paths, CHECK-pinned; steps cached, photos online-only. | 0.75 | **done** (`277639c`) |
-| 6f | Rest alert while the app is CLOSED: Web Push to the installed PWA, sent by a server at the deadline, cancelled by the next log. Designed in decisions.md; needs a VAPID secret, an injectManifest service worker and a phone to test on. | 2.0 | **designed, not built** |
+| 6f | Rest alert while the app is CLOSED: Web Push to the installed PWA, sent by a server at the deadline, cancelled by the next log. VAPID pair generated into `push_config`, injectManifest service worker, `push-alerts` function. | 2.0 | **built and deployed** (`083f9aa`); phone test outstanding |
 
 Two MCP bugs fell out of the one feedback-table entry (filed by the coach,
 2026-09-05): `prescriptionRows` omitted defaulted columns and PostgREST's bulk
 insert turned that into NULLs on a mixed day (three 500s), and
 `update_planned_workout` could not move a day. Both fixed in `da552e4`.
-**`da552e4` is committed and NOT yet deployed to `mcp-server`**: the coach
-(v10) went out through the Supabase MCP, but the server's 28 files did not fit
-through that path. Until `supabase functions deploy mcp-server --no-verify-jwt`
-runs (or the three deploy settings exist and the workflow does it), the coach
-will still 500 on any day that mixes an explicit set_type or tracking with unset
-rows, and `scheduled_date` is described to the model by a prompt the server does
-not yet honour.
+**Deployed 2026-09-05 (later the same day).** `mcp-server` v22 carries
+`da552e4` and everything after it (the loop tools, the plan tools) as a
+minified bundle imported by commit sha from `deploy/mcp-server-bundle` — the
+28 files did not fit through the Supabase MCP, the bundle did (deploy.md,
+"Without the CLI"). `coach` v11 and `push-alerts` v1 went out as source, and
+migrations `20260905030000` through `20260905060000` are in
+`schema_migrations`. The next CLI or workflow deploy of `mcp-server` replaces
+the shim with source and needs no other change.
 
 ## After the first real session: the plan above the program
 
@@ -270,7 +271,10 @@ around it are read in
 designs the long-term plan (`training_plans` / `plan_phases`, written from
 Desktop, read by the in-app coach every turn, never written by it) and the
 parse → repeat → review loop, and lists the two decisions the session forces:
-bands as a load entry, and per-side reps. About seven days; design only so far.
+bands as a load entry, and per-side reps. Built and deployed 2026-09-05 as
+three workstreams merged in `083f9aa` (build plan:
+[2026-09-05-build-plan.md](2026-09-05-build-plan.md)); the two decisions are
+still Colt's.
 
 ## Not doing, and why
 
