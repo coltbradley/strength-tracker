@@ -56,8 +56,12 @@ auth and the gateway must not demand a Supabase JWT.
 ## PWA changed (pwa/)
 
 Nothing to run. Push to main → the `deploy` GitHub Action publishes to
-GitHub Pages; the installed app picks it up on next launch (service worker
-autoUpdate). Device data survives updates (IndexedDB is untouched).
+GitHub Pages. The installed app does NOT reload itself: `registerType` is
+"prompt", so main.tsx applies a waiting worker only when no session is open
+and otherwise defers to the next time the app is hidden — a mid-set reload
+would take the staged reps and any half-typed note. Expect a lifter to get
+the new build at their next visit, not within seconds of the push. Device
+data survives updates (IndexedDB is untouched).
 
 ## Adding or removing a person
 
