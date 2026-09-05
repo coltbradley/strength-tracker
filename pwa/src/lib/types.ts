@@ -3,8 +3,15 @@
 
 export type SetType = "warmup" | "working" | "backoff";
 
-/** How a movement is logged: weight and reps, or just "done". */
-export type TrackingMode = "reps" | "done";
+/**
+ * How a movement is logged: weight and reps, a completion tick, or a duration.
+ *
+ * All three write a REAL row in `sets`. A tick and a timed hold both carry
+ * reps 0, which is what keeps them out of volume and e1RM through the filters
+ * those views already have, with no view anywhere branching on this field: the
+ * analysis must not depend on what the plan asked for.
+ */
+export type TrackingMode = "reps" | "done" | "time";
 
 /**
  * How a load was ENTERED. `load_kg` is always the TOTAL system load — the
@@ -201,6 +208,33 @@ export interface SetInsert {
    * unrated set can only be rated through a correction.
    */
   rpe?: number | null;
+  /**
+   * How long the effort lasted, for work measured in TIME rather than reps:
+   * a plank, a carry, a dead hang. Null on every ordinary set.
+   *
+   * A timed set carries reps 0 so the existing filters ignore it, and
+   * `load_kg` still means the total system load, so a weighted carry records
+   * both what was carried and for how long. Seconds are NOT stored in `reps`:
+   * the column is checked between 0 and 100, and a 45 second carry at 64 kg
+   * would otherwise land inside the e1RM window and be priced as 45
+   * repetitions.
+   */
+  duration_seconds?: number | null;
+}
+
+/**
+ * A bodyweight measurement that does not belong to a session.
+ *
+ * `sessions.bodyweight_kg` has existed all along and was written zero times in
+ * a month of real use, because the End screen is only reached by tapping
+ * Finish. Reads go through `v_bodyweight`, which unions the two sources;
+ * writes go here, queued through the outbox like a set, with a
+ * client-generated id so a replay is idempotent rather than a second weigh-in.
+ */
+export interface BodyweightInsert {
+  id: string;
+  measured_at: string;
+  weight_kg: number;
 }
 
 /**
