@@ -262,6 +262,16 @@ will still 500 on any day that mixes an explicit set_type or tracking with unset
 rows, and `scheduled_date` is described to the model by a prompt the server does
 not yet honour.
 
+## After the first real session: the plan above the program
+
+Colt's first session against a coach-parsed day (2026-09-05) and the coach turns
+around it are read in
+[2026-09-05-plan-and-review-loop.md](2026-09-05-plan-and-review-loop.md). It
+designs the long-term plan (`training_plans` / `plan_phases`, written from
+Desktop, read by the in-app coach every turn, never written by it) and the
+parse → repeat → review loop, and lists the two decisions the session forces:
+bands as a load entry, and per-side reps. About seven days; design only so far.
+
 ## Not doing, and why
 
 Social features, badges, streaks, month grids and swipe gestures stay rejected;
