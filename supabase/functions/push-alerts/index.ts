@@ -73,8 +73,19 @@ const VAPID_SUBJECT =
 /** Mirrors the CHECK on rest_alerts.label, so a bad label is a 400 here and
  *  never a 500 from Postgres. */
 const LABEL_MAX = 120;
-// deno-lint-ignore no-control-regex
-const LABEL_FORBIDDEN = /[\u0001-\u001f\u007f-\u009f\u2028\u2029]/;
+/** C0 and C1 controls plus the two Unicode line separators. Spelled as code
+ *  points rather than a regex with backslash-u escapes: the Supabase MCP deploy path
+ *  carries source as a JSON string and decoded those escapes into the raw
+ *  control characters, which is an unterminated regex literal. */
+function hasForbiddenChar(s: string): boolean {
+  for (const ch of s) {
+    const c = ch.codePointAt(0) ?? 0;
+    if ((c >= 0x01 && c <= 0x1f) || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029) {
+      return true;
+    }
+  }
+  return false;
+}
 const B64URL_87 = /^[A-Za-z0-9_-]{87}$/;
 const B64URL_22 = /^[A-Za-z0-9_-]{22}$/;
 const UUID_RE =
@@ -283,7 +294,7 @@ async function schedule(req: Request, db: Db, userId: string): Promise<Response>
   const fireAt = typeof body.fire_at === "string" ? Date.parse(body.fire_at) : NaN;
   if (!Number.isFinite(fireAt)) return json({ error: "fire_at must be an ISO timestamp." }, 400);
   const label = typeof body.label === "string" ? body.label.trim() : "";
-  if (label.length === 0 || label.length > LABEL_MAX || LABEL_FORBIDDEN.test(label)) {
+  if (label.length === 0 || label.length > LABEL_MAX || hasForbiddenChar(label)) {
     return json({ error: `label must be one printable line of at most ${LABEL_MAX} characters.` }, 400);
   }
 
