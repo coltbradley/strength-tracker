@@ -108,11 +108,13 @@ browser pass, because the dev server could not start in that session — Node
 failed to resolve its own cwd in the preview harness, before any project code
 ran. Worth a manual look next time someone has a working preview.
 
-**None of it is deployed.** It needs, in this order: `supabase db push` for the
-`exercise_count` view change, `supabase functions deploy mcp-server` and
-`supabase functions deploy coach` for the new tool and the prompt, then a push
-to main for the PWA. The migration goes first, or the app selects a column that
-does not exist yet — the snag deploy.md already records.
+**Deployed 2026-09-05.** Verified against production, not inferred from the
+runbook: all 24 migrations through `20260905020000` are in
+`schema_migrations`, `v_plan_workouts.exercise_count` exists, and both edge
+functions match the repo byte for byte (`coach` 4/4 files, `mcp-server`
+28/28). The order the previous version of this paragraph asked for was
+followed. `deploy.yml` now enforces that order itself once the three settings
+in deploy.md ("Automating the Supabase half") exist.
 
 Deploying 0a also makes 0d smaller: the duplicate program still needs a
 decision, but her half-stored dumbbell loads become correctable in the app's own
@@ -212,6 +214,19 @@ destructive one.
 | 4d  | Proposal cards with Apply / Change, per Decision 4.                                                                                                                                                                      | 2.0  |
 | 4e  | Batch `resolve_exercises(names[])`, replacing six sequential lookups in a write turn.                                                                                                                                    | 0.5  |
 | 4f  | Prompt: ask what they are avoiding after one rejected alternative; quote loads per hand; edit a day rather than rewrite a program.                                                                                       | 0.5  |
+
+4a is applied (`e18a2a3`), minus the cache TTL change, which Wave 2's notes
+rejected. 4b has NOT been run: `scripts/coach-eval/run.mjs` needs
+`ANTHROPIC_API_KEY` in its environment and the remote Claude Code session that
+did the 2026-09-05 wrap-up had none, so it could not spend the $2. From a
+machine that has the key:
+
+```bash
+cd scripts/coach-eval && node run.mjs --configs sonnet-low,opus-low --trials 1 --out out/run2
+```
+
+Until it runs, Decision 1 rests on the argument in this document rather than
+on a measurement, and the monthly cap is paying Opus prices on faith.
 
 ## Wave 5: what the coach asks about (6 days)
 

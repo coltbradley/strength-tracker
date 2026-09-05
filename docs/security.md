@@ -91,28 +91,32 @@ functions or grants.
   policy here would not fix a warning, it would open the digest store to
   whoever the policy admits. Leave it.
 
-**Open, and each one's real severity:**
+**Fixed by `20260905030000_function_grants.sql`, and pinned in
+`scripts/validate-db.mjs` so they stay fixed:**
 
 - `anon_security_definer_function_executable` and its authenticated twin, both
   on `purge_expired_mcp_tokens()` (WARN). The function is `SECURITY DEFINER`
-  and does pin `search_path`, but `EXECUTE` is granted to `anon` and
-  `authenticated`, so anyone — signed in or not — can call it over PostgREST.
-  What it can do is bounded by its own WHERE clause: it deletes only rows whose
-  `expires_at` is more than a day past, so it destroys no working credential
-  and cannot touch a permanent token (`expires_at is null`) at all. This is an
-  unauthenticated write endpoint, not a credential exposure. The fix is a
-  revoke, not a rewrite:
-
-  ```sql
-  revoke execute on function public.purge_expired_mcp_tokens() from anon, authenticated;
-  ```
+  and pins `search_path`, but `EXECUTE` was granted to `anon`, `authenticated`
+  and PUBLIC, so anyone — signed in or not — could call it over PostgREST. What
+  it could do was bounded by its own WHERE clause (rows whose `expires_at` is
+  more than a day past, so no working credential and never a permanent token),
+  which made it an unauthenticated write endpoint rather than a credential
+  exposure. Execute is now held by `postgres` and `service_role` only; the coach
+  function, its one legitimate caller, runs as the latter. The harness asserts
+  the revoke AND asserts that an ordinary function is still executable, so a
+  future blanket grant or a too-wide revoke both fail CI.
 
 - `function_search_path_mutable` on `app_tz` (both overloads),
   `claim_custom_exercise`, `refuse_orphaning_logged_sets` and
-  `stamp_exercise_edit` (WARN). Hygiene rather than a hole: all four are
-  SECURITY INVOKER, so they run as the caller and there is no privilege to
-  escalate to. The attack this lint exists for needs a definer-rights function.
-  Worth pinning `search_path` when those functions are next touched.
+  `stamp_exercise_edit` (WARN). Hygiene rather than a hole — all five are
+  SECURITY INVOKER, so they ran as the caller and there was no privilege to
+  escalate to — but pinned now to `public, pg_temp`. `pg_temp` is listed
+  because it is otherwise searched FIRST, which was the one route by which a
+  caller's temp table could have shadowed `user_config` inside `app_tz`. The
+  harness asserts every public function has a `search_path`, so a new function
+  without one fails CI.
+
+**Open, and its real severity:**
 
 - `auth_leaked_password_protection` and `auth_insufficient_mfa_options` (WARN).
   Both are about passwords, and this deployment signs in with magic links —
