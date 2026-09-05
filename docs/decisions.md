@@ -1776,3 +1776,47 @@ the program clone reproduces no matter who is driving, and found a second gap
 the audit had missed in the empty-day rewrite. Both point at
 `update_planned_workout`, which is why that tool came before any model change.
 The API-driven run stays as the verification of the model question itself.
+
+## A schema error is not a bad day for wifi
+
+`fetchWithCache` is the read layer's whole offline story: try the server, and
+on any failure serve what IndexedDB has. It caught `unknown`, and `throwIf` had
+already flattened every PostgREST error to `new Error(message)`, so the catch
+could not tell a phone with no signal from a server that had just answered
+"column does not exist". Both got the cache, both got the banner that says
+"offline", and neither went through `reportError`. That last part is what made
+it a bug rather than a design: the Report-a-problem sheet exists so a person can
+send what actually blew up, and it read RECENT ERRORS: none through the entire
+class of failure that most needs reporting. A deploy that ships a select ahead
+of its migration, the snag deploy.md already records, would have been invisible
+on every device that had ever loaded the plan.
+
+postgrest-js draws the line for us. A fetch that never got a response (offline,
+DNS, a timeout, an abort) comes back with an EMPTY `code` and `status: 0`;
+anything Postgres or PostgREST said carries a SQLSTATE or a PGRSTxxx code.
+`throwIf` now throws a `QueryError` that keeps the code, and `staleReason` reads
+it: no code is "offline", everything else — including a throw from our own
+code, which is a bug and not weather — is "error".
+
+The fallback itself did not change shape. The cache is still served whenever it
+exists, because the alternative is a blank screen mid-session over a transient
+500. What changed is that hiding a real error behind cached data is no longer
+silent: it is reported once per message per thirty seconds (History fires seven
+reads at once, and seven toasts for one broken view is noise, not information),
+and the banner says "couldn’t refresh" in the warning colour rather than
+"offline" in the info colour. When there is NO cache the error propagates
+exactly as before and the caller reports it, as every caller already did, so
+nothing is reported twice.
+
+Rejected: rethrowing server errors instead of serving the cache. Correct in the
+abstract and wrong in a gym, where the plan on screen is the thing being
+trained from and the failure is usually not the lifter's to fix. Rejected: a
+per-family dedupe key. A view that breaks breaks for every family that reads
+it; the message is what is the same, so the message is the key. Rejected:
+reporting from inside `fetchWithCache` even when it rethrows. Every caller
+already reports what it catches, and two toasts for one failure teaches people
+to dismiss toasts.
+
+The factory `makeFetchWithCache` exists so the rule is tested without IndexedDB
+or a network: `data.test.ts` pins offline-serves-quietly, error-serves-and-
+reports, once-per-window, and propagate-when-empty.

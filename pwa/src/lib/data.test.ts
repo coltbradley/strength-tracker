@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ACTUALS_PAGE,
   LAST_RUN_CAP,
+  QueryError,
+  REPORT_WINDOW_MS,
+  makeFetchWithCache,
+  staleReason,
+  worstStale,
   currentTrainingMax,
   groupTrainingMaxes,
   orderLoggedExercises,
@@ -509,5 +514,132 @@ describe("orderLoggedExercises", () => {
       "bench",
       "row",
     ]);
+  });
+});
+
+// The cache fallback used to swallow EVERY failure into "offline". A real
+// user's diagnostics read "RECENT ERRORS: none" while the app was serving a
+// cached plan because of a server error it never mentioned. These pin the rule
+// that replaced it: serve the cache whenever it exists, but report a hidden
+// error, once, and say which kind of stale this is.
+
+describe("staleReason", () => {
+  it("a PostgREST error with no code is a fetch that never got an answer", () => {
+    // postgrest-js: `{ message: "TypeError: Failed to fetch", code: "", status: 0 }`
+    expect(
+      staleReason(new QueryError("TypeError: Failed to fetch", null)),
+    ).toBe("offline");
+  });
+
+  it("a code means the server answered, so it is an error, not weather", () => {
+    expect(
+      staleReason(
+        new QueryError(
+          "column v_plan_workouts.exercise_count does not exist",
+          "42703",
+        ),
+      ),
+    ).toBe("error");
+    expect(staleReason(new QueryError("JWT expired", "PGRST301"))).toBe(
+      "error",
+    );
+  });
+
+  it("anything that is not a PostgREST error is our own bug, not the network", () => {
+    expect(staleReason(new TypeError("x is undefined"))).toBe("error");
+    expect(staleReason("string")).toBe("error");
+  });
+});
+
+describe("worstStale", () => {
+  it("an error outranks offline, which outranks fresh", () => {
+    expect(worstStale(null, null)).toBeNull();
+    expect(worstStale(null, "offline", null)).toBe("offline");
+    expect(worstStale("offline", "error", null)).toBe("error");
+  });
+});
+
+describe("fetchWithCache", () => {
+  function harness(seed: Record<string, unknown> = {}) {
+    const cache: Record<string, unknown> = { ...seed };
+    const report = vi.fn();
+    let t = 0;
+    const fetchWithCache = makeFetchWithCache({
+      cacheGet: async <T,>(k: string) => cache[k] as T | undefined,
+      cacheSet: async (k, v) => {
+        cache[k] = v;
+      },
+      report,
+      now: () => t,
+    });
+    return { fetchWithCache, cache, report, tick: (ms: number) => (t += ms) };
+  }
+  const offline = () => new QueryError("TypeError: Failed to fetch", null);
+  const broken = () =>
+    new QueryError(
+      "column v_plan_workouts.exercise_count does not exist",
+      "42703",
+    );
+
+  it("a good read is served fresh and written to the cache", async () => {
+    const h = harness();
+    const r = await h.fetchWithCache("k", async () => 42);
+    expect(r).toEqual({ data: 42, fromCache: false, stale: null });
+    expect(h.cache.k).toBe(42);
+    expect(h.report).not.toHaveBeenCalled();
+  });
+
+  it("offline with a cache: serves it, says offline, reports nothing", async () => {
+    const h = harness({ k: "cached" });
+    const r = await h.fetchWithCache("k", async () => {
+      throw offline();
+    });
+    expect(r).toEqual({ data: "cached", fromCache: true, stale: "offline" });
+    expect(h.report).not.toHaveBeenCalled();
+  });
+
+  it("a server error with a cache: serves it, says error, and REPORTS it", async () => {
+    const h = harness({ k: "cached" });
+    const r = await h.fetchWithCache("k", async () => {
+      throw broken();
+    });
+    expect(r).toEqual({ data: "cached", fromCache: true, stale: "error" });
+    expect(h.report).toHaveBeenCalledTimes(1);
+    expect(h.report.mock.calls[0][0]).toBeInstanceOf(QueryError);
+  });
+
+  it("one message is reported once per window, not once per view", async () => {
+    const h = harness({ a: 1, b: 2, c: 3 });
+    const fail = async (): Promise<number> => {
+      throw broken();
+    };
+    await h.fetchWithCache("a", fail);
+    await h.fetchWithCache("b", fail);
+    await h.fetchWithCache("c", fail);
+    expect(h.report).toHaveBeenCalledTimes(1);
+    h.tick(REPORT_WINDOW_MS + 1);
+    await h.fetchWithCache("a", fail);
+    expect(h.report).toHaveBeenCalledTimes(2);
+  });
+
+  it("two different failures are two reports", async () => {
+    const h = harness({ a: 1, b: 2 });
+    await h.fetchWithCache("a", async () => {
+      throw broken();
+    });
+    await h.fetchWithCache("b", async () => {
+      throw new QueryError("permission denied for view v_e1rm", "42501");
+    });
+    expect(h.report).toHaveBeenCalledTimes(2);
+  });
+
+  it("with no cache the error propagates unreported here: the caller owns it", async () => {
+    const h = harness();
+    await expect(
+      h.fetchWithCache("k", async () => {
+        throw broken();
+      }),
+    ).rejects.toBeInstanceOf(QueryError);
+    expect(h.report).not.toHaveBeenCalled();
   });
 });

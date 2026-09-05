@@ -29,6 +29,8 @@ import {
   summariseAdherence,
   type RxOutcome,
   type SessionMetaRow,
+  worstStale,
+  type StaleReason,
 } from "../lib/data";
 import { reportError, toast } from "../lib/errors";
 import { formatRepRange, formatSessionDate } from "../lib/format";
@@ -91,7 +93,7 @@ export function History() {
   /** session_id -> what each prescription in it asked for */
   const [planned, setPlanned] = useState<Map<string, RxOutcome[]>>(new Map());
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [fromCache, setFromCache] = useState(false);
+  const [stale, setStale] = useState<StaleReason | null>(null);
   const [discardArm, setDiscardArm] = useArmed();
   const [voidArm, setVoidArm] = useArmed();
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -169,7 +171,7 @@ export function History() {
         setVolume(vol.data);
         setGoal(g.data);
         setRecent(live);
-        setFromCache(e1.fromCache || vol.fromCache || rec.fromCache);
+        setStale(worstStale(e1.stale, vol.stale, rec.stale));
         // post-workout notes + sRPE for the visible sessions; cached so
         // notes read back offline too
         const ids = [...new Set(live.map((s) => s.session_id))];
@@ -300,8 +302,13 @@ export function History() {
         </button>
       </h1>
 
-      {fromCache && (
+      {stale === "offline" && (
         <div className="cache-note">offline — showing cached data</div>
+      )}
+      {stale === "error" && (
+        <div className="cache-note cache-note-error">
+          couldn’t refresh — showing cached data
+        </div>
       )}
 
       {indexLoading && !selected && <p className="muted">Loading…</p>}

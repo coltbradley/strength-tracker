@@ -1124,6 +1124,12 @@
     text-align: center;
   }
 
+  /* the same line when the cause was NOT the network: the server answered and
+     refused, so it reads as a warning rather than a weather report */
+  .cache-note-error {
+    color: var(--warn);
+  }
+
   .chev {
     color: var(--text-dim);
     font-size: var(--fs-sm);

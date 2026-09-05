@@ -228,6 +228,16 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   so it is deliberately loose about it — any unexpected shape, any unreadable
   store, any missing refresh token returns null and puts the app back on the
   old behaviour.
+- A cached read tells "the server never answered" apart from "the server said
+  no". `fetchWithCache` serves the device cache in BOTH cases, because a stale
+  plan beats a blank screen in a gym, but only the first is offline. postgrest-js
+  marks a fetch that got no response with an EMPTY error code; anything carrying
+  a SQLSTATE or PGRST code is an answer, and an answer of no is REPORTED (once
+  per message per 30 s, so seven views over one broken column are one toast)
+  and shown as "couldn’t refresh", never as "offline". `throwIf` throws
+  `QueryError` with the code intact for exactly this reason: collapsing it to
+  `Error(message)` is how a missing view column would have read as a basement
+  on every device with a cache, while Report-a-problem said RECENT ERRORS: none.
 - The device cache belongs to one user, tracked by a localStorage marker, and
   is cleared when that changes. Cache keys are NOT namespaced by user on
   purpose: one marker has one place to be wrong, forty key builders do not.

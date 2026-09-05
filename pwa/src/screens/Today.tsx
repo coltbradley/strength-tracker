@@ -32,10 +32,12 @@ import {
   getResolvedPrescriptions,
   getServerSessionSets,
   invalidateForSessionClose,
+  staleReason,
   syncOpenSessions,
   updatePlannedWorkout,
   weekOrder,
   type OpenSessionRow,
+  type StaleReason,
   type WorkoutList,
 } from "../lib/data";
 import { groupRamps } from "../lib/entries";
@@ -242,11 +244,13 @@ export function Today() {
   const navigate = useNavigate();
   const unit = useUnit();
   const [list, setList] = useState<WorkoutList | null>(null);
-  const [fromCache, setFromCache] = useState(false);
+  const [stale, setStale] = useState<StaleReason | null>(null);
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
   const [active, setActive] = useState<ActiveSession | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
-  const [loadError, setLoadError] = useState(false);
+  // null while loading or loaded; otherwise WHY the load failed, because
+  // "offline" and "the server refused" need different words below
+  const [loadError, setLoadError] = useState<StaleReason | null>(null);
   // The calendar day, LIVE. An installed PWA is resumed, not reloaded: iOS
   // brings this screen back on Tuesday morning with Monday's render still on
   // it, and a `today` captured once meant Monday's "Start session" was the
@@ -315,11 +319,11 @@ export function Today() {
     getPlannedWorkouts()
       .then((r) => {
         setList(r.data);
-        setFromCache(r.fromCache);
-        setLoadError(false);
+        setStale(r.stale);
+        setLoadError(null);
       })
       .catch((e: unknown) => {
-        setLoadError(true);
+        setLoadError(staleReason(e));
         reportError(e, "load workouts");
       });
   }, []);
@@ -1105,12 +1109,22 @@ export function Today() {
           the subject; where a program came from lives with Claude/the coach */}
       {program && <div className="today-context">{program.name}</div>}
 
-      {fromCache && (
+      {stale === "offline" && (
         <div className="cache-note">offline — showing cached plan</div>
+      )}
+      {/* Not offline: the server answered and said no. The error has already
+          gone to recentErrors, Sentry and a toast; this line stops the screen
+          telling an online person they are offline. */}
+      {stale === "error" && (
+        <div className="cache-note cache-note-error">
+          couldn’t refresh — showing cached plan
+        </div>
       )}
       {loadError && !list && (
         <div className="warn-badge">
-          Couldn’t load workouts (offline, no cache)
+          {loadError === "offline"
+            ? "Couldn’t load workouts (offline, no cache)"
+            : "Couldn’t load workouts — the server returned an error (details under Report a problem)"}
         </div>
       )}
 
