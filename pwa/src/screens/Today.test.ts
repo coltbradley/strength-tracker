@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canDoWorkoutNow,
+  showFirstRun,
   weekPageDate,
   weekPages,
   weekRangeLabel,
@@ -188,5 +189,39 @@ describe("canDoWorkoutNow", () => {
   it("leaves an undated day to be rescheduled instead", () => {
     // "Ahead or behind" needs a schedule to be ahead of or behind.
     expect(canDoWorkoutNow("NO DATE")).toBe(false);
+  });
+});
+
+// The first-run card is the only thing on an empty Today that points at the
+// coach, and the coach is what writes a plan for someone who would otherwise
+// build one by hand. Its visibility rule is three conditions and each one has
+// a way of being wrong: showing over a plan that is still loading, showing
+// above a week somebody already has, or coming back after it was dismissed.
+describe("showFirstRun", () => {
+  it("shows on a loaded, program-less screen that has not dismissed it", () => {
+    expect(
+      showFirstRun({ loaded: true, hasProgram: false, dismissed: false }),
+    ).toBe(true);
+  });
+
+  it("waits for the plan list — an empty state is a claim about the data", () => {
+    expect(
+      showFirstRun({ loaded: false, hasProgram: false, dismissed: false }),
+    ).toBe(false);
+  });
+
+  it("stays away once there is a program to read", () => {
+    expect(
+      showFirstRun({ loaded: true, hasProgram: true, dismissed: false }),
+    ).toBe(false);
+  });
+
+  it("stays dismissed", () => {
+    expect(
+      showFirstRun({ loaded: true, hasProgram: false, dismissed: true }),
+    ).toBe(false);
+    expect(
+      showFirstRun({ loaded: true, hasProgram: true, dismissed: true }),
+    ).toBe(false);
   });
 });

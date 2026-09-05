@@ -13,7 +13,9 @@ import {
   addBar,
   addPlate,
   clearExercisePref,
+  dismissFirstRun,
   getBarInventory,
+  getFirstRunDismissed,
   getBarKg,
   getDefaultRestSeconds,
   getExerciseBarKg,
@@ -436,6 +438,48 @@ describe("reset and subscription", () => {
     reloadSettings();
     resetAllSettings();
     expect(localStorage.getItem("strength-log.plates")).not.toBeNull();
+  });
+});
+
+describe("firstRunDismissed", () => {
+  it("defaults to false, so a fresh install is offered the card", () => {
+    expect(getFirstRunDismissed()).toBe(false);
+  });
+
+  it("stays dismissed across a reload of the envelope", () => {
+    dismissFirstRun();
+    expect(getFirstRunDismissed()).toBe(true);
+    reloadSettings();
+    expect(getFirstRunDismissed()).toBe(true);
+  });
+
+  it("needs no migration: an existing v2 envelope reads the default", () => {
+    // The key is ADDITIVE. Someone mid-upgrade has an envelope written before
+    // it existed, and it must parse as "not dismissed" rather than resetting
+    // anything around it — which is the whole reason ENVELOPE_VERSION did not
+    // move for this.
+    localStorage.setItem(
+      ENVELOPE,
+      JSON.stringify({ v: 2, values: { defaultRest: 90 } }),
+    );
+    reloadSettings();
+    expect(getFirstRunDismissed()).toBe(false);
+    expect(getDefaultRestSeconds()).toBe(90);
+  });
+
+  it("falls back to the default for a non-boolean", () => {
+    localStorage.setItem(
+      ENVELOPE,
+      JSON.stringify({ v: 2, values: { firstRunDismissed: "yes" } }),
+    );
+    reloadSettings();
+    expect(getFirstRunDismissed()).toBe(false);
+  });
+
+  it("comes back after a full settings reset", () => {
+    dismissFirstRun();
+    resetAllSettings();
+    expect(getFirstRunDismissed()).toBe(false);
   });
 });
 

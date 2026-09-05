@@ -415,6 +415,29 @@ const SETTINGS = {
     },
   }),
 
+  /**
+   * Whether the first-run card on an empty Today has been put away.
+   *
+   * A fact about the app's chrome rather than about the gym, so it sits with
+   * the bug button's position in `display`, and hidden for the same reason:
+   * the card dismisses itself and there is no sheet row for it. "Reset all
+   * settings" brings it back, which is the honest way in.
+   *
+   * NO MIGRATION IS NEEDED HERE and none should be added. An absent key parses
+   * to null and falls back to `defaults()`, so every install that predates this
+   * entry reads `false` — and for anyone who already has a program that is a
+   * card which never renders anyway. Migrations exist for values that CHANGE
+   * SHAPE; a new key with a default is the additive path, and bumping
+   * ENVELOPE_VERSION for one would rewrite everybody's envelope to say nothing.
+   */
+  firstRunDismissed: def<boolean>({
+    group: "display",
+    label: "First-run card dismissed",
+    control: { kind: "hidden" },
+    defaults: () => false,
+    parse: (raw) => (typeof raw === "boolean" ? raw : null),
+  }),
+
   weekStartsOn: def<number>({
     group: "display",
     label: "Week starts on",
@@ -1023,4 +1046,23 @@ export function setExerciseLoadEntry(
 /** 0 = Sunday … 6 = Saturday. Read this in format.ts's getWeekDates. */
 export function getWeekStartsOn(): number {
   return getSetting("weekStartsOn");
+}
+
+// ---- first run -------------------------------------------------------------
+
+/**
+ * Whether the one-time card on an empty Today has been put away.
+ *
+ * Named rather than left to `getSetting("firstRunDismissed")` at the call
+ * site so the pair below reads as one small API: the screen asks a question
+ * and states a fact, and never has to know the key's spelling.
+ */
+export function getFirstRunDismissed(): boolean {
+  return getSetting("firstRunDismissed");
+}
+
+/** One-way on purpose: nothing in the app un-dismisses it except a full
+ *  settings reset. */
+export function dismissFirstRun(): void {
+  setSetting("firstRunDismissed", true);
 }

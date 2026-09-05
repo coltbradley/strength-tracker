@@ -57,7 +57,8 @@ import {
   workoutName,
 } from "../lib/format";
 import { useUnit } from "../hooks/useUnit";
-import { useWeekStartsOn } from "../hooks/useSettings";
+import { useSetting, useWeekStartsOn } from "../hooks/useSettings";
+import { dismissFirstRun, setUnit } from "../lib/settings";
 import type {
   ActiveSession,
   PlannedWorkoutRow,
@@ -190,6 +191,32 @@ export function canDoWorkoutNow(state: WorkoutState): boolean {
   return state === "UPCOMING" || state === "MISSED";
 }
 
+/**
+ * Whether the first-run card belongs on screen.
+ *
+ * Three conditions and each one is load-bearing, which is why this is a named
+ * predicate rather than a `&&` chain in the JSX:
+ *
+ *  - LOADED. Every branch of this screen's empty state is a claim about the
+ *    data and must wait for it. Rendering "here is how to get started" over a
+ *    plan that is still arriving is the same bug as the empty state itself.
+ *  - NO PROGRAM. The card is the answer to a blank screen. Once there is a
+ *    program the person has already got past the thing it explains, and it
+ *    would be sitting on top of the week they came here to read.
+ *  - NOT DISMISSED. Device-local, in the settings registry, so it stays gone.
+ *
+ * Deliberately NOT keyed on "has this person ever logged a set": someone who
+ * finished a program and has none right now is back at the same blank screen,
+ * and the coach is still the fastest way off it.
+ */
+export function showFirstRun(a: {
+  loaded: boolean;
+  hasProgram: boolean;
+  dismissed: boolean;
+}): boolean {
+  return a.loaded && !a.hasProgram && !a.dismissed;
+}
+
 export function weekPageDate(selected: string, page: number): string {
   return addDays(selected, (page - 1) * 7);
 }
@@ -242,6 +269,7 @@ export function Today() {
   // false until we know whether a session is already open (locally or on the
   // server), so no Start button is live while that is still an open question
   const [startGateOpen, setStartGateOpen] = useState(false);
+  const firstRunDismissed = useSetting("firstRunDismissed");
 
   /**
    * Follow the clock — unless the person went somewhere on purpose.
@@ -268,6 +296,11 @@ export function Today() {
 
   // most recent confirmed program drives the week
   const program = list?.programs[0] ?? null;
+  const firstRun = showFirstRun({
+    loaded: list !== null,
+    hasProgram: program !== null,
+    dismissed: firstRunDismissed,
+  });
   const workouts = useMemo(
     () =>
       program
@@ -1320,6 +1353,72 @@ export function Today() {
       {!list && !loadError && <p className="muted">Loading…</p>}
       {list && !program && (
         <>
+          {/* The first minute used to be a dead end: "No confirmed programs
+              yet" and two buttons that both ask the person to build a plan by
+              hand, while the one thing that can write it FOR them — the coach,
+              behind a floating button they have no reason to press — went
+              unmentioned. The app's second real user described her training to
+              the coach and it wrote her days; she found that on her own.
+
+              The unit sits here for the same reason. It defaults to kg and she
+              trains in lb, so every number in the app was wrong until she
+              found Settings — and by then some of them were logged. Asking
+              once, before anything is logged, is cheaper than any conversion
+              afterwards. */}
+          {firstRun && (
+            <section className="first-run">
+              <div className="first-run-head">
+                <span className="field-label">START HERE</span>
+                <button
+                  type="button"
+                  className="btn btn-ghost first-run-dismiss"
+                  onClick={dismissFirstRun}
+                >
+                  Dismiss
+                </button>
+              </div>
+
+              <div className="first-run-row">
+                <span className="first-run-q">
+                  Do you train in kilos or pounds?
+                </span>
+                {/* setUnit, not setSetting: switching display unit also remaps
+                    bar selections onto the other catalogue. */}
+                <div className="seg seg-types">
+                  <button
+                    type="button"
+                    className={`seg-btn ${unit === "kg" ? "seg-on" : ""}`}
+                    aria-pressed={unit === "kg"}
+                    onClick={() => setUnit("kg")}
+                  >
+                    kg
+                  </button>
+                  <button
+                    type="button"
+                    className={`seg-btn ${unit === "lb" ? "seg-on" : ""}`}
+                    aria-pressed={unit === "lb"}
+                    onClick={() => setUnit("lb")}
+                  >
+                    lb
+                  </button>
+                </div>
+              </div>
+              <div className="microcopy">
+                Weights are stored in kilos either way. This changes what you
+                read and type, and Settings can change it back.
+              </div>
+
+              <p className="first-run-body">
+                You don’t have to build a plan by hand. Tap the speech-bubble
+                button floating over the app, describe how you train or paste in
+                what your coach wrote, and it will write the plan for you.
+              </p>
+              <div className="microcopy">
+                Those conversations are saved, and whoever runs this deployment
+                can read them.
+              </div>
+            </section>
+          )}
           <p className="muted">No confirmed programs yet.</p>
           {/* With no program there was previously NO planning affordance
               anywhere in the app — the whole screen was "Start empty
