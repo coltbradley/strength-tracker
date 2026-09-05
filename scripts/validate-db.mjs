@@ -1346,5 +1346,210 @@ await check("every public function pins search_path", async () => {
   assertEq(r.rows.map((x) => x.proname), [], "functions without search_path");
 });
 
+// --- A · push alerts ---------------------------------------------------------
+// The three tables behind "alert me when the app is closed" (20260905050000).
+// A subscription is a device's address and must be private to its owner; the
+// VAPID key pair must be unreadable by ANY client; an alert is written only by
+// the function and readable by the person it belongs to.
+console.log("\npush alerts (rest alert while the app is closed):");
+await db.exec("reset role;");
+
+// OTHER was deleted above, so this section stands up its own second person.
+const PUSH_A = "00000000-0000-4000-8000-00000000000a";
+const PUSH_B = "00000000-0000-4000-8000-00000000000b";
+await db.exec(`
+  insert into auth.users (id, email) values
+    ('${PUSH_A}', 'push-a@example.test'), ('${PUSH_B}', 'push-b@example.test')
+  on conflict do nothing;
+`);
+// 65-byte uncompressed P-256 point and 16-byte auth secret, base64url: the
+// shapes a real browser hands back from PushSubscription.getKey().
+const P256DH = "B" + "A".repeat(86);
+const AUTH16 = "A".repeat(22);
+
+await check("push_subscriptions: owner can subscribe, and sees only their own", async () => {
+  await asUser(
+    PUSH_A,
+    `insert into push_subscriptions (endpoint, p256dh, auth, user_agent)
+     values ('https://push.example.test/a', '${P256DH}', '${AUTH16}', 'ua')`,
+  );
+  await db.exec(
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/b', '${P256DH}', '${AUTH16}')`,
+  );
+  const a = await asUser(PUSH_A, `select endpoint from push_subscriptions order by endpoint`);
+  assertEq(a.rows.map((r) => r.endpoint), ["https://push.example.test/a"], "A sees only A");
+  const b = await asUser(PUSH_B, `select count(*)::int as n from push_subscriptions`);
+  assertEq(b.rows[0].n, 1, "B sees only B");
+});
+
+await check("push_subscriptions: auth.uid() stamps the owner; naming someone else is refused", async () => {
+  const r = await db.query(
+    `select user_id from push_subscriptions where endpoint = 'https://push.example.test/a'`,
+  );
+  assertEq(r.rows[0].user_id, PUSH_A, "owner stamped by default");
+  let rejected = false;
+  try {
+    await asUser(
+      PUSH_A,
+      `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+       values ('${PUSH_B}', 'https://push.example.test/forged', '${P256DH}', '${AUTH16}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("subscribed a device on someone else's behalf");
+});
+
+await check("push_subscriptions: owner can revoke their own, never another's, and nobody deletes", async () => {
+  const mine = await asUser(
+    PUSH_A,
+    `update push_subscriptions set revoked_at = now()
+     where endpoint = 'https://push.example.test/a' returning id`,
+  );
+  assertEq(mine.rows.length, 1, "own row revoked");
+  const theirs = await asUser(
+    PUSH_A,
+    `update push_subscriptions set revoked_at = now()
+     where endpoint = 'https://push.example.test/b' returning id`,
+  );
+  assertEq(theirs.rows.length, 0, "another user's row untouched");
+  const del = await asUser(PUSH_A, `delete from push_subscriptions returning id`);
+  assertEq(del.rows.length, 0, "no delete policy");
+  const pol = await db.query(
+    `select count(*)::int as n from pg_policies where tablename = 'push_subscriptions' and cmd = 'DELETE'`,
+  );
+  assertEq(pol.rows[0].n, 0, "and none exists");
+});
+
+await check("push_subscriptions: endpoint is unique and the key shapes are pinned", async () => {
+  for (const bad of [
+    // duplicate endpoint
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/b', '${P256DH}', '${AUTH16}')`,
+    // http endpoint
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'http://push.example.test/plain', '${P256DH}', '${AUTH16}')`,
+    // wrong key lengths
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/short', 'abc', '${AUTH16}')`,
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/short2', '${P256DH}', 'abc')`,
+    // standard base64 padding is not base64url
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/padded', '${P256DH}', '${"A".repeat(21)}=')`,
+  ]) {
+    let rejected = false;
+    try {
+      await db.exec(bad);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error(`accepted: ${bad}`);
+  }
+});
+
+await check("push_config: RLS on, no policies, unreadable and unwritable as authenticated", async () => {
+  // the service role (here: superuser) writes the key pair
+  await db.exec(
+    `insert into push_config (id, vapid_public_key, vapid_private_jwk)
+     values (1, 'B${"A".repeat(86)}', '{"kty":"EC","crv":"P-256"}')`,
+  );
+  const rls = await db.query(
+    `select relrowsecurity from pg_class where relname = 'push_config'`,
+  );
+  assertEq(rls.rows[0].relrowsecurity, true, "row security enabled");
+  const pol = await db.query(
+    `select count(*)::int as n from pg_policies where tablename = 'push_config'`,
+  );
+  assertEq(pol.rows[0].n, 0, "no policies at all — see docs/security.md");
+  const seen = await asUser(PUSH_A, `select count(*)::int as n from push_config`);
+  assertEq(seen.rows[0].n, 0, "an authenticated user reads nothing");
+  let rejected = false;
+  try {
+    await asUser(
+      PUSH_A,
+      `insert into push_config (id, vapid_public_key, vapid_private_jwk)
+       values (2, 'x', '{}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("an authenticated user wrote push_config");
+});
+
+await check("push_config: a single row, and only row 1", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into push_config (id, vapid_public_key, vapid_private_jwk) values (2, 'x', '{}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("a second key pair was accepted");
+});
+
+await check("rest_alerts: the function writes, the owner reads, nobody else does either", async () => {
+  await db.exec(
+    `insert into rest_alerts (user_id, fire_at, label)
+     values ('${PUSH_A}', now() + interval '90 seconds', 'Barbell Row set 3')`,
+  );
+  const mine = await asUser(PUSH_A, `select label from rest_alerts`);
+  assertEq(mine.rows.map((r) => r.label), ["Barbell Row set 3"], "owner reads own");
+  const theirs = await asUser(PUSH_B, `select count(*)::int as n from rest_alerts`);
+  assertEq(theirs.rows[0].n, 0, "another user sees nothing");
+  for (const sql of [
+    `insert into rest_alerts (user_id, fire_at, label) values ('${PUSH_A}', now(), 'mine')`,
+    `update rest_alerts set cancelled_at = now() returning id`,
+    `delete from rest_alerts returning id`,
+  ]) {
+    let wrote = false;
+    try {
+      const r = await asUser(PUSH_A, sql);
+      wrote = (r.rows?.length ?? 0) > 0;
+    } catch {
+      // refused outright — also fine
+    }
+    if (wrote) throw new Error(`a client wrote rest_alerts: ${sql}`);
+  }
+});
+
+await check("rest_alerts: the label is one printable line, and the open-alert index exists", async () => {
+  for (const bad of ["", "x".repeat(121), "two\nlines", "tab\there"]) {
+    let rejected = false;
+    try {
+      await db.query(
+        `insert into rest_alerts (user_id, fire_at, label) values ('${PUSH_A}', now(), $1)`,
+        [bad],
+      );
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error(`accepted label ${JSON.stringify(bad)}`);
+  }
+  const idx = await db.query(
+    `select indexdef from pg_indexes where indexname = 'idx_rest_alerts_open'`,
+  );
+  assert(idx.rows.length === 1, "idx_rest_alerts_open exists");
+  assert(
+    /WHERE .*sent_at IS NULL.*cancelled_at IS NULL/i.test(idx.rows[0].indexdef),
+    `partial on open alerts: ${idx.rows[0].indexdef}`,
+  );
+});
+
+await check("deleting a user takes their subscriptions and alerts with them", async () => {
+  await db.exec(`delete from auth.users where id = '${PUSH_A}'`);
+  const subs = await db.query(
+    `select count(*)::int as n from push_subscriptions where user_id = '${PUSH_A}'`,
+  );
+  const alerts = await db.query(
+    `select count(*)::int as n from rest_alerts where user_id = '${PUSH_A}'`,
+  );
+  assertEq([subs.rows[0].n, alerts.rows[0].n], [0, 0], "cascaded");
+  const cfg = await db.query(`select count(*)::int as n from push_config`);
+  assertEq(cfg.rows[0].n, 1, "the deployment key pair is nobody's and survives");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
