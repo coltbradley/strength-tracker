@@ -39,6 +39,7 @@ import {
 } from "../tools/get_program.ts";
 import { registerGetRecentSessions } from "../tools/get_recent_sessions.ts";
 import { registerGetVolume } from "../tools/get_volume.ts";
+import { registerGetWeekSummary } from "../tools/get_week_summary.ts";
 import { registerMemory } from "../tools/memory.ts";
 import { registerManageExercises } from "../tools/manage_exercises.ts";
 import { registerResolveExercises } from "../tools/resolve_exercises.ts";
@@ -62,6 +63,7 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerGetRecentSessions(server, db, ctx);
   registerGetGoalProgress(server, db, ctx);
   registerGetVolume(server, db, ctx);
+  registerGetWeekSummary(server, db, ctx);
   registerMemory(server, db, ctx);
   registerListPrograms(server, db, ctx);
   // Write tools. NEVER add tools that write sessions or sets: those tables

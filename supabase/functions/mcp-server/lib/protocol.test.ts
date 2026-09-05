@@ -75,6 +75,10 @@ Deno.test("tools/list advertises every tool with a usable schema", async () => {
     "get_lift_history",
     "get_recent_sessions",
     "get_goal_progress",
+    // The week as one row. It exists so "how was last week" stops being dozens
+    // of set rows added up in a model's head, which was slow and gave a
+    // slightly different answer every time it was asked.
+    "get_week_summary",
     "get_program",
     // The index that makes get_program's program_id usable. Without it the
     // model can only ever read the NEWEST program, which stopped being the
