@@ -10,6 +10,7 @@ additive — nothing destroys data.
 node scripts/validate-db.mjs                      # migrations + views + RLS in PGlite
 node scripts/check-selects.mjs                    # every SELECTed column exists
 cd supabase/functions/mcp-server && deno check index.ts && cd -
+cd supabase/functions/coach && deno check index.ts && cd -
 cd pwa && npm run build && npm test -- --run && cd -
 ```
 
@@ -53,6 +54,32 @@ supabase functions deploy mcp-server --no-verify-jwt
 `--no-verify-jwt` is required every deploy: the function does its own bearer
 auth and the gateway must not demand a Supabase JWT.
 
+## Coach changed (supabase/functions/coach/)
+
+```bash
+supabase functions deploy coach
+```
+
+No `--no-verify-jwt` here, and that asymmetry is the point: the coach
+authenticates the caller with their Supabase session, so the gateway SHOULD
+demand a JWT. Only `mcp-server` opts out, because it does its own bearer check
+for a client that has no session.
+
+Deploy it after `mcp-server` whenever a round changed both. The coach reaches
+the MCP server over the network like any other client, so a coach that knows
+about a tool the deployed server does not have gets a tool-not-found mid-turn.
+The other order is merely a tool nobody calls yet.
+
+A change to the SYSTEM PROMPT (`prompt.ts`) is a deploy too. It is bundled
+into the function, not read from anywhere at runtime, so editing it and
+pushing to main changes nothing a lifter talks to.
+
+If the round changed `COACH_ALLOWED_USERS`, `COACH_LOG_CONTENT`, `SENTRY_DSN`
+or the API key, set the secret first and then deploy — secrets are read at
+boot, so a running function keeps the old value until it is replaced. Setting
+the allowlist has no append: it is the whole list every time
+([setup.md](setup.md#who-can-sign-up-and-who-gets-the-coach)).
+
 ## PWA changed (pwa/)
 
 Nothing to run. Push to main → the `deploy` GitHub Action publishes to
@@ -92,7 +119,8 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
 
 - A commit is not a deploy, and the two halves go out separately. The PWA
   ships from a Pages build on push; a migration needs `supabase db push` and
-  an edge function needs `supabase functions deploy`, both by hand. Shipping
+  each edge function needs its own `supabase functions deploy` — `mcp-server`
+  and `coach` are two deploys, not one, and CI performs neither. Shipping
   PWA code that writes a column whose migration has not been pushed yet fails
   every write until someone runs it — that has happened once already, with
   `prescriptions.set_type`. Push the migration FIRST, then the code that
