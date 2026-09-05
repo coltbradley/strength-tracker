@@ -50,20 +50,29 @@ export function rxLoadKg(rx: ResolvedPrescriptionRow): number | null {
  * target line — while the stepper directly beneath showed 30, and History's
  * own formatter showed 30/side. Three surfaces, two answers, and the wrong one
  * is a plausible instruction to pick up double.
+ *
+ * A WARMUP bracket says so: "1×12 @ 10 kg warmup · 3×8 @ 20 kg". The column
+ * has existed since August and nothing rendered it, so a coach's warmup and
+ * their first working set looked like the same instruction twice at two
+ * different weights — and the target read as four sets of work when three
+ * were asked for. An absent set_type is 'working' and stays unmarked, which
+ * is every row written before the column existed. `backoff` is unmarked too:
+ * it is work, and the app no longer offers it.
  */
 export function formatRxTarget(
   rx: ResolvedPrescriptionRow,
   unit: Unit,
 ): string {
   const base = `${rx.sets}×${formatRepRange(rx.reps_min, rx.reps_max)}`;
+  const tail = rx.set_type === "warmup" ? " warmup" : "";
   const load = rxLoadKg(rx);
   if (load !== null) {
     return rx.load_entry === "per_side"
-      ? `${base} @ ${toDisplay(load / 2, unit)} ${unit}/side`
-      : `${base} @ ${toDisplay(load, unit)} ${unit}`;
+      ? `${base} @ ${toDisplay(load / 2, unit)} ${unit}/side${tail}`
+      : `${base} @ ${toDisplay(load, unit)} ${unit}${tail}`;
   }
-  if (rx.load_pct_tm !== null) return `${base} @ ${rx.load_pct_tm}% TM`;
-  return base;
+  if (rx.load_pct_tm !== null) return `${base} @ ${rx.load_pct_tm}% TM${tail}`;
+  return `${base}${tail}`;
 }
 
 /**

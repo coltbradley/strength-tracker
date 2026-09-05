@@ -60,7 +60,13 @@ import {
   isLocalBracket,
   setsForEntry as setsForEntryOf,
   supersetInfo as supersetInfoOf,
-  totalSets,
+  entryMet,
+  progressSets,
+  supersetPartner as supersetPartnerOf,
+  targetSets,
+  warmupSets,
+  workingSets,
+  type BracketKind,
   type ExerciseEntry,
   type ExtraExercise,
 } from "../lib/entries";
@@ -428,21 +434,39 @@ export function Session() {
     [sets, rx, knownRxIds],
   );
 
-  /** working sets logged against an entry — the number that answers
-   *  "am I done with this exercise" (warmups don't count toward the plan) */
+  /** Working sets logged against an entry — the number that answers "am I
+   *  done with this exercise". Everything that is not a WARMUP counts,
+   *  which is the same line `workingSets` draws over the brackets: legacy
+   *  `backoff` rows are work you were asked to do, and counting them on one
+   *  side of that comparison but not the other is how a target becomes
+   *  unreachable. */
   const workingCount = useCallback(
     (entry: ExerciseEntry) =>
-      setsForEntry(entry).filter((s) => s.set_type === "working").length,
+      setsForEntry(entry).filter((s) => s.set_type !== "warmup").length,
+    [setsForEntry],
+  );
+
+  /** warmup sets logged against an entry. Counted SEPARATELY, against the
+   *  entry's warmup brackets: the coach's "1×12 @ 10 warmup" is a thing to
+   *  finish, not a set of the 3×8 that follows it. */
+  const warmupCount = useCallback(
+    (entry: ExerciseEntry) =>
+      setsForEntry(entry).filter((s) => s.set_type === "warmup").length,
+    [setsForEntry],
+  );
+
+  /** How far through its plan an entry is, and what it is measured against.
+   *  Both come from lib/entries so the target and the progress can never be
+   *  counted by two different rules — see `targetSets`. */
+  const entryProgress = useCallback(
+    (e: ExerciseEntry) => progressSets(e, setsForEntry(e)),
     [setsForEntry],
   );
 
   const entryDone = useCallback(
     (e: ExerciseEntry): boolean =>
-      skips.has(e.key) ||
-      (e.brackets.length > 0
-        ? workingCount(e) >= totalSets(e)
-        : setsForEntry(e).length > 0),
-    [skips, workingCount, setsForEntry],
+      skips.has(e.key) || entryMet(e, setsForEntry(e)),
+    [skips, setsForEntry],
   );
   const doneEntries = entries.filter(entryDone).length;
 
@@ -511,6 +535,21 @@ export function Session() {
     return entries.slice(idx + 1).find((e) => !entryDone(e)) ?? null;
   }, [openEntry, entries, entryDone]);
 
+  // Mid-superset the round, not the list, is what comes next: after A1 you
+  // do A2, and `nextEntry` above never helps because it only appears once
+  // the OPEN entry is finished, which mid-round it never is. So every log in
+  // a superset offered nothing, and the lifter scrolled back up and tapped
+  // the partner by hand — every round, of every superset, of every session.
+  const partnerEntry = useMemo(
+    () => supersetPartnerOf(entries, openKey, entryDone),
+    [entries, openKey, entryDone],
+  );
+
+  // The partner leads while the round is unfinished; once it is, the
+  // ordinary next-exercise hint takes over. Exactly one destination, so the
+  // secondary button never has to be read twice.
+  const advanceTo = partnerEntry ?? nextEntry;
+
   const equipment = openEntry
     ? (equipMap[openEntry.exercise_id] ?? null)
     : null;
@@ -542,13 +581,44 @@ export function Session() {
 
   // ---- prefill on entry open / bracket advance -----------------------------
 
-  // the bracket the NEXT working set falls into; walking into a new bracket
-  // re-prefills (its rep range, its load if set) mid-exercise
+  // Which run the set being staged belongs to. The toggle is the lifter's
+  // statement of intent — tapping WARMUP means this set is a warmup — and it
+  // decides which brackets are walked and therefore which target, load and
+  // rep range are shown.
+  const stagedKind: BracketKind = setType === "warmup" ? "warmup" : "working";
+
+  /** The kind the NEXT set should be, from what has been LOGGED alone: a
+   *  prescribed warmup that is still outstanding, otherwise working. Free of
+   *  the toggle on purpose, so it can decide what the toggle starts at. */
+  const suggestedKind = useCallback(
+    (entry: ExerciseEntry): BracketKind =>
+      warmupCount(entry) < warmupSets(entry) ? "warmup" : "working",
+    [warmupCount],
+  );
+
+  const countFor = useCallback(
+    (entry: ExerciseEntry, kind: BracketKind) =>
+      kind === "warmup" ? warmupCount(entry) : workingCount(entry),
+    [warmupCount, workingCount],
+  );
+
+  // the bracket the NEXT set of the staged kind falls into; walking into a
+  // new bracket re-prefills (its rep range, its load if set) mid-exercise
   const currentBracket = openEntry
-    ? bracketFor(openEntry, workingCount(openEntry))
+    ? bracketFor(openEntry, countFor(openEntry, stagedKind), stagedKind)
     : null;
+  // The bracket a freshly opened exercise should start on, which is a
+  // question about the PLAN and not about whatever the toggle was left on
+  // two exercises ago.
+  const openingKind = openEntry ? suggestedKind(openEntry) : "working";
+  const openingBracket = openEntry
+    ? bracketFor(openEntry, countFor(openEntry, openingKind), openingKind)
+    : null;
+  // The kind is part of the key: toggling WARMUP on a day whose plan has no
+  // warmup bracket lands on the same bracket, and the lifter should still
+  // get that bracket's numbers back rather than a stale staged load.
   const prefillKey = openEntry
-    ? `${openEntry.key}:${currentBracket?.id ?? "free"}`
+    ? `${openEntry.key}:${currentBracket?.id ?? "free"}:${stagedKind}`
     : null;
 
   // ---- per-side convention -------------------------------------------------
@@ -587,25 +657,40 @@ export function Session() {
   );
 
   const prefilledFor = useRef<string | null>(null);
+  const openedFor = useRef<string | null>(null);
   useEffect(() => {
     // wait for the sets merge: a mid-workout reload otherwise prefills from
     // the wrong bracket and can clobber staged values while a sheet is open
     if (!setsLoaded || !openEntry || prefillKey === null) return;
-    if (prefilledFor.current === prefillKey) return;
-    prefilledFor.current = prefillKey;
+    // Opening an exercise is the one moment the TYPE is decided for you: the
+    // plan's outstanding warmup, if it has one. This used to be a flat
+    // `setSetType("working")` on every prefill, and logSet reset to working
+    // after every log, so a prescribed warmup could only be logged by
+    // remembering to tap WARMUP for each one — and tapping it then left the
+    // counter stuck, because the same set was counted against the working
+    // target. Half a wired feature is worse than none: the honest way to
+    // finish the day was to log the warmup as working, at the warmup weight.
+    const fresh = openedFor.current !== openEntry.key;
+    const bracket = fresh ? openingBracket : currentBracket;
+    const key = fresh
+      ? `${openEntry.key}:${bracket?.id ?? "free"}:${openingKind}`
+      : prefillKey;
+    if (!fresh && prefilledFor.current === key) return;
+    openedFor.current = openEntry.key;
+    prefilledFor.current = key;
     const logged = setsForExercise(openEntry.exercise_id);
     const lastThis = logged[logged.length - 1];
     const p = prefillSet({
-      prescription: currentBracket
+      prescription: bracket
         ? {
-            resolved_load_kg: currentBracket.resolved_load_kg,
+            resolved_load_kg: bracket.resolved_load_kg,
             // plate_load_kg rounds the TOTAL to 2.5 kg, which is the wrong
             // granularity for a pair (2.5 kg per hand is a 5 kg step), so a
             // per-side movement prefills from the unrounded resolved load —
             // see the migration header.
-            plate_load_kg: perSide ? null : currentBracket.plate_load_kg,
-            reps_min: currentBracket.reps_min,
-            reps_max: currentBracket.reps_max,
+            plate_load_kg: perSide ? null : bracket.plate_load_kg,
+            reps_min: bracket.reps_min,
+            reps_max: bracket.reps_max,
           }
         : null,
       lastThisSession: lastThis
@@ -616,7 +701,10 @@ export function Session() {
     // every source above is a TOTAL; the steppers hold what gets typed
     setEntryKg(Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100);
     setReps(p.reps);
-    setSetType("working");
+    // Only on a fresh open. After that the toggle belongs to the lifter (and
+    // to logSet, which advances it as the plan's warmups are used up):
+    // writing it here on every bracket change would fight a deliberate tap.
+    if (fresh) setSetType(openingKind);
     // `loadEntry`/`perSide` are deliberately NOT dependencies: flipping the
     // convention mid-entry must not re-prefill over a staged value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -625,6 +713,8 @@ export function Session() {
     openEntry,
     prefillKey,
     currentBracket,
+    openingBracket,
+    openingKind,
     setsForExercise,
     lastActuals,
   ]);
@@ -698,23 +788,44 @@ export function Session() {
       .enqueue({ kind: "insert", table: "sets", payload: set })
       .catch((e: unknown) => reportError(e, "log set"));
 
+    // Done-ness read from the list that now INCLUDES this set: `sets` state
+    // is a render behind, and both decisions below are about the workout as
+    // it stands after the tap.
+    const doneAfter = (e: ExerciseEntry): boolean =>
+      // logging on a skipped exercise un-skips it (above), so the open entry
+      // is never treated as skipped here
+      (skips.has(e.key) && e.key !== openEntry.key) ||
+      entryMet(e, setsForEntryOf(e, next, rx, knownRxIds));
+    // Mid-superset the rest strip is a countdown to nothing: the next thing
+    // to do is the partner, not a wait. Only the STRIP is held — the clock
+    // below always starts, because `rest_seconds_actual` is data and
+    // append-only, so a rest not measured now can never be recorded later.
+    const roundOpen = supersetPartnerOf(entries, openEntry.key, doneAfter);
+
     // The clock always starts MEASURING (rest_seconds_actual is data, and
     // append-only means it can never be added later); auto-start governs only
     // whether the strip appears.
     const now = Date.now();
     restRef.current = { startedAt: now };
     const forLabel = `${openEntry.name} set ${nextIndex + 1}`;
-    if (autoStartRest)
+    const showStrip = autoStartRest && roundOpen === null;
+    if (showStrip)
       setRest({ startedAt: now, targetSeconds: restSeconds, forLabel });
     // Mirror the clock HERE, whether or not a strip appeared. With auto-start
     // off nothing about `rest` changes, so nothing else would ever write the
     // new startedAt — and no strip also means there is none to restore, which
     // is the null target.
-    mirrorRest(
-      autoStartRest ? restSeconds : null,
-      autoStartRest ? forLabel : null,
-    );
-    setSetType("working");
+    mirrorRest(showStrip ? restSeconds : null, showStrip ? forLabel : null);
+    // What the NEXT set should be, from the plan rather than from a reset:
+    // this was an unconditional "working", so a coach's second prescribed
+    // warmup arrived pre-set to working and got logged as one.
+    const warmupsLogged = setsForEntryOf(
+      openEntry,
+      next,
+      rx,
+      knownRxIds,
+    ).filter((s) => s.set_type === "warmup").length;
+    setSetType(warmupsLogged < warmupSets(openEntry) ? "warmup" : "working");
   };
 
   const openSheet = (kind: "search" | "plates") => {
@@ -1051,14 +1162,31 @@ export function Session() {
     ? `${toDisplay(totalLoadKg, unit)} ${unit} total`
     : formatStoredTwin(entryKg, unit);
 
-  /** "Last time · 60 kg × 8" — the previous session's working set for this
-   *  movement, in the convention the screen is currently using. Reference
-   *  text: it never competes with the target or the log button. */
+  /**
+   * "Last time · 60 kg × 8, 8, 6" — the previous SESSION's working sets for
+   * this movement, in the convention the screen is currently using.
+   *
+   * The run, not one set. A single "60 kg × 8" is the top of a shape and
+   * says nothing about whether the last set of it was a grind: what a lifter
+   * standing at the rack is deciding is whether to repeat the day or add
+   * weight, and the reps that fell away are the whole of that answer. When
+   * the load moved across the run each set is quoted with its own, because
+   * "60, 65, 70 × 8, 8, 6" would be a puzzle rather than a reminder.
+   *
+   * Reference text: it never competes with the target or the log button.
+   */
   const lastTime = (exerciseId: string): string | null => {
     const a = lastActuals[exerciseId];
     if (!a) return null;
-    const shown = toDisplay(enteredKg(a.load_kg, loadEntry), unit);
-    return `Last time · ${shown} ${unit}${perSide ? "/side" : ""} × ${a.reps}`;
+    const shown = (kg: number) =>
+      `${toDisplay(enteredKg(kg, loadEntry), unit)} ${unit}${perSide ? "/side" : ""}`;
+    // a value cached before runs existed carries only the top set
+    const run = a.run && a.run.length > 0 ? a.run : [a];
+    const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);
+    const body = sameLoad
+      ? `${shown(run[0].load_kg)} × ${run.map((s) => s.reps).join(", ")}`
+      : run.map((s) => `${shown(s.load_kg)} × ${s.reps}`).join(" · ");
+    return `Last time · ${body}`;
   };
 
   /** rest AFTER a given set: next exercise-set's stored value, or live timer */
@@ -1120,21 +1248,30 @@ export function Session() {
   const isTick = (entry: ExerciseEntry | null): boolean =>
     entry?.brackets[0]?.tracking === "done";
 
-  /** "LOG WARMUP SET", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan */
+  /** "LOG WARMUP 1 OF 2", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan.
+   *  Warmups count against the warmups the coach wrote, working sets against
+   *  the working sets — two runs, two targets, never added together. */
   const logLabel = (entry: ExerciseEntry): string => {
     if (!setsLoaded) return "LOADING…";
     if (setsFailed) return "LOG UNAVAILABLE";
     if (isTick(entry)) {
-      const n = workingCount(entry) + 1;
-      const total = totalSets(entry);
+      // a tick has no warmup/working distinction to make; it counts against
+      // whatever its plan actually asked for
+      const n = entryProgress(entry) + 1;
+      const total = targetSets(entry);
       return total > 0 && n <= total ? `DONE ${n} OF ${total}` : "MARK DONE";
     }
-    if (setType === "warmup") return "LOG WARMUP SET";
+    if (setType === "warmup") {
+      const n = warmupCount(entry) + 1;
+      const total = warmupSets(entry);
+      return total > 0 && n <= total
+        ? `LOG WARMUP ${n} OF ${total}`
+        : "LOG WARMUP SET";
+    }
     const n = workingCount(entry) + 1;
     if (entry.brackets.length === 0) return `LOG SET ${n}`;
-    return n > totalSets(entry)
-      ? "LOG EXTRA SET"
-      : `LOG SET ${n} OF ${totalSets(entry)}`;
+    const total = workingSets(entry);
+    return n > total ? "LOG EXTRA SET" : `LOG SET ${n} OF ${total}`;
   };
 
   const req = padRequest();
@@ -1201,10 +1338,10 @@ export function Session() {
 
             const isOpen = entry.key === openKey;
             const prescribed = entry.brackets.length > 0;
-            const done = prescribed
-              ? workingCount(entry)
-              : setsForEntry(entry).length;
-            const total = prescribed ? totalSets(entry) : null;
+            const done = entryProgress(entry);
+            // the plan's WORKING sets: a prescribed warmup has its own count
+            // on the log button and never inflates the day's target
+            const total = prescribed ? targetSets(entry) : null;
             // An unprescribed exercise has no plan to meet, so it never hands
             // the lead over to NEXT — there is always another set you might do.
             const planMet = total !== null && done >= total;
@@ -1223,364 +1360,372 @@ export function Session() {
                     <span className="field-label">MAIN WORK</span>
                   </div>
                 )}
-              <div
-                ref={(el) => {
-                  if (el) itemRefs.current.set(entry.key, el);
-                  else itemRefs.current.delete(entry.key);
-                }}
-                className={`wk-item ${isOpen ? "wk-item-on" : ""}`}
-              >
-                <div className="wk-row">
-                  {superset && (
-                    <span
-                      className={`wk-superset-rail ${superset.first ? "wk-superset-rail-start" : ""} ${superset.last ? "wk-superset-rail-end" : ""}`}
-                    >
-                      <span className="wk-superset-tag">{superset.tag}</span>
-                    </span>
-                  )}
-                  {isOpen ? (
-                    <button
-                      type="button"
-                      className="wk-header-open"
-                      aria-expanded={isOpen}
-                      aria-label={`collapse ${entry.name}`}
-                      onClick={() => toggleOpen(entry.key)}
-                    >
-                      {entry.name}{" "}
-                      <span className="chev" aria-hidden="true">
-                        ▾
-                      </span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="wk-main"
-                      aria-expanded={isOpen}
-                      onClick={() => toggleOpen(entry.key)}
-                    >
+                <div
+                  ref={(el) => {
+                    if (el) itemRefs.current.set(entry.key, el);
+                    else itemRefs.current.delete(entry.key);
+                  }}
+                  className={`wk-item ${isOpen ? "wk-item-on" : ""}`}
+                >
+                  <div className="wk-row">
+                    {superset && (
                       <span
-                        className={`wk-name ${skipped ? "wk-name-skipped" : ""}`}
+                        className={`wk-superset-rail ${superset.first ? "wk-superset-rail-start" : ""} ${superset.last ? "wk-superset-rail-end" : ""}`}
                       >
-                        {entry.name}
+                        <span className="wk-superset-tag">{superset.tag}</span>
                       </span>
-                      <span className="wk-target">
-                        {skipped
-                          ? "SKIPPED"
-                          : prescribed
-                            ? scheme(entry).toUpperCase()
-                            : "NO TARGET · BY FEEL"}
-                      </span>
-                      <span
-                        className={`wk-count ${total !== null && done >= total ? "wk-count-done" : ""}`}
+                    )}
+                    {isOpen ? (
+                      <button
+                        type="button"
+                        className="wk-header-open"
+                        aria-expanded={isOpen}
+                        aria-label={`collapse ${entry.name}`}
+                        onClick={() => toggleOpen(entry.key)}
                       >
-                        {done}
-                        {total !== null ? `/${total}` : ""}
-                      </span>
-                    </button>
-                  )}
-                  {!isOpen && (
-                    /* UNDO ADD, not REMOVE: this only ever drops an extra you
+                        {entry.name}{" "}
+                        <span className="chev" aria-hidden="true">
+                          ▾
+                        </span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="wk-main"
+                        aria-expanded={isOpen}
+                        onClick={() => toggleOpen(entry.key)}
+                      >
+                        <span
+                          className={`wk-name ${skipped ? "wk-name-skipped" : ""}`}
+                        >
+                          {entry.name}
+                        </span>
+                        <span className="wk-target">
+                          {skipped
+                            ? "SKIPPED"
+                            : prescribed
+                              ? scheme(entry).toUpperCase()
+                              : "NO TARGET · BY FEEL"}
+                        </span>
+                        <span
+                          className={`wk-count ${total !== null && done >= total ? "wk-count-done" : ""}`}
+                        >
+                          {done}
+                          {total !== null ? `/${total}` : ""}
+                        </span>
+                      </button>
+                    )}
+                    {!isOpen && (
+                      /* UNDO ADD, not REMOVE: this only ever drops an extra you
                        added this session and have not logged into. Two taps
                        like every destructive action. */
-                    <button
-                      type="button"
-                      className={`drawer-action ${
-                        removable && dropArm === entry.key
-                          ? "drawer-action-armed"
-                          : ""
-                      }`}
-                      onClick={() => {
-                        if (!removable) {
-                          toggleSkip(entry);
-                          return;
-                        }
-                        if (dropArm === entry.key) {
-                          setDropArm(null);
-                          void removeExtra(entry);
-                        } else {
-                          setDropArm(entry.key);
-                        }
-                      }}
-                    >
-                      {removable
-                        ? dropArm === entry.key
-                          ? "UNDO ADD?"
-                          : "UNDO ADD"
-                        : skipped
-                          ? "UNSKIP"
-                          : "SKIP"}
-                    </button>
-                  )}
-                </div>
+                      <button
+                        type="button"
+                        className={`drawer-action ${
+                          removable && dropArm === entry.key
+                            ? "drawer-action-armed"
+                            : ""
+                        }`}
+                        onClick={() => {
+                          if (!removable) {
+                            toggleSkip(entry);
+                            return;
+                          }
+                          if (dropArm === entry.key) {
+                            setDropArm(null);
+                            void removeExtra(entry);
+                          } else {
+                            setDropArm(entry.key);
+                          }
+                        }}
+                      >
+                        {removable
+                          ? dropArm === entry.key
+                            ? "UNDO ADD?"
+                            : "UNDO ADD"
+                          : skipped
+                            ? "UNSKIP"
+                            : "SKIP"}
+                      </button>
+                    )}
+                  </div>
 
-                {isOpen && (
-                  <div className="wk-open">
-                    <span className="rx-context">
-                      {prescribed ? (
-                        <>
-                          TARGET {scheme(entry).toUpperCase()}
-                          {entry.brackets.length > 1 && currentBracket
-                            ? ` · NOW ${formatRepRange(currentBracket.reps_min, currentBracket.reps_max)} REPS`
-                            : ""}
-                          {currentBracket?.rest_seconds != null
-                            ? ` · REST ${formatClock(currentBracket.rest_seconds)}`
-                            : ""}
-                          {entry.brackets.some(rxHasNoTm) ? " · NO TM SET" : ""}
-                        </>
-                      ) : (
-                        `NO TARGET · BY FEEL${equipment ? ` · ${equipment.toUpperCase()}` : ""}`
+                  {isOpen && (
+                    <div className="wk-open">
+                      <span className="rx-context">
+                        {prescribed ? (
+                          <>
+                            TARGET {scheme(entry).toUpperCase()}
+                            {entry.brackets.length > 1 && currentBracket
+                              ? ` · NOW ${formatRepRange(currentBracket.reps_min, currentBracket.reps_max)} REPS`
+                              : ""}
+                            {currentBracket?.rest_seconds != null
+                              ? ` · REST ${formatClock(currentBracket.rest_seconds)}`
+                              : ""}
+                            {entry.brackets.some(rxHasNoTm)
+                              ? " · NO TM SET"
+                              : ""}
+                          </>
+                        ) : (
+                          `NO TARGET · BY FEEL${equipment ? ` · ${equipment.toUpperCase()}` : ""}`
+                        )}
+                      </span>
+
+                      {lastTime(entry.exercise_id) && (
+                        <div className="microcopy">
+                          {lastTime(entry.exercise_id)}
+                        </div>
                       )}
-                    </span>
 
-                    {lastTime(entry.exercise_id) && (
-                      <div className="microcopy">
-                        {lastTime(entry.exercise_id)}
+                      {editing && (
+                        <div className="microcopy correcting-note">
+                          Correcting set {editing.set.set_index + 1} · was{" "}
+                          {toDisplay(
+                            enteredKg(
+                              editing.set.load_kg,
+                              editing.set.load_entry ?? "total",
+                            ),
+                            unit,
+                          )}{" "}
+                          {unit}
+                          {editing.set.load_entry === "per_side"
+                            ? "/side"
+                            : ""}{" "}
+                          × {editing.set.reps}
+                        </div>
+                      )}
+
+                      <div className="seg seg-types">
+                        {SET_TYPES.map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            className={`seg-btn ${setType === t ? "seg-on" : ""}`}
+                            onClick={() => setSetType(t)}
+                          >
+                            {t}
+                          </button>
+                        ))}
                       </div>
-                    )}
 
-                    {editing && (
-                      <div className="microcopy correcting-note">
-                        Correcting set {editing.set.set_index + 1} · was{" "}
-                        {toDisplay(
-                          enteredKg(
-                            editing.set.load_kg,
-                            editing.set.load_entry ?? "total",
-                          ),
-                          unit,
-                        )}{" "}
-                        {unit}
-                        {editing.set.load_entry === "per_side" ? "/side" : ""}{" "}
-                        × {editing.set.reps}
-                      </div>
-                    )}
-
-                    <div className="seg seg-types">
-                      {SET_TYPES.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          className={`seg-btn ${setType === t ? "seg-on" : ""}`}
-                          onClick={() => setSetType(t)}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* A tick has no numbers to set. Showing a reps stepper
+                      {/* A tick has no numbers to set. Showing a reps stepper
                         and a load stepper for a banded glute bridge is the
                         thing that made people stop logging the warmup half of
                         a session at all. */}
-                    {isTick(entry) ? (
-                      <section className="rule-section">
-                        <p className="microcopy">
-                          No numbers for this one — tap below each time you
-                          finish a set.
-                        </p>
-                      </section>
-                    ) : (
-                      <>
+                      {isTick(entry) ? (
                         <section className="rule-section">
-                          <div className="section-head">
-                            <span className="field-label">REPS</span>
-                          </div>
-                          <Stepper
-                            label="reps"
-                            inline
-                            display={String(reps)}
-                            onTapValue={() => openPad("reps")}
-                            value={reps}
-                            min={0}
-                            max={MAX_REPS}
-                            onChange={(v) => setReps(Math.round(v))}
-                            steps={[
-                              { label: "−", delta: -1 },
-                              { label: "+", delta: 1 },
-                            ]}
-                          />
+                          <p className="microcopy">
+                            No numbers for this one — tap below each time you
+                            finish a set.
+                          </p>
                         </section>
+                      ) : (
+                        <>
+                          <section className="rule-section">
+                            <div className="section-head">
+                              <span className="field-label">REPS</span>
+                            </div>
+                            <Stepper
+                              label="reps"
+                              inline
+                              display={String(reps)}
+                              onTapValue={() => openPad("reps")}
+                              value={reps}
+                              min={0}
+                              max={MAX_REPS}
+                              onChange={(v) => setReps(Math.round(v))}
+                              steps={[
+                                { label: "−", delta: -1 },
+                                { label: "+", delta: 1 },
+                              ]}
+                            />
+                          </section>
 
-                        <section className="rule-section">
-                          <div className="section-head">
-                            <span className="field-label">
-                              LOAD · {unit.toUpperCase()}
-                            </span>
-                            {showLoadEntry && (
-                              /* a property of the movement, not a per-set choice:
+                          <section className="rule-section">
+                            <div className="section-head">
+                              <span className="field-label">
+                                LOAD · {unit.toUpperCase()}
+                              </span>
+                              {showLoadEntry && (
+                                /* a property of the movement, not a per-set choice:
                              it only appears where a pair is possible, and it
                              remembers per exercise like the bar does */
-                              <button
-                                type="button"
-                                className="plate-hint"
-                                aria-label={
-                                  perSide
-                                    ? "load is typed per side; switch to total load"
-                                    : "load is typed as the total; switch to per side"
-                                }
-                                onClick={toggleLoadEntry}
-                              >
-                                {perSide ? "PER SIDE ×2" : "TOTAL"}
-                              </button>
-                            )}
-                            {hint !== null && (
-                              <button
-                                type="button"
-                                className="plate-hint"
-                                onClick={() => openSheet("plates")}
-                              >
-                                {hint} ›
-                              </button>
-                            )}
-                          </div>
-                          <Stepper
-                            label="load"
-                            accent
-                            display={String(toDisplay(entryKg, unit))}
-                            subText={loadSub}
-                            onTapValue={() => openPad("load")}
-                            snap
-                            value={entryKg}
-                            min={0}
-                            max={maxEntryKg}
-                            onChange={setEntryKg}
-                            /* labels and deltas both come from the setting, so a
+                                <button
+                                  type="button"
+                                  className="plate-hint"
+                                  aria-label={
+                                    perSide
+                                      ? "load is typed per side; switch to total load"
+                                      : "load is typed as the total; switch to per side"
+                                  }
+                                  onClick={toggleLoadEntry}
+                                >
+                                  {perSide ? "PER SIDE ×2" : "TOTAL"}
+                                </button>
+                              )}
+                              {hint !== null && (
+                                <button
+                                  type="button"
+                                  className="plate-hint"
+                                  onClick={() => openSheet("plates")}
+                                >
+                                  {hint} ›
+                                </button>
+                              )}
+                            </div>
+                            <Stepper
+                              label="load"
+                              accent
+                              display={String(toDisplay(entryKg, unit))}
+                              subText={loadSub}
+                              onTapValue={() => openPad("load")}
+                              snap
+                              value={entryKg}
+                              min={0}
+                              max={maxEntryKg}
+                              onChange={setEntryKg}
+                              /* labels and deltas both come from the setting, so a
                            custom increment can never make the button lie */
-                            steps={loadSteps(entry.exercise_id, unit)}
-                          />
-                        </section>
-                      </>
-                    )}
+                              steps={loadSteps(entry.exercise_id, unit)}
+                            />
+                          </section>
+                        </>
+                      )}
 
-                    {/* Once the plan is met, NEXT leads and extra sets recede.
+                      {/* Once the plan is met, NEXT leads and extra sets recede.
                         Exactly one of these two is primary at any moment: two
                         filled buttons stacked on a phone read as a choice
                         between equals, and mid-set the lifter should never
                         have to work out which one the app meant. */}
-                    <button
-                      type="button"
-                      className={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
-                      disabled={logLocked || !setsLoaded || setsFailed}
-                      onClick={editing ? saveCorrection : logSet}
-                    >
-                      {editing
-                        ? `SAVE SET ${editing.set.set_index + 1}`
-                        : logLabel(entry)}
-                    </button>
-
-                    {setsFailed && (
-                      <p className="microcopy">
-                        This session’s logged sets could not be read from this
-                        device, so a new set would be numbered as if nothing had
-                        been logged. Reload to try again. Nothing already logged
-                        is lost.
-                      </p>
-                    )}
-
-                    {editing && (
                       <button
                         type="button"
-                        className="btn btn-ghost btn-block"
-                        onClick={cancelCorrection}
+                        className={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
+                        disabled={logLocked || !setsLoaded || setsFailed}
+                        onClick={editing ? saveCorrection : logSet}
                       >
-                        Cancel correction
+                        {editing
+                          ? `SAVE SET ${editing.set.set_index + 1}`
+                          : logLabel(entry)}
                       </button>
-                    )}
 
-                    {nextEntry && !editing && (
-                      <button
-                        type="button"
-                        className={`btn ${planMet ? "btn-primary" : "btn-outline-ink"} btn-block`}
-                        onClick={() => setOpenKey(nextEntry.key)}
-                      >
-                        Next · {nextEntry.name}
-                      </button>
-                    )}
+                      {setsFailed && (
+                        <p className="microcopy">
+                          This session’s logged sets could not be read from this
+                          device, so a new set would be numbered as if nothing
+                          had been logged. Reload to try again. Nothing already
+                          logged is lost.
+                        </p>
+                      )}
 
-                    {entrySets.length > 0 && (
-                      <section className="rule-section">
-                        <div className="section-head">
-                          <span className="field-label">LOGGED</span>
-                          <span className="section-meta">
-                            {done}
-                            {total !== null ? ` OF ${total}` : ""}
-                          </span>
-                        </div>
-                        <div className="logged-sets">
-                          {entrySets
-                            .slice()
-                            .sort((a, b) => b.set_index - a.set_index)
-                            .map((s) => (
-                              <div key={s.id} className="logged-set-wrap">
-                                <SetRow
-                                  set={s}
-                                  unit={unit}
-                                  restLabel={restAfter(s)}
-                                  onVoid={() => voidSet(s)}
-                                  voidArmed={voidArm === s.id}
-                                  onArmVoid={() => setVoidArm(s.id)}
-                                  /* a tick has no numbers to correct */
-                                  onEdit={
-                                    isTick(entry)
-                                      ? undefined
-                                      : () => startCorrection(s)
-                                  }
-                                  editing={editing?.set.id === s.id}
-                                />
-                                {noteEditingId === s.id ? (
-                                  <div className="set-note-editor">
-                                    <textarea
-                                      className="input note-input set-note-input"
-                                      rows={2}
-                                      autoFocus
-                                      enterKeyHint="done"
-                                      value={noteDraft}
-                                      onChange={(e) =>
-                                        setNoteDraft(e.target.value)
-                                      }
-                                      /* the keyboard animates in over ~250ms;
+                      {editing && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-block"
+                          onClick={cancelCorrection}
+                        >
+                          Cancel correction
+                        </button>
+                      )}
+
+                      {/* The partner mid-superset, the next exercise once the
+                          round is over. It leads only once this exercise's
+                          own plan is met — the same rule as before, so
+                          exactly one of these two buttons is ever primary. */}
+                      {advanceTo && !editing && (
+                        <button
+                          type="button"
+                          className={`btn ${planMet ? "btn-primary" : "btn-outline-ink"} btn-block`}
+                          onClick={() => setOpenKey(advanceTo.key)}
+                        >
+                          Next · {advanceTo.name}
+                        </button>
+                      )}
+
+                      {entrySets.length > 0 && (
+                        <section className="rule-section">
+                          <div className="section-head">
+                            <span className="field-label">LOGGED</span>
+                            <span className="section-meta">
+                              {done}
+                              {total !== null ? ` OF ${total}` : ""}
+                            </span>
+                          </div>
+                          <div className="logged-sets">
+                            {entrySets
+                              .slice()
+                              .sort((a, b) => b.set_index - a.set_index)
+                              .map((s) => (
+                                <div key={s.id} className="logged-set-wrap">
+                                  <SetRow
+                                    set={s}
+                                    unit={unit}
+                                    restLabel={restAfter(s)}
+                                    onVoid={() => voidSet(s)}
+                                    voidArmed={voidArm === s.id}
+                                    onArmVoid={() => setVoidArm(s.id)}
+                                    /* a tick has no numbers to correct */
+                                    onEdit={
+                                      isTick(entry)
+                                        ? undefined
+                                        : () => startCorrection(s)
+                                    }
+                                    editing={editing?.set.id === s.id}
+                                  />
+                                  {noteEditingId === s.id ? (
+                                    <div className="set-note-editor">
+                                      <textarea
+                                        className="input note-input set-note-input"
+                                        rows={2}
+                                        autoFocus
+                                        enterKeyHint="done"
+                                        value={noteDraft}
+                                        onChange={(e) =>
+                                          setNoteDraft(e.target.value)
+                                        }
+                                        /* the keyboard animates in over ~250ms;
                                          scroll once it has settled so Save and
                                          Cancel land above it */
-                                      onFocus={(e) => {
-                                        const el = e.currentTarget
-                                          .parentElement as HTMLElement | null;
-                                        window.setTimeout(() => {
-                                          el?.scrollIntoView({
-                                            block: "center",
-                                            behavior: prefersReducedMotion()
-                                              ? "auto"
-                                              : "smooth",
-                                          });
-                                        }, 300);
-                                      }}
-                                      placeholder="Note on this set…"
-                                    />
-                                    <div className="set-note-actions">
-                                      <button
-                                        type="button"
-                                        className="btn btn-ghost"
-                                        onClick={() => setNoteEditingId(null)}
-                                      >
-                                        Cancel
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        onClick={() => saveNote(s.id)}
-                                      >
-                                        Save
-                                      </button>
+                                        onFocus={(e) => {
+                                          const el = e.currentTarget
+                                            .parentElement as HTMLElement | null;
+                                          window.setTimeout(() => {
+                                            el?.scrollIntoView({
+                                              block: "center",
+                                              behavior: prefersReducedMotion()
+                                                ? "auto"
+                                                : "smooth",
+                                            });
+                                          }, 300);
+                                        }}
+                                        placeholder="Note on this set…"
+                                      />
+                                      <div className="set-note-actions">
+                                        <button
+                                          type="button"
+                                          className="btn btn-ghost"
+                                          onClick={() => setNoteEditingId(null)}
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="btn btn-secondary"
+                                          onClick={() => saveNote(s.id)}
+                                        >
+                                          Save
+                                        </button>
+                                      </div>
                                     </div>
-                                  </div>
-                                ) : setNotes[s.id] ? (
-                                  <button
-                                    type="button"
-                                    className="set-note-preview"
-                                    onClick={() => openNote(s.id)}
-                                  >
-                                    {setNotes[s.id]}
-                                  </button>
-                                ) : s.id === newestSetId ? (
-                                  /* + NOTE on the NEWEST set only. A set that
+                                  ) : setNotes[s.id] ? (
+                                    <button
+                                      type="button"
+                                      className="set-note-preview"
+                                      onClick={() => openNote(s.id)}
+                                    >
+                                      {setNotes[s.id]}
+                                    </button>
+                                  ) : s.id === newestSetId ? (
+                                    /* + NOTE on the NEWEST set only. A set that
                                      already HAS a note still shows it (the
                                      branch above), and an older one can still
                                      be annotated by tapping its row — but five
@@ -1588,43 +1733,43 @@ export function Session() {
                                      chrome, which roughly doubled the height of
                                      this section for an action almost nobody
                                      takes on a set from twenty minutes ago. */
-                                  <button
-                                    type="button"
-                                    className="set-note-add"
-                                    onClick={() => openNote(s.id)}
-                                  >
-                                    + NOTE
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="set-note-add set-note-add-quiet"
-                                    aria-label={`add a note to set ${s.set_index + 1}`}
-                                    onClick={() => openNote(s.id)}
-                                  >
-                                    +
-                                  </button>
-                                )}
-                              </div>
-                            ))}
-                        </div>
-                        {/* Shown on the FIRST set of a session only. It taught
+                                    <button
+                                      type="button"
+                                      className="set-note-add"
+                                      onClick={() => openNote(s.id)}
+                                    >
+                                      + NOTE
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="set-note-add set-note-add-quiet"
+                                      aria-label={`add a note to set ${s.set_index + 1}`}
+                                      onClick={() => openNote(s.id)}
+                                    >
+                                      +
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                          </div>
+                          {/* Shown on the FIRST set of a session only. It taught
                             something worth knowing once — the set itself is
                             the tap target, ✕ removes — and then repeated
                             itself under every open exercise, in every
                             session, forever. By the third week it was
                             furniture. */}
-                        {entrySets.length === 1 && (
-                          <div className="microcopy">
-                            Wrong number? Tap the set to correct it, or ✕ to
-                            remove it.
-                          </div>
-                        )}
-                      </section>
-                    )}
-                  </div>
-                )}
-              </div>
+                          {entrySets.length === 1 && (
+                            <div className="microcopy">
+                              Wrong number? Tap the set to correct it, or ✕ to
+                              remove it.
+                            </div>
+                          )}
+                        </section>
+                      )}
+                    </div>
+                  )}
+                </div>
               </Fragment>
             );
           })}

@@ -85,6 +85,53 @@ describe("formatRxTarget is the one prescription formatter", () => {
       formatRxTarget(rx({ resolved_load_kg: 100, plate_load_kg: 100 }), "lb"),
     ).toBe("3×5 @ 220.5 lb");
   });
+
+  // The column has existed since August and nothing rendered it, so a
+  // coach's warmup and the working sets under it read as the same
+  // instruction twice at two different weights.
+  it("says which bracket is a warmup", () => {
+    expect(
+      formatRxTarget(
+        rx({
+          sets: 1,
+          reps_min: 12,
+          reps_max: 12,
+          resolved_load_kg: 10,
+          set_type: "warmup",
+        }),
+        "kg",
+      ),
+    ).toBe("1×12 @ 10 kg warmup");
+  });
+
+  it("marks a warmup with no load, and one given as a % of a training max", () => {
+    expect(formatRxTarget(rx({ set_type: "warmup" }), "kg")).toBe("3×5 warmup");
+    expect(
+      formatRxTarget(rx({ load_pct_tm: 50, set_type: "warmup" }), "kg"),
+    ).toBe("3×5 @ 50% TM warmup");
+  });
+
+  it("marks a per-side warmup after the side, not inside it", () => {
+    expect(
+      formatRxTarget(
+        rx({
+          resolved_load_kg: 20,
+          load_entry: "per_side",
+          set_type: "warmup",
+        }),
+        "kg",
+      ),
+    ).toBe("3×5 @ 10 kg/side warmup");
+  });
+
+  it("leaves working sets — and rows written before the column — unmarked", () => {
+    // an absent set_type reads as 'working'; every row cached before the
+    // column existed carries none, and marking those would be a lie
+    expect(formatRxTarget(rx({ set_type: "working" }), "kg")).toBe("3×5");
+    expect(formatRxTarget(rx({}), "kg")).toBe("3×5");
+    // backoff is work, and the app no longer offers it
+    expect(formatRxTarget(rx({ set_type: "backoff" }), "kg")).toBe("3×5");
+  });
 });
 
 // The unit twin under a load field was hand-rolled on three screens. It is

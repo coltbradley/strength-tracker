@@ -982,7 +982,31 @@ export async function getExercises(): Promise<{
 
 // ---- last actuals ----------------------------------------------------------
 
-export type LastActuals = Record<string, { load_kg: number; reps: number }>;
+/** One set as "last time" quotes it back. */
+export interface LastActualSet {
+  load_kg: number;
+  reps: number;
+}
+
+/**
+ * What an exercise was last done with.
+ *
+ * `load_kg`/`reps` are the TOP of the shape below — the most recent
+ * qualifying set — and they are the whole of what prefill reads
+ * (`prefillSet`), so they stay exactly where they were. `run` is the rest of
+ * that same session, because "60 kg × 8" answers a question nobody asked:
+ * what you want on the gym floor is "8, 8, 6", the shape you have to beat.
+ *
+ * `run` is OPTIONAL and may be absent: this record is cached in IndexedDB,
+ * and a value written before the run existed carries only the two numbers.
+ * Readers fall back to the top set rather than rendering nothing.
+ */
+export interface LastActual extends LastActualSet {
+  /** the top set's session, in the order performed, newest last */
+  run?: LastActualSet[];
+}
+
+export type LastActuals = Record<string, LastActual>;
 
 /** One row of the last-actuals scan. */
 export interface ActualsRow {
@@ -999,9 +1023,29 @@ export const ACTUALS_PAGE = 1000;
 /** Safety stop: ~1M sets is far past any human training history. */
 const ACTUALS_MAX_PAGES = 20;
 
+/** How many sets of one exercise "last time" quotes. A working set count
+ *  past this is a drop-set marathon nobody reads back on a phone screen;
+ *  the run keeps the most RECENT six, which are the sets that mattered. */
+export const LAST_RUN_CAP = 6;
+
+/** A run being accumulated: the top set, plus which session it belongs to so
+ *  everything after it can be tested against the same day. */
+interface RunBuild extends LastActualSet {
+  session_id: string;
+  /** newest first while building — the order the pages arrive in */
+  run: LastActualSet[];
+}
+
 /**
- * Fold time-descending pages of live sets into "the latest working set per
- * exercise, falling back to the latest set of any type".
+ * Fold time-descending pages of live sets into "the latest working SESSION
+ * per exercise, falling back to the latest sets of any type".
+ *
+ * The first row seen for an exercise is its top set (the pages are newest
+ * first) and it also fixes the SESSION: every later row from that same
+ * session joins the run, and the first row from an older one is ignored.
+ * That is what makes the answer "8, 8, 6" — one day's work — rather than a
+ * rolling six sets that could straddle two workouts a fortnight apart and
+ * read as a single session that never happened.
  *
  * Paging is keyset (each page asks for rows strictly older than the last row
  * of the previous page), NOT a single capped `limit`. The old single
@@ -1014,18 +1058,28 @@ export async function scanLastActuals(
   fetchPage: (cursor: string | null) => Promise<ActualsRow[]>,
   excludeSessionId?: string,
 ): Promise<LastActuals> {
-  const best: LastActuals = {};
-  const anyType: LastActuals = {};
+  const best: Record<string, RunBuild> = {};
+  const anyType: Record<string, RunBuild> = {};
+  const add = (into: Record<string, RunBuild>, r: ActualsRow): void => {
+    const cur = into[r.exercise_id];
+    const one: LastActualSet = { load_kg: r.load_kg, reps: r.reps };
+    if (cur === undefined) {
+      into[r.exercise_id] = { ...one, session_id: r.session_id, run: [one] };
+      return;
+    }
+    // a row from an EARLIER session is not part of this run
+    if (cur.session_id !== r.session_id || cur.run.length >= LAST_RUN_CAP)
+      return;
+    cur.run.push(one);
+  };
   let cursor: string | null = null;
   for (let page = 0; page < ACTUALS_MAX_PAGES; page++) {
     const rows = await fetchPage(cursor);
     if (rows.length === 0) break;
     for (const r of rows) {
       if (excludeSessionId && r.session_id === excludeSessionId) continue;
-      if (!(r.exercise_id in anyType))
-        anyType[r.exercise_id] = { load_kg: r.load_kg, reps: r.reps };
-      if (r.set_type === "working" && !(r.exercise_id in best))
-        best[r.exercise_id] = { load_kg: r.load_kg, reps: r.reps };
+      add(anyType, r);
+      if (r.set_type === "working") add(best, r);
     }
     if (rows.length < ACTUALS_PAGE) break;
     const next = rows[rows.length - 1].performed_at;
@@ -1033,7 +1087,15 @@ export async function scanLastActuals(
     if (next === cursor) break;
     cursor = next;
   }
-  return { ...anyType, ...best };
+  // the walk is newest-first; a run is READ in the order it was performed
+  const finish = (built: Record<string, RunBuild>): LastActuals =>
+    Object.fromEntries(
+      Object.entries(built).map(([id, b]) => [
+        id,
+        { load_kg: b.load_kg, reps: b.reps, run: [...b.run].reverse() },
+      ]),
+    );
+  return { ...finish(anyType), ...finish(best) };
 }
 
 /** Rows per page of the logged-exercise scan. Same 1000 the last-actuals

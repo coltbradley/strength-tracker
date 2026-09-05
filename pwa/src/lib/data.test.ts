@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ACTUALS_PAGE,
+  LAST_RUN_CAP,
   currentTrainingMax,
   groupTrainingMaxes,
   orderLoggedExercises,
@@ -56,8 +57,10 @@ describe("scanLastActuals", () => {
       ]),
     );
     const out = await scanLastActuals(p.fetchPage);
-    expect(out.squat).toEqual({ load_kg: 140, reps: 3 });
-    expect(out.bench).toEqual({ load_kg: 90, reps: 5 });
+    // the top set is still the top set: prefill reads these two numbers and
+    // nothing else, so they stay exactly where they were
+    expect(out.squat).toMatchObject({ load_kg: 140, reps: 3 });
+    expect(out.bench).toMatchObject({ load_kg: 90, reps: 5 });
   });
 
   it("falls back to any set type when an exercise has no working set", async () => {
@@ -68,7 +71,7 @@ describe("scanLastActuals", () => {
       ]),
     );
     const out = await scanLastActuals(p.fetchPage);
-    expect(out.curl).toEqual({ load_kg: 15, reps: 12 });
+    expect(out.curl).toMatchObject({ load_kg: 15, reps: 12 });
   });
 
   it("prefers a working set over a more recent warmup", async () => {
@@ -79,7 +82,9 @@ describe("scanLastActuals", () => {
       ]),
     );
     const out = await scanLastActuals(p.fetchPage);
-    expect(out.squat).toEqual({ load_kg: 140, reps: 3 });
+    expect(out.squat).toMatchObject({ load_kg: 140, reps: 3 });
+    // and the run is the WORKING sets, not the warmup that preceded them
+    expect(out.squat.run).toEqual([{ load_kg: 140, reps: 3 }]);
   });
 
   it("skips the excluded session", async () => {
@@ -90,7 +95,67 @@ describe("scanLastActuals", () => {
       ]),
     );
     const out = await scanLastActuals(p.fetchPage, "current");
-    expect(out.squat).toEqual({ load_kg: 140, reps: 3 });
+    expect(out.squat).toMatchObject({ load_kg: 140, reps: 3 });
+    expect(out.squat.run).toEqual([{ load_kg: 140, reps: 3 }]);
+  });
+
+  // "60 kg × 8" is the top of a shape and says nothing about whether the last
+  // set was a grind. The run is what a lifter at the rack is deciding
+  // against: repeat the day, or add weight.
+  it("keeps the whole last session's working sets, in the order performed", async () => {
+    const p = pager(
+      series([
+        { exercise_id: "squat", load_kg: 60, reps: 6 },
+        { exercise_id: "squat", load_kg: 60, reps: 8 },
+        { exercise_id: "squat", load_kg: 60, reps: 8 },
+      ]),
+    );
+    const out = await scanLastActuals(p.fetchPage);
+    expect(out.squat.run?.map((s) => s.reps)).toEqual([8, 8, 6]);
+    expect(out.squat).toMatchObject({ load_kg: 60, reps: 6 });
+  });
+
+  it("stops at the session boundary — a run is ONE day", async () => {
+    // rows either side of a session change would otherwise read back as a
+    // single workout that never happened
+    const p = pager(
+      series([
+        { exercise_id: "squat", session_id: "today", load_kg: 100, reps: 5 },
+        { exercise_id: "squat", session_id: "today", load_kg: 100, reps: 5 },
+        { exercise_id: "squat", session_id: "a_fortnight_ago", load_kg: 90 },
+      ]),
+    );
+    const out = await scanLastActuals(p.fetchPage);
+    expect(out.squat.run).toHaveLength(2);
+  });
+
+  it("caps a long session at the most recent six sets", async () => {
+    const p = pager(
+      series(
+        Array.from({ length: 10 }, (_, i) => ({
+          exercise_id: "squat",
+          reps: 10 - i,
+        })),
+      ),
+    );
+    const out = await scanLastActuals(p.fetchPage);
+    expect(out.squat.run).toHaveLength(LAST_RUN_CAP);
+    // newest-first input, chronological output: the last six performed
+    expect(out.squat.run?.map((s) => s.reps)).toEqual([5, 6, 7, 8, 9, 10]);
+  });
+
+  it("carries a run on the any-type fallback too", async () => {
+    const p = pager(
+      series([
+        { exercise_id: "curl", set_type: "warmup", load_kg: 15, reps: 12 },
+        { exercise_id: "curl", set_type: "warmup", load_kg: 12, reps: 12 },
+      ]),
+    );
+    const out = await scanLastActuals(p.fetchPage);
+    expect(out.curl.run).toEqual([
+      { load_kg: 12, reps: 12 },
+      { load_kg: 15, reps: 12 },
+    ]);
   });
 
   // the regression this replaces: a single capped read stopped at 1000 sets,
