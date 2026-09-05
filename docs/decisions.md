@@ -2141,3 +2141,93 @@ Not built: a screen. The PWA reads the plan for the coach's context block and
 nothing else yet; RLS already lets it show and edit the plan when a screen is
 worth having.
 
+## Rest alert while the app is closed: a function that waits, and a cap it admits to
+
+Built 2026-09-05 as 6f, to the design in the entry above: `push_subscriptions`,
+`push_config` and `rest_alerts` (`20260905050000`), the `push-alerts` edge
+function, a hand-written service worker, `lib/push.ts`, a Settings row and the
+session wiring. Six things were decided in the building.
+
+**The wall-clock number, and what happens above it.** Supabase kills an edge
+function WORKER at 150 s on the Free plan and 400 s on paid plans (the Edge
+Functions "Limits" page and the "wall clock time limit reached" troubleshooting
+page; the kill is a 546). The limit is on the worker, not the request, and
+workers are reused — the worker that slept through one rest is the one the next
+LOG lands on. So `schedule` measures its own worker's age and REFUSES, with a
+422 and `max_lead_seconds`, any `fire_at` that will not fit in the wall clock
+left minus 10 s. The client treats the 422 as an answer, not an error: it shows
+the server's sentence once per page load and otherwise stays quiet, because the
+tone still fires while the app is open. The limit is `PUSH_WALL_CLOCK_SECONDS`
+and defaults to 150 — assuming the paid number on a Free project would accept
+alerts that never fire, which is the one thing this feature must not do — so a
+paid deployment has to set 400 or a three-minute rest is refused for no reason.
+Rejected: chaining workers by having the function call itself near the limit
+(whether the platform routes that call to a fresh worker or the retiring one is
+neither visible nor controllable from inside), and pg_cron at second
+granularity (a new extension and a polling job for a two-user app, to buy back
+something a paid plan already gives).
+
+**The VAPID key pair is generated, not set.** On first use the function
+generates an ECDSA P-256 pair with WebCrypto and writes it to `push_config`
+(RLS on, no policies, the `mcp_tokens` pattern). Two workers racing both try to
+insert row 1; one loses on the primary key and both re-read the winner, so the
+pair every subscription is bound to is always the one in the table. It is
+cached at module scope, which the identity rule forbids for anything
+user-derived; a deployment-wide key is not that, and nothing about it can reach
+the wrong person. Rejected: a secret pasted by hand — one more setup step a
+public repo cannot document with a value, for a key that is only ever used from
+one place.
+
+**The worker is source now, and it does NOT `clientsClaim()`.** vite-plugin-pwa
+moved from `generateSW` to `injectManifest` so `src/sw.ts` can hold a `push`
+handler. The first rule for that file was to reproduce the generated worker
+exactly, and reading the generated `dist/sw.js` showed it had no `clientsClaim`
+and no unconditional `skipWaiting` — only the SKIP_WAITING message handler,
+`precacheAndRoute`, `cleanupOutdatedCaches` and the `index.html`
+`NavigationRoute`. The plan listed `clientsClaim` from memory; the built file
+wins, and adding it would change first-install semantics nobody asked to
+change. Precache count 11 before, 11 after, under both the root and the Pages
+subpath base. The worker has its own `tsconfig.sw.json` (WebWorker lib, no
+DOM) because the two libs cannot share a program, and `workbox-core`,
+`workbox-precaching` and `workbox-routing` are pinned devDependencies rather
+than borrowed transitively from `workbox-build`.
+
+**Encryption is WebCrypto, pinned by the RFC's own vector.** RFC 8291
+(aes128gcm) and RFC 8292 (VAPID) are about 300 lines of `crypto.subtle` —
+ECDH, HKDF, AES-GCM, ECDSA — so `lib/webpush.ts` has no dependency and is pure:
+no env, no database, no logger, which is also how an endpoint or a key can never
+appear in a log line. The Deno test asserts RFC 8291 Appendix A at every
+intermediate (ecdh_secret, IKM, CEK, nonce) and the final 144-byte message. The
+RFC itself was unreachable from the session that wrote the test (rfc-editor and
+datatracker are blocked from that sandbox, and no reachable package ships the
+vector), so the values were written from memory; the implementation, written
+from the two RFCs' algorithms rather than from the vector, then matched them
+byte for byte at every step, which AES-GCM does not permit by coincidence. `web-push` on npm was rejected for reaching into Node's `crypto`,
+which Deno only partly emulates.
+
+**The alert id lives in component state and a reload loses it.** The id exists
+only to cancel. Mirroring it into the session cache would be one more thing to
+keep consistent with a strip that is itself rehydrated, for the case of a reload
+mid-rest — rare, and the cost is one buzz for a rest already ended. Accepted,
+and said in a comment where the rehydrate path arms nothing. The race that IS
+handled: a schedule still in flight when the next LOG disarms. A sequence
+number decides whether the id that comes back is still the current rest's, and
+cancels it on the server if not.
+
+**The subscription belongs to the phone; the row follows the current user.**
+`endpoint` is unique, `subscribe` upserts on it, and a second person signing in
+on the same phone moves the row to them — one phone, one set of alerts, for
+whoever is logging on it. A `schedule` that finds no row for the caller is a
+409, and the client answers it by re-filing the browser's subscription under
+the current user and trying once more. Settings never stores "on": it reads the
+browser's push manager each time the sheet opens, so the row cannot report ON
+for a subscription the browser has dropped. Four states, all true: not
+available (a Safari tab, where `PushManager` does not exist until the app is
+installed), blocked, off, on.
+
+**Not verified in the session that built it**: no iPhone, no push service and
+no edge runtime were reachable. What is pinned by tests is the cryptography,
+the RLS, the client's network behaviour and the built worker's shape; what the
+phone checklist has to prove is that Apple's push service accepts the VAPID
+token and that the platform honours `waitUntil` for a sleep of a full rest.
+

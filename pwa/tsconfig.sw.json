@@ -1,0 +1,21 @@
+{
+  "// why": "src/sw.ts runs in a ServiceWorkerGlobalScope. The DOM and WebWorker libs cannot be loaded into one program without conflicting globals, so the worker is its own project: WebWorker lib, no DOM, excluded from tsconfig.app.json.",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.sw.tsbuildinfo",
+    "target": "ES2022",
+    "lib": ["ES2022", "WebWorker"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": []
+  },
+  "include": ["src/sw.ts"]
+}

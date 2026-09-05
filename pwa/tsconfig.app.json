@@ -18,5 +18,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "// exclude": "the service worker is a WebWorker program, checked by tsconfig.sw.json",
+  "exclude": ["src/sw.ts"]
 }
