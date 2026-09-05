@@ -58,6 +58,7 @@ const ALL_KEYS: string[] = [
   cacheKeys.adherence(EX),
   cacheKeys.trainingMaxes,
   cacheKeys.exerciseDemo(EX),
+  cacheKeys.trainingPlan,
 ];
 
 async function seedAll(): Promise<void> {
@@ -88,6 +89,7 @@ const UNTOUCHED = [
   cacheKeys.sessionVoids(SESS),
   cacheKeys.trainingMaxes,
   cacheKeys.exerciseDemo(EX),
+  cacheKeys.trainingPlan,
 ].sort();
 
 beforeEach(async () => {

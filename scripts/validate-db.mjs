@@ -1346,5 +1346,157 @@ await check("every public function pins search_path", async () => {
   assertEq(r.rows.map((x) => x.proname), [], "functions without search_path");
 });
 
+// --- B · training plans ---------------------------------------------------
+// The plan above the program (20260905060000). Three rules the schema has to
+// hold on its own, whichever path writes: phases of one plan never share a
+// day, one live plan per user, and another user's plan does not exist.
+console.log("\ntraining plans (one live plan, non-overlapping phases, private):");
+await db.exec("reset role;");
+// The exercise-notes checks above delete OTHER to prove the cascade; the
+// cross-user checks here need a second person again.
+await db.exec(`insert into auth.users (id, email) values ('${OTHER}', 'other@example.test') on conflict do nothing`);
+
+const PLAN_A = "66666666-0000-4000-8000-000000000001";
+const PLAN_B = "66666666-0000-4000-8000-000000000002";
+const PHASE = (n) => `77777777-0000-4000-8000-00000000000${n}`;
+
+await check("a plan with dated, adjacent phases writes in one statement", async () => {
+  await db.exec(`
+    insert into training_plans (id, user_id, objective, starts_on, ends_on)
+      values ('${PLAN_A}', '${OWNER}', 'Squat 200 kg by spring', '2026-09-01', '2026-12-20');
+    insert into plan_phases (id, user_id, plan_id, position, name, starts_on, ends_on, focus, progression)
+      values
+      ('${PHASE(1)}', '${OWNER}', '${PLAN_A}', 0, 'Accumulation',     '2026-09-01', '2026-10-12', 'hypertrophy on the squat pattern', 'add 2.5 kg when every set hits the top of the range'),
+      ('${PHASE(2)}', '${OWNER}', '${PLAN_A}', 1, 'Intensification', '2026-10-13', '2026-11-23', 'heavier triples', 'add 2.5 kg per week'),
+      ('${PHASE(3)}', '${OWNER}', '${PLAN_A}', 2, 'Peak',            '2026-11-24', '2026-12-20', 'singles', 'by feel');
+  `);
+  const r = await db.query(`select count(*)::int as n from plan_phases where plan_id = '${PLAN_A}'`);
+  assertEq(r.rows[0].n, 3, "three phases");
+});
+
+await check("two overlapping phases in ONE bulk insert are refused (the trigger is AFTER ROW)", async () => {
+  // set_training_plan writes every phase of a plan in one statement. A BEFORE
+  // ROW trigger cannot see the earlier rows of the statement it is part of;
+  // an AFTER ROW trigger fires once all of them are in.
+  await db.exec(`insert into training_plans (id, user_id, objective, starts_on, ends_on)
+                   values ('${PLAN_B}', '${OTHER}', 'other plan', '2026-09-01', '2026-12-31')`);
+  let code = null;
+  try {
+    await db.exec(`
+      insert into plan_phases (user_id, plan_id, position, name, starts_on, ends_on) values
+        ('${OTHER}', '${PLAN_B}', 0, 'One', '2026-09-01', '2026-09-30'),
+        ('${OTHER}', '${PLAN_B}', 1, 'Two', '2026-09-30', '2026-10-31');
+    `);
+  } catch (e) {
+    code = e.code ?? e.message;
+  }
+  assertEq(code, "23P01", "exclusion_violation, the SQLSTATE an exclusion constraint raises");
+  const r = await db.query(`select count(*)::int as n from plan_phases where plan_id = '${PLAN_B}'`);
+  assertEq(r.rows[0].n, 0, "the whole statement rolled back");
+});
+
+await check("a phase that shares one day with a neighbour is refused; the next day is fine", async () => {
+  // Bounds are inclusive on both ends ('[]'): a phase ending on the 12th and
+  // one starting on the 12th overlap. Separate statement this time.
+  let rejected = false;
+  try {
+    await db.exec(`insert into plan_phases (user_id, plan_id, position, name, starts_on, ends_on)
+                     values ('${OWNER}', '${PLAN_A}', 3, 'Overlap', '2026-12-20', '2026-12-31')`);
+  } catch (e) {
+    rejected = e.code === "23P01";
+  }
+  if (!rejected) throw new Error("accepted a phase sharing a day with Peak");
+  // An UPDATE that creates an overlap is refused too.
+  rejected = false;
+  try {
+    await db.exec(`update plan_phases set ends_on = '2026-10-13' where id = '${PHASE(1)}'`);
+  } catch (e) {
+    rejected = e.code === "23P01";
+  }
+  if (!rejected) throw new Error("accepted an update that made Accumulation overlap Intensification");
+  await db.exec(`insert into plan_phases (user_id, plan_id, position, name, starts_on, ends_on)
+                   values ('${OWNER}', '${PLAN_A}', 3, 'Deload', '2026-12-21', '2026-12-27')`);
+  const r = await db.query(`select count(*)::int as n from plan_phases where plan_id = '${PLAN_A}'`);
+  assertEq(r.rows[0].n, 4, "the day after is not an overlap");
+});
+
+await check("a second live plan for the same user is refused; superseding the first admits it", async () => {
+  let rejected = false;
+  try {
+    await db.exec(`insert into training_plans (user_id, objective, starts_on, ends_on)
+                     values ('${OWNER}', 'a second live plan', '2027-01-01', '2027-03-31')`);
+  } catch (e) {
+    rejected = e.code === "23505";
+  }
+  if (!rejected) throw new Error("two live plans for one user");
+  await db.exec(`update training_plans set superseded_at = now() where id = '${PLAN_A}'`);
+  await db.exec(`insert into training_plans (id, user_id, objective, starts_on, ends_on)
+                   values ('66666666-0000-4000-8000-000000000003', '${OWNER}', 'the revision', '2027-01-01', '2027-03-31')`);
+  const r = await db.query(
+    `select count(*)::int as n from training_plans where user_id = '${OWNER}' and superseded_at is null`,
+  );
+  assertEq(r.rows[0].n, 1, "exactly one live plan");
+  const hist = await db.query(`select count(*)::int as n from training_plans where user_id = '${OWNER}'`);
+  assertEq(hist.rows[0].n, 2, "the superseded plan is still in Postgres");
+});
+
+await check("another user's plan and phases do not exist through RLS", async () => {
+  const plans = await asUser(OTHER, `select count(*)::int as n from training_plans`);
+  assertEq(plans.rows[0].n, 1, "OTHER sees only their own plan");
+  const phases = await asUser(OTHER, `select count(*)::int as n from plan_phases`);
+  assertEq(phases.rows[0].n, 0, "OTHER sees none of OWNER's phases");
+  let rejected = false;
+  try {
+    await asUser(
+      OTHER,
+      `insert into plan_phases (user_id, plan_id, position, name, starts_on, ends_on)
+         values ('${OWNER}', '${PLAN_A}', 9, 'Injected', '2028-01-01', '2028-01-31')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("wrote a phase onto another user's plan");
+  // RLS refuses an UPDATE by matching zero rows, not by raising.
+  const touched = await asUser(
+    OTHER,
+    `update plan_phases set name = 'renamed' where id = '${PHASE(1)}' returning id`,
+  );
+  assertEq(touched.rows.length, 0, "renamed another user's phase");
+});
+
+await check("neither plan table has a delete policy, on purpose", async () => {
+  const r = await db.query(
+    `select tablename, count(*)::int as n from pg_policies
+      where tablename in ('training_plans', 'plan_phases') and cmd = 'DELETE'
+      group by tablename`,
+  );
+  assertEq(r.rows, [], "a plan is superseded, never deleted; a phase has no life outside its plan");
+});
+
+await check("a program files under a phase, and survives the phase", async () => {
+  await db.exec(`insert into programs (id, user_id, name, confirmed_at, phase_id)
+                   values ('11111111-0000-4000-8000-000000000077', '${OWNER}', 'Accumulation block', now(), '${PHASE(1)}')`);
+  const r = await db.query(
+    `select ph.name from programs p join plan_phases ph on ph.id = p.phase_id
+      where p.id = '11111111-0000-4000-8000-000000000077'`,
+  );
+  assertEq(r.rows[0].name, "Accumulation", "joins to the phase by name");
+  let rejected = false;
+  try {
+    await db.exec(`insert into programs (user_id, name, phase_id)
+                     values ('${OWNER}', 'dangling', '77777777-0000-4000-8000-0000000000ff')`);
+  } catch (e) {
+    rejected = e.code === "23503";
+  }
+  if (!rejected) throw new Error("a program pointed at a phase that does not exist");
+  // No client can reach this delete (no policy), but a hand-run one in psql
+  // must not take the training with it.
+  const deload = await db.query(`select id from plan_phases where name = 'Deload'`);
+  await db.exec(`update programs set phase_id = '${deload.rows[0].id}' where id = '11111111-0000-4000-8000-000000000077'`);
+  await db.exec(`delete from plan_phases where id = '${deload.rows[0].id}'`);
+  const after = await db.query(`select phase_id from programs where id = '11111111-0000-4000-8000-000000000077'`);
+  assertEq(after.rows[0].phase_id, null, "on delete set null: the program is still there, unfiled");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

@@ -24,7 +24,11 @@ const workoutSchema = z.object({
     .number()
     .int()
     .min(0)
-    .describe("Day within the program, 0-based. Unique per program."),
+    .describe(
+      "Day within the program, 0-based. Unique per program. When the write " +
+        "ADDS days to a phase's existing program (see phase_id), these are " +
+        "offset past the program's last day and the result reports the map.",
+    ),
   label: z
     .string()
     .min(1)
@@ -113,6 +117,60 @@ function loadLabel(
   return "by feel";
 }
 
+/** The review table. `dayIndexOf` is identity for a new program and the
+ *  offset map when days were added to an existing one, so the table shows
+ *  the indexes that were actually written. */
+function summaryTable(
+  program: Program,
+  tms: Map<string, number>,
+  dayIndexOf: (w: Program["workouts"][number]) => number,
+): string[] {
+  const lines = [
+    "| Day | Date | Label | Section | # | Exercise | SS | Type | Sets x Reps | Load | Rest |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+  ];
+  for (
+    const w of [...program.workouts].sort(
+      (a, b) => a.day_index - b.day_index,
+    )
+  ) {
+    // Array order IS the order written, so the review table shows it
+    // rather than re-sorting by a field that no longer exists.
+    for (const [position, p] of w.prescriptions.entries()) {
+      lines.push(
+        `| ${dayIndexOf(w)} | ${w.scheduled_date ?? ""} | ${w.label ?? ""} ` +
+          `| ${p.section ?? ""} | ${position} | ${p.exercise_id} ` +
+          // The superset group is the thing most worth catching in
+          // review: a mis-parsed A1/A2 pairing changes how the session is
+          // actually performed, and it was written but never shown back.
+          `| ${
+            p.superset_group == null
+              ? ""
+              : String.fromCharCode(64 + p.superset_group)
+          } ` +
+          `| ${p.set_type ?? "working"} ` +
+          `| ${
+            p.tracking === "done"
+              ? "tick"
+              : formatRepRange(p.sets, p.reps_min, p.reps_max)
+          } ` +
+          `| ${p.tracking === "done" ? "" : loadLabel(p, tms)} ` +
+          `| ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,
+      );
+    }
+  }
+  return lines;
+}
+
+interface PhaseLookupRow {
+  id: string;
+  name: string;
+  training_plans:
+    | { id: string; confirmed_at: string | null; superseded_at: string | null }
+    | { id: string; confirmed_at: string | null; superseded_at: string | null }[]
+    | null;
+}
+
 export function registerUpsertProgram(
   server: McpServer,
   db: Db,
@@ -134,9 +192,35 @@ export function registerUpsertProgram(
         "A %TM prescription with no current training max is written as " +
         "written and listed under unresolved_pct in the result: propose the " +
         "TM from the first session with set_training_max rather than turning " +
-        "the percentage into prose.",
+        "the percentage into prose.\n\n" +
+        "When the user has a training plan (get_training_plan), pass the " +
+        "current phase's id as phase_id. If a live program is already filed " +
+        "under that phase, the days are ADDED to it instead of a second " +
+        "program being created — one program per phase, not one per " +
+        "screenshot. Adding days to a CONFIRMED program is live on the " +
+        "calendar at once and needs confirm_change=true after the user's " +
+        "approval in chat, like editing a day.",
       inputSchema: {
         program: programSchema.describe("The full program to write."),
+        phase_id: z
+          .string()
+          .uuid()
+          .optional()
+          .describe(
+            "The plan phase this program belongs to, from get_training_plan " +
+              "(the context block names the current one). With it, days join " +
+              "the phase's existing live program when there is one; without " +
+              "it, a new program is created and filed under nothing.",
+          ),
+        confirm_change: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Only consulted when phase_id names a phase whose live program " +
+              "is CONFIRMED: adding days to it changes the user's calendar " +
+              "immediately. Set it only after the user approved these " +
+              "specific days in chat, in their own words.",
+          ),
       },
     },
     (args) =>
@@ -185,6 +269,78 @@ export function registerUpsertProgram(
         const tmRes = await resolveTrainingMaxes(db, allRx);
         const tms = tmRes.tms;
 
+        // The phase, when given, must be this user's and on the LIVE plan. A
+        // phase of a superseded plan is history; filing new days under it
+        // would hide them from get_training_plan, which reads the live plan.
+        let phase: { id: string; name: string; plan_confirmed: boolean } | null =
+          null;
+        // The program already filed under that phase, if any: the write adds
+        // days to it rather than creating a second one.
+        let target: { id: string; name: string; confirmed_at: string | null } | null =
+          null;
+        let filedCount = 0;
+        if (args.phase_id !== undefined) {
+          const rows = must(
+            await db.client
+              .from("plan_phases")
+              .select("id, name, training_plans!inner(id, confirmed_at, superseded_at)")
+              .eq("user_id", db.ownerId)
+              .eq("id", args.phase_id),
+            "phase lookup",
+          ) as unknown as PhaseLookupRow[];
+          if (rows.length === 0) {
+            throw new ToolError(
+              `No plan phase with id ${args.phase_id} belongs to this user. ` +
+                "Call get_training_plan for the current phase ids.",
+            );
+          }
+          const row = rows[0];
+          const plan = Array.isArray(row.training_plans)
+            ? row.training_plans[0]
+            : row.training_plans;
+          if (!plan) {
+            throw new ToolError(`Phase ${row.id} has no plan. Nothing to file under.`);
+          }
+          if (plan.superseded_at !== null) {
+            throw new ToolError(
+              `Phase "${row.name}" (${row.id}) belongs to a plan superseded on ` +
+                `${plan.superseded_at}. Call get_training_plan for the live ` +
+                "plan's phase ids and file under one of those.",
+            );
+          }
+          phase = { id: row.id, name: row.name, plan_confirmed: plan.confirmed_at !== null };
+
+          const filed = must(
+            await db.client
+              .from("programs")
+              .select("id, name, confirmed_at")
+              .eq("user_id", db.ownerId)
+              .eq("phase_id", row.id)
+              .is("discarded_at", null)
+              .order("created_at", { ascending: false }),
+            "programs by phase",
+          ) as { id: string; name: string; confirmed_at: string | null }[];
+          filedCount = filed.length;
+          if (filed.length > 0) {
+            target = filed[0];
+            if (target.confirmed_at !== null && !args.confirm_change) {
+              throw new ToolError(
+                `Phase "${row.name}" already has a live program, ` +
+                  `'${target.name}' (${target.id}), and it is CONFIRMED — the ` +
+                  "plan the user is following, so days added to it land on " +
+                  "their calendar the moment they are written. Show them the " +
+                  "days you intend to add, get their approval in chat, then " +
+                  "retry with confirm_change=true. To change a day that is " +
+                  "already there, use update_planned_workout instead.",
+              );
+            }
+          }
+        }
+
+        if (target !== null && phase !== null) {
+          return await addDaysToProgram(db, ctx, program, tms, phase, target, filedCount);
+        }
+
         // Upsert semantics: replace an UNCONFIRMED program with the same name.
         // Confirmed programs are never touched. The old program is deleted only
         // AFTER the new one is fully written: a failed re-parse must never
@@ -218,6 +374,7 @@ export function registerUpsertProgram(
               name: program.name,
               source_note: program.source_note ?? null,
               confirmed_at: null,
+              phase_id: phase?.id ?? null,
             })
             .select("id")
             .single(),
@@ -307,40 +464,16 @@ export function registerUpsertProgram(
         const lines = [
           `## Program written: ${program.name}`,
           "",
-          "| Day | Date | Label | Section | # | Exercise | SS | Type | Sets x Reps | Load | Rest |",
-          "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+          ...summaryTable(program, tms, (w) => w.day_index),
         ];
-        for (
-          const w of [...program.workouts].sort(
-            (a, b) => a.day_index - b.day_index,
-          )
-        ) {
-          // Array order IS the order written, so the review table shows it
-          // rather than re-sorting by a field that no longer exists.
-          for (const [position, p] of w.prescriptions.entries()) {
-            lines.push(
-              `| ${w.day_index} | ${w.scheduled_date ?? ""} | ${
-                w.label ?? ""
-              } ` +
-                `| ${p.section ?? ""} | ${position} | ${p.exercise_id} ` +
-                // The superset group is the thing most worth catching in
-                // review: a mis-parsed A1/A2 pairing changes how the session is
-                // actually performed, and it was written but never shown back.
-                `| ${
-                  p.superset_group == null
-                    ? ""
-                    : String.fromCharCode(64 + p.superset_group)
-                } ` +
-                `| ${p.set_type ?? "working"} ` +
-                `| ${
-                  p.tracking === "done"
-                    ? "tick"
-                    : formatRepRange(p.sets, p.reps_min, p.reps_max)
-                } ` +
-                `| ${p.tracking === "done" ? "" : loadLabel(p, tms)} ` +
-                `| ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,
-            );
-          }
+        if (phase !== null) {
+          lines.push(
+            "",
+            `Filed under plan phase "${phase.name}"` +
+              (phase.plan_confirmed
+                ? "."
+                : " — note that the plan itself is not confirmed yet."),
+          );
         }
         lines.push(
           "",
@@ -366,6 +499,8 @@ export function registerUpsertProgram(
             program_id: programId,
             name: program.name,
             confirmed: false,
+            added_to_existing: false,
+            phase: phase === null ? null : { id: phase.id, name: phase.name },
             replaced_unconfirmed: staleWarning ? 0 : oldUnconfirmedIds.length,
             ...(staleWarning
               ? {
@@ -384,5 +519,127 @@ export function registerUpsertProgram(
           lines.join("\n"),
         );
       }),
+  );
+}
+
+/**
+ * The "add these days to it" path. Same shape as update_planned_workout, one
+ * level up: the unit is the program, and what changes is that it grows.
+ *
+ * day_index continues from the program's last day, counted over EVERY row of
+ * the program — templates and discarded days included — because
+ * (program_id, day_index) is unique across all of them and a collision here
+ * would be an opaque 500. The caller's indexes are offset, not replaced, so a
+ * parse that numbered its days 0 and 2 keeps that gap. Failure past the day
+ * insert deletes the new days (nobody has seen them; nothing can have been
+ * logged against them, so the prescriptions trigger has nothing to refuse) and
+ * leaves the program exactly as it was.
+ */
+async function addDaysToProgram(
+  db: Db,
+  ctx: RequestContext,
+  program: Program,
+  tms: Map<string, number>,
+  phase: { id: string; name: string; plan_confirmed: boolean },
+  target: { id: string; name: string; confirmed_at: string | null },
+  filedCount: number,
+) {
+  const existingDays = must(
+    await db.client
+      .from("planned_workouts")
+      .select("day_index")
+      .eq("user_id", db.ownerId)
+      .eq("program_id", target.id),
+    "existing days",
+  ) as { day_index: number }[];
+  const base = existingDays.length === 0
+    ? 0
+    : Math.max(...existingDays.map((d) => d.day_index)) + 1;
+  const indexOf = (w: Program["workouts"][number]) => base + w.day_index;
+
+  const workoutRows = must(
+    await db.client
+      .from("planned_workouts")
+      .insert(
+        program.workouts.map((w) => ({
+          user_id: db.ownerId,
+          program_id: target.id,
+          day_index: indexOf(w),
+          label: w.label ?? null,
+          notes: w.notes ?? null,
+          scheduled_date: w.scheduled_date ?? null,
+        })),
+      )
+      .select("id, day_index"),
+    "insert workouts",
+  ) as { id: string; day_index: number }[];
+  const workoutIdByDay = new Map(workoutRows.map((w) => [w.day_index, w.id]));
+
+  try {
+    const rxRows = program.workouts.flatMap((w) =>
+      prescriptionRows(db.ownerId, workoutIdByDay.get(indexOf(w))!, w.prescriptions)
+    );
+    const { error } = await db.client.from("prescriptions").insert(rxRows);
+    if (error) throw new Error(`insert prescriptions: ${error.message}`);
+  } catch (err) {
+    const { error: rollbackError } = await db.client
+      .from("planned_workouts")
+      .delete()
+      .eq("user_id", db.ownerId)
+      .in("id", workoutRows.map((w) => w.id));
+    if (rollbackError) {
+      log("error", "upsert_program_add_days_cleanup_failed", {
+        request_id: ctx.requestId,
+        tool: "upsert_program",
+        program_id: target.id,
+        planned_workout_ids: workoutRows.map((w) => w.id),
+        error: rollbackError.message,
+      });
+    }
+    throw err;
+  }
+
+  const confirmed = target.confirmed_at !== null;
+  const lines = [
+    `## Days added to: ${target.name}`,
+    "",
+    `Filed under plan phase "${phase.name}", which already had this program, ` +
+    `so the ${program.workouts.length} day(s) were ADDED to it rather than ` +
+    "written as a new program. The name you passed " +
+    `('${program.name}') was not used; the program keeps its own.`,
+    "",
+    ...summaryTable(program, tms, indexOf),
+    "",
+    confirmed
+      ? "The program is CONFIRMED, so these days are live on the user's " +
+        "calendar now. No confirm step."
+      : "The program is not confirmed yet, so nothing changed on the user's " +
+        "calendar. confirm_program makes the whole program live, these days " +
+        "included.",
+  ];
+  if (filedCount > 1) {
+    lines.push(
+      "",
+      `Note: ${filedCount} live programs are filed under this phase; the ` +
+        "days went to the newest. list_programs shows them all.",
+    );
+  }
+
+  return jsonResult(
+    {
+      program_id: target.id,
+      name: target.name,
+      confirmed,
+      added_to_existing: true,
+      phase: { id: phase.id, name: phase.name },
+      workouts_added: program.workouts.length,
+      day_index_map: program.workouts.map((w) => ({
+        given: w.day_index,
+        written: indexOf(w),
+        planned_workout_id: workoutIdByDay.get(indexOf(w)),
+      })),
+      prescriptions: program.workouts.reduce((n, w) => n + w.prescriptions.length, 0),
+    },
+    lines.join("\n"),
   );
 }
