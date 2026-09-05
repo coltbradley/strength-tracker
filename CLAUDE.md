@@ -28,8 +28,12 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   hides a set from every view. Never add an update or delete policy.
   "Editing" a logged set in the PWA is a void PLUS a new row at the same
   `set_index` with the same `performed_at`, rest and prescription
-  (`pwa/src/lib/corrections.ts`); only load, reps and type change. Never
+  (`pwa/src/lib/corrections.ts`); only load, reps, type and rpe change. Never
   give it the next index: that is how a corrected set 2 became set 5.
+  `isNoopCorrection` normalises undefined to null before comparing, because a
+  row cached before a column exists reads back undefined and `undefined ===
+  null` is false: without it, saving an unrated set unrated writes a void and a
+  duplicate row.
   `set_notes` is the one editable set-adjacent row (a user annotation,
   last-write-wins) — the sessions.notes mutability class, never a way to
   edit the set itself.
@@ -273,6 +277,23 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 - The outbox is the only copy of an unsynced set, and WebKit clears IndexedDB
   after about a week idle, so `navigator.storage.persist()` is requested at
   startup. Best-effort and never awaited on the boot path.
+- Because it is the only copy, the queue is VISIBLE (`OutboxSheet`): every
+  waiting write, its state, its age, and the reason a held one is held. Two
+  functions answer two different questions and must not be merged. `classify()`
+  decides what the flusher does with a failure in the moment; `deadKind()`
+  decides what a Retry button may PROMISE, from the recorded code and status
+  rather than from the message text. Auth, a policy refusal and a missing
+  ancestor row are retryable (the ancestor is usually the session insert
+  sitting ahead in the same queue); a constraint violation is not, because the
+  same bytes get the same answer, and a button that cannot work is worse than
+  no button. Retry looks only at DEAD items, which is what structurally keeps
+  it from replaying a HELD one under the wrong identity.
+- Sign-out copy must match what sign-out actually does. It claimed for a while
+  that signing out discarded the queue and that this was its only copy; nothing
+  in that path touches the outbox (`cacheClearAll` drops the kv cache and the
+  coach thread), while the half that IS destructive, the cached log, went
+  unmentioned. An over-warning about the safe half and silence about the
+  dangerous one is worse than no copy at all.
 
 - Planned days have STRUCTURE beyond a flat list, and all of it is expressed
   as adjacency rather than as new tables. Consecutive prescriptions naming the
@@ -282,13 +303,45 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   decision entry, not a table. The unit of grouping and of reordering is the
   ENTRY (a ramp, a superset), never one row — moving or sectioning a single
   row tears those apart, which is a bug class this repo has already had.
-- `prescriptions.tracking` is 'reps' (weight and reps) or 'done' (a tick, for
-  activations and mobility). A tick writes a REAL row in `sets`: reps 0 at
-  load 0, both already legal. Never invent a second completion record — no
+- `prescriptions.tracking` is 'reps' (weight and reps), 'done' (a tick, for
+  activations and mobility) or 'time' (a hold or a carry). All three write a
+  REAL row in `sets`: a tick is reps 0 at load 0, both already legal, and a
+  timed set is reps 0 with the seconds in `sets.duration_seconds` and
+  `load_kg` still the total system load, so a weighted carry records both what
+  was carried and for how long. Never invent a second completion record — no
   view, chart or MCP tool would know how to read it. Volume and e1RM exclude
-  it through the filters they already have; do NOT add a `tracking` filter to
-  those views, which would couple the analysis to the plan the way
+  all of it through the filters they already have; do NOT add a `tracking`
+  filter to those views, which would couple the analysis to the plan the way
   `v_adherence` deliberately does not.
+  Seconds are NOT stored in `reps`, and the reason is worth keeping: `reps` is
+  checked `between 0 and 100`, so a three minute carry is not representable at
+  all, and a 45 second carry at 64 kg would otherwise fall inside `v_e1rm`'s
+  `reps between 1 and 8` window and inside `v_weekly_volume`'s tonnage as
+  64 x 45. A nullable column makes nothing branch; a reinterpreted one prices
+  seconds as repetitions in the two views the whole analysis rests on.
+- `sets.rpe` is how hard a set felt, 5 to 10 in half points, and NULL is the
+  ordinary case. Rating is one optional tap, and because `sets` is append-only
+  an unrated set can only be rated by voiding and relogging, so the nulls are
+  permanent: nothing derived may require an RPE, no average may run over the
+  nulls, and absence is never evidence a set was easy. The scale lives in
+  `pwa/src/lib/rpe.ts`, derived from the column's bounds rather than retyped;
+  the UI floor (6.5) sits deliberately above the column floor (5), because the
+  column decides what is LEGAL and the chip row decides what is worth a tap.
+- Bodyweight has two homes and one read. `sessions.bodyweight_kg` is the
+  weigh-in attached to a session; `bodyweight_log` is a measurement on a day
+  with no training, queued through the outbox with a client id like every
+  other write. Read `v_bodyweight`, never one source alone — a caller that
+  reads one silently answers the wrong question about the weeks the other
+  covers. `bodyweight_log` is the one table carrying update and delete
+  policies, and that is the append-only rule applied rather than relaxed: a set
+  has dependents, views derived from it and a void mechanism, and a weigh-in
+  has none of the three, so a mistyped 700 would otherwise sit in the trend
+  forever with no way to say so.
+- `v_weekly_summary` reports `planned_days` and `planned_days_done` as two
+  counts and must never be divided into an adherence percentage, in SQL, in a
+  tool, or in the UI. A week nobody planned has no adherence, and a ratio
+  renders that as zero, which reads as total failure rather than as nothing
+  having been asked. Draft days are not counted as owed at all.
 - A TEMPLATE is a planned day with no date (`is_template`), not a table. It
   can never carry a `scheduled_date` (checked), and every plan read goes
   through `v_plan_workouts`, which drops templates AND days whose program is
@@ -304,6 +357,22 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   `set_notes` is one logged set; `exercise_notes` is a standing cue for a
   MOVEMENT, keyed (user_id, exercise_id) because `exercises` is a shared
   seeded library that never grows a per-user column.
+- The per-turn CONTEXT BLOCK carries today in full and THIS WEEK a line at a
+  time: state, label, exercise names and the day's id. Names only, no sets or
+  loads, because a whole week of prescriptions costs several times as much on
+  every turn to answer a question asked once. The id rides along because it is
+  unguessable and was the last remaining reason to call `get_program` before
+  editing a day. A DRAFT is rendered ahead of every date check so a day nobody
+  wrote never reads as one they failed to do, and where completion cannot be
+  checked a past day reads PAST rather than MISSED: not knowing is not failing.
+  The separator is a field separator, not an envelope, which is what stops an
+  exercise name closing anything.
+- `resolve_exercises` resolves MANY names in one call and `search_exercises`
+  explores. One real turn spent 37 seconds on six sequential searches for names
+  the model already knew. The batch tool is a wrapper over the search tool's
+  matching and ranking, never a second matcher: two tools disagreeing about
+  which "incline press" is meant would be worse than the latency. Its one extra
+  tier is exact-name-before-alphabet, because naming ONE match is its job.
 - `coach_memory` holds standing facts about the person (injury, constraint,
   preference, context) — not goals, which `goals` measures against real sets.
   It reaches the coach through the per-turn CONTEXT BLOCK, never a tool call:
