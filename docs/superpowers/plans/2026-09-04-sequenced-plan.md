@@ -175,19 +175,32 @@ dollar ceiling, since the cap is denominated in tokens and its value in money
 moves with the model. The API eval remains the cheap way to check whether
 Sonnet would have matched it.
 
-## Wave 3: the set loop (4.5 days)
+## Wave 3: the set loop (4.5 days) — DONE 2026-09-04
 
-Seconds-scale. This is what she touches every single session, and where the
-research says apps are won or abandoned.
+Seconds-scale. What she touches every session, and where the research says apps
+are won or abandoned.
 
-| #   | Work                                                                                                                                                                                                                                          | Days |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| 3a  | Prescribed warmups actually work: prefill the bracket's `set_type`, count done-ness by working sets only, label warmup brackets in the target line. Half-wired since August.                                                                  | 1.0  |
-| 3b  | A rest timer that gets attention on a locked iPhone: screen wake lock while a session is open, an audio cue unlocked on the LOG tap, and honest copy on the Rest alerts setting, which currently reports success for something iOS cannot do. | 1.0  |
-| 3c  | Supersets hand you the partner after every log instead of only when the exercise is finished, and the rest strip waits for the last partner in the round.                                                                                     | 0.5  |
-| 3d  | "Last time" shows the run (60 x 8, 8, 6), not one set.                                                                                                                                                                                        | 0.5  |
-| 3e  | "Do this workout now" on any planned day, without rewriting its date.                                                                                                                                                                         | 0.5  |
-| 3f  | Substitute an exercise mid-session: keeps the prescription link so adherence still credits the slot, changes the exercise so history records what was lifted. Valentine wrote this as prose twice.                                            | 1.0  |
+| # | Work | Days | Status |
+|---|---|---|---|
+| 3a | Prescribed warmups actually work: type from the bracket, done-ness by working sets, warmup marked in the target line. | 1.0 | **done** (`c10ca28`) |
+| 3b | Screen wake lock and an audio cue, plus honest copy on Rest alerts. | 1.0 | **done** (`007031a`) |
+| 3c | Supersets hand you the partner after every log. | 0.5 | **done** (`c10ca28`) |
+| 3d | "Last time" shows the run, not one set. | 0.5 | **done** (`c10ca28`) |
+| 3e | "Do this workout now" on any planned day, without rewriting its date. | 0.5 | **done** (`535dad7`) |
+| 3f | Substitute an exercise mid-session, keeping the prescription link. | 1.0 | **done** (`6629cc3`) |
+
+Four things surfaced that the audit had not named, all fixed in place: a day
+prescribed ENTIRELY as warmups had a working target of zero and was therefore
+born finished; the announced-for marker sat inside the notification guard, so a
+browser granting no permission would have fired a tone on every 400ms tick once
+a sound existed; `set_index` is scoped per exercise, so a swapped entry holds
+two runs both counting from zero; and an iPhone home-screen app DOES expose
+`Notification` and WILL grant the permission, then throw on the constructor,
+which is why the settings copy now separates permission from delivery.
+
+3e also renamed "Move to today" to "Reschedule to today". The old label read as
+"do it today", which is exactly the confusion that sent people to the
+destructive one.
 
 ## Wave 4: the coach earns its latency (5.25 days)
 
@@ -211,16 +224,14 @@ research says apps are won or abandoned.
 | 5e  | A sessions view in History plus a weekly summary view and MCP tool. "What did I do Tuesday" currently needs the coach.                                                        | 1.5  |
 | 5f  | Time-tracked work (`tracking = 'time'`) so planks and carries stop being ticks.                                                                                               | 1.0  |
 
-## Wave 6: the second user, and the long tail (2.75 days)
+## Wave 6: the second user, and the long tail (2.75 days) — PARTLY DONE
 
-| #   | Work                                                                                                                                                                                                                                                                               | Days |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| 6a  | First run: a dismissable card that picks the unit, points at the coach, and says in one line that chats are logged. Plus a Resend button on Login, and the owner's name out of the coach's cap message.                                                                            | 0.75 |
-| 6b  | The outbox is visible on the phone: dead items with their error, Retry, Export, and sign-out copy that matches what actually happens.                                                                                                                                              | 0.5  |
-| 6c  | MCP gaps: `program_id` on `get_program` plus `list_programs`; `confirm_program` stops reporting a discarded program as already confirmed; `upsert_program` validates dates and caps lengths; `resolve_feedback` raises a tool error, not a 500; `search_exercises` handles quotes. | 1.0  |
-| 6d  | Indexes on `set_voids`/`set_notes` by user, and a `since` predicate in `get_volume` so it stops aggregating all history on every call.                                                                                                                                             | 0.5  |
-
----
+| # | Work | Days | Status |
+|---|---|---|---|
+| 6a | First-run card (unit, the coach, the logging disclosure) and a Resend on Login. | 0.75 | **done** (`2a87d67`) |
+| 6b | The outbox is visible on the phone: dead items, Retry, Export, honest sign-out copy. | 0.5 | not started |
+| 6c | MCP gaps: `program_id` and `list_programs`; `confirm_program` on a discarded program; `upsert_program` date and length validation; `resolve_feedback` error type; `search_exercises` quoting. | 1.0 | **done** (`659de92`) |
+| 6d | Indexes on `set_voids`/`set_notes` by user; a `since` predicate in `get_volume`. | 0.5 | not started |
 
 ## Not doing, and why
 
