@@ -316,6 +316,9 @@ dashboard's analytics are the thing that is down.
 | Edge runtime (auto)       | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`   | injected by platform                                 |
 | PWA build                 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | public client creds                                  |
 | PWA build (optional)      | `VITE_SENTRY_DSN`                             | error tracking; no-op if unset                       |
+| GitHub Actions secret     | `SUPABASE_ACCESS_TOKEN`                       | lets `deploy.yml` push migrations + functions; skipped if unset |
+| GitHub Actions secret     | `SUPABASE_DB_PASSWORD`                        | `db push` needs Postgres itself, not just the API    |
+| GitHub Actions variable   | `SUPABASE_PROJECT_REF`                        | which project the workflow links; not secret, still not in the repo |
 
 `MCP_SECRET` / `OWNER_USER_ID` are the pre-multi-user credential: one secret
 mapped to one person. They still work, so an existing Claude Desktop config

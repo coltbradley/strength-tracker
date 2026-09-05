@@ -1820,3 +1820,42 @@ to dismiss toasts.
 The factory `makeFetchWithCache` exists so the rule is tested without IndexedDB
 or a network: `data.test.ts` pins offline-serves-quietly, error-serves-and-
 reports, once-per-window, and propagate-when-empty.
+
+## Migrations apply from CI, in front of the client
+
+The deploy workflow published the PWA on every push and nothing else. A
+migration needed `supabase db push` by hand, an edge function needed its own
+`functions deploy` by hand, and the runbook said so — but a runbook is advice,
+and the ordering it asks for (schema first, then the code that reads it) was
+enforced by nobody. `prescriptions.set_type` shipped as a select before its
+column existed and every write failed until someone ran the push. The
+`exercise_count` question on 2026-09-05 was the same shape; it turned out to
+be already applied, but establishing that took a database connection, and the
+app itself would have said "offline" (the entry above).
+
+`deploy.yml` now has a `supabase` job that pushes migrations and deploys both
+functions when anything under `supabase/` changed, and the Pages job `needs` it.
+A skipped Supabase job (nothing under `supabase/` changed) lets Pages run; a
+failed one blocks it. The order is a property of the workflow rather than of
+someone's memory.
+
+It is gated on three repository settings and does nothing without them, so
+merging the workflow changed nothing on its own. That gate is deliberate: the
+settings are a credential and a database password, and adding them is a
+decision the deployment owner makes in the dashboard, not something a commit
+should be able to do.
+
+The tradeoff is real and worth stating plainly: a migration reaches production
+with no human between merge and database. Three facts about THIS repo make
+that acceptable. CI already runs the entire chain in PGlite before a merge;
+migrations are append-only by rule, so there is no destructive statement to
+fire; and `db push` applies only what the remote has not seen, so a rerun is a
+no-op. Remove any one of those and this decision should be reopened.
+
+Rejected: deploying the seeds from CI too. A seed rewrites hundreds of rows in
+a shared table, and "the seed file changed" should mean "someone decided to
+re-seed", not "someone merged". Rejected: letting a `supabase/`-only push
+republish the client. The Pages build stamps the sha into the bundle, so a
+republish of identical code still shows every phone an "update available" for
+nothing. Rejected: `cancel-in-progress: true`, which the old workflow had. It
+is fine to abandon a Pages publish; it is not fine to abandon a `db push`.

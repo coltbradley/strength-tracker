@@ -90,6 +90,40 @@ would take the staged reps and any half-typed note. Expect a lifter to get
 the new build at their next visit, not within seconds of the push. Device
 data survives updates (IndexedDB is untouched).
 
+## Automating the Supabase half
+
+`deploy.yml` can push migrations and deploy both edge functions itself, in
+front of the Pages publish, so the client can never ship ahead of its schema.
+It does so only when three repository settings exist; until then it prints a
+notice and skips, and everything above stays by hand.
+
+| Setting                 | Kind     | Where it comes from                                                                                                                          |
+| ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | secret   | Supabase dashboard → Account → Access Tokens. Scope it to this one project if the dashboard offers it.                                       |
+| `SUPABASE_DB_PASSWORD`  | secret   | The database password from project creation (Settings → Database). `db push` needs it; the access token alone does not reach Postgres.       |
+| `SUPABASE_PROJECT_REF`  | variable | The project ref. Not secret, so a variable, but it stays out of the repo like every other ref.                                              |
+
+Add them under Settings → Secrets and variables → Actions. The next push that
+touches `supabase/` runs `supabase db push`, then `functions deploy mcp-server
+--no-verify-jwt`, then `functions deploy coach`, and only after all three does
+the Pages job start. A push touching only `pwa/` skips the Supabase job and
+publishes straight away; a push touching only `supabase/` deploys the schema
+and functions and does NOT republish the client, so nobody's phone offers an
+update for a build that did not change.
+
+What this trades away: a migration goes to production with no human between
+the merge and the database. That is acceptable here for three specific
+reasons, none of which is "it will probably be fine". CI has already run the
+whole migration chain in PGlite before anything reaches main; migrations are
+append-only by rule, so there is no destructive statement to fire; and
+`db push` applies only what the remote has not seen, so a re-run changes
+nothing. What is bought is that the failure mode this project has hit twice
+(client first, schema later) stops being possible.
+
+The exercise seeds stay by hand on purpose. They rewrite hundreds of rows in a
+shared table, and "the seed changed" is a decision to re-seed, not a side
+effect of merging.
+
 ## Adding or removing a person
 
 ```bash
@@ -117,15 +151,17 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
 
 ## Known snags (learned the hard way)
 
-- A commit is not a deploy, and the two halves go out separately. The PWA
-  ships from a Pages build on push; a migration needs `supabase db push` and
-  each edge function needs its own `supabase functions deploy` — `mcp-server`
-  and `coach` are two deploys, not one, and CI performs neither. Shipping
-  PWA code that writes a column whose migration has not been pushed yet fails
-  every write until someone runs it — that has happened once already, with
-  `prescriptions.set_type`. Push the migration FIRST, then the code that
+- A commit is not a deploy, and the two halves go out separately UNLESS the
+  three settings in "Automating the Supabase half" exist. Without them the PWA
+  ships from a Pages build on push while a migration needs `supabase db push`
+  and each edge function needs its own `supabase functions deploy` —
+  `mcp-server` and `coach` are two deploys, not one. Shipping PWA code that
+  reads or writes a column whose migration has not been pushed yet fails every
+  such read or write until someone runs it — that has happened once already,
+  with `prescriptions.set_type`. Push the migration FIRST, then the code that
   depends on it: the schema tolerates a column nothing writes, the app does
-  not tolerate writing a column that is not there.
+  not tolerate a column that is not there. With the settings in place the
+  workflow enforces that order for you, which is the whole reason it exists.
 
 - `alter database ... set` for custom GUCs is superuser-only on managed
   Postgres, so timezones live in tables instead:

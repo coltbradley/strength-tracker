@@ -1,36 +1,122 @@
 name: deploy
 
-# Every push to main that touches the PWA redeploys GitHub Pages. The
-# installed app does NOT reload itself to get it: registerType is "prompt", so
-# main.tsx applies a waiting worker only when no session is open and otherwise
-# defers to the next time the app is hidden. A mid-set reload would take the
-# staged reps and any half-typed note. Expect a lifter on the new build at
-# their next visit, not seconds after the push.
+# Every push to main deploys what changed, in the order the schema needs.
 #
-# This publishes the CLIENT ONLY. Migrations (`supabase db push`) and both edge
-# functions (`supabase functions deploy mcp-server --no-verify-jwt`, `supabase
-# functions deploy coach`) are still by hand — see docs/deploy.md. Nothing here
-# sequences them, so shipping a build that reads a column whose migration has
-# not been pushed breaks that read for everyone until someone runs it.
+# Three jobs. `changes` looks at the diff. `supabase` pushes migrations and both
+# edge functions when anything under supabase/ changed — but ONLY when the three
+# deploy settings exist (see docs/deploy.md, "Automating the Supabase half");
+# without them it prints a notice and skips, so this file is safe to merge
+# before anyone has added a secret. `pages` publishes the PWA when pwa/ changed,
+# and it WAITS for `supabase`: a build that selects a column the database does
+# not have yet fails every read until someone runs the migration by hand, and
+# that has happened once already (prescriptions.set_type). A skipped supabase
+# job lets pages proceed; a failed one blocks it, which is the point.
 #
-# Deploys never touch user data: training data lives in Postgres, and
-# device-local IndexedDB/localStorage survive service worker updates untouched.
+# The installed app does NOT reload itself to pick up a Pages build: registerType
+# is "prompt", so main.tsx applies a waiting worker only when no session is open
+# and otherwise defers to the next time the app is hidden. A mid-set reload
+# would take the staged reps and any half-typed note. Expect a lifter on the
+# new build at their next visit, not seconds after the push.
+#
+# Deploys never touch user data: training data lives in Postgres, migrations are
+# append-only, and device-local IndexedDB/localStorage survive service worker
+# updates untouched.
 
 on:
   push:
     branches: [main]
-    paths: ["pwa/**", ".github/workflows/deploy.yml"]
+    paths: ["pwa/**", "supabase/**", ".github/workflows/deploy.yml"]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: pages-deploy
-  cancel-in-progress: true
+  group: deploy
+  # never cancel a run that may be mid `db push`; the next one queues behind it
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+    outputs:
+      pwa: ${{ steps.filter.outputs.pwa }}
+      supabase: ${{ steps.filter.outputs.supabase }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          # workflow_dispatch, a first push, or a force-push whose old head is
+          # gone: no honest diff exists, so treat everything as changed.
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            echo "pwa=true" >> "$GITHUB_OUTPUT"
+            echo "supabase=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$BEFORE" "$AFTER")
+          if echo "$changed" | grep -qE '^(pwa/|\.github/workflows/deploy\.yml$)'; then p=true; else p=false; fi
+          if echo "$changed" | grep -qE '^supabase/'; then s=true; else s=false; fi
+          echo "pwa=$p" >> "$GITHUB_OUTPUT"
+          echo "supabase=$s" >> "$GITHUB_OUTPUT"
+          echo "pwa changed: $p · supabase changed: $s"
+
+  supabase:
+    name: migrations + edge functions
+    needs: changes
+    if: needs.changes.outputs.supabase == 'true'
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      # `secrets` cannot be read in an `if:`, so the gate is a shell step that
+      # turns "are all three set" into an output the later steps can test.
+      - id: gate
+        shell: bash
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_DB_PASSWORD" ] && [ -n "$SUPABASE_PROJECT_REF" ]; then
+            echo "on=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Supabase deploy skipped::SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD (repository secrets) and SUPABASE_PROJECT_REF (repository variable) are not all set. Migrations and edge functions still go out by hand — docs/deploy.md."
+          fi
+      - if: steps.gate.outputs.on == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - if: steps.gate.outputs.on == 'true'
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+      # Only migrations the remote has not seen. Never edits an applied one.
+      - if: steps.gate.outputs.on == 'true'
+        run: supabase db push
+      # --no-verify-jwt on mcp-server every deploy: it does its own bearer auth
+      # and the gateway must not demand a Supabase JWT. The coach is the
+      # opposite on purpose: its caller has a session, so the gateway SHOULD.
+      - if: steps.gate.outputs.on == 'true'
+        run: supabase functions deploy mcp-server --no-verify-jwt
+      - if: steps.gate.outputs.on == 'true'
+        run: supabase functions deploy coach
+
+  pages:
+    name: publish PWA
+    needs: [changes, supabase]
+    # always() so a SKIPPED supabase job (nothing under supabase/ changed) does
+    # not skip this one too; the explicit result checks keep a failed or
+    # cancelled db push in front of the client build.
+    if: >-
+      always()
+      && needs.changes.outputs.pwa == 'true'
+      && needs.supabase.result != 'failure'
+      && needs.supabase.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
