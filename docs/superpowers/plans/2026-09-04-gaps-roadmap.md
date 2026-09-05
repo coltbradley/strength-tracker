@@ -10,6 +10,12 @@
 
 ---
 
+> **The ORDER and the DECISIONS now live in
+> [2026-09-04-sequenced-plan.md](2026-09-04-sequenced-plan.md)** — waves, day
+> estimates, and the settled calls on model, per-set RPE and tap-to-approve.
+> This file keeps the task-level detail: exact files, interfaces, constraints.
+> Where the two disagree about sequence, the sequenced plan wins.
+
 ## PICK UP HERE (last worked 2026-09-04)
 
 ### Done and committed
@@ -74,20 +80,16 @@ bugs are unaffected by model choice.
 
 ### Then, in order
 
-1. **Task 3.3's `update_planned_workout`, promoted to first.** Run 1 proved it
-   is the only fix for two bugs that corrupt a live user's calendar, and that
-   no model or prompt change touches either. It was buried in Phase 3 because
-   the audit read the clone as a judgment failure; it is not. Ship the day-level
-   edit tool, teach the coach to reach for it instead of `upsert_program`, and
-   leave `upsert_program` for a genuinely new program.
-2. **Phase 0** — record safety. Task 0.1 (offline open shows Login) and 0.9
-   (plan editor stores `load_entry`, so dumbbell prescriptions stop prefilling
-   at half) are the two that bite a real user today. Run 1 confirmed 0.9 is a
-   PWA-only fix.
-3. **Task C.2** — whatever the API eval says, plus TTL to 5 minutes and the
-   week in the context block. Fold in the `remember` prompt wording; run 1 says
-   the current wording does not survive contact with a real conversation.
-4. **Phase 1** — the set loop.
+Sequence, day estimates and the settled decisions are in
+[2026-09-04-sequenced-plan.md](2026-09-04-sequenced-plan.md). In short: Wave 0
+is `update_planned_workout` plus the plan editor's `load_entry` plus repairing
+Valentine's data (about 3 days); Wave 1 is the offline and identity fixes that
+keep a logged set from being lost; then server hygiene, the set loop, the
+coach, capture, and the second user. About 27 days in total, shippable a wave
+at a time.
+
+The model question is decided there too: **Opus 5 at effort `low`**, with the
+API eval kept as a cheap verification rather than a precondition.
 
 ### Loose ends worth knowing
 

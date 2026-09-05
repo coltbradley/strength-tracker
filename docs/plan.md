@@ -141,19 +141,26 @@ already existed.
       every set linked to a prescription, zero voids.
 - [ ] Review adherence output with Claude.
 
-What that first real use exposed is audited and planned in
-[superpowers/plans/2026-09-04-gaps-roadmap.md](superpowers/plans/2026-09-04-gaps-roadmap.md),
-which has a PICK UP HERE section at the top. Highlights: dumbbell prescriptions
-prefill at half (the plan editor never wrote `load_entry`), the coach clones a
-confirmed program instead of editing it, and the rest timer cannot get
-attention on a locked iPhone.
+What that first real use exposed is audited in
+[superpowers/plans/2026-09-04-gaps-roadmap.md](superpowers/plans/2026-09-04-gaps-roadmap.md)
+and sequenced in
+[superpowers/plans/2026-09-04-sequenced-plan.md](superpowers/plans/2026-09-04-sequenced-plan.md),
+which is the plan of record. Highlights: dumbbell prescriptions prefill at half
+(the plan editor never wrote `load_entry`), the coach clones a confirmed program
+instead of editing it because `upsert_program` cannot touch one, and the rest
+timer cannot get attention on a locked iPhone.
 
 ## Phase 5: measuring the coach
 
 - [x] A replay eval for the coach (`scripts/coach-eval/`): real MCP server,
-      real transcripts, end-state checks. Built and smoke-tested.
-- [ ] Run it. It has never been run against a model; it decides whether the
-      coach stays on `sonnet-low`.
+      real transcripts, end-state checks. Two drivers, one of which needs no
+      API key.
+- [x] Run 1, seven cases, subagent driver
+      ([write-up](superpowers/plans/2026-09-04-coach-eval-run1.md)). Settled
+      that the program clone and the lost empty day are structural, and that
+      the memory misses are the prompt rather than the model.
+- [ ] Run 2, API driver, to verify the move to `opus-low` against `sonnet-low`.
+      About $2. A verification, not a blocker.
 
 ## Out of scope (per spec)
 
