@@ -90,19 +90,33 @@ beat confirm-at-the-end in the one controlled study on it. Wave 4.
 
 ---
 
-## Wave 0: stop corrupting a live user's data (2.75 days)
+## Wave 0: stop corrupting a live user's data (2.75 days) — CODE DONE 2026-09-04
 
 Valentine's calendar is wrong right now. Nothing else ships first.
 
-| #   | Work                                                                                                                                                                                                                        | Days |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| 0a  | `update_planned_workout` MCP tool: edit one day's prescriptions in place, on a confirmed program, without restating the rest. Coach prompt learns to reach for it and to leave `upsert_program` for genuinely new programs. | 1.5  |
-| 0b  | Plan editor writes `load_entry` (roadmap Task 0.9). Scheme sheet resolves per-side the way the session screen already does, shows PER HAND, stores the total.                                                               | 0.5  |
-| 0c  | A planned day with no prescriptions is a draft, not a MISSED day, on Today and in the week strip.                                                                                                                           | 0.25 |
-| 0d  | Data repair for Valentine: soft-delete the duplicate program, double the dumbbell prescription loads and mark them `per_side`. **Her data — ask her first.**                                                                | 0.5  |
+| # | Work | Days | Status |
+|---|---|---|---|
+| 0a | `update_planned_workout` MCP tool: edit one day's prescriptions in place, on a confirmed program, without restating the rest. Coach prompt reaches for it and leaves `upsert_program` for genuinely new programs. | 1.5 | **done** (`edfda10`) |
+| 0b | Plan editor writes `load_entry`. Both write paths resolve per-side the way the session screen does, show PER HAND, store the total. | 0.5 | **done** (`d3d606c`) |
+| 0c | A planned day with no prescriptions is a draft, not a MISSED day. | 0.25 | **done** (`a84294c`) |
+| 0d | Data repair for Valentine: soft-delete the duplicate program, double the dumbbell prescription loads and mark them `per_side`. | 0.5 | **blocked: her data, needs her yes** |
 
-Wave 0 is also the only wave that needs no deploy coordination: one edge
-function deploy for 0a, a Pages push for 0b and 0c, one SQL statement for 0d.
+0a and 0b were verified against the eval: v12 and s01-swap went from failing to
+passing every check, with one live program, all four days intact, and the swap
+actually applied. 0b is covered by render tests over the sheet rather than by a
+browser pass, because the dev server could not start in that session — Node
+failed to resolve its own cwd in the preview harness, before any project code
+ran. Worth a manual look next time someone has a working preview.
+
+**None of it is deployed.** It needs, in this order: `supabase db push` for the
+`exercise_count` view change, `supabase functions deploy mcp-server` and
+`supabase functions deploy coach` for the new tool and the prompt, then a push
+to main for the PWA. The migration goes first, or the app selects a column that
+does not exist yet — the snag deploy.md already records.
+
+Deploying 0a also makes 0d smaller: the duplicate program still needs a
+decision, but her half-stored dumbbell loads become correctable in the app's own
+plan editor instead of by hand in SQL.
 
 ## Wave 1: never lose or misfile a set (2.75 days)
 
