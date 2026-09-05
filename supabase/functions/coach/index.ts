@@ -45,6 +45,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { systemPrompt } from "./prompt.ts";
 import { captureError } from "./sentry.ts";
+import { extractMemory } from "./memory-extract.ts";
 
 // Opus, at LOW effort, and the two halves of that are separate decisions.
 //
@@ -273,10 +274,17 @@ async function overLimit(
   // Counting them meant every retry after hitting the cap extended the rolling
   // window, turning a 24-hour limit into a permanent lockout — and made the
   // message the user was shown ("resets a day after your first message") false.
+  //
+  // `kind = 'turn'` for the same reason one level along: the memory-extraction
+  // pass writes its own coach_usage row after every turn, and this cap counts
+  // MESSAGES. Without the filter, shipping that pass would have silently
+  // halved the daily allowance for everyone. Its TOKENS still count, in the
+  // monthly sum below, because they are the same money.
   const { count, error } = await db
     .from("coach_usage")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
+    .eq("kind", "turn")
     .is("refused", null)
     .gte("created_at", dayAgo);
   if (error) throw new Error(`usage check: ${error.message}`);
@@ -908,6 +916,44 @@ Deno.serve(async (req) => {
         // connector only holds the token for the length of the request; the
         // minutes left on its TTL were pure exposure.
         await revokeToken(db, mcpTokenDigest);
+
+        // Then, and only then, read what the lifter just said for standing
+        // facts about them (memory-extract.ts). It runs HERE for three
+        // reasons, and the order is all three of them:
+        //
+        //  - After `done` was sent. The UI clears its spinner on that event,
+        //    not on the stream closing, so nothing about this is visible to
+        //    the person: they have their answer and the app is idle.
+        //  - After record(). The turn's own row is the quota and the client's
+        //    way of recovering an answer it was disconnected from, and neither
+        //    may wait behind a second model call.
+        //  - Before controller.close(). Once the response body ends the
+        //    platform is entitled to freeze this isolate, and work started
+        //    after that is work that may simply not happen. This is the same
+        //    reason record() and revokeToken() are awaited here rather than
+        //    fired off.
+        //
+        // It cannot throw. Every failure inside is caught, logged and sent to
+        // Sentry there, because there is nobody left here to tell.
+        await extractMemory({
+          db,
+          anthropic,
+          userId,
+          turnId,
+          // The last turn is the one they just sent. Earlier ones were read by
+          // their own pass, which is what makes this deterministic rather than
+          // a re-read of the whole thread on every message. The role check is
+          // not paranoia about the app: `turns` is client-supplied and only
+          // checked into a shape, so "the last turn" is not guaranteed to be
+          // the lifter's — and an assistant turn is the one thing this pass
+          // must never read.
+          userText:
+            turns[turns.length - 1]?.role === "user"
+              ? (turns[turns.length - 1]?.text ?? "")
+              : "",
+          turnFailed: failed !== null,
+        });
+
         try {
           controller.close();
         } catch {

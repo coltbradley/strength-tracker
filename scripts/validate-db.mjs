@@ -1340,5 +1340,108 @@ await check("memory is private to its owner", async () => {
   if (!rejected) throw new Error("wrote a memory onto another user");
 });
 
+console.log("\nmemory extracted after a turn (4c):");
+
+await check("an extracted fact says so, and says which turn", async () => {
+  // The app owes the lifter a way to see and delete a fact nobody told them
+  // about, and it can only single those out if the row says where it came from.
+  const turn = "11111111-2222-3333-4444-555555555555";
+  await db.exec(
+    `insert into coach_memory (user_id, kind, fact, source, source_turn_id)
+     values ('${OWNER}', 'constraint', 'Only has dumbbells at home', 'extracted', '${turn}')`,
+  );
+  const r = await db.query(
+    `select source, source_turn_id from coach_memory where fact = 'Only has dumbbells at home'`,
+  );
+  assertEq(r.rows[0].source, "extracted", "provenance is recorded");
+  assertEq(r.rows[0].source_turn_id, turn, "and so is the turn behind it");
+  const old = await db.query(
+    `select source from coach_memory where kind = 'injury' limit 1`,
+  );
+  assertEq(old.rows[0].source, "coach", "a fact written by remember defaults to coach");
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into coach_memory (user_id, kind, fact, source)
+       values ('${OWNER}', 'context', 'x', 'guessed')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("accepted an unknown memory source");
+});
+
+await check("an extraction costs money but is not a message", async () => {
+  // The monthly cap sums tokens over every row; the daily cap counts messages.
+  // Miscount the second and shipping this pass halves everyone's allowance.
+  await db.exec(
+    `insert into coach_usage (user_id, model, input_tokens, output_tokens)
+     values ('${OWNER}', 'claude-opus-5', 1000, 200)`,
+  );
+  await db.exec(
+    `insert into coach_usage (user_id, model, kind, input_tokens, output_tokens)
+     values ('${OWNER}', 'claude-haiku-4-5-20251001', 'extraction', 900, 40)`,
+  );
+  const kinds = await db.query(
+    `select kind, count(*)::int as n from coach_usage group by kind order by kind`,
+  );
+  assertEq(kinds.rows.length, 2, "both kinds are present");
+  assertEq(kinds.rows[0].kind, "extraction", "and the new one is named");
+  const day = await db.query(
+    `select turns, input_tokens, output_tokens from v_coach_spend_daily
+      where user_id = '${OWNER}'`,
+  );
+  assertEq(Number(day.rows[0].turns), 1, "one message, not two");
+  assertEq(Number(day.rows[0].input_tokens), 1900, "but every token is billed");
+  assertEq(Number(day.rows[0].output_tokens), 240, "output too");
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into coach_usage (user_id, model, kind) values ('${OWNER}', 'x', 'audit')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("accepted an unknown usage kind");
+});
+
+await check("cost is priced per model, and an unknown model is not guessed", async () => {
+  // One rate table across two models underpriced the turns and overpriced the
+  // extractions, which partly cancel — the worst way for a cost view to be
+  // wrong, because the total still looks plausible. The two rows inserted
+  // above are one Opus turn (1000 in / 200 out) and one Haiku extraction
+  // (900 / 40), so the arithmetic is checkable by hand:
+  //   opus  1000 * 5  + 200 * 25 =  10000  -> 0.010000
+  //   haiku  900 * 1  +  40 *  5 =   1100  -> 0.001100
+  const priced = await db.query(
+    `select model, cost_usd from v_coach_cost
+      where user_id = '${OWNER}' order by model`,
+  );
+  const byModel = new Map(priced.rows.map((r) => [r.model, Number(r.cost_usd)]));
+  assertEq(byModel.get("claude-opus-5"), 0.01, "opus priced at its own rate");
+  assertEq(
+    byModel.get("claude-haiku-4-5-20251001"),
+    0.0011,
+    "a dated snapshot id prices as its alias",
+  );
+
+  // An unpriced row is a question somebody asks. A plausible number computed
+  // from the wrong rate is one nobody ever asks.
+  await db.exec(
+    `insert into coach_usage (user_id, model, input_tokens, output_tokens)
+     values ('${OWNER}', 'some-other-model', 1000, 1000)`,
+  );
+  const unknown = await db.query(
+    `select cost_usd from v_coach_cost where model = 'some-other-model'`,
+  );
+  assertEq(unknown.rows[0].cost_usd, null, "unknown model costs null, not zero");
+
+  // And a null must not read as free once it is summed.
+  const day = await db.query(
+    `select cost_usd from v_coach_spend_daily where user_id = '${OWNER}'`,
+  );
+  assertEq(Number(day.rows[0].cost_usd), 0.0111, "sum skips the unpriced row");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

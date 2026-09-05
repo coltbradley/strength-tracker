@@ -379,6 +379,17 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   memory that must be fetched is memory that gets forgotten. It is deletable,
   unlike the training record, because a fact that stopped being true makes
   every future answer worse.
+  It is also WRITTEN off the response path. `remember` still exists, but the
+  coach never called it once in a real 13-turn conversation that stated two
+  standing facts, and the eval reproduced that with two different models: an
+  in-band tool call competing with answering someone at a rack always loses.
+  A Haiku pass after the turn does it instead
+  (`supabase/functions/coach/memory-extract.ts`), reading the LIFTER's message
+  only — never the assistant's words, never an attachment, and never the
+  `<current_context>` block, which opens with the memory this pass wrote.
+  `source` says which path a row came from and `source_turn_id` which message,
+  so the app can show a fact nobody mentioned in chat and offer to delete it;
+  `source` carries that one fact and nothing may branch on it for ownership.
 
 ## The coach (supabase/functions/coach)
 
@@ -423,6 +434,26 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   response text. That last part is a product decision, not a technical detail:
   whoever runs the deployment can read the conversation. `COACH_LOG_CONTENT=off`
   disables it.
+- A second, cheap pass follows every turn: memory extraction on
+  `claude-haiku-4-5-20251001` (`memory-extract.ts`). It runs in the same
+  `finally`, AFTER `record()` and BEFORE `controller.close()` — after, because
+  the turn's row is the quota and the client's way of recovering an answer and
+  neither may wait behind another model call; before, because once the response
+  body ends the platform may freeze the isolate and work started then may
+  simply not happen. The UI clears on the `done` event, not on the close, so
+  none of it is visible to the lifter. Every failure inside is caught, logged
+  and sent to Sentry: an extraction that throws must never turn a good answer
+  into an error, and must never fail invisibly to the operator either.
+  Its tokens get their OWN `coach_usage` row, `kind = 'extraction'`. They count
+  against the monthly TOKEN cap, which is right, and must not count against the
+  daily MESSAGE cap, which is why `overLimit` filters the day window on
+  `kind = 'turn'` — without that, shipping the pass halves everyone's
+  allowance. `turn_id` stays null there (the unique index and the 409 check
+  both belong to the turn's row). `COACH_MEMORY_EXTRACT=off` switches the pass
+  off; `COACH_LOG_CONTENT=off` nulls its stored `response` exactly as it does a
+  turn's, while the facts themselves still reach `coach_memory` — that switch
+  is about what the OPERATOR can read, not about whether the lifter gets a
+  memory.
 
 ## Commands
 

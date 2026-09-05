@@ -1844,3 +1844,48 @@ all, and a ratio renders that as zero, which reads as total failure rather than
 as nothing having been asked. Draft days are not counted as owed either: a day
 with no prescriptions is one someone abandoned in the plan editor, and the week
 strip already refuses to call that a missed workout.
+
+## Memory is extracted after the turn, not remembered during it
+
+`remember` exists, the prompt tells the coach to use it, and in a real 13-turn
+conversation the lifter said "my left shoulder clicks on overhead press" and "I
+only have dumbbells at home" and it was never called once. The eval reproduced
+the miss on both triggers with two different models, which rules out model
+strength as the explanation. Saving a fact is something the model has to do
+BESIDES answering someone standing at a rack, and an in-band tool call
+competing with the answer loses that race every time. A prompt cannot fix a
+race it is one side of.
+
+So the judgment leaves the response path. A second pass on
+`claude-haiku-4-5-20251001` runs in the turn's `finally`, after the answer is
+streamed and after `coach_usage` has the turn's row, reads the LIFTER's message
+only, and writes what it finds. It is bounded extraction rather than judgment,
+which is the kind of job a small model does reliably and cheaply, and its cost
+is noise against the Opus turn it follows.
+
+Three things it deliberately does not do. It never reads the assistant's words:
+the coach's prose is full of plausible sentences about the lifter, and a model
+inferring a standing fact from its own output is how memory fills with things
+nobody said. It never reads attachments: a coach's screenshot is a picture of
+the COACH's words. And it strips the app's `<current_context>` block, which
+opens with the memory this pass writes, or every existing fact would look
+freshly stated on every turn.
+
+Duplicates are decided twice over. The model is shown everything already in
+memory and told not to restate it, which catches the genuine paraphrase; under
+that, `isSameFact` compares stopword-stripped word sets by Jaccard at 0.6, with
+two overrides — a left/right mismatch and a polarity mismatch are never the
+same fact, because "no longer clicks" is the lifter correcting the earlier one
+and must be allowed to land beside it.
+
+Cost lands on its own `coach_usage` row, tagged `kind = 'extraction'`. Folding
+it into the turn's row would misprice both and describe two calls as one, and
+the turn's row is already written by then. A separate row makes the extraction
+count against the monthly TOKEN cap automatically, which is right; the daily cap
+counts MESSAGES, so it now filters on `kind = 'turn'` — without that, shipping
+this pass would silently have halved everyone's daily allowance.
+
+`coach_memory.source` and `source_turn_id` exist so the app can show a fact
+nobody mentioned in the chat and offer to delete it. `source` carries exactly
+one fact, how the row got here, and nothing may branch on it for ownership:
+that is the mistake `exercises.source` made.

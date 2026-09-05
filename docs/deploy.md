@@ -10,6 +10,7 @@ additive — nothing destroys data.
 node scripts/validate-db.mjs                      # migrations + views + RLS in PGlite
 node scripts/check-selects.mjs                    # every SELECTed column exists
 cd supabase/functions/mcp-server && deno check index.ts && cd -
+cd supabase/functions/coach && deno check index.ts && deno test && cd -
 cd pwa && npm run build && npm test -- --run && cd -
 ```
 
@@ -52,6 +53,25 @@ supabase functions deploy mcp-server --no-verify-jwt
 
 `--no-verify-jwt` is required every deploy: the function does its own bearer
 auth and the gateway must not demand a Supabase JWT.
+
+## Coach function changed (supabase/functions/coach/)
+
+```bash
+supabase functions deploy coach
+```
+
+No `--no-verify-jwt` here, unlike mcp-server: the coach authenticates the
+caller with their Supabase session and WANTS the gateway to demand a JWT.
+
+Secrets it reads, all optional except the first:
+`ANTHROPIC_API_KEY`, `COACH_ALLOWED_USERS` (unset means everyone),
+`COACH_LOG_CONTENT` (`off` stops storing conversation text),
+`COACH_MEMORY_EXTRACT` (`off` stops the post-turn memory pass), `SENTRY_DSN`.
+
+The memory pass reads `coach_usage.kind`, so `20260906050000` has to be pushed
+first — see the ordering snag below. It is the one migration the coach's own
+quota check depends on: without the column, `overLimit` fails and every turn
+answers 503.
 
 ## PWA changed (pwa/)
 
