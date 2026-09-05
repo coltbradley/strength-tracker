@@ -38,6 +38,11 @@ const FILES = [
   ...readdirSync(join(ROOT, "supabase/functions/mcp-server/tools"))
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
     .map((f) => join("supabase/functions/mcp-server/tools", f)),
+  // Shared readers under lib/ select too (prescriptions.ts, lastTime.ts): a
+  // column that only a tool file can misname is not the only kind.
+  ...readdirSync(join(ROOT, "supabase/functions/mcp-server/lib"))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+    .map((f) => join("supabase/functions/mcp-server/lib", f)),
   "pwa/src/lib/data.ts",
   "pwa/src/lib/coach.ts",
 ];

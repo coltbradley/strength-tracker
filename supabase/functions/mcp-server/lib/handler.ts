@@ -46,6 +46,9 @@ import { registerSetGoal } from "../tools/set_goal.ts";
 import { registerSetTrainingMax } from "../tools/set_training_max.ts";
 import { registerUpdatePlannedWorkout } from "../tools/update_planned_workout.ts";
 import { registerUpsertProgram } from "../tools/upsert_program.ts";
+// C · the loop
+import { registerFindSimilarDays } from "../tools/find_similar_days.ts";
+import { registerRepeatPlannedWorkout } from "../tools/repeat_planned_workout.ts";
 
 function buildServer(ctx: RequestContext, userId: string): McpServer {
   const server = new McpServer({ name: "strength-tracker", version: "1.0.0" });
@@ -72,6 +75,11 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerManageExercises(server, db, ctx);
   registerFeedback(server, db, ctx);
   registerExerciseNotes(server, db, ctx);
+  // C · the loop: recognise a day, repeat it forward. find_similar_days is a
+  // read; repeat_planned_workout writes planned tables only, like the two
+  // plan tools above it, and never sets or sessions.
+  registerFindSimilarDays(server, db, ctx);
+  registerRepeatPlannedWorkout(server, db, ctx);
   return server;
 }
 
