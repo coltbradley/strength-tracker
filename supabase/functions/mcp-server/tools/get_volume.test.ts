@@ -70,7 +70,7 @@ interface ToolResult {
  * where `weeks` stopped carrying a default) is part of what is under test
  * rather than something the test quietly bypasses.
  */
-function harness() {
+function harness(tz = "UTC", ownerId: string = USER) {
   const calls: Recorded[] = [];
   const client = {
     from(table: string) {
@@ -78,8 +78,15 @@ function harness() {
       calls.push(rec);
       return new FakeQuery(rec);
     },
+    // The lookback is counted back from the LIFTER's today, so the tool asks
+    // the database for their timezone first. appTz caches per ownerId at
+    // module scope, which is why a test wanting a different zone passes a
+    // different owner rather than expecting a second answer for the same one.
+    rpc(_fn: string, _args: unknown) {
+      return Promise.resolve({ data: tz, error: null });
+    },
   };
-  const db = { client, ownerId: USER } as unknown as Db;
+  const db = { client, ownerId } as unknown as Db;
   const ctx: RequestContext = { requestId: "test-request" };
 
   let schema: z.ZodTypeAny | null = null;
@@ -115,9 +122,21 @@ function harness() {
   };
 }
 
-/** The floor the tool computes for a lookback of n weeks. */
-function weeksAgo(n: number): string {
-  return new Date(Date.now() - n * 7 * 86_400_000).toISOString().slice(0, 10);
+/** Today's calendar date in a zone, computed independently of the tool. */
+function todayIn(tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+/** The floor the tool should compute for a lookback of n weeks in a zone. */
+function weeksAgo(n: number, tz = "UTC"): string {
+  const d = new Date(`${todayIn(tz)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - n * 7);
+  return d.toISOString().slice(0, 10);
 }
 
 function gteOn(rec: Recorded, column: string): string {
@@ -208,5 +227,23 @@ Deno.test(
       // And it fails BEFORE the query: a bad date must not become a filter.
       assertEquals(h.calls.length, 0);
     }
+  },
+);
+
+Deno.test(
+  "the lookback is counted from the lifter's today, not the server's",
+  async () => {
+    // Both ends of this comparison are calendar dates in the lifter's zone:
+    // week_start is bucketed with app_tz(user_id) in SQL. Counting the floor
+    // from a UTC clock puts one end in a different calendar, and the two
+    // disagree for the hours either side of local midnight -- which for a
+    // Sunday-evening question in Los Angeles is a whole extra week.
+    const LA = "America/Los_Angeles";
+    const h = harness(LA, "00000000-0000-4000-8000-0000000000la".replace(
+      "la",
+      "02",
+    ));
+    await h.run({});
+    assertEquals(gteOn(h.calls[0], "week_start"), weeksAgo(12, LA));
   },
 );

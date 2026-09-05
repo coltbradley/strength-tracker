@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
-import { assertIsoDate } from "../lib/dates.ts";
+import { assertIsoDate, todayIso } from "../lib/dates.ts";
 import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
 
 /**
@@ -86,11 +86,17 @@ export function registerGetVolume(
         const floors: string[] = [];
         if (since !== null) floors.push(since);
         if (weeks !== null) {
-          floors.push(
-            new Date(Date.now() - weeks * 7 * 86_400_000)
-              .toISOString()
-              .slice(0, 10),
-          );
+          // Counted back from the lifter's OWN today, not the server's. Both
+          // ends of this comparison are calendar dates in their timezone --
+          // week_start is bucketed with app_tz(user_id) -- and mixing a UTC
+          // clock into one end is how someone in Los Angeles asking on a
+          // Sunday evening gets a different twelve weeks than the view thinks
+          // they asked for. The arithmetic below is deliberately date-only:
+          // parsed at UTC midnight and formatted back, so no zone offset
+          // enters it and DST cannot move a boundary.
+          const from = new Date(`${await todayIso(db)}T00:00:00Z`);
+          from.setUTCDate(from.getUTCDate() - weeks * 7);
+          floors.push(from.toISOString().slice(0, 10));
         }
         // Two floors on one column: a caller naming both is asking for both to
         // hold, so the later one is the effective bound. ISO dates sort
