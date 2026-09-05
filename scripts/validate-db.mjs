@@ -51,6 +51,12 @@ await db.exec(`
     as $$ select nullif(current_setting('app.user_id', true), '')::uuid $$;
   create role authenticated login;
   create role anon login;
+  -- Supabase grants EXECUTE on every new public function to anon and
+  -- authenticated through default privileges, i.e. at CREATE time. Modelled the
+  -- same way, and BEFORE the migrations run, so that a migration which revokes
+  -- execute on one function (20260905030000) is not silently re-granted by the
+  -- harness afterwards. A blanket grant after the migrations was exactly that.
+  alter default privileges in schema public grant execute on functions to anon, authenticated;
 `);
 
 // --- migrations (unmodified) ----------------------------------------------
@@ -65,7 +71,6 @@ await db.exec(`
   grant usage on schema public, auth to authenticated;
   grant select, insert, update, delete on all tables in schema public to authenticated;
   grant execute on all functions in schema auth to authenticated;
-  grant execute on all functions in schema public to authenticated;
 `);
 
 // --- seed ------------------------------------------------------------------
@@ -1311,6 +1316,34 @@ await check("memory is private to its owner", async () => {
     rejected = true;
   }
   if (!rejected) throw new Error("wrote a memory onto another user");
+});
+
+// --- function grants (20260905030000) -------------------------------------
+console.log("\nfunction grants (the linter baseline in docs/security.md):");
+await db.exec("reset role;");
+
+await check("purge_expired_mcp_tokens is not callable by anon or authenticated", async () => {
+  const r = await db.query(`
+    select has_function_privilege('anon', 'public.purge_expired_mcp_tokens()', 'execute') as anon,
+           has_function_privilege('authenticated', 'public.purge_expired_mcp_tokens()', 'execute') as authed`);
+  assertEq(r.rows[0], { anon: false, authed: false }, "execute on purge_expired_mcp_tokens");
+});
+
+await check("but an ordinary public function still is (the revoke is targeted)", async () => {
+  const r = await db.query(
+    `select has_function_privilege('authenticated', 'public.app_tz()', 'execute') as authed`,
+  );
+  assertEq(r.rows[0].authed, true, "execute on app_tz");
+});
+
+await check("every public function pins search_path", async () => {
+  const r = await db.query(`
+    select p.proname
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%')
+    order by 1`);
+  assertEq(r.rows.map((x) => x.proname), [], "functions without search_path");
 });
 
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
