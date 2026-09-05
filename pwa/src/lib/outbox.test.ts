@@ -3,6 +3,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createOutbox,
+  deadKind,
   type OutboxTransport,
   type TransportError,
 } from "./outbox";
@@ -55,6 +56,14 @@ const authErr: TransportError = {
   message: "JWT expired",
   code: null,
   status: 401,
+};
+// A judgement on the ROW rather than on the caller: the same bytes come back
+// refused every time, which is the one class a retry button must not offer to
+// fix.
+const checkErr: TransportError = {
+  message: 'violates check constraint "sets_reps_check"',
+  code: "23514",
+  status: 400,
 };
 
 const session: SessionInsert = {
@@ -146,6 +155,7 @@ describe("outbox", () => {
     expect(outbox.getStatus()).toEqual({
       pending: 0,
       dead: 0,
+      held: 0,
       state: "idle",
       lastError: null,
     });
@@ -186,6 +196,7 @@ describe("outbox", () => {
     expect(outbox.getStatus()).toEqual({
       pending: 0,
       dead: 0,
+      held: 0,
       state: "idle",
       lastError: null,
     });
@@ -278,6 +289,7 @@ describe("outbox", () => {
     expect(outbox.getStatus()).toEqual({
       pending: 0,
       dead: 0,
+      held: 0,
       state: "idle",
       lastError: null,
     });
@@ -309,6 +321,7 @@ describe("outbox", () => {
     expect(outbox.getStatus()).toEqual({
       pending: 0,
       dead: 0,
+      held: 0,
       state: "idle",
       lastError: null,
     });
@@ -349,6 +362,7 @@ describe("outbox", () => {
     expect(outbox.getStatus()).toEqual({
       pending: 0,
       dead: 0,
+      held: 0,
       state: "idle",
       lastError: null,
     });
@@ -699,6 +713,172 @@ describe("outbox identity", () => {
       currentUserId: () => BOB,
     });
     await box.flush();
+    expect(calls).toHaveLength(1);
+  });
+});
+
+// The queue was invisible. Nothing on screen said a set had not reached the
+// server, and the only action offered ("retry failed") re-queued every dead
+// item blindly — including the ones the server refuses on the merits of the
+// row, which came straight back as failures. These are the reads and the
+// narrowed retry that <OutboxSheet> is built on.
+describe("outbox visibility", () => {
+  const ALICE = "aaaaaaaa-1111-4111-8111-111111111111";
+  const BOB = "bbbbbbbb-2222-4222-8222-222222222222";
+  const setC = makeSet("cccccccc-3333-4333-8333-333333333333", 2);
+  const setD = makeSet("dddddddd-4444-4444-8444-444444444444", 3);
+
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory();
+    resetDbForTests();
+  });
+
+  it("reads the cause off the code and status, never off the message", () => {
+    // A 401 whose refresh answered "no": a later sign-in changes it.
+    expect(deadKind(null, 401)).toBe("auth");
+    // Refused by state OUTSIDE the payload — a policy judging the caller, or
+    // an ancestor row that has not landed yet. Both can change on a replay.
+    expect(deadKind("42501", 403)).toBe("blocked");
+    expect(deadKind("23503", 409)).toBe("blocked");
+    // ...and the code wins over the status, so a 409 carrying an FK is still
+    // blocked while a bare 409 is a conflict on the row.
+    expect(deadKind(null, 409)).toBe("rejected");
+    // A judgement on the row: not-null, check, unique.
+    expect(deadKind("23502", 400)).toBe("rejected");
+    expect(deadKind("23514", 400)).toBe("rejected");
+    expect(deadKind("23505", 409)).toBe("rejected");
+    // No evidence at all — an item that died before the code was recorded,
+    // and a 404, which is about the endpoint rather than the row.
+    expect(deadKind(null, null)).toBe("unknown");
+    expect(deadKind(undefined, undefined)).toBe("unknown");
+    expect(deadKind(null, 404)).toBe("unknown");
+  });
+
+  it("counts waiting, held and dead apart, and names each one", async () => {
+    let online = false;
+    let who: string | null = ALICE;
+    const { transport } = makeTransport([checkErr]);
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => who,
+    });
+
+    await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+    who = BOB; // someone else borrows the phone
+    await box.enqueue({ kind: "insert", table: "sets", payload: setB });
+    who = ALICE;
+    await box.enqueue({ kind: "insert", table: "sets", payload: setC });
+
+    online = true;
+    await box.flush();
+    // setA was refused on its own merits; setB is not this device's to send;
+    // setC went up and left the queue.
+    online = false;
+    await box.enqueue({ kind: "insert", table: "sets", payload: setD });
+
+    // `held` is a SUBSET of `pending`: the item is queued and healthy, this
+    // device is simply not the one to send it. Every existing reader of
+    // `pending` still counts the same things it did.
+    expect(box.getStatus()).toMatchObject({ pending: 2, held: 1, dead: 1 });
+
+    const entries = await box.inspect();
+    expect(entries.map((e) => e.state)).toEqual(["dead", "held", "waiting"]);
+    expect(entries[0]).toMatchObject({
+      cause: "rejected",
+      retryable: false,
+      last_error: checkErr.message,
+      user_id: ALICE,
+    });
+    expect(entries[1]).toMatchObject({
+      cause: null,
+      retryable: false,
+      user_id: BOB,
+    });
+    expect(entries[2]).toMatchObject({ cause: null, user_id: ALICE });
+    // Replay order is the queue order, and the view shows it that way.
+    expect(entries.map((e) => e.key)).toEqual([...entries.map((e) => e.key)].sort((a, b) => a - b));
+  });
+
+  it("retryDead re-queues only the failures whose answer can change", async () => {
+    let online = false;
+    const { calls, transport } = makeTransport([rlsErr, checkErr]);
+    const box = createOutbox({ getDb, transport, isOnline: () => online });
+
+    await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+    await box.enqueue({ kind: "insert", table: "sets", payload: setB });
+    online = true;
+    await box.flush();
+    expect(box.getStatus().dead).toBe(2);
+
+    const outcome = await box.retryDead();
+    // setA was refused by a policy, which a replay can get past. setB was
+    // refused by a check constraint, which it cannot — re-queueing that one
+    // only moves it from FAILED to FAILED via a moment of false hope.
+    expect(outcome).toEqual({ requeued: 1, stuck: 1 });
+    expect(box.getStatus()).toMatchObject({ pending: 0, dead: 1, held: 0 });
+
+    const sent = calls.map((c) => (c.payload as SetInsert).id);
+    expect(sent.filter((id) => id === setA.id)).toHaveLength(2);
+    expect(sent.filter((id) => id === setB.id)).toHaveLength(1);
+
+    // It stays in IndexedDB, exportable, rather than being dropped.
+    const remaining = await box.inspect();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toMatchObject({ cause: "rejected", retryable: false });
+  });
+
+  it("retryDead leaves another user's held work exactly where it is", async () => {
+    let who: string | null = BOB;
+    let online = false;
+    const { calls, transport } = makeTransport();
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => who,
+    });
+
+    await box.enqueue({ kind: "insert", table: "sets", payload: setB });
+    who = ALICE;
+    online = true;
+
+    // Retry is a verb aimed at DEAD items. A held item is pending and healthy,
+    // and re-queueing it would be the one thing that could send Bob's set as
+    // Alice — permanently, because `sets` is append-only.
+    expect(await box.retryDead()).toEqual({ requeued: 0, stuck: 0 });
+    expect(calls).toHaveLength(0);
+    await box.flush();
+    expect(calls).toHaveLength(0);
+
+    const db = await getDb();
+    const rows = await db.getAll("outbox");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].user_id).toBe(BOB);
+    expect(rows[0].status).toBe("pending");
+    expect(box.getStatus()).toMatchObject({ pending: 1, held: 1, dead: 0 });
+  });
+
+  it("a dead item with no recorded cause is still offered a retry", async () => {
+    // Items that died before the code and status were kept carry only the
+    // message. Refusing to try on no evidence is the worse of the two guesses:
+    // the write is real and the server may well take it now.
+    const { calls, transport } = makeTransport();
+    const db = await getDb();
+    await db.add("outbox", {
+      op: { kind: "insert", table: "sets", payload: setA },
+      created_at: "2026-08-25T10:00:00.000Z",
+      retries: 4,
+      last_error: "permission denied for table sets",
+      status: "dead",
+    });
+    const box = createOutbox({ getDb, transport, isOnline: () => true });
+
+    const entries = await box.inspect();
+    expect(entries[0]).toMatchObject({ cause: "unknown", retryable: true });
+
+    expect(await box.retryDead()).toEqual({ requeued: 1, stuck: 0 });
     expect(calls).toHaveLength(1);
   });
 });

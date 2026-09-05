@@ -213,9 +213,111 @@ export function downloadText(
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export function exportFilename(ext: "json" | "csv"): string {
+export function exportFilename(ext: "json" | "csv", tag?: string): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-  return `strength-log-${stamp}.${ext}`;
+  return `strength-log-${tag ? `${tag}-` : ""}${stamp}.${ext}`;
+}
+
+// ---- the write queue ------------------------------------------------------
+//
+// Everything above exports what the SERVER has, which by definition is not the
+// queue: the outbox holds the only copy of a set that has not landed, and an
+// archive that cannot include it is exactly the wrong archive to offer someone
+// whose writes are stuck.
+//
+// Pure on purpose. The caller hands over the entries and the exercise names it
+// already has, so this file keeps knowing nothing about IndexedDB and the
+// shape is testable without one.
+
+export interface QueueExportItem {
+  /** Replay position. The queue is ordered and the order is load-bearing: a
+   *  session insert lands before the sets that name it. */
+  position: number;
+  state: "waiting" | "held" | "dead";
+  /** why a dead item is dead; null unless dead */
+  cause: string | null;
+  retryable: boolean;
+  queued_at: string | null;
+  /** the account that queued it, which is who a HELD item is waiting for */
+  queued_by: string | null;
+  attempts: number;
+  last_error: string | null;
+  /** e.g. "insert sets" */
+  operation: string;
+  /** The exact row this device is trying to write, verbatim. */
+  row: unknown;
+  /** The exercise's name where the row names one. An id on its own is not
+   *  something a person can retype into anything. */
+  exercise_name?: string;
+}
+
+export interface QueueExportBundle {
+  exported_at: string;
+  app_version: string;
+  /** Loads in `row` are kg and are the TOTAL system load, whatever the app is
+   *  displaying — `load_entry` says how the number was typed. Stated in the
+   *  file because this one is read by a person, off a phone, when something
+   *  has gone wrong. */
+  units: "kg";
+  summary: { waiting: number; held: number; dead: number };
+  items: QueueExportItem[];
+}
+
+interface QueueEntry {
+  op: {
+    kind: string;
+    table: string;
+    payload?: unknown;
+    id?: string;
+    patch?: unknown;
+  };
+  created_at: string | null;
+  retries: number;
+  last_error: string | null;
+  user_id: string | undefined;
+  state: "waiting" | "held" | "dead";
+  cause: string | null;
+  retryable: boolean;
+}
+
+export function buildQueueExport(
+  entries: readonly QueueEntry[],
+  exerciseNames: Record<string, string>,
+  appVersion: string,
+): QueueExportBundle {
+  const summary = { waiting: 0, held: 0, dead: 0 };
+  const items = entries.map((e, i): QueueExportItem => {
+    summary[e.state] += 1;
+    // An update's patch alone does not say WHAT it patches, so the target id
+    // goes in beside it; an insert's payload already carries its own.
+    const row =
+      e.op.kind === "insert"
+        ? e.op.payload
+        : { id: e.op.id, ...(e.op.patch as Record<string, unknown>) };
+    const exerciseId = (row as { exercise_id?: unknown } | null)?.exercise_id;
+    const name =
+      typeof exerciseId === "string" ? exerciseNames[exerciseId] : undefined;
+    return {
+      position: i,
+      state: e.state,
+      cause: e.cause,
+      retryable: e.retryable,
+      queued_at: e.created_at,
+      queued_by: e.user_id ?? null,
+      attempts: e.retries,
+      last_error: e.last_error,
+      operation: `${e.op.kind} ${e.op.table}`,
+      row: row ?? null,
+      ...(name === undefined ? {} : { exercise_name: name }),
+    };
+  });
+  return {
+    exported_at: new Date().toISOString(),
+    app_version: appVersion,
+    units: "kg",
+    summary,
+    items,
+  };
 }

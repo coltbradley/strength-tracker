@@ -11,9 +11,13 @@
 //    data must survive)
 //  - 401 -> attempt ONE auth refresh per flush, retry; still failing -> 'dead'
 //  - other constraint/RLS/client errors (23xxx, 42501, 400/403/404/409/422)
-//    -> mark 'dead': kept in IndexedDB with last_error, skipped by the
-//    flusher, surfaced in SyncStatus with a "retry failed" action
+//    -> mark 'dead': kept in IndexedDB with last_error AND the code and status
+//    that caused it, skipped by the flusher, listed in <OutboxSheet> where it
+//    can be retried or exported
 // The flusher keeps going past dead items.
+//
+// Dead is not the same as hopeless, and the difference is `deadKind` below:
+// a retry is only offered for the failures whose answer can still change.
 //
 // The outbox knows nothing about screens; screens know nothing about sync.
 
@@ -25,6 +29,14 @@ export type SyncState = "idle" | "syncing" | "error";
 export interface OutboxStatus {
   pending: number;
   dead: number;
+  /**
+   * How many of `pending` this device must not send: queued by another
+   * account, or queued before identity resolved. A SUBSET of `pending`, not a
+   * third bucket — the item is queued and healthy, this device is simply not
+   * the one to send it, and making it a separate total would have changed
+   * what every existing reader of `pending` means.
+   */
+  held: number;
   state: SyncState;
   lastError: string | null;
 }
@@ -58,8 +70,19 @@ export interface OutboxTransport {
 export interface Outbox {
   enqueue(op: OutboxOp): Promise<void>;
   flush(): Promise<void>;
-  /** re-queue all dead items as pending and flush */
-  retryDead(): Promise<void>;
+  /**
+   * Re-queue the dead items a retry could actually help, and flush. Items
+   * the server refused on the merits of the row itself are left where they
+   * are — see `deadKind`. Returns what it did, so the caller can say so
+   * instead of implying a rescue that never happened.
+   */
+  retryDead(): Promise<RetryOutcome>;
+  /**
+   * Every queued item, in replay order, for the pending-writes view. The one
+   * READ of the queue as a queue: everything else here asks it a question
+   * about one session or one set.
+   */
+  inspect(): Promise<OutboxEntry[]>;
   getStatus(): OutboxStatus;
   subscribe(fn: () => void): () => void;
   /** Queued (unsynced) set inserts for a session — dead ones included, the
@@ -136,6 +159,78 @@ function classify(op: OutboxOp, err: TransportError): ErrorClass {
   return "retry"; // network errors, 5xx, timeouts, anything unknown
 }
 
+/**
+ * Why the server refused a DEAD item, and therefore whether asking again
+ * could ever produce a different answer. `classify` above decides what to do
+ * in the moment; this decides what a retry button is allowed to promise, and
+ * it reads the recorded CODE and STATUS, never the message — the prose is
+ * whatever PostgREST felt like saying that day.
+ *
+ *  - 'auth'     the refresh answered "no session". A later sign-in changes it.
+ *  - 'blocked'  refused by state OUTSIDE the payload. 42501/403 is a row-level
+ *               policy judging the CALLER, and a 23503 past the prescription
+ *               special case is an ancestor row that never landed — the
+ *               session insert sitting AHEAD of this one in the queue. Both
+ *               change when the queue is replayed by the right person in
+ *               order, which is exactly what retryDead does.
+ *  - 'rejected' a judgement on the ROW: not-null, check, unique, or a request
+ *               the server could not parse. Same bytes, same answer, forever.
+ *               These are the ones a retry button must not offer to fix.
+ *  - 'unknown'  no evidence. Items that died before the code was recorded, and
+ *               a 404, which is about the ENDPOINT rather than the row and can
+ *               come back. Treated as retryable: refusing to try on no
+ *               evidence is the worse of the two guesses.
+ */
+export type DeadKind = "auth" | "blocked" | "rejected" | "unknown";
+
+export function deadKind(
+  code: string | null | undefined,
+  status: number | null | undefined,
+): DeadKind {
+  if (status === 401) return "auth";
+  if (code === "42501" || code === "23503" || status === 403) return "blocked";
+  // codes before statuses, so a 409 carrying 23503 stays 'blocked' and a bare
+  // 409 (a conflict on the row) does not
+  if (code != null && /^23\d{3}$/.test(code)) return "rejected";
+  if (status === 400 || status === 409 || status === 422) return "rejected";
+  return "unknown";
+}
+
+/** Whether re-queueing this dead item could produce a different answer. */
+export function isRetryable(item: OutboxItem): boolean {
+  return deadKind(item.last_code, item.last_status) !== "rejected";
+}
+
+export interface RetryOutcome {
+  /** dead items put back in the queue */
+  requeued: number;
+  /** dead items left alone, because the same bytes would be refused again */
+  stuck: number;
+}
+
+/** One queued write, as the pending-writes view needs to read it. */
+export interface OutboxEntry {
+  /** IndexedDB key. Also the enqueue order, which is the replay order. */
+  key: number;
+  op: OutboxOp;
+  table: OutboxOp["table"];
+  /** null on items queued before the field existed */
+  created_at: string | null;
+  retries: number;
+  last_error: string | null;
+  /** who queued it; undefined on items queued before multi-user */
+  user_id: string | undefined;
+  /**
+   * 'waiting' goes on the next flush. 'held' was queued by another account
+   * (or before identity resolved) and this device must not send it. 'dead'
+   * was refused and the flusher steps over it.
+   */
+  state: "waiting" | "held" | "dead";
+  /** null unless dead */
+  cause: DeadKind | null;
+  retryable: boolean;
+}
+
 interface Row {
   key: number;
   item: OutboxItem;
@@ -151,6 +246,7 @@ export function createOutbox({
   let status: OutboxStatus = {
     pending: 0,
     dead: 0,
+    held: 0,
     state: "idle",
     lastError: null,
   };
@@ -209,14 +305,38 @@ export function createOutbox({
     return out;
   }
 
-  function counts(rows: Row[]): { pending: number; dead: number } {
+  function counts(rows: Row[]): {
+    pending: number;
+    dead: number;
+    held: number;
+  } {
     let pending = 0;
     let dead = 0;
+    let held = 0;
     for (const r of rows) {
-      if (r.item.status === "dead") dead++;
-      else pending++;
+      if (r.item.status === "dead") {
+        dead++;
+      } else {
+        pending++;
+        if (!replayable(r.item)) held++;
+      }
     }
-    return { pending, dead };
+    return { pending, dead, held };
+  }
+
+  /**
+   * Record a failure on the item. The code and status ride along, not just
+   * the message: once the item is dead they are the only evidence left of
+   * why, and every caller below has to write the same three fields.
+   */
+  function withFailure(item: OutboxItem, err: TransportError): OutboxItem {
+    return {
+      ...item,
+      retries: item.retries + 1,
+      last_error: err.message,
+      last_code: err.code,
+      last_status: err.status,
+    };
   }
 
   async function refreshCounts(): Promise<void> {
@@ -273,10 +393,8 @@ export function createOutbox({
               { kind: "insert"; table: "sets" }
             >;
             item = {
-              ...item,
+              ...withFailure(item, err),
               op: { ...op, payload: { ...op.payload, prescription_id: null } },
-              retries: item.retries + 1,
-              last_error: err.message,
             };
             await db.put("outbox", item, row.key);
             continue attempt; // retry once; a second 23503 classifies as dead
@@ -302,22 +420,14 @@ export function createOutbox({
               unreachable = true;
             }
             if (refreshed) {
-              item = {
-                ...item,
-                retries: item.retries + 1,
-                last_error: err.message,
-              };
+              item = withFailure(item, err);
               await db.put("outbox", item, row.key);
               continue attempt;
             }
             if (unreachable) {
               // fall through to the retryable path: stay pending, stop the
               // flush, try again on the next trigger
-              item = {
-                ...item,
-                retries: item.retries + 1,
-                last_error: err.message,
-              };
+              item = withFailure(item, err);
               await db.put("outbox", item, row.key);
               setStatus({
                 ...counts(await readAll(db)),
@@ -330,12 +440,7 @@ export function createOutbox({
           }
 
           if (kind === "dead" || kind === "auth") {
-            item = {
-              ...item,
-              status: "dead",
-              retries: item.retries + 1,
-              last_error: err.message,
-            };
+            item = { ...withFailure(item, err), status: "dead" };
             await db.put("outbox", item, row.key);
             setStatus({
               ...counts(await readAll(db)),
@@ -345,11 +450,7 @@ export function createOutbox({
           }
 
           // retryable: record the failure and stop the whole flush
-          item = {
-            ...item,
-            retries: item.retries + 1,
-            last_error: err.message,
-          };
+          item = withFailure(item, err);
           await db.put("outbox", item, row.key);
           setStatus({
             ...counts(await readAll(db)),
@@ -404,13 +505,44 @@ export function createOutbox({
 
     async retryDead() {
       const db = await getDb();
+      let requeued = 0;
+      let stuck = 0;
       for (const row of await readAll(db)) {
-        if (row.item.status === "dead") {
-          await db.put("outbox", { ...row.item, status: "pending" }, row.key);
+        if (row.item.status !== "dead") continue;
+        // A row the server rejected on its own merits comes back refused, and
+        // a retry that re-queues it only moves it from FAILED to FAILED via a
+        // moment of false hope. It stays dead and stays exportable.
+        if (!isRetryable(row.item)) {
+          stuck++;
+          continue;
         }
+        await db.put("outbox", { ...row.item, status: "pending" }, row.key);
+        requeued++;
       }
       await refreshCounts();
-      await flush();
+      // Nothing was un-parked, so there is nothing new for a flush to find.
+      if (requeued > 0) await flush();
+      return { requeued, stuck };
+    },
+
+    async inspect() {
+      const db = await getDb();
+      const rows = await readAll(db);
+      return rows.map(({ key, item }): OutboxEntry => {
+        const dead = item.status === "dead";
+        return {
+          key,
+          op: item.op,
+          table: item.op.table,
+          created_at: item.created_at ?? null,
+          retries: item.retries ?? 0,
+          last_error: item.last_error ?? null,
+          user_id: item.user_id,
+          state: dead ? "dead" : replayable(item) ? "waiting" : "held",
+          cause: dead ? deadKind(item.last_code, item.last_status) : null,
+          retryable: dead && isRetryable(item),
+        };
+      });
     },
 
     getStatus: () => status,

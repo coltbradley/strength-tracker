@@ -1693,6 +1693,14 @@
     border-color: var(--accent-dim);
   }
 
+  /* Held is not a fault and must not read as one: someone else's queued work
+     waiting for them is the queue behaving correctly. --info, same ink as
+     PENDING, because that is what it is. */
+  .sync-held {
+    color: var(--info);
+    border-color: var(--info);
+  }
+
   /* ---- sheets / drawers ---- */
 
   .sheet-backdrop {
@@ -1855,6 +1863,76 @@
   .override-row {
     font-family: var(--font-mono);
     font-size: var(--fs-meta);
+  }
+
+  /* -- the write queue (OutboxSheet) ------------------------------------
+   * A list of RECORDS, not of preferences, so it is denser than .sheet-row:
+   * a name, an age, and — only when there is one — the server's own words
+   * about why it would not take it, wrapped rather than clipped because a
+   * truncated error is the same as no error.
+   *
+   * Colour appears only where something is genuinely parked. Ordinary queued
+   * writes are the normal state of an offline-first app and are set in the
+   * body ink like everything else; --info (4.94:1) marks HELD, which is not a
+   * fault, and --danger (5.9:1) marks FAILED. The accent is never used here:
+   * 4.08:1 does not carry text this small. */
+  .queue-list {
+    display: grid;
+    gap: 0;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .queue-item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    gap: var(--s-3) var(--s-5);
+    padding: var(--s-5) 0;
+    border-bottom: var(--rule-hair);
+    font-size: var(--fs-sm);
+  }
+
+  .queue-item > * {
+    min-width: 0;
+  }
+
+  .queue-item-name {
+    overflow-wrap: break-word;
+  }
+
+  .queue-item-age {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-2);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  /* Spans both tracks: the message is the row's second line, not a cell. */
+  .queue-item-error {
+    grid-column: 1 / -1;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    line-height: 1.5;
+    color: var(--text-dim);
+    overflow-wrap: break-word;
+  }
+
+  .queue-item-more {
+    grid-template-columns: 1fr;
+    border-bottom: 0;
+    color: var(--text-dim);
+    font-size: var(--fs-meta);
+  }
+
+  .queue-state-held {
+    color: var(--info);
+  }
+
+  .queue-state-dead {
+    color: var(--danger);
   }
 
   .drawer-row {

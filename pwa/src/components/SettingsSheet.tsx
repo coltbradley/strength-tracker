@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { NumberPad, type PadRequest } from "./NumberPad";
+import { OutboxSheet } from "./OutboxSheet";
 import { Sheet } from "./Sheet";
 import { TrainingMaxSheet } from "./TrainingMaxSheet";
 import {
@@ -69,6 +70,44 @@ interface SettingsSheetProps {
   onClose: () => void;
 }
 
+/**
+ * What signing out actually does to unsynced writes, said exactly, or null
+ * when there is nothing outstanding to say it about.
+ *
+ * This copy used to read "Signing out discards them, this is the only copy",
+ * and it was never true. Nothing in the sign-out path touches the outbox:
+ * `cacheClearAll` drops the `kv` read cache and the coach thread and leaves
+ * the queue alone on purpose, every queued item carries the id of whoever made
+ * it, and the flusher holds an item for that person rather than replaying it
+ * as anyone else. So the writes survive, they survive under the ACCOUNT that
+ * made them, and the button two lines below already said "kept for you" while
+ * this block threatened a deletion. A warning that overstates is how a user
+ * learns to ignore the ones that are real.
+ *
+ * The second half is the part that IS destructive and was never mentioned:
+ * the cached log on this device goes.
+ */
+export function signOutCopy(status: {
+  pending: number;
+  dead: number;
+}): string | null {
+  const total = status.pending + status.dead;
+  if (total === 0) return null;
+  const one = total === 1;
+  const head = one
+    ? "1 write has not reached the server. Signing out does not delete it: it stays on this phone under the account that made it, and goes up the next time that account signs in here."
+    : `${total} writes have not reached the server. Signing out does not delete them: they stay on this phone under the account that made each one, and go up the next time that account signs in here.`;
+  const cache =
+    " The rest of your log is cleared from this device and comes back when you sign in.";
+  const tail =
+    status.dead === 0
+      ? " Tap “Sync now” first if you have signal."
+      : status.dead === 1
+        ? " One of them has failed and will not go on its own: open Unsynced writes and retry or export it first."
+        : ` ${status.dead} of them have failed and will not go on their own: open Unsynced writes and retry or export them first.`;
+  return head + cache + tail;
+}
+
 type OpenPad = (req: PadRequest) => void;
 
 export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
@@ -81,6 +120,7 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   );
   const [busy, setBusy] = useState(false);
   const [tmOpen, setTmOpen] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
   // count of training maxes actually IN FORCE today (a future-dated row is
   // scheduled, not current — same rule as v_current_tm); null = not read yet
   const [tmCount, setTmCount] = useState<number | null>(null);
@@ -204,8 +244,9 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
     signOutStage === 0
       ? "Sign out"
       : queued > 0
-        ? `${queued} unsynced, kept for you — sign out?`
+        ? `${queued} unsynced, kept for you. Sign out?`
         : "Sign out?";
+  const signOutWarning = signOutStage > 0 ? signOutCopy(status) : null;
 
   const signOut = () => {
     if (signOutStage === 0) {
@@ -330,6 +371,31 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
           </span>
         </button>
 
+        {/* Sync now is the ACTION; this is the account of what it is acting
+            on. They show different numbers on purpose: the queue's total is
+            above, and this row names the part of it that will not move on its
+            own, which is the only part worth a trip. */}
+        <button
+          type="button"
+          className="sheet-row sheet-row-btn"
+          onClick={() => setQueueOpen(true)}
+        >
+          <span>Unsynced writes</span>
+          <span className="sheet-row-value">
+            {queued === 0
+              ? "NONE"
+              : status.dead > 0
+                ? `${status.dead} FAILED`
+                : status.held > 0
+                  ? `${status.held} HELD`
+                  : `${queued} WAITING`}
+          </span>
+        </button>
+        <div className="microcopy">
+          What has not reached the server, why, and how to get a copy off this
+          phone. The queue holds the only copy of a set until it lands.
+        </div>
+
         <button
           type="button"
           className="sheet-row sheet-row-btn"
@@ -392,15 +458,8 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
           Preferences only. Logged sessions and sets are never touched.
         </div>
 
-        {signOutStage > 0 && queued > 0 && (
-          <div className="microcopy settings-warn">
-            {queued === 1 ? "1 set has" : `${queued} sets have`} not reached the
-            server. Signing out discards {queued === 1 ? "it" : "them"} — this
-            is the only copy.
-            {status.dead > 0
-              ? " Some are permanently failed: retry them from the sync pill first."
-              : " Tap “Sync now” first if you have signal."}
-          </div>
+        {signOutWarning !== null && (
+          <div className="microcopy settings-warn">{signOutWarning}</div>
         )}
 
         <button
@@ -413,6 +472,7 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
       </section>
 
       {tmOpen && <TrainingMaxSheet onClose={() => setTmOpen(false)} />}
+      {queueOpen && <OutboxSheet onClose={() => setQueueOpen(false)} />}
       {pad && <NumberPad req={pad} />}
     </Sheet>
   );

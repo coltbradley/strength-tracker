@@ -28,6 +28,21 @@ export interface OutboxItem {
   /** 'dead' = permanently failing, skipped by flush until retryDead() */
   status: "pending" | "dead";
   /**
+   * The PostgREST code and HTTP status of the last failure, kept beside the
+   * message. `last_error` is prose for a human; these two are what decides
+   * whether asking again could ever get a different answer (`deadKind` in
+   * outbox.ts). A dead item used to keep only the sentence, so the retry
+   * button had to guess — and a retry that cannot work is worse than none.
+   *
+   * Optional, and NOT a version bump: an object store holds whatever shape
+   * you put in it, so a new field on the record needs no upgrade path. Items
+   * that died before this shipped carry neither and read as an unknown
+   * cause, which is retryable, because refusing to try on no evidence is the
+   * worse of the two guesses.
+   */
+  last_code?: string | null;
+  last_status?: number | null;
+  /**
    * Who queued this. Payloads leave `user_id` to the database default
    * (auth.uid()), which was safe while one person could ever be signed in and
    * became a data-integrity hazard the moment two could: a set queued offline
