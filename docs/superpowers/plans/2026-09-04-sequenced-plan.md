@@ -118,17 +118,27 @@ Deploying 0a also makes 0d smaller: the duplicate program still needs a
 decision, but her half-stored dumbbell loads become correctable in the app's own
 plan editor instead of by hand in SQL.
 
-## Wave 1: never lose or misfile a set (2.75 days)
+## Wave 1: never lose or misfile a set (2.75 days) — DONE 2026-09-04
 
 The abandonment reason no feature outruns. All from the PWA audit.
 
-| #   | Work                                                                                                                                                                                  | Days |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| 1a  | Offline open keeps you signed in, and a transient refresh failure stops dead-lettering the queue (roadmap 0.1). Reproduce first: expired token plus no network currently shows Login. | 1.0  |
-| 1b  | Overnight reconciliation never discards a session another device may still be uploading (0.2).                                                                                        | 0.5  |
-| 1c  | Today notices midnight, so a resumed app cannot start today's session against yesterday's planned day (0.3).                                                                          | 0.5  |
-| 1d  | History stops resurrecting a removed set (0.4).                                                                                                                                       | 0.25 |
-| 1e  | Rest-clock mirror when auto-start is off, and a failed bootstrap keeps the log button disabled instead of logging index 0 (0.7).                                                      | 0.5  |
+| # | Work | Days | Status |
+|---|---|---|---|
+| 1a | Offline open keeps you signed in, and a transient refresh failure stops dead-lettering the queue. | 1.0 | **done** (`c055114`) |
+| 1b | Overnight reconciliation never discards a session another device may still be uploading. | 0.5 | **done** (`f77c919`) |
+| 1c | Today notices midnight, so a resumed app cannot start today's session against yesterday's planned day. | 0.5 | **done** (`60d32d1`) |
+| 1d | History stops resurrecting a removed set. | 0.25 | **done** (`27f4278`) |
+| 1e | Rest-clock mirror when auto-start is off, and a failed bootstrap keeps the log button disabled. | 0.5 | **done** (`24ca224`) |
+
+430 PWA tests pass, plus the build, the PGlite migration run and the edge
+function suite. Three findings came out of the work that the audit had not
+named, all now fixed and commented in place: crossing midnight mid-workout
+would have auto-completed a live session and cleared the active pointer out
+from under someone still lifting (1c); `pendingSessionUpdateIds` cannot tell an
+`ended_at` patch from a `discarded_at` one, so filtering history on it would
+have hidden a session for the crime of being finished offline (1d); and the
+outbox's own "unreachable, keep it pending" branch, comment and all, could
+never once have fired against the real transport (1a).
 
 ## Wave 2: safe to run (2.75 days)
 
