@@ -146,6 +146,16 @@ export function Session() {
   const [newName, setNewName] = useState<string | null>(null);
   const [sets, setSets] = useState<SetInsert[]>([]);
   const [setsLoaded, setSetsLoaded] = useState(false);
+  // The bootstrap RAN and FAILED — which is not the same state as "hasn't
+  // finished yet". `setsRef` is empty because we could not find out what is
+  // in it, not because nothing is there, and logging against an empty list
+  // computes set_index 0 for an exercise that already has sets. Nothing
+  // downstream catches that: there is no unique constraint on
+  // (session_id, exercise_id, set_index), and `sets` is append-only, so the
+  // duplicate index would stand in LOGGED and in History forever. Same shape
+  // as `exercisesFailed` below — a failure the screen tells the user about
+  // instead of quietly acting on bad data.
+  const [setsFailed, setSetsFailed] = useState(false);
   const [lastActuals, setLastActuals] = useState<LastActuals>({});
   const [equipMap, setEquipMap] = useState<Record<string, string | null>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -330,7 +340,9 @@ export function Session() {
             ),
         );
         // re-cache the repaired list; the server read just clobbered it
-        cacheSet(cacheKeys.sessionSets(a.id), merged).catch(() => undefined);
+        cacheSet(cacheKeys.sessionSets(a.id), merged).catch((e: unknown) =>
+          reportError(e, "cache session sets"),
+        );
         // notes may have been written on another device — best-effort merge
         getSetNotesByIds(merged.map((s) => s.id))
           .then((fresh) => {
@@ -338,7 +350,7 @@ export function Session() {
             setSetNotes((prev) => {
               const next = { ...fresh, ...prev }; // local unsynced edits win
               cacheSet(cacheKeys.sessionSetNotes(a.id), next).catch(
-                () => undefined,
+                (e: unknown) => reportError(e, "cache set notes"),
               );
               return next;
             });
@@ -346,6 +358,11 @@ export function Session() {
           .catch(() => undefined);
       } catch (e) {
         reportError(e, "load session");
+        // The merge never ran, so `setsRef` is empty and untrustworthy. The
+        // screen still stops loading — a spinner that never resolves helps
+        // nobody, and Finish, notes and navigation all still work — but LOG
+        // stays disabled until a reload reads the cache successfully.
+        if (!cancelled) setSetsFailed(true);
       } finally {
         if (!cancelled) setSetsLoaded(true);
       }
@@ -359,19 +376,31 @@ export function Session() {
     if (active === null) navigate("/", { replace: true });
   }, [active, navigate]);
 
-  // mirror the rest clock to the cache; runs on every rest change (log,
-  // adjust, dismiss) — restRef keeps startedAt even after the strip is done
-  useEffect(() => {
-    if (!sessionId) return;
-    const startedAt = restRef.current?.startedAt;
-    if (startedAt === undefined) return;
-    const snapshot: RestCache = {
-      startedAt,
-      targetSeconds: rest?.targetSeconds ?? null,
-      forLabel: rest?.forLabel ?? null,
-    };
-    cacheSet(cacheKeys.sessionRest(sessionId), snapshot).catch(() => undefined);
-  }, [rest, sessionId]);
+  // Mirror the rest clock to the cache. Called at every point that MOVES the
+  // clock or the strip, deliberately NOT from an effect keyed on `rest`: the
+  // clock lives in `restRef`, and with auto-start rest off, logging a set
+  // moves the ref without touching `rest` at all. An effect never ran, the
+  // cache kept an OLDER startedAt, and after a reload or an iOS eviction the
+  // ref rehydrated from it — so the next set recorded the rest measured from
+  // the set before last, silently swallowing a whole set's rest.
+  // `rest_seconds_actual` is append-only and that number can never be
+  // corrected, so the write belongs where the clock actually moves.
+  //
+  // `startedAt` always comes from `restRef` (the clock that MEASURES); the
+  // target and label describe the STRIP, which can be dismissed or never
+  // shown while the clock keeps running — that is what targetSeconds null
+  // means, and rehydrate reads it back the same way.
+  const mirrorRest = useCallback(
+    (targetSeconds: number | null, forLabel: string | null) => {
+      const startedAt = restRef.current?.startedAt;
+      if (!sessionId || startedAt === undefined) return;
+      const snapshot: RestCache = { startedAt, targetSeconds, forLabel };
+      cacheSet(cacheKeys.sessionRest(sessionId), snapshot).catch((e: unknown) =>
+        reportError(e, "cache rest clock"),
+      );
+    },
+    [sessionId],
+  );
 
   // ---- exercise entries ----------------------------------------------------
 
@@ -616,7 +645,10 @@ export function Session() {
   // ---- actions -------------------------------------------------------------
 
   const logSet = () => {
-    if (!openEntry || !sessionId || logLocked || !setsLoaded) return;
+    // setsFailed: see the state declaration — an empty `setsRef` we could not
+    // verify would number this set 0 on top of whatever is already logged.
+    if (!openEntry || !sessionId || logLocked || !setsLoaded || setsFailed)
+      return;
     setLogLocked(true);
     window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     setVoidArm(null);
@@ -671,12 +703,17 @@ export function Session() {
     // whether the strip appears.
     const now = Date.now();
     restRef.current = { startedAt: now };
+    const forLabel = `${openEntry.name} set ${nextIndex + 1}`;
     if (autoStartRest)
-      setRest({
-        startedAt: now,
-        targetSeconds: restSeconds,
-        forLabel: `${openEntry.name} set ${nextIndex + 1}`,
-      });
+      setRest({ startedAt: now, targetSeconds: restSeconds, forLabel });
+    // Mirror the clock HERE, whether or not a strip appeared. With auto-start
+    // off nothing about `rest` changes, so nothing else would ever write the
+    // new startedAt — and no strip also means there is none to restore, which
+    // is the null target.
+    mirrorRest(
+      autoStartRest ? restSeconds : null,
+      autoStartRest ? forLabel : null,
+    );
     setSetType("working");
   };
 
@@ -800,7 +837,7 @@ export function Session() {
       const nextNotes = { ...setNotes, [next.id]: note };
       setSetNotes(nextNotes);
       cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
-        () => undefined,
+        (e: unknown) => reportError(e, "cache set notes"),
       );
       outbox
         .enqueue({
@@ -832,7 +869,12 @@ export function Session() {
     if (startedClock && restRef.current) {
       restRef.current = null;
       setRest(null);
-      cacheDelete(cacheKeys.sessionRest(sessionId)).catch(() => undefined);
+      // Drop the mirror directly, for the same reason logSet writes it
+      // directly: a stale startedAt here would be rehydrated as this void's
+      // rest and recorded on the next set.
+      cacheDelete(cacheKeys.sessionRest(sessionId)).catch((e: unknown) =>
+        reportError(e, "clear rest clock"),
+      );
     }
     const nextVoids = new Set(voids);
     nextVoids.add(s.id);
@@ -899,7 +941,9 @@ export function Session() {
     const next = { ...setNotes, [setId]: note };
     setSetNotes(next);
     setNoteEditingId(null);
-    cacheSet(cacheKeys.sessionSetNotes(sessionId), next).catch(() => undefined);
+    cacheSet(cacheKeys.sessionSetNotes(sessionId), next).catch((e: unknown) =>
+      reportError(e, "cache set notes"),
+    );
     outbox
       .enqueue({
         kind: "insert",
@@ -961,7 +1005,10 @@ export function Session() {
         const want = Math.min(MAX_REST_SECONDS, Math.max(0, Math.round(v)));
         // elapsed re-read at commit time so typing delay doesn't skew it
         const nowEl = Math.round(restElapsedSeconds() ?? 0);
-        setRest((r) => (r ? { ...r, targetSeconds: nowEl + want } : r));
+        if (rest) {
+          setRest({ ...rest, targetSeconds: nowEl + want });
+          mirrorRest(nowEl + want, rest.forLabel);
+        }
         setPad(null);
       },
       onCancel: () => setPad(null),
@@ -1076,6 +1123,7 @@ export function Session() {
   /** "LOG WARMUP SET", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan */
   const logLabel = (entry: ExerciseEntry): string => {
     if (!setsLoaded) return "LOADING…";
+    if (setsFailed) return "LOG UNAVAILABLE";
     if (isTick(entry)) {
       const n = workingCount(entry) + 1;
       const total = totalSets(entry);
@@ -1411,13 +1459,22 @@ export function Session() {
                     <button
                       type="button"
                       className={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
-                      disabled={logLocked || !setsLoaded}
+                      disabled={logLocked || !setsLoaded || setsFailed}
                       onClick={editing ? saveCorrection : logSet}
                     >
                       {editing
                         ? `SAVE SET ${editing.set.set_index + 1}`
                         : logLabel(entry)}
                     </button>
+
+                    {setsFailed && (
+                      <p className="microcopy">
+                        This session’s logged sets could not be read from this
+                        device, so a new set would be numbered as if nothing had
+                        been logged. Reload to try again. Nothing already logged
+                        is lost.
+                      </p>
+                    )}
 
                     {editing && (
                       <button
@@ -1591,13 +1648,19 @@ export function Session() {
       {!sheetOpen && (
         <RestTimer
           rest={rest}
-          onAdjust={(d) =>
-            setRest((r) =>
-              r ? { ...r, targetSeconds: Math.max(0, r.targetSeconds + d) } : r,
-            )
-          }
+          onAdjust={(d) => {
+            if (!rest) return;
+            const targetSeconds = Math.max(0, rest.targetSeconds + d);
+            setRest({ ...rest, targetSeconds });
+            mirrorRest(targetSeconds, rest.forLabel);
+          }}
           onEdit={() => openPad("rest")}
-          onDone={() => setRest(null)}
+          /* dismissing hides the strip only: the clock keeps measuring, so
+             the mirror keeps its startedAt with a null target */
+          onDone={() => {
+            setRest(null);
+            mirrorRest(null, null);
+          }}
         />
       )}
 
