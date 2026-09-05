@@ -26,6 +26,7 @@ import { resolveCaller } from "./auth.ts";
 import { dbFor } from "./db.ts";
 import type { RequestContext } from "./errors.ts";
 import { log } from "./log.ts";
+import { captureError } from "./sentry.ts";
 import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
 import { registerExerciseNotes } from "../tools/exercise_notes.ts";
@@ -111,6 +112,10 @@ export async function handleRequest(req: Request): Promise<Response> {
   // Which CREDENTIAL was used, never the token itself. Two people share these
   // logs; without it there is no way to tell whose call failed.
   let userLabel: string | undefined;
+  // The same question answered as an opaque id, for the error tracker. The
+  // label is a person's name and a client's name; Sentry gets the id instead,
+  // because "enough to act on" there means "which log", not "which human".
+  let userId: string | undefined;
 
   const finish = (outcome: "ok" | "error", error?: string): void => {
     log(outcome === "ok" ? "info" : "error", "request", {
@@ -146,6 +151,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       return withCors(caller);
     }
     userLabel = caller.label;
+    userId = caller.userId;
 
     // Stateless streamable HTTP: POST only. There is no session to resume, so
     // there is no SSE stream to GET and nothing for DELETE to tear down. 405
@@ -198,6 +204,14 @@ export async function handleRequest(req: Request): Promise<Response> {
       request_id: requestId,
       error: message,
       stack: err instanceof Error ? err.stack : undefined,
+    });
+    // Alongside the log line, never instead of it. Inert unless SENTRY_DSN is
+    // set; see lib/sentry.ts for why this is awaited rather than fired off.
+    await captureError(err, {
+      request_id: requestId,
+      rpc_method: method,
+      tool,
+      user_id: userId,
     });
     finish("error", message);
     return json(500, {

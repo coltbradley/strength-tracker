@@ -24,9 +24,11 @@
 //     what makes the token's life the length of the request rather than ten
 //     minutes of a live credential nobody is using.
 //
-//  4. Spend is capped per user. The key belongs to the deployment owner; an
-//     authenticated user must not be able to run their bill up, on purpose or
-//     by leaving a retry loop going.
+//  4. Spend is capped per user, and WHO gets a per-user cap is itself capped.
+//     The key belongs to the deployment owner; an authenticated user must not
+//     be able to run their bill up, on purpose or by leaving a retry loop
+//     going, and with sign-up open a stranger must not be able to become an
+//     authenticated user with a quota of their own (COACH_ALLOWED_USERS).
 //
 //  5. The tool surface is the full MCP surface minus three tools, and the
 //     three are named at the connector rather than in the prompt (see the
@@ -42,6 +44,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { systemPrompt } from "./prompt.ts";
+import { captureError } from "./sentry.ts";
 
 const MODEL = "claude-sonnet-5";
 // Sonnet 5 counts thinking, tool calls AND the answer against max_tokens, and
@@ -58,6 +61,33 @@ function today(): string {
 /** Per user. Generous for a person, ruinous for a loop. */
 const LIMIT_TURNS_PER_DAY = 150;
 const LIMIT_OUTPUT_TOKENS_PER_MONTH = 2_000_000;
+
+/**
+ * WHO may use the coach, as opposed to how much.
+ *
+ * The quota above caps what one account can spend and says nothing at all
+ * about how many accounts there are. Sign-up is open by default, the function
+ * URL is public, and the key belongs to whoever runs the deployment — so
+ * without this, anyone who finds the URL and makes an account gets 150 turns a
+ * day on someone else's bill. A per-user quota only ever shaped the blast
+ * radius of a person already inside; it was never the door.
+ *
+ * UNSET MEANS EVERYONE, deliberately: this lands on a running deployment and
+ * must not lock its own lifter out the moment it deploys. Set it to a
+ * comma-separated list of user uuids and only those ids get in. A value that
+ * is present but names nobody refuses everyone rather than falling open — the
+ * two mistakes are not symmetrical, and only one of them spends money.
+ */
+const ALLOWED_USERS: Set<string> | null = (() => {
+  const raw = Deno.env.get("COACH_ALLOWED_USERS")?.trim();
+  if (!raw) return null;
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s !== ""),
+  );
+})();
 
 /** Attachment ceilings, enforced before anything is sent upstream. */
 const MAX_ATTACHMENTS = 8;
@@ -509,7 +539,7 @@ async function record(a: {
 
   // Never fail a turn the user already received over bookkeeping, but do make
   // the failure visible: a silent one means the quota stops counting.
-  const complain = (event: string, message: string) =>
+  const complain = async (event: string, message: string) => {
     console.error(
       JSON.stringify({
         event,
@@ -518,6 +548,15 @@ async function record(a: {
         error: message,
       }),
     );
+    // Reported as well as logged, because this row IS the quota: a write that
+    // fails silently is a free turn on the owner's key, and "silently" has so
+    // far meant "unless somebody happens to read the function logs".
+    await captureError(new Error(`${event}: ${message}`), {
+      stage: "usage_write",
+      user_id: a.userId,
+      turn_id: a.turnId ?? undefined,
+    });
+  };
 
   try {
     // READ THE ERROR. supabase-js does not throw on a PostgREST failure, it
@@ -530,7 +569,7 @@ async function record(a: {
     // leaves this as the alarm for everything nobody has thought of.
     const { error } = await a.db.from("coach_usage").insert(row);
     if (!error) return;
-    complain("coach_usage_write_failed", error.message);
+    await complain("coach_usage_write_failed", error.message);
     if (row.turn_id === null) return;
     // The turn_id is the client's handle for recovering this answer, and the
     // quota's count of this turn. If the id is what the write choked on, the
@@ -538,9 +577,11 @@ async function record(a: {
     const { error: retry } = await a.db
       .from("coach_usage")
       .insert({ ...row, turn_id: null });
-    if (retry) complain("coach_usage_write_failed_untagged", retry.message);
+    if (retry) {
+      await complain("coach_usage_write_failed_untagged", retry.message);
+    }
   } catch (e) {
-    complain(
+    await complain(
       "coach_usage_write_failed",
       e instanceof Error ? e.message : String(e),
     );
@@ -558,6 +599,20 @@ Deno.serve(async (req) => {
 
   const userId = await resolveUser(req);
   if (!userId) return json({ error: "Sign in to use the coach" }, 401);
+
+  // Before the body is read: nothing a stranger sent should cost anything to
+  // look at. No coach_usage row is written either. Refusal rows exist to keep
+  // the rolling quota honest for someone who HAS a quota; one per rejected
+  // caller would hand anybody with an account an unbounded insert.
+  if (ALLOWED_USERS && !ALLOWED_USERS.has(userId.toLowerCase())) {
+    return json(
+      {
+        error:
+          "The coach isn't enabled for this account. Ask whoever runs this deployment to add you.",
+      },
+      403,
+    );
+  }
 
   const declared = Number(req.headers.get("content-length") ?? "0");
   if (declared > MAX_BODY_BYTES) {
@@ -629,6 +684,7 @@ Deno.serve(async (req) => {
       }
     }
   } catch (e) {
+    await captureError(e, { stage: "usage_check", user_id: userId });
     return json(
       { error: e instanceof Error ? e.message : "Could not check usage" },
       503,
@@ -642,6 +698,7 @@ Deno.serve(async (req) => {
     mcpToken = minted.token;
     mcpTokenDigest = minted.digest;
   } catch (e) {
+    await captureError(e, { stage: "mint_token", user_id: userId });
     return json(
       { error: e instanceof Error ? e.message : "Could not authorise tools" },
       503,
@@ -792,6 +849,16 @@ Deno.serve(async (req) => {
       } catch (e) {
         failed = e instanceof Error ? e.message : "The coach failed to answer";
         send("error", { message: failed });
+        // The person is told first, then the operator. This is the failure
+        // that matters most here — the Anthropic call or the MCP connector
+        // giving up — and it was previously visible only as one `error` field
+        // on a coach_turn log line nobody was watching. The exception and the
+        // stage go up; the conversation never does (see sentry.ts).
+        await captureError(e, {
+          stage: "generate",
+          user_id: userId,
+          turn_id: turnId ?? undefined,
+        });
       } finally {
         // ALWAYS record, in a finally. Recording only after finalMessage()
         // meant an aborted turn — which the PWA offers as a first-class

@@ -1,6 +1,7 @@
 {
   "imports": {
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.72.0",
+    "@sentry/deno": "npm:@sentry/deno@^10.73.0",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.49.4"
   }
 }

@@ -186,10 +186,15 @@ link, and add to home screen.
 Everything below is per-person. Nothing is shared except the exercise library,
 which is the point of a library.
 
-**1. Create the account.** Nothing to do, usually: sign-up is open, so they
-enter their email on the login screen and the account is created on the spot.
-To pre-create instead, Authentication → Users → Add user (their email). Either
-way, copy the new UUID — the MCP token and timezone steps below need it.
+**1. Create the account.** Nothing to do, usually: sign-up is open by default,
+so they enter their email on the login screen and the account is created on the
+spot. To pre-create instead, Authentication → Users → Add user (their email).
+Either way, copy the new UUID — the MCP token and timezone steps below need it.
+
+Open sign-up is a convenience for exactly this step and a liability every other
+day of the year, because the coach spends the deployment owner's money. Close
+it once the people you meant to add are added: "Who can sign up, and who gets
+the coach" below.
 
 **2. Give them the PWA.** Nothing to configure — the app is one deployment and
 RLS scopes every read and write to whoever is signed in. They install it and
@@ -242,15 +247,75 @@ server setting there would be a third write-ownership class — see CLAUDE.md).
 That last row is the one to know: two people sharing one phone share its plate
 inventory and per-exercise preferences. Two phones, no overlap.
 
+## Who can sign up, and who gets the coach
+
+Two settings, and they only make sense together. Sign-up is open by default,
+which is what makes step 1 above a no-op. The coach's spend limit is PER USER
+(150 turns a day), so it caps what one account can cost and says nothing at all
+about how many accounts there are. Open sign-up plus a per-user quota means a
+stranger who finds the function URL can make an account and run 150 turns a day
+on the Anthropic key belonging to whoever deployed this.
+
+**Close sign-up once everyone is in.** Dashboard → Authentication → Sign In /
+Providers → Email (older dashboards: Authentication → Providers → Email), turn
+off "Allow new users to sign up". Existing users keep signing in with magic
+links exactly as before; new accounts now have to be created by you, which is
+the Authentication → Users → Add user path step 1 already describes.
+
+**Allowlist the coach**, separately, so that an account you create for the PWA
+is not automatically a coach account:
+
+```bash
+supabase secrets set COACH_ALLOWED_USERS="<uuid>,<uuid>"
+supabase functions deploy coach
+```
+
+Unset — the default — means everyone who can sign in can use the coach, so an
+existing deployment behaves exactly as it did before this variable existed.
+Set, and anyone not named gets a 403 and a plain "the coach isn't enabled for
+this account" instead of a turn, before anything is spent or recorded. There is
+no append: adding someone means re-setting the whole list. The per-user quota
+still applies on top; the allowlist decides who has one.
+
+Both, not either. Closing sign-up stops the account existing. The allowlist
+stops an account that does exist — one you created for the PWA, or one made
+before you closed the door — from reaching the API key.
+
+## Error tracking (optional)
+
+Both edge functions report to Sentry when a DSN is configured and do nothing
+whatsoever when it is not: no init, no network call, and the SDK is never even
+loaded. Local runs and CI need no DSN. (The PWA has its own, set at build time
+— `VITE_SENTRY_DSN` — and the same no-op-if-unset rule.)
+
+```bash
+supabase secrets set SENTRY_DSN="https://<key>@<org>.ingest.sentry.io/<project>"
+supabase functions deploy mcp-server --no-verify-jwt
+supabase functions deploy coach
+```
+
+What goes up is the exception plus operational tags: request id, JSON-RPC
+method, tool name, the user as a bare uuid, and which stage of a coach turn
+failed. Never a prompt, an answer, an attachment name, a set or an exercise
+name. Storing the conversation is a separate, deliberate decision with its own
+switch (`coach_usage`, `COACH_LOG_CONTENT`), and Sentry is not allowed to
+become a second copy of it that nobody chose. The structured JSON logs keep
+everything they always had; this is added alongside them, for the days the
+dashboard's analytics are the thing that is down.
+
 ## Env var reference
 
-| Where                | Var                                           | What                                  |
-| -------------------- | --------------------------------------------- | ------------------------------------- |
-| Edge function secret | `MCP_SECRET`                                  | LEGACY single-user bearer token       |
-| Edge function secret | `OWNER_USER_ID`                               | LEGACY user that `MCP_SECRET` maps to |
-| Edge runtime (auto)  | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`   | injected by platform                  |
-| PWA build            | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | public client creds                   |
-| PWA build (optional) | `VITE_SENTRY_DSN`                             | error tracking; no-op if unset        |
+| Where                     | Var                                           | What                                                 |
+| ------------------------- | --------------------------------------------- | ---------------------------------------------------- |
+| Edge function secret      | `ANTHROPIC_API_KEY`                           | the coach's key; the coach 503s without it           |
+| Edge fn secret (optional) | `COACH_ALLOWED_USERS`                         | uuids that may use the coach; everyone if unset      |
+| Edge fn secret (optional) | `COACH_LOG_CONTENT`                           | `off` stops storing prompts/answers in `coach_usage` |
+| Edge fn secret (optional) | `SENTRY_DSN`                                  | error tracking for both functions; no-op if unset    |
+| Edge function secret      | `MCP_SECRET`                                  | LEGACY single-user bearer token                      |
+| Edge function secret      | `OWNER_USER_ID`                               | LEGACY user that `MCP_SECRET` maps to                |
+| Edge runtime (auto)       | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`   | injected by platform                                 |
+| PWA build                 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | public client creds                                  |
+| PWA build (optional)      | `VITE_SENTRY_DSN`                             | error tracking; no-op if unset                       |
 
 `MCP_SECRET` / `OWNER_USER_ID` are the pre-multi-user credential: one secret
 mapped to one person. They still work, so an existing Claude Desktop config

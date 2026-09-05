@@ -1,6 +1,7 @@
 {
   "imports": {
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.25.0/",
+    "@sentry/deno": "npm:@sentry/deno@^10.73.0",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@^2",
     "zod": "npm:zod@^3.25.1"
   }

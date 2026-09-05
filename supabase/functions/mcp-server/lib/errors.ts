@@ -6,6 +6,7 @@
 // extensionless path is the one whose types resolve under Deno.
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types";
 import { log } from "./log.ts";
+import { captureError } from "./sentry.ts";
 
 /** Expected, user-facing tool failure. The message goes to the client verbatim. */
 export class ToolError extends Error {}
@@ -61,6 +62,14 @@ export async function guard(
       error: message,
       stack: err instanceof Error ? err.stack : undefined,
     });
+    // Reported as well as logged. This branch, not handleRequest's catch, is
+    // where nearly everything that goes wrong in this server ends up: MCP
+    // returns a tool failure as a successful HTTP response carrying an error
+    // result, so a tool that throws never reaches the top-level handler. The
+    // ToolError branch above deliberately does not report — a validation
+    // message is the system working. Only the arguments-free facts go up; a
+    // tool's arguments are the caller's training data.
+    await captureError(err, { request_id: ctx.requestId, tool });
     return errorResult(
       `Unexpected server error. Reference request_id ${ctx.requestId} in the function logs.`,
     );
