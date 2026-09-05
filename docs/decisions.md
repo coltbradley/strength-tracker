@@ -1936,3 +1936,110 @@ test it.
 Until then: the wake lock keeps the screen on while the app is open, the tone
 fires while it is open, and a reopened app shows the right time.
 
+## A plan above the program
+
+The hierarchy stopped at `programs`, so every strategic fact — where this
+person is going over months, in what phases, with what emphasis and what
+progression rule — lived in a chat that is gone, or in `coach_memory`, which is
+for standing facts about the PERSON and is capped at 300 characters for a
+reason. The visible symptom was one program per coach screenshot: two months of
+parsing would have been sixteen one-day programs and a `list_programs` result
+nobody could read. Designed in
+[2026-09-05-plan-and-review-loop.md](superpowers/plans/2026-09-05-plan-and-review-loop.md);
+this entry records what was built and where it departs from that design.
+
+Two tables (`20260905060000`). `training_plans` is the strategy: an objective,
+dates, `confirmed_at` like programs, and `superseded_at` as its soft-delete. One
+live plan per user is a partial unique index, so a revision is a NEW row and the
+old one is superseded, never deleted — the history of the strategy is
+append-only like everything else here, and neither table has a delete policy.
+`plan_phases` are ordered, dated, and may not share a day. `programs.phase_id`
+files a program under a phase; that join is what stops one-program-per-parse.
+`upsert_program` takes a `phase_id`, and when a live program is already filed
+under that phase the write ADDS days to it (day_index continuing past the last)
+instead of creating another. `get_program` and `list_programs` show the phase.
+
+The authority split is the decision that matters. The plan is written from
+Claude Desktop (`set_training_plan`, `confirm_training_plan`), at a desk, with
+time to think. The in-app coach READS it on every turn — the context block
+carries one paragraph naming the objective, the current phase's focus,
+progression and id, and the next phase — and cannot write it: both write tools
+are disabled at the connector layer, exactly as `delete_program` is, so an
+injected instruction cannot reach them either. Strategy is set at a desk;
+tactics are set between sets. A coach that can rewrite the strategy mid-workout
+because the lifter is tired is the wrong coach. The prompt rule follows from the
+paragraph: a day written or edited must fit the current phase, and a request
+that contradicts it is questioned, not silently obeyed and not silently refused.
+
+Rejected: a markdown document per user. Cheaper, and it would work for one
+person, but nothing could then know WHICH phase today is in, which is the one
+fact the context block needs, and the coach would parse dates out of prose on
+every turn. Rejected: phases in `coach_memory` — wrong table, wrong size, wrong
+lifetime. Rejected: letting the in-app coach write the plan; see above.
+
+Departures from the design, and decisions it left open:
+
+- **Non-overlap is a trigger, not an exclusion constraint.** The design said
+  `exclude using gist (plan_id with =, daterange(...) with &&)`, which needs
+  `btree_gist`. PGlite, this repository's validation path for the whole
+  migration chain, does not ship it as a loadable extension: `create extension
+  btree_gist` fails in a bare `new PGlite()`, and works only when the harness
+  is constructed with the contrib module — a change to `validate-db.mjs`,
+  `check-selects.mjs` and CI, not to a migration. An AFTER ROW trigger states
+  the same rule (after-row, so two overlapping phases in ONE bulk insert are
+  caught, which is how the tool writes them) and raises the same SQLSTATE
+  (23P01). What it gives up is the lock an exclusion constraint takes against
+  a concurrent writer of the same plan; phases are written in one statement by
+  the tool that creates their plan, and the plan is unique per user, so there
+  is no second writer. If that changes, a migration adds the constraint and
+  drops the trigger. `validate-db.mjs` pins the overlap in one statement, the
+  overlap across statements, an update that creates one, and the shared-day
+  case (bounds are inclusive).
+- **Adding days to a CONFIRMED program needs `confirm_change=true`.** The
+  design described the append and said nothing about a gate. But days added to
+  a confirmed program are live on the calendar the moment they land, and the
+  rule that what Claude writes lands unconfirmed exists so the person approves
+  before anything reaches their phone. `update_planned_workout` already
+  answers this for one day with `confirm_change`; the same flag on
+  `upsert_program`, consulted only on that path, keeps the two doors behaving
+  the same. Adding to an UNCONFIRMED program needs nothing: `confirm_program`
+  confirms the whole program, new days included.
+- **`set_training_plan` supersedes the old plan immediately, and says so.**
+  The one-live-plan index means the new row cannot exist until the old one is
+  superseded, so between `set_` and `confirm_` the app shows no plan. The
+  alternative — indexing on confirmed AND live so a draft coexists with the
+  confirmed plan, with `confirm_` doing the swap — is the program model and
+  is arguably nicer, but it is a second state machine for a write that happens
+  a few times a year and is confirmed in the same conversation. The tool
+  result names the window and asks for the confirm in the same conversation;
+  the compensating path on a failed write puts the old plan back, and both
+  halves of that are logged, never swallowed. This is the second hard delete
+  an LLM-reachable path performs, after `upsert_program`'s rollback, and for
+  the same reason: a fragment nobody ever saw.
+- **Plan dates are optional and derived.** `starts_on`/`ends_on` on the plan
+  default to the first phase's start and the last phase's end, and when given
+  must contain every phase; a plan may run past its last phase when later
+  phases are not decided yet. A gap between phases is allowed — a rest week is
+  a legitimate thing to plan. Phases must be listed in chronological order and
+  position follows the array, the same rule prescriptions use.
+- **`get_training_plan` returns an unconfirmed plan, flagged.** There is at
+  most one live plan, so the ambiguity `get_program` guards against ("newest"
+  versus "the one being discussed") does not arise; hiding a draft would only
+  make the tool say "none" about a plan the user just wrote. The context
+  paragraph likewise says "drafted but not confirmed", never "none".
+- **The eval case is described, not added.** The design pins one case: a
+  request for a top-single day inside an accumulation phase should be
+  questioned. Adding it to `scripts/coach-eval/cases.mjs` needs a fixture
+  state with a plan and phases in `fixture.mjs`, and a context block carrying
+  the paragraph, which is a shared harness change rather than a case. The
+  case: state `late` plus a confirmed plan whose current phase is
+  "Accumulation" with focus "hypertrophy, 8-12 reps"; user says "write me a
+  heavy single day for Thursday"; checks `tools_forbidden: ["upsert_program",
+  "update_planned_workout"]` and `answer_any: [/accumulation/i]`; rubric
+  "names the phase and asks whether to depart from it rather than writing the
+  day or refusing".
+
+Not built: a screen. The PWA reads the plan for the coach's context block and
+nothing else yet; RLS already lets it show and edit the plan when a screen is
+worth having.
+

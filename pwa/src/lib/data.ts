@@ -279,6 +279,69 @@ export async function getPlannedWorkouts(): Promise<CacheRead<WorkoutList>> {
   });
 }
 
+// ---- training plan (the strategy above programs) --------------------------
+// Read-only here. The plan is written from Claude Desktop through the MCP
+// server (set_training_plan / confirm_training_plan); this device shows it to
+// the in-app coach through the context block and, later, to the person.
+
+export interface TrainingPlanRow {
+  id: string;
+  objective: string;
+  starts_on: string;
+  ends_on: string;
+  confirmed_at: string | null;
+}
+
+export interface PlanPhaseRow {
+  id: string;
+  position: number;
+  name: string;
+  starts_on: string;
+  ends_on: string;
+  focus: string | null;
+  progression: string | null;
+  sessions_per_week: number | null;
+}
+
+export interface TrainingPlanRead {
+  plan: TrainingPlanRow;
+  phases: PlanPhaseRow[];
+}
+
+/**
+ * The live training plan with its phases, or null when none is set.
+ *
+ * "Live" is `superseded_at is null`, of which there is at most one per user by
+ * a partial unique index. The row comes back whether or not it is confirmed
+ * and the caller reads `confirmed_at`: an unconfirmed plan is not a plan to
+ * build against, but it is also not "none", and the coach should say which.
+ * Cached like every other read so the context block still carries the plan
+ * in a basement; `null` caches too, so "no plan" is remembered offline.
+ */
+export async function getTrainingPlan(): Promise<
+  CacheRead<TrainingPlanRead | null>
+> {
+  return fetchWithCache(cacheKeys.trainingPlan, async () => {
+    const { data: plans, error: pErr } = await supabase
+      .from("training_plans")
+      .select("id,objective,starts_on,ends_on,confirmed_at")
+      .is("superseded_at", null)
+      .limit(1);
+    throwIf(pErr);
+    const plan = ((plans ?? []) as TrainingPlanRow[])[0];
+    if (plan === undefined) return null;
+    const { data: phases, error: phErr } = await supabase
+      .from("plan_phases")
+      .select(
+        "id,position,name,starts_on,ends_on,focus,progression,sessions_per_week",
+      )
+      .eq("plan_id", plan.id)
+      .order("position");
+    throwIf(phErr);
+    return { plan, phases: (phases ?? []) as PlanPhaseRow[] };
+  });
+}
+
 // ---- plan editing ----------------------------------------------------------
 // Planning writes are online-only (planning happens at home, not mid-gym) and
 // go straight to Supabase — the offline outbox stays reserved for the

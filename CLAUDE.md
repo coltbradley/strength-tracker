@@ -335,6 +335,24 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   memory that must be fetched is memory that gets forgotten. It is deletable,
   unlike the training record, because a fact that stopped being true makes
   every future answer worse.
+- `training_plans` / `plan_phases` (20260905060000) are the STRATEGY above
+  programs: an objective over months in dated, ordered phases, each with a
+  focus and a progression rule. Not goals (measured against sets), not memory
+  (facts about the body); a decision about time. One live plan per user is a
+  partial unique index on `superseded_at is null`; a revision is a NEW row and
+  the old one is superseded, never deleted — neither table has a delete
+  policy. Lands unconfirmed like programs. Phases may not share a day, enforced
+  by an AFTER ROW trigger rather than the exclusion constraint it stands in for,
+  because PGlite (the validation path) has no `btree_gist`. `programs.phase_id`
+  files a program under a phase, and `upsert_program` with a `phase_id` ADDS
+  days to that phase's live program instead of minting one per screenshot (a
+  confirmed one takes `confirm_change=true`, like editing a day). Written from
+  Claude Desktop only: `set_training_plan` and `confirm_training_plan` are OFF
+  for the in-app coach at the connector. The coach READS the plan every turn
+  through the context block's PLAN line (objective, current phase's focus,
+  progression and id, next phase) and must fit each day it writes to the
+  current phase, questioning a request that contradicts it. Strategy is set at
+  a desk with time to think; tactics are set between sets.
 
 ## The coach (supabase/functions/coach)
 
