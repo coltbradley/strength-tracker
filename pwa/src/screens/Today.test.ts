@@ -4,7 +4,13 @@
 // month, or a range label that renders "29–4 DEC" across New Year.
 
 import { describe, expect, it } from "vitest";
-import { weekPageDate, weekPages, weekRangeLabel } from "./Today";
+import {
+  weekPageDate,
+  weekPages,
+  weekRangeLabel,
+  workoutStates,
+} from "./Today";
+import type { PlannedWorkoutRow } from "../lib/types";
 
 describe("weekPageDate", () => {
   it("is the identity for the page already selected", () => {
@@ -77,5 +83,68 @@ describe("weekRangeLabel", () => {
     expect(weekRangeLabel(weekPages("2026-01-01", 1)[1])).toBe(
       "29 DEC – 4 JAN",
     );
+  });
+});
+
+describe("workoutStates", () => {
+  const day = (o: Partial<PlannedWorkoutRow> = {}): PlannedWorkoutRow => ({
+    id: o.id ?? "w1",
+    program_id: "p1",
+    day_index: 0,
+    label: "PUSH",
+    notes: null,
+    scheduled_date: "2026-08-30",
+    plan_note: null,
+    skipped_at: null,
+    exercise_count: 5,
+    ...o,
+  });
+  const TODAY = "2026-09-04";
+  const states = (ws: PlannedWorkoutRow[], done = new Set<string>()) =>
+    workoutStates(ws, done, true, TODAY);
+
+  it("a past day with exercises is missed", () => {
+    expect(states([day()]).get("w1")).toBe("MISSED");
+  });
+
+  // The bug: "Plan a workout" creates the day before its contents, so an
+  // abandoned one turned into a MISSED workout the day after — a session
+  // someone failed to do, that was never programmed. A real user has one of
+  // these sitting next to three sessions she actually trained.
+  it("a past day with NOTHING in it is a draft, not missed", () => {
+    expect(states([day({ exercise_count: 0 })]).get("w1")).toBe("DRAFT");
+  });
+
+  it("an empty day is a draft on its own date too, not TODAY", () => {
+    const w = day({ exercise_count: 0, scheduled_date: TODAY });
+    expect(states([w]).get("w1")).toBe("DRAFT");
+  });
+
+  it("an empty FUTURE day is a draft rather than something to come", () => {
+    const w = day({ exercise_count: 0, scheduled_date: "2026-12-01" });
+    expect(states([w]).get("w1")).toBe("DRAFT");
+  });
+
+  it("what actually happened still outranks emptiness", () => {
+    // A session logged against a day nobody programmed is still a session.
+    const w = day({ exercise_count: 0 });
+    expect(states([w], new Set(["w1"])).get("w1")).toBe("DONE");
+    const skipped = day({ exercise_count: 0, skipped_at: "2026-08-30T07:30:00Z" });
+    expect(states([skipped]).get("w1")).toBe("SKIPPED");
+  });
+
+  it("a full day keeps every other state it had", () => {
+    expect(states([day({ scheduled_date: TODAY })]).get("w1")).toBe("TODAY");
+    expect(states([day({ scheduled_date: "2026-12-01" })]).get("w1")).toBe(
+      "UPCOMING",
+    );
+    expect(states([day({ scheduled_date: null })]).get("w1")).toBe("NO DATE");
+  });
+
+  it("with no dates anywhere, the first full day is today's", () => {
+    const a = day({ id: "a", scheduled_date: null });
+    const b = day({ id: "b", scheduled_date: null });
+    const m = workoutStates([a, b], new Set(), false, TODAY);
+    expect([m.get("a"), m.get("b")]).toEqual(["TODAY", "UPCOMING"]);
   });
 });

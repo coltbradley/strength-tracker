@@ -375,9 +375,16 @@ function vPlanWorkouts(s: DemoStore): Row[] {
       .filter((p) => (p.discarded_at ?? null) === null)
       .map((p) => p.id),
   );
-  return (s.planned_workouts ?? []).filter(
-    (w) => w.is_template !== true && live.has(w.program_id),
-  );
+  // exercise_count mirrors the real view's subquery, so an empty day reads as
+  // a DRAFT in the demo exactly as it does against Postgres.
+  const counts = new Map<string, number>();
+  for (const r of s.prescriptions ?? []) {
+    const k = r.planned_workout_id as string;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return (s.planned_workouts ?? [])
+    .filter((w) => w.is_template !== true && live.has(w.program_id))
+    .map((w) => ({ ...w, exercise_count: counts.get(w.id as string) ?? 0 }));
 }
 
 const VIEWS: Record<string, (s: DemoStore) => Row[]> = {

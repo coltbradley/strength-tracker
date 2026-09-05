@@ -68,7 +68,17 @@ import type {
 const GATE_TIMEOUT_MS = 2500;
 
 type WorkoutState =
-  "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE";
+  | "DONE"
+  | "SKIPPED"
+  | "TODAY"
+  | "MISSED"
+  | "UPCOMING"
+  | "NO DATE"
+  /** dated, but nothing programmed into it yet. "Plan a workout" creates the
+   *  day before its contents, so an abandoned one used to turn into a MISSED
+   *  workout the day after — a session someone failed to do, that never
+   *  existed. */
+  | "DRAFT";
 
 /** How long the swipe track must sit still before we call it settled. */
 const SETTLE_MS = 120;
@@ -99,6 +109,45 @@ export function weekPages(selected: string, weekStart: number): string[][] {
  * screen and the day previewed below it disagree. Same weekday, so a swipe
  * from Wednesday lands on Wednesday.
  */
+/**
+ * What each planned day IS, right now. Pure so it can be tested: the order of
+ * these branches is the whole meaning.
+ *
+ * DONE and SKIPPED come first because they are facts about what happened.
+ * DRAFT comes next, ahead of every date check — a day with nothing programmed
+ * into it is a draft whether its date has passed or not, and calling it MISSED
+ * accuses someone of skipping a workout that was never written.
+ */
+export function workoutStates(
+  workouts: PlannedWorkoutRow[],
+  doneIds: Set<string>,
+  anyDates: boolean,
+  today: string,
+): Map<string, WorkoutState> {
+  const map = new Map<string, WorkoutState>();
+  let todayAssigned = false;
+  for (const w of workouts) {
+    if (doneIds.has(w.id)) {
+      map.set(w.id, "DONE");
+    } else if (w.skipped_at !== null) {
+      map.set(w.id, "SKIPPED");
+    } else if (w.exercise_count === 0) {
+      map.set(w.id, "DRAFT");
+    } else if (anyDates) {
+      if (w.scheduled_date === null) map.set(w.id, "NO DATE");
+      else if (w.scheduled_date === today) map.set(w.id, "TODAY");
+      else if (w.scheduled_date < today) map.set(w.id, "MISSED");
+      else map.set(w.id, "UPCOMING");
+    } else if (!todayAssigned) {
+      map.set(w.id, "TODAY");
+      todayAssigned = true;
+    } else {
+      map.set(w.id, "UPCOMING");
+    }
+  }
+  return map;
+}
+
 export function weekPageDate(selected: string, page: number): string {
   return addDays(selected, (page - 1) * 7);
 }
@@ -319,28 +368,10 @@ export function Today() {
     }, SETTLE_MS);
   };
 
-  const states = useMemo(() => {
-    const map = new Map<string, WorkoutState>();
-    let todayAssigned = false;
-    for (const w of workouts) {
-      if (doneIds.has(w.id)) {
-        map.set(w.id, "DONE");
-      } else if (w.skipped_at !== null) {
-        map.set(w.id, "SKIPPED");
-      } else if (anyDates) {
-        if (w.scheduled_date === null) map.set(w.id, "NO DATE");
-        else if (w.scheduled_date === today) map.set(w.id, "TODAY");
-        else if (w.scheduled_date < today) map.set(w.id, "MISSED");
-        else map.set(w.id, "UPCOMING");
-      } else if (!todayAssigned) {
-        map.set(w.id, "TODAY");
-        todayAssigned = true;
-      } else {
-        map.set(w.id, "UPCOMING");
-      }
-    }
-    return map;
-  }, [workouts, doneIds, anyDates, today]);
+  const states = useMemo(
+    () => workoutStates(workouts, doneIds, anyDates, today),
+    [workouts, doneIds, anyDates, today],
+  );
 
   const doneCount = workouts.filter((w) => states.get(w.id) === "DONE").length;
   const skippedCount = workouts.filter(
@@ -548,7 +579,7 @@ export function Today() {
       : `DAY ${w.day_index + 1}`;
 
   const stateLabel = (state: WorkoutState): string =>
-    state === "UPCOMING" ? "TO COME" : state;
+    state === "UPCOMING" ? "TO COME" : state === "DRAFT" ? "EMPTY" : state;
 
   const moveToToday = (w: PlannedWorkoutRow) =>
     void (async () => {
@@ -745,6 +776,11 @@ export function Today() {
         {state === "NO DATE" && (
           <div className="microcopy">
             No date set — move it to today, or pick a day in Edit.
+          </div>
+        )}
+        {state === "DRAFT" && (
+          <div className="microcopy">
+            Nothing in this day yet — add exercises in Edit.
           </div>
         )}
         {(() => {

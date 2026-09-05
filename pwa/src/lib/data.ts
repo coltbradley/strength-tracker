@@ -159,7 +159,7 @@ export async function getPlannedWorkouts(): Promise<{
     const { data: workouts, error: wErr } = await supabase
       .from("v_plan_workouts")
       .select(
-        "id,program_id,day_index,label,notes,scheduled_date,plan_note,skipped_at",
+        "id,program_id,day_index,label,notes,scheduled_date,plan_note,skipped_at,exercise_count",
       )
       .in(
         "program_id",

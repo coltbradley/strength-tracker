@@ -54,6 +54,9 @@ export interface PlannedWorkoutRow {
   /** the user's own pre-workout planning note, edited in the app */
   plan_note: string | null;
   skipped_at: string | null;
+  /** how many prescriptions the day holds. 0 = nothing programmed yet, which
+   *  is a DRAFT rather than a workout that was missed. */
+  exercise_count: number;
 }
 
 /** Owner-editable planning fields on planned_workouts. */
