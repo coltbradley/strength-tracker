@@ -644,6 +644,7 @@ export async function addPrescriptionGroups(
     superset_group: number;
     section: string | null;
     tracking: TrackingMode;
+    load_entry: LoadEntry | null;
   }[],
   existing: ResolvedPrescriptionRow[],
 ): Promise<string | null> {
@@ -665,6 +666,9 @@ export async function addPrescriptionGroups(
     superset_group: g.superset_group === 0 ? null : g.superset_group,
     section: g.section,
     tracking: g.tracking,
+    // load_kg is the TOTAL; this says how the person typed it, so the session
+    // screen can hand back "30 x 2" instead of prefilling half the weight.
+    load_entry: g.load_entry,
   }));
   const { error } = await supabase.from("prescriptions").insert(rows);
   throwIf(error);

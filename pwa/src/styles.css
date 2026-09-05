@@ -1180,6 +1180,14 @@
     color: var(--accent-dim);
   }
 
+  /* In the plan editor the toggle has no section head to sit in, so it needs
+   * its own right-alignment. Same control, same words, same colour as the one
+   * on the session screen. */
+  .rx-entry-toggle {
+    display: block;
+    margin-left: auto;
+  }
+
   /* ---- logged sets ---- */
 
   .logged-sets {

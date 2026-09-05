@@ -17,6 +17,7 @@ describe("groupSets", () => {
         superset_group: 0,
         section: null,
         tracking: "reps",
+        load_entry: "total",
       },
     ]);
   });
@@ -126,5 +127,44 @@ describe("sections and tick-only tracking", () => {
 
   it("defaults to reps, so nothing existing changes meaning", () => {
     expect(groupSets([w(40)], 10, false, REST)[0]!.tracking).toBe("reps");
+  });
+});
+
+describe("per-hand loads", () => {
+  // The bug this exists to stop: the plan editor wrote what the person typed
+  // straight into load_kg with no convention attached, so "20" meaning a pair
+  // of 20s was stored as a 20 kg TOTAL. The session screen then resolved
+  // dumbbells as per-side and prefilled 10 a hand — half the weight, every
+  // first set, on every dumbbell exercise in a real user's plan.
+  it("doubles a per-hand number into the stored total", () => {
+    const out = groupSets([w(20), w(20)], 8, false, REST, 0, null, "reps", "per_side");
+    expect(out).toHaveLength(1);
+    expect(out[0]!.load_kg).toBe(40);
+    expect(out[0]!.load_entry).toBe("per_side");
+  });
+
+  it("leaves a total alone and says so", () => {
+    const [g] = groupSets([w(100)], 5, false, REST, 0, null, "reps", "total");
+    expect(g!.load_kg).toBe(100);
+    expect(g!.load_entry).toBe("total");
+  });
+
+  it("defaults to total, so nothing written before this changes meaning", () => {
+    expect(groupSets([w(100)], 5, false, REST)[0]!.load_entry).toBe("total");
+  });
+
+  it("by feel asserts no convention, because there is no side to halve", () => {
+    const [g] = groupSets([w(20)], 8, true, REST, 0, null, "reps", "per_side");
+    expect(g!.load_kg).toBeNull();
+    expect(g!.load_entry).toBeNull();
+  });
+
+  it("collapsing still compares the stored total, not the typed number", () => {
+    // 20 per hand and 20 per hand are the same set; they must merge.
+    const out = groupSets([w(20), w(20), w(30)], 8, false, REST, 0, null, "reps", "per_side");
+    expect(out.map((g) => [g.sets, g.load_kg])).toEqual([
+      [2, 40],
+      [1, 60],
+    ]);
   });
 });

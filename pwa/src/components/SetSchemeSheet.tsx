@@ -20,7 +20,13 @@ import { NumberPad, type PadRequest } from "./NumberPad";
 import { formatClock, formatStoredTwin } from "../lib/format";
 import { fromDisplay, stepKg, toDisplay, type Unit } from "../lib/units";
 import { getDefaultRestSeconds } from "../lib/settings";
-import type { SetType, TrackingMode } from "../lib/types";
+import {
+  enteredKg,
+  offersLoadEntry,
+  resolveLoadEntry,
+  totalKg,
+} from "../lib/loadEntry";
+import type { LoadEntry, SetType, TrackingMode } from "../lib/types";
 
 /** One prescription row to be written: N identical sets at one load. */
 export interface SetGroup {
@@ -36,6 +42,9 @@ export interface SetGroup {
   section: string | null;
   /** how it is logged */
   tracking: TrackingMode;
+  /** how load_kg was ENTERED. load_kg is always the total; this is what the
+   *  person typed, so the app can show "30 x 2" back to them. */
+  load_entry: LoadEntry | null;
 }
 
 /**
@@ -70,11 +79,15 @@ export function groupSets(
   supersetGroup = 0,
   section: string | null = null,
   tracking: TrackingMode = "reps",
+  loadEntry: LoadEntry = "total",
 ): SetGroup[] {
   const out: SetGroup[] = [];
   for (const s of sets) {
     const type: SetType = s.warmup ? "warmup" : "working";
-    const load = byFeel ? null : s.loadKg;
+    // The steppers hold what the person TYPED. load_kg is always the total
+    // system load, so a per-hand number doubles on the way out — the same
+    // conversion the session screen does when logging a set.
+    const load = byFeel ? null : totalKg(s.loadKg, loadEntry);
     const last = out[out.length - 1];
     if (last !== undefined && last.load_kg === load && last.set_type === type) {
       last.sets += 1;
@@ -95,6 +108,8 @@ export function groupSets(
       superset_group: supersetGroup,
       section,
       tracking,
+      // "by feel" has no side to halve, so it asserts nothing.
+      load_entry: load === null ? null : loadEntry,
     });
   }
   return out;
@@ -102,6 +117,10 @@ export function groupSets(
 
 interface SetSchemeSheetProps {
   exerciseName: string;
+  /** Drives the per-hand default, exactly as it does on the session screen.
+   *  Without it the sheet cannot tell a pair of dumbbells from a barbell, and
+   *  every per-hand number it wrote was stored as if it were the total. */
+  equipment?: string | null;
   /** Sections already used in this day, offered before the defaults. */
   knownSections?: string[];
   /** The part of the day this add started from — "Add exercise here" on a
@@ -121,6 +140,7 @@ interface SetSchemeSheetProps {
 
 export function SetSchemeSheet({
   exerciseName,
+  equipment = null,
   knownSections = [],
   initialSection = null,
   supersetMembers,
@@ -130,9 +150,21 @@ export function SetSchemeSheet({
   onCancel,
   onSave,
 }: SetSchemeSheetProps) {
+  // How this exercise's load is expressed. Same resolution the session screen
+  // uses, so the plan and the logging screen agree about what the number on
+  // it means. `startKg` is a stored TOTAL, so it converts on the way in.
+  const entryInput = { equipment, name: exerciseName };
+  const [loadEntry, setLoadEntry] = useState<LoadEntry>(() =>
+    resolveLoadEntry(entryInput),
+  );
+  const perSide = loadEntry === "per_side";
+  const showLoadEntry = offersLoadEntry(entryInput);
+
   // Snapped once, at mount, so every stepper and the "make every set X"
   // shortcut start from the same round number.
-  const [start] = useState(() => snapToUnit(startKg, unit));
+  const [start] = useState(() =>
+    snapToUnit(enteredKg(startKg, resolveLoadEntry(entryInput)), unit),
+  );
   const [sets, setSets] = useState<PlannedSet[]>(() =>
     Array.from({ length: 3 }, () => ({ loadKg: start, warmup: false })),
   );
@@ -191,6 +223,7 @@ export function SetSchemeSheet({
     superset,
     section.trim() === "" ? null : section.trim(),
     tracking,
+    loadEntry,
   );
   const supersetMates = supersetMembers?.[superset] ?? [];
   const working = sets.filter((s) => !s.warmup).length;
@@ -356,7 +389,26 @@ export function SetSchemeSheet({
 
       {tracking === "reps" && (
         <>
-      <div className="field-label">WEIGHT</div>
+      <div className="section-head">
+        <span className="field-label">WEIGHT</span>
+        {showLoadEntry && !byFeel && (
+          /* A property of the movement, not of one set — the same control and
+             the same wording the session screen uses, so the number typed here
+             and the number typed at the rack mean the same thing. */
+          <button
+            type="button"
+            className="plate-hint"
+            aria-label={
+              perSide
+                ? "weight is per hand; switch to the total"
+                : "weight is the total; switch to per hand"
+            }
+            onClick={() => setLoadEntry(perSide ? "total" : "per_side")}
+          >
+            {perSide ? "PER HAND ×2" : "TOTAL"}
+          </button>
+        )}
+      </div>
       <div className="seg">
         <button
           type="button"

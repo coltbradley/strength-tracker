@@ -61,7 +61,14 @@ import { useArmed } from "../hooks/useArmed";
 import { useDragList } from "../hooks/useDragList";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { fromDisplay, stepKg, toDisplay } from "../lib/units";
+import {
+  enteredKg,
+  offersLoadEntry,
+  resolveLoadEntry,
+  totalKg,
+} from "../lib/loadEntry";
 import type {
+  LoadEntry,
   ExerciseRow,
   TrackingMode,
   PlannedWorkoutRow,
@@ -76,7 +83,12 @@ interface RxDraft {
   reps_min: number;
   reps_max: number;
   mode: LoadMode;
-  load_kg: number; // stored kg, meaningful in kg mode
+  /** What the person TYPES: per hand when load_entry is 'per_side', otherwise
+   *  the whole system. `load_kg` in the database is always the total, so this
+   *  converts at both edges (see loadEntry.ts). */
+  load_kg: number;
+  /** How this row's weight is expressed. */
+  load_entry: LoadEntry;
   load_pct: number; // meaningful in pct mode
   rest_seconds: number;
   hasRest: boolean;
@@ -111,13 +123,27 @@ const MAIN_LABEL = "MAIN WORK";
 /** Sections the editor offers before anything the day already uses. */
 const SECTION_SUGGESTIONS = ["Activations", "Abs", "Cooldown"];
 
-function draftFrom(r: ResolvedPrescriptionRow): RxDraft {
+function draftFrom(
+  r: ResolvedPrescriptionRow,
+  equipment: string | null,
+): RxDraft {
+  // The row's own assertion wins; otherwise fall back to what the equipment
+  // and the name imply, exactly as the session screen does. A row written
+  // before the convention existed carries null and is a guess either way —
+  // but a guess the person can see and correct beats a silent halving.
+  const entry = resolveLoadEntry({
+    prescribed: r.load_entry ?? null,
+    equipment,
+    name: r.exercise_name,
+  });
+  const storedTotal = r.load_kg ?? r.resolved_load_kg ?? 20;
   return {
     sets: r.sets,
     reps_min: r.reps_min,
     reps_max: r.reps_max,
     mode: r.load_kg !== null ? "kg" : r.load_pct_tm !== null ? "pct" : "feel",
-    load_kg: r.load_kg ?? r.resolved_load_kg ?? 20,
+    load_kg: Math.round(enteredKg(storedTotal, entry) * 100) / 100,
+    load_entry: entry,
     load_pct: r.load_pct_tm ?? 75,
     rest_seconds: r.rest_seconds ?? 180,
     hasRest: r.rest_seconds !== null,
@@ -134,6 +160,7 @@ function unchanged(r: ResolvedPrescriptionRow, p: PrescriptionPatch): boolean {
     p.reps_min === r.reps_min &&
     p.reps_max === r.reps_max &&
     (p.load_kg ?? null) === (r.load_kg ?? null) &&
+    (p.load_entry ?? null) === (r.load_entry ?? null) &&
     (p.load_pct_tm ?? null) === (r.load_pct_tm ?? null) &&
     (p.rest_seconds ?? null) === (r.rest_seconds ?? null) &&
     (p.superset_group ?? null) === (r.superset_group ?? null) &&
@@ -150,7 +177,14 @@ function patchFrom(d: RxDraft): PrescriptionPatch {
     // 0 is bodyweight, not "unset": the schema says so
     // (`load_kg >= 0`, 0 = bodyweight) and a chin-up prescribed at 0 is a
     // real prescription. Clamping it up to 0.5 made bodyweight unexpressible.
-    load_kg: d.mode === "kg" ? Math.max(0, d.load_kg) : null,
+    // Back to a TOTAL on the way out, which is the only thing load_kg ever
+    // holds. The convention is stamped alongside it so the session screen can
+    // hand the same number back rather than halving it again.
+    load_kg:
+      d.mode === "kg"
+        ? Math.round(Math.max(0, totalKg(d.load_kg, d.load_entry)) * 100) / 100
+        : null,
+    load_entry: d.mode === "kg" ? d.load_entry : null,
     load_pct_tm: d.mode === "pct" ? d.load_pct : null,
     rest_seconds: d.hasRest ? d.rest_seconds : null,
     superset_group: d.superset === 0 ? null : d.superset,
@@ -256,7 +290,7 @@ export function Plan() {
     if (row === undefined) return;
     openAfterReload.current = null;
     setEditingRx(row.id);
-    setDraft(draftFrom(row));
+    setDraft(draftFrom(row, equipmentOf.get(row.exercise_id) ?? null));
     setConfirming(null);
     requestAnimationFrame(() =>
       document
@@ -266,8 +300,13 @@ export function Plan() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rx]);
 
+  // Loaded on mount, not only when the picker opens: the row editor needs each
+  // exercise's EQUIPMENT to know whether its weight is per hand or a total,
+  // and a row editor that cannot tell a pair of dumbbells from a barbell is
+  // how every dumbbell prescription came to be stored at half. The read is
+  // cached, so the picker still opens instantly.
   useEffect(() => {
-    if (!searchOpen || allExercises.length > 0) return;
+    if (allExercises.length > 0) return;
     setExercisesFailed(false);
     getExercises()
       .then((r) => setAllExercises(r.data))
@@ -276,7 +315,14 @@ export function Plan() {
         setExercisesFailed(true);
         reportError(e, "load exercises");
       });
-  }, [searchOpen, allExercises.length]);
+  }, [allExercises.length]);
+
+  /** exercise_id -> equipment, for resolving the per-hand convention. */
+  const equipmentOf = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const e of allExercises) m.set(e.id, e.equipment);
+    return m;
+  }, [allExercises]);
 
   /** Who is already in each superset group, so the add sheet can say what a
    *  letter pairs with instead of leaving it to mean nothing. */
@@ -943,7 +989,7 @@ export function Plan() {
                     void saveRx(r);
                   } else {
                     setEditingRx(r.id);
-                    setDraft(draftFrom(r));
+                    setDraft(draftFrom(r, equipmentOf.get(r.exercise_id) ?? null));
                     setConfirming(null);
                   }
                 }}
@@ -964,8 +1010,13 @@ export function Plan() {
                     <span className="rx-type">{r.set_type.toUpperCase()}</span>
                   )}
                   {r.sets} × {formatRepRange(r.reps_min, r.reps_max)}
+                  {/* load_kg is the TOTAL; show it back the way it was
+                      entered, so the summary and the editor agree and a pair
+                      of 20s never reads as a single 40. */}
                   {r.load_kg !== null
-                    ? ` · ${toDisplay(r.load_kg, unit)} ${unit}`
+                    ? ` · ${toDisplay(enteredKg(r.load_kg, r.load_entry ?? "total"), unit)} ${unit}${
+                        r.load_entry === "per_side" ? "/hand" : ""
+                      }`
                     : r.load_pct_tm !== null
                       ? ` · ${r.load_pct_tm}%`
                       : ""}
@@ -1085,13 +1136,46 @@ export function Plan() {
                       </button>
                     ))}
                   </div>
+                  {draft.mode === "kg" &&
+                    offersLoadEntry({
+                      equipment: equipmentOf.get(r.exercise_id) ?? null,
+                      name: r.exercise_name,
+                    }) && (
+                      /* Same control and same words as the session screen. A
+                         weight typed here means what it means at the rack. */
+                      <button
+                        type="button"
+                        className="plate-hint rx-entry-toggle"
+                        aria-label={
+                          draft.load_entry === "per_side"
+                            ? "weight is per hand; switch to the total"
+                            : "weight is the total; switch to per hand"
+                        }
+                        onClick={() =>
+                          setDraft({
+                            ...draft,
+                            load_entry:
+                              draft.load_entry === "per_side"
+                                ? "total"
+                                : "per_side",
+                          })
+                        }
+                      >
+                        {draft.load_entry === "per_side"
+                          ? "PER HAND ×2"
+                          : "TOTAL"}
+                      </button>
+                    )}
                   {draft.mode === "kg" && (
                     <Stepper
                       label="load"
                       compact
                       onTapValue={() =>
                         setPad({
-                          label: `LOAD IN ${unit.toUpperCase()}`,
+                          label: `LOAD PER HAND IN ${unit.toUpperCase()}`.replace(
+                            "PER HAND ",
+                            draft.load_entry === "per_side" ? "PER HAND " : "",
+                          ),
                           action: "SET",
                           initial: String(toDisplay(draft.load_kg, unit)),
                           allowDecimal: true,
@@ -1636,6 +1720,7 @@ export function Plan() {
       {adding && (
         <SetSchemeSheet
           exerciseName={adding.name}
+          equipment={adding.equipment}
           supersetMembers={supersetMembers}
           knownSections={knownSections}
           initialSection={addingTo}

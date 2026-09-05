@@ -1653,6 +1653,7 @@ export function Session() {
       {declaring && (
         <SetSchemeSheet
           exerciseName={declaring.name}
+          equipment={declaring.equipment}
           knownSections={knownSections}
           supersetMembers={supersetMembers}
           unit={unit}
