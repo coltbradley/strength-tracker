@@ -1454,3 +1454,325 @@ the pair is already legible in the data (same index, one voided) and a link
 column would be one more thing every view had to know to ignore. History
 still voids only; corrections happen while the workout is in progress, where
 the steppers are.
+
+## One day changed is one day written
+
+`upsert_program` replaces a program wholesale and refuses to touch a confirmed
+one. Those two facts together meant "add the PULL day to my plan" had no
+correct call at all: the only thing a model could do was write a SECOND program
+with the same name. That is what happened to a real user on 2026-08-31 — two
+live plans, and four days on her calendar she never trained, every one of them
+reading MISSED — and the eval reproduced it with a different model driving,
+which is how we know it was the tool surface rather than the judgment.
+
+The wholesale shape had a second failure with the same root. A day with no
+prescriptions could not be restated, because the array required at least one,
+so every rewrite silently dropped every empty day. In the eval one subagent
+dropped a blank day and another refused a one-exercise swap outright rather
+than destroy it: the surface made "change one exercise" and "keep the empty
+days" mutually exclusive, so the careful model did nothing and the incautious
+one deleted. Editing one day never restates the others, so both go away
+together.
+
+`update_planned_workout` takes one planned day and replaces its prescription
+list in place. The DAY is the unit and the row is not, deliberately: order,
+supersets, sections and ramps are all adjacency between rows, so a per-row
+patch API would let a caller tear a superset in half without ever naming it.
+The schema lost the `position` field it was drafted with on the way in — array
+order is the order, and a caller-supplied position is a second source of truth
+that can silently reshape a day.
+
+Two mechanics carry weight. New rows are inserted at parked positions above
+anything real and moved down only after the old ones are deleted, because
+PostgREST has no transactions and a failure between statements should leave the
+day holding two lists — visible, and fixable on the next call — rather than
+holding nothing, which is the failure the whole tool exists to stop. And a day
+with logged sets against it is refused in the tool, matching the trigger that
+already refuses it in Postgres.
+
+Editing a day of a CONFIRMED program takes `confirm_change=true` and the user's
+approval in chat, because the change is live on their calendar the moment it
+lands. There is no confirm step afterwards; nothing new was written to confirm.
+Validation is shared with `upsert_program` (`lib/prescriptions.ts`) so an
+exercise id or a %TM that fails one fails the other identically.
+
+The tool description says all of this out loud, because the failure was a model
+reaching for the only plan-writing tool it could see. `upsert_program` is now
+for a genuinely new program and nothing else.
+
+## An empty day is a draft, not a workout you missed
+
+"Plan a workout" creates the dated day and then opens its editor, so abandoning
+it there leaves a real, dated, empty day behind. The moment its date passed,
+Today called it MISSED — for ever, for a session that was never programmed. A
+real user has one of these on her calendar from 2026-08-30, sitting among three
+sessions she actually trained, and it would have gone on accusing her next
+year.
+
+Today could not tell the difference on its own. Prescriptions load lazily, for
+the selected day and for today's, so for every other cell in the week strip the
+screen has no idea whether the day holds anything. So the count goes on the row
+that describes it: `v_plan_workouts` gains `exercise_count`, additively, and
+the demo mock mirrors the same subquery so the state behaves identically there.
+It counts prescription ROWS rather than summing their `sets`, because a ramp is
+three rows and one exercise and either number answers "is this day empty".
+
+DRAFT sits ahead of every date check and behind DONE and SKIPPED. What actually
+happened outranks emptiness — a session logged against a day nobody programmed
+is still a session — but nothing that never existed should read as something
+you failed to do. The card says EMPTY and points at Edit. The state computation
+came out of the component so the branch ORDER, which is the whole meaning of
+the function, could be pinned by tests.
+
+The migration ships before the code that reads the column, per the runbook: the
+schema tolerates a column nothing selects, and the app does not tolerate
+selecting one that is not there.
+
+## The delete doors soft delete was supposed to have closed
+
+Two migrations gave `programs` and `planned_workouts` a `discarded_at`, both
+for the same reason: prescriptions cascade from `planned_workouts`, and
+`sets.prescription_id` is ON DELETE SET NULL, so ONE hard delete of a planned
+day severs the link from every set ever logged against it. The sets survive.
+What the plan ASKED for does not, and `sets` is append-only, so nothing puts it
+back — `v_adherence` and the prescription line History renders above each
+session are gone for good.
+
+Both migrations changed how the CODE deletes. Neither dropped the POLICY that
+lets the database do it. The PWA stopped taking that path, but the PWA was
+never the boundary: anyone holding a session token talks to PostgREST directly,
+and RLS was the only thing in the way. `programs_delete` is gone outright, and
+so is `exercise_owners_delete`, which is the same shape one table over —
+deleting your own ownership row does not unshare a custom exercise, it makes it
+readable by NOBODY, which is precisely the state 20260901010000 had to write a
+repair for, arrived at from the other direction.
+
+`pw_delete` is NARROWED rather than dropped, and that distinction was found by
+reading the client rather than the schema. `deleteTemplate` hard-deletes a
+template today, and RLS refuses by returning ZERO ROWS rather than an error, so
+a bare drop would have made the template delete button silently do nothing at
+all. A template is dateless by constraint, never appears on a calendar, and is
+APPLIED by copying its prescriptions onto a real day, so nothing can ever have
+been logged against its own rows. The danger was never "delete" as a verb; it
+was deleting a DATED day.
+
+`rx_delete` stays. Removing one exercise from a day is an ordinary plan edit,
+and the case that would sever history is already refused row by row by the
+`prescriptions_keep_logged_history` trigger.
+
+## An exercise name is untrusted cross-user input
+
+`exercises.name` was `text` with no constraint. The library is SHARED, and
+`update_exercise` can rename a seeded row, so that name travels: it comes back
+from `search_exercises`, from `get_program` through
+`v_resolved_prescriptions.exercise_name`, and from the coach's per-turn context
+block, unquoted, in front of the model, for EVERY account on the deployment
+rather than only the one that typed it.
+
+The dangerous part is structural rather than semantic. A name carrying newlines
+can close whatever framing it was rendered inside and open another one, and a
+name carrying zero-width or bidi formatting characters can do it invisibly, so
+the person reading "Barbell Squat" in the picker and the model reading the row
+disagree about what the row says. One line of bounded plain text can still say
+something rude; it cannot forge a turn.
+
+So the constraint bounds the length and requires a single line of printable
+text. 80 characters, calibrated against all 979 seeded rows (longest 58) and
+against the punctuation they actually use — apostrophes, parens, commas,
+hyphens and slashes. Deliberately NOT an allow-list of characters: whitelisting
+ASCII letters would refuse a name written in a script this repo's author does
+not read, and the POSIX classes that would not are collation-dependent, which
+means a constraint accepting different text in PGlite than in Postgres than in
+production. Naming what is dangerous — the C0/C1 controls, U+2028 and U+2029,
+and the invisible formatting characters — is both narrower and portable.
+
+## An audit stamp on the one table that may not have per-user columns
+
+CLAUDE.md forbids `exercises` growing a per-user column, and this is an
+explicit exception to it, which is why it is written down here rather than only
+in the migration.
+
+The name is bounded now but still mutable, and the question that was impossible
+to answer after the fact was "this library row no longer says what the seed
+says — who did that?". `source = 'edited'` records THAT a human changed a
+seeded row; it cannot say which human, or when. A rename that landed in
+everyone's model context had no trail back to an account at all. So `exercises`
+gains `updated_at` and `updated_by`.
+
+The rule it deviates from has two stated reasons, and neither one applies. 873
+generated rows would carry a null forever: true, but null here is not a
+placeholder standing in for a value that belongs in the row, it IS the answer —
+"not modified since it was seeded" — true of the whole library the day this
+lands and true of most of it for ever. And every re-seed would write it back:
+both ON CONFLICT DO UPDATE clauses name eight columns and neither of these is
+one, so no seed touches them. The rule is really about data that differs per
+VIEWER; this is a single global fact about the row.
+
+The third condition is the load-bearing one. This is an audit trail and must
+never be read as ownership. Ownership lives in `exercise_owners` and nowhere
+else, and no policy, view or MCP guard may branch on `updated_by`. It answers
+"who touched this", not "whose is this" — which is exactly the distinction the
+`source` column failed to make, and that failure is the bug 20260901010000
+exists to repair.
+
+Stamped by a trigger rather than by each writer, for the reason
+`claim_custom_exercise` is a trigger: there are two write paths, and a stamp
+every future call site has to remember is one a future call site will forget.
+A no-op update stamps nothing, because the seeds upsert every row on every run
+and a re-seed rewriting a row with the values it already holds has not edited
+it. An explicitly supplied `updated_by` beats `auth.uid()`, so the MCP server
+can name the token's user on a path where `auth.uid()` is null; left alone
+there it stays null, which is honest rather than wrong.
+
+## `update_exercise` joins the tools the coach cannot reach
+
+`delete_program` and `delete_exercise` were already disabled for the in-app
+coach at the connector layer. `update_exercise` now joins them, and it is a
+different argument: it is not destructive, it writes OTHER PEOPLE's data.
+
+The library is shared — everything not sourced 'custom' is one library that
+every account reads — so renaming a seeded row is a write nobody can see
+happening, and the new name flows into every other user's model context through
+`search_exercises`, `get_program` and the context block. There is no coaching
+reason to rename a shared movement, and a screenshot the coach is asked to
+parse is exactly the untrusted input that would ask for it.
+
+Turning a tool off converts "the prompt says ask first" into something an
+injected instruction cannot reach. `upsert_program` deliberately stays:
+drafting a plan is the job, and it lands unconfirmed, which is a real gate but
+a softer one — it rests on the model's judgment rather than on structure.
+Claude Desktop keeps all three, because a person typing into a desktop client
+is not an untrusted screenshot.
+
+## A basement gym is not a sign-out
+
+Opening the app with no signal and a token that expired overnight showed the
+Login screen — to someone who signed in perfectly well yesterday, whose refresh
+token was sitting valid in localStorage.
+
+`getSession()` tries to refresh an expired token and, when it cannot reach the
+server, returns `session: null` with a RETRYABLE error: the same shape as a
+real sign-out. Verified against the installed auth-js, which only preserves the
+session while the access token is still inside its own expiry window, so past
+that point a dead network and a revoked token are indistinguishable to every
+caller that reads the null and stops there. Three callers did. `useAuth` showed
+Login. `currentUser` reported "nobody", which HOLDS every queued write —
+correct when identity is genuinely unknown, wrong when the device knows
+perfectly well whose it is. And the outbox transport returned false, which
+means "the server answered and there is no session, this item is dead", so the
+"unreachable, keep it pending" branch it already had, with a comment explaining
+exactly this failure, could never once have fired against the real transport. A
+timeout on gym wifi dead-lettered a whole session's worth of sets.
+
+All three separate "no" from "we could not ask". The transport throws on a
+retryable error so the outbox's existing branch works as written, and the other
+two fall back to the session auth-js has on disk.
+
+That fallback is IDENTITY, NEVER AUTHORIZATION, and `persistedSession.ts` says
+so at length. It answers "whose data is this device holding" so the shell can
+render and the outbox can stamp an owner; every request still carries the real
+token and is still refused by the server if that token is no good. It reads the
+auth library's private storage key, which is a coupling, so it is deliberately
+loose about it: any unexpected shape, any unreadable store, any missing refresh
+token returns null and puts the app back on the previous behaviour.
+
+## Only the device that started a session may discard it
+
+The overnight sweep discarded yesterday's open sessions when they looked empty.
+Both of its "empty" signals are local truths dressed as global ones:
+`queuedSetCount` reads THIS device's outbox, and `lastSetAt` reads a server the
+other phone has not reached yet.
+
+So: phone A starts a session at the gym on Monday and logs 25 sets offline.
+Tuesday morning the lifter opens the iPad. Both signals say zero, the sweep
+discards, and phone A's sets flush into a session `v_live_sets` excludes and
+the PWA has no way to un-discard. The training survives in Postgres and
+vanishes from the app.
+
+Completing stays cross-device, because it is safe from anywhere: sets that
+arrive later still belong to the session, and `ended_at` only says the day is
+over. Discarding now requires owning the active pointer, which is the one piece
+of evidence that the absent outbox is OUR absent outbox. A foreign session that
+looks empty is left OPEN, where Today's orphan card can offer it back — an open
+session is a card someone dismisses, and a wrongly discarded one is training
+only SQL can find.
+
+## Today has to notice that it is tomorrow
+
+An installed PWA is not a page load. iOS suspends it and resumes it with the
+same heap and the same rendered output, so a calendar day read during render is
+a fact about whenever this screen last rendered. Left open on Monday evening
+and picked up on Tuesday morning, Today still said Monday and still offered
+MONDAY's Start button. The first tap filed the whole workout against Monday:
+its planned day, its brackets, every set. `sets` is append-only, so Monday read
+DONE for ever and Tuesday stayed open for ever.
+
+`useLocalToday` watches three signals, none of which is sufficient alone. A
+timer armed for the next local midnight is the only one that fires while
+someone is looking at the screen. `visibilitychange` covers the suspended app
+whose timers never ran. `online` covers the phone that spent the night in a
+basement. The boundary is computed from the calendar date rather than by adding
+24 hours, so DST lands on the real one.
+
+`selectedDate` follows the clock only when it was still tracking it. That state
+carries two meanings which look identical — "today, because that is where this
+screen opens" and "this day, because I tapped it" — and what tells them apart
+is what the day used to be. Someone reading next Thursday's plan at midnight
+keeps their place.
+
+The day-change re-run opened two hazards, both closed here. Reconciliation
+re-runs at midnight, which is right for a session abandoned overnight and very
+wrong for one in progress: a 23:50 start would have been auto-completed at its
+last logged set and the active pointer cleared out from under someone still
+lifting, so the re-run stands down while this device holds a live session. The
+mount run never stands down, because clearing yesterday's pointer is exactly
+what a fresh launch is for. And the re-run does not re-close the start gate,
+which would disable every Start button for a couple of seconds at midnight.
+
+## The plan editor learns what a pair of dumbbells is
+
+`load_kg` is always the TOTAL system load, and the plan editor had no per-hand
+concept at all. Whatever number was typed went straight into `load_kg`, so "20"
+meaning a pair of 20s was stored as a 20 kg total, and the session screen —
+which DOES resolve dumbbells as per-side — prefilled 10 a hand. Half the
+weight, on every dumbbell exercise, on the first set of every session. A real
+user's whole plan is stored that way, and her logged sets show her retyping the
+real number every time.
+
+Both write paths now resolve the convention identically, from the exercise's
+`equipment` and name, and show the same control with the same words. The scheme
+sheet gains it on the way in; the row editor gains it for rows that already
+exist, which is what makes an existing plan correctable in the app rather than
+only in SQL. What gets stored is the total, with `load_entry` saying how it was
+typed, so the number comes back the way it was written — including in the
+collapsed row summary, because a summary reading 40 above an editor reading 20
+is the same confusion in a smaller font.
+
+Consequence worth recording: the plan editor now loads the exercise library on
+mount rather than when the picker opens. The row editor needs each exercise's
+equipment to know what its weight MEANS, and a row editor that cannot tell
+dumbbells from a barbell is how this happened. The read is cached, so the
+picker still opens instantly.
+
+## A coach eval a Claude Code subagent can drive
+
+`scripts/coach-eval/` replays turns against the REAL MCP server on a
+PGlite-backed PostgREST and grades what the model DID — the rows it wrote,
+whether it edited or cloned, whether a load landed doubled with `load_entry`
+set. It could only be driven by the Anthropic API, and there is no key on this
+machine, so it had never been run.
+
+`serve.mjs` holds the stack up and exposes a small control API, which lets a
+Claude Code subagent play the coach instead: it reads a generated prompt pack
+(the real system prompt, the real tool schemas, the context block, the
+conversation) and drives the tools over `tool.mjs`. Tool calls are read from
+the MCP server's own log rather than self-reported, because an agent that says
+it called `remember` and did not is exactly the failure being measured.
+
+That driver cannot answer the model question — a subagent runs under a
+different harness with no effort control — but it answers a question that
+matters more and answers it for free: which failures are STRUCTURAL. Run 1 said
+the program clone reproduces no matter who is driving, and found a second gap
+the audit had missed in the empty-day rewrite. Both point at
+`update_planned_workout`, which is why that tool came before any model change.
+The API-driven run stays as the verification of the model question itself.
