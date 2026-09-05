@@ -46,10 +46,27 @@ import { createClient } from "@supabase/supabase-js";
 import { systemPrompt } from "./prompt.ts";
 import { captureError } from "./sentry.ts";
 
-const MODEL = "claude-sonnet-5";
-// Sonnet 5 counts thinking, tool calls AND the answer against max_tokens, and
-// its tokenizer runs ~30% heavier than Sonnet 4.6's. At 8k with adaptive
-// thinking on, a multi-tool turn truncates mid-sentence.
+// Opus, at LOW effort, and the two halves of that are separate decisions.
+//
+// The model: the thing this function does that nothing else in the app does is
+// WRITE to someone's training plan. The expensive failure is not a mediocre
+// sentence, it is a wrong write — and a real user's plan has already been
+// corrupted once. Side-effect error rate is the metric that improves with
+// tier, and at observed usage the difference is about a dollar a month per
+// person. It is insurance, not a fix: an eval run with a Sonnet-class model
+// handled every judgment case where the prompt was clear, so the model was
+// never the bottleneck. Reversing this is one line if the API eval
+// (scripts/coach-eval) says Sonnet matches it.
+//
+// The effort: unchanged, and deliberately. `low` was chosen for someone
+// standing at a rack between sets and that reasoning still holds — turns
+// already take 9 to 18 seconds. A stronger model at low effort buys judgment
+// without buying latency, and the worst turn on record was 37 seconds of six
+// sequential exercise lookups, which is a tool-loop problem rather than a
+// thinking-depth one.
+const MODEL = "claude-opus-5";
+// Counts thinking, tool calls AND the answer against max_tokens. At 8k with
+// adaptive thinking on, a multi-tool turn truncates mid-sentence.
 const MAX_TOKENS = 16000;
 const TOKEN_TTL_MS = 10 * 60 * 1000;
 
@@ -60,7 +77,11 @@ function today(): string {
 
 /** Per user. Generous for a person, ruinous for a loop. */
 const LIMIT_TURNS_PER_DAY = 150;
-const LIMIT_OUTPUT_TOKENS_PER_MONTH = 2_000_000;
+// Denominated in TOKENS, so its value in money moves with the model. At 2M on
+// Sonnet the ceiling was about $20 per user per month; the same number on Opus
+// is about $50. Realistic use is 30k to 200k, so 800k holds roughly the old
+// dollar ceiling and still only ever bites a runaway loop.
+const LIMIT_OUTPUT_TOKENS_PER_MONTH = 800_000;
 
 /**
  * WHO may use the coach, as opposed to how much.
@@ -771,6 +792,13 @@ Deno.serve(async (req) => {
               // exactly the 5-60 minute gap where the 2x write cost pays for
               // itself; at 5 minutes every question after a working set was a
               // cold miss on ~17k tokens of tool definitions.
+              //
+              // The sequenced plan proposed dropping this to 5 minutes, on the
+              // evidence of one PLANNING conversation whose turns were a
+              // minute or two apart. That is the wrong sample: the gap this
+              // exists for is the one between sets, and a 5-minute window is
+              // measured from the START of the request, so a slow generation
+              // leaves almost none of it. Keeping the hour.
               cache_control: { type: "ephemeral", ttl: "1h" },
             },
           ],

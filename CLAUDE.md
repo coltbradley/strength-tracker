@@ -313,7 +313,8 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 
 ## The coach (supabase/functions/coach)
 
-- An edge function calling the Anthropic API with `claude-sonnet-5`, giving it
+- An edge function calling the Anthropic API with `claude-opus-5` at effort
+  `low`, giving it
   the EXISTING MCP server as its tool surface via the MCP connector. One
   authorization boundary, not two. The API key is a Supabase secret and never
   reaches the browser; the caller authenticates with their Supabase session.
