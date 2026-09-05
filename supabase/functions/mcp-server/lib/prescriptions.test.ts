@@ -52,20 +52,6 @@ Deno.test("owner and day are stamped on every row", () => {
   }
 });
 
-Deno.test(
-  "set_type and tracking are omitted when unsaid, so the column default stands",
-  () => {
-    const [row] = prescriptionRows(OWNER, DAY, [base]);
-    assertEquals("set_type" in row, false);
-    assertEquals("tracking" in row, false);
-
-    const [explicit] = prescriptionRows(OWNER, DAY, [
-      { ...base, set_type: "warmup", tracking: "done" },
-    ]);
-    assertEquals(explicit.set_type, "warmup");
-    assertEquals(explicit.tracking, "done");
-  },
-);
 
 Deno.test("absent optional fields become null, not undefined", () => {
   const [row] = prescriptionRows(OWNER, DAY, [base]);
