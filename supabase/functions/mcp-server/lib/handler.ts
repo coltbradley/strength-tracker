@@ -40,6 +40,7 @@ import { registerManageExercises } from "../tools/manage_exercises.ts";
 import { registerSearchExercises } from "../tools/search_exercises.ts";
 import { registerSetGoal } from "../tools/set_goal.ts";
 import { registerSetTrainingMax } from "../tools/set_training_max.ts";
+import { registerUpdatePlannedWorkout } from "../tools/update_planned_workout.ts";
 import { registerUpsertProgram } from "../tools/upsert_program.ts";
 
 function buildServer(ctx: RequestContext, userId: string): McpServer {
@@ -58,6 +59,7 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   // belong to the PWA (see CLAUDE.md hard rules).
   registerGetProgram(server, db, ctx);
   registerUpsertProgram(server, db, ctx);
+  registerUpdatePlannedWorkout(server, db, ctx);
   registerConfirmProgram(server, db, ctx);
   registerDeleteProgram(server, db, ctx);
   registerSetTrainingMax(server, db, ctx);

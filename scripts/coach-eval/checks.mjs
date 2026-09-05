@@ -48,11 +48,18 @@ export async function runChecks(db, c, turn) {
     const r = await db.query(`select count(*)::int as n from programs where user_id = $1 and discarded_at is null`, [OWNER]);
     out.programs_live_max = { pass: r.rows[0].n <= ch.programs_live_max, detail: `${r.rows[0].n} live` };
   }
-  const needsNewest = ch.program_has_days || ch.day_superset_groups || ch.newest_confirmed !== undefined || ch.rx_load || ch.rx_absent || ch.rx_present;
+  const needsNewest =
+    ch.program_has_days ||
+    ch.program_day_count !== undefined ||
+    ch.day_superset_groups ||
+    ch.newest_confirmed !== undefined ||
+    ch.rx_load ||
+    ch.rx_absent ||
+    ch.rx_present;
   if (needsNewest) {
     const p = await newestProgram(db);
     if (!p) {
-      for (const k of ["program_has_days", "day_superset_groups", "newest_confirmed", "rx_load", "rx_absent", "rx_present"])
+      for (const k of ["program_has_days", "program_day_count", "day_superset_groups", "newest_confirmed", "rx_load", "rx_absent", "rx_present"])
         if (ch[k] !== undefined) out[k] = { pass: false, detail: "no live program" };
     } else {
       if (ch.program_has_days) {
@@ -60,6 +67,20 @@ export async function runChecks(db, c, turn) {
         const labels = r.rows.map((x) => (x.label ?? "").toUpperCase());
         const missing = ch.program_has_days.filter((l) => !labels.includes(l));
         out.program_has_days = { pass: missing.length === 0, detail: `days ${labels.join(",")}${missing.length ? `; missing ${missing.join(",")}` : ""}` };
+      }
+      if (ch.program_day_count !== undefined) {
+        // Counts EVERY live day, including ones with no exercises. An empty
+        // day is a draft the user made, and a rewrite that silently drops it
+        // is the second bug update_planned_workout exists to prevent.
+        const r = await db.query(
+          `select count(*)::int as n from planned_workouts
+            where program_id = $1 and discarded_at is null and coalesce(is_template,false) = false`,
+          [p.id],
+        );
+        out.program_day_count = {
+          pass: r.rows[0].n === ch.program_day_count,
+          detail: `${r.rows[0].n} live days, want ${ch.program_day_count}`,
+        };
       }
       if (ch.day_superset_groups) {
         const r = await db.query(

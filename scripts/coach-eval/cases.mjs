@@ -11,6 +11,7 @@
 //   memory_matches   regexes; each must match some coach_memory.fact after the turn
 //   programs_live_max  count of live programs must be <= n
 //   program_has_days   labels the NEWEST program must contain
+//   program_day_count  exact number of live days, so a dropped empty day shows
 //   day_superset_groups  { label, min }: that day has at least `min` distinct superset groups
 //   newest_confirmed   the newest program's confirmed_at must be (non)null
 //   rx_load           { exercise, load_kg, load_entry } on the newest program
@@ -138,21 +139,25 @@ export const cases = [
   valentine(12, {
     note: "'Yes' - write the PULL day",
     checks: {
-      tools_required: ["upsert_program"],
-      tools_forbidden: ["confirm_program"],
+      // Filling in a day of a plan she is already following is an EDIT.
+      // upsert_program is the wrong tool for it and was the cause of the
+      // production clone, so calling it here is now a failure, not a pass.
+      tools_required: ["update_planned_workout"],
+      tools_forbidden: ["upsert_program", "confirm_program"],
       program_has_days: ["PUSH", "LEGS", "PULL"],
       day_superset_groups: { label: "PULL", min: 2 },
       // She had ONE confirmed program. Adding a day to it must not leave two
-      // live programs on her calendar. This is the failure that produced four
-      // phantom MISSED days in production, and it is expected to fail for
-      // every model: upsert_program cannot touch a CONFIRMED program, so
-      // there is no call sequence that satisfies it. That is the finding.
+      // live programs on her calendar — the failure that put four phantom
+      // MISSED days in front of a real user.
       programs_live_max: 1,
+      // And her blank 2026-08-30 day must still be there. A wholesale rewrite
+      // could not restate a day with no exercises, so it dropped it.
+      program_day_count: 4,
     },
     rubric: [
       ...COMMON_RUBRIC,
-      "Tells the lifter the program is written but not yet live and that a confirmation is needed, in one or two sentences.",
-      "Mentions or handles the fact that a confirmed program named 'My plan' already exists (a warning, a different name, or an explanation of what will happen to the old one).",
+      "Says what is now on the PULL day, in one or two sentences.",
+      "Does not ask for a second confirmation. Editing one day of a confirmed program is live on save; there is no confirm step to wait for, so promising one would be wrong.",
     ],
   }),
   valentine(13, {
@@ -175,11 +180,15 @@ export const cases = [
     history: [],
     user: "On push day the cable station is always taken. Swap the cable tricep extension for a dumbbell overhead tricep extension, same sets and reps.",
     checks: {
-      tools_required: ["get_program", "upsert_program"],
-      tools_forbidden: ["confirm_program"],
+      // A swap is a day EDIT. Before update_planned_workout existed there was
+      // no safe call for this at all: a careful model refused rather than
+      // destroy the program's empty days, and an incautious one cloned.
+      tools_required: ["get_program", "update_planned_workout"],
+      tools_forbidden: ["upsert_program", "confirm_program"],
       program_has_days: ["PUSH", "LEGS"],
+      program_day_count: 4,
       rx_absent: { exercise: "Cable_Incline_Triceps_Extension" },
-      rx_present: { exercise_like: "%Overhead%Triceps%|%Triceps%Overhead%|%Overhead%Extension%" },
+      rx_present: { exercise_like: "%Overhead%Triceps%|%Triceps%Overhead%|%Overhead%Extension%|%Triceps%Extension%" },
     },
     rubric: [...COMMON_RUBRIC, "Keeps every other exercise on PUSH and LEGS unchanged and says the swap is written but not yet confirmed."],
   },

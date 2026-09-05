@@ -1,148 +1,21 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
-import { must, visibleExerciseIds } from "../lib/db.ts";
-import { todayIso } from "../lib/dates.ts";
+import { must } from "../lib/db.ts";
 import {
   guard,
   jsonResult,
-  ToolError,
   type RequestContext,
+  ToolError,
 } from "../lib/errors.ts";
 import { formatRepRange } from "../lib/format.ts";
 import { log } from "../lib/log.ts";
-
-const prescriptionSchema = z
-  .object({
-    exercise_id: z
-      .string()
-      .min(1)
-      .describe(
-        "Exercise id slug. Must exist in the library (use search_exercises).",
-      ),
-    position: z
-      .number()
-      .int()
-      .min(0)
-      .describe("Order within the workout, 0-based. Unique per workout."),
-    sets: z
-      .number()
-      .int()
-      .min(1)
-      .max(20)
-      .describe("Number of prescribed sets."),
-    section: z
-      .string()
-      .min(1)
-      .max(40)
-      .optional()
-      .describe(
-        "Heading this exercise sits under — 'Activations', 'Abs', " +
-          "'Cooldown', or whatever the coach called it. Consecutive " +
-          "prescriptions sharing a section render as one titled block, so " +
-          "keep them adjacent in `position`. Omit for the main body of the " +
-          "workout, which needs no heading. Use the coach's own wording; do " +
-          "not invent sections they did not write.",
-      ),
-    tracking: z
-      .enum(["reps", "done"])
-      .optional()
-      .describe(
-        "How it is logged. 'reps' (the default) is weight and reps. 'done' " +
-          "is a completion tick, for movements nobody counts — band " +
-          "activations, mobility drills, anything the coach wrote without a " +
-          "load or a rep target. A 'done' set records reps 0 at load 0 and " +
-          "stays out of volume and e1RM.",
-      ),
-    set_type: z
-      .enum(["warmup", "working", "backoff"])
-      .optional()
-      .describe(
-        "What this set-group IS. Defaults to 'working'. Use 'warmup' for the " +
-          "coach's explicit warmup or ramp-up sets ('warm up to', 'build to', " +
-          "'2 light sets first') and 'backoff' for volume sets after a top " +
-          "single ('then 3x5 @80%'). Warmup groups do not count toward the " +
-          "day's working-set target. When the coach does not say, leave it " +
-          "unset rather than guessing — 'working' is the honest default.",
-      ),
-    reps_min: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .describe("Bottom of the rep range."),
-    reps_max: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .describe(
-        "Top of the rep range. Must be >= reps_min. Equal for a fixed rep count.",
-      ),
-    load_kg: z
-      .number()
-      .positive()
-      .optional()
-      .describe("Absolute load in kg. Mutually exclusive with load_pct_tm."),
-    load_pct_tm: z
-      .number()
-      .positive()
-      .max(200)
-      .optional()
-      .describe(
-        "Load as a percent of training max (e.g. 72.5). Mutually exclusive with " +
-          "load_kg. Requires a current training max for the exercise. Omit both " +
-          "load fields when the coach said 'by feel'.",
-      ),
-    load_entry: z
-      .enum(["total", "per_side"])
-      .optional()
-      .describe(
-        "How the load is EXPRESSED. load_kg (and any %TM it resolves to) is " +
-          "ALWAYS the TOTAL system load — the whole weight moved in one rep. " +
-          "When the coach writes a per-hand number ('DB bench 3x10 @ 30', " +
-          "'30s', '30 each'), DOUBLE it into load_kg and set " +
-          "load_entry: 'per_side' so the app shows the lifter 30 x 2. Use " +
-          "'total' for a barbell, a machine stack, or single-arm work where " +
-          "one implement IS the whole system (a one-arm row at 30 kg is " +
-          "total 30, not 60). Omit only when the coach's programming genuinely " +
-          "does not say — omitted means UNKNOWN, not total.",
-      ),
-    rest_seconds: z
-      .number()
-      .int()
-      .min(0)
-      .max(3600)
-      .optional()
-      .describe("Prescribed rest between sets, in seconds."),
-    notes: z.string().optional().describe("Coach notes for this prescription."),
-    superset_group: z
-      .number()
-      .int()
-      .min(1)
-      .max(26)
-      .optional()
-      .describe(
-        "Superset marker: prescriptions in the same workout sharing a group " +
-          "number are performed as a superset (1 = A, 2 = B, ...). Use when " +
-          "the coach pairs exercises ('A1/A2', 'superset with', arrows).",
-      ),
-  })
-  .refine((p) => !(p.load_kg != null && p.load_pct_tm != null), {
-    message: "load_kg and load_pct_tm are mutually exclusive",
-  })
-  .refine((p) => p.reps_max >= p.reps_min, {
-    message: "reps_max must be >= reps_min",
-  })
-  .refine(
-    (p) =>
-      p.load_entry !== "per_side" || p.load_kg != null || p.load_pct_tm != null,
-    {
-      message:
-        "load_entry 'per_side' needs a load; a 'by feel' prescription has no " +
-        "side to halve",
-    },
-  );
+import {
+  assertExercisesExist,
+  prescriptionRows,
+  prescriptionSchema,
+  resolveTrainingMaxes,
+} from "../lib/prescriptions.ts";
 
 const workoutSchema = z.object({
   day_index: z
@@ -212,10 +85,14 @@ function loadLabel(
   if (rx.load_kg != null) return kgLabel(rx.load_kg, rx.load_entry);
   if (rx.load_pct_tm != null) {
     const tm = tms.get(rx.exercise_id);
-    const resolved =
-      tm != null
-        ? ` (~${kgLabel(Math.round((rx.load_pct_tm / 100) * tm * 10) / 10, rx.load_entry)})`
-        : "";
+    const resolved = tm != null
+      ? ` (~${
+        kgLabel(
+          Math.round((rx.load_pct_tm / 100) * tm * 10) / 10,
+          rx.load_entry,
+        )
+      })`
+      : "";
     return `${rx.load_pct_tm}% TM${resolved}`;
   }
   return "by feel";
@@ -256,103 +133,17 @@ export function registerUpsertProgram(
             "Duplicate day_index values in program.workouts.",
           );
         }
-        for (const w of program.workouts) {
-          const positions = w.prescriptions.map((p) => p.position);
-          if (new Set(positions).size !== positions.length) {
-            throw new ToolError(
-              `Duplicate prescription positions in workout day_index ${w.day_index}.`,
-            );
-          }
-        }
-
         // Every exercise_id must exist AND be one this caller can see.
         //
         // This ran as a bare existence check, and the service role bypasses
         // RLS, so another account's custom exercise passed it, was written
         // into the program, and came back out of get_program by name. Slugs
         // are derived from names, so they are guessable rather than secret.
-        // Scoped now, through the same gate requireExercise uses.
-        const allIds = [
-          ...new Set(
-            program.workouts.flatMap((w) =>
-              w.prescriptions.map((p) => p.exercise_id),
-            ),
-          ),
-        ];
-        const knownIds = await visibleExerciseIds(db, allIds);
-        // Reported as unknown, never as forbidden: saying "that exists but is
-        // not yours" is the leak this is here to prevent.
-        const unknown = allIds.filter((id) => !knownIds.has(id));
-        if (unknown.length > 0) {
-          throw new ToolError(
-            `Unknown exercise ids: ${unknown.join(", ")}. ` +
-              "Call search_exercises to find the correct id slugs.",
-          );
-        }
-
-        // Every %TM prescription must be resolvable against a current TM.
-        const pctIds = [
-          ...new Set(
-            program.workouts
-              .flatMap((w) => w.prescriptions)
-              .filter((p) => p.load_pct_tm != null)
-              .map((p) => p.exercise_id),
-          ),
-        ];
-        const tms = new Map<string, number>();
-        if (pctIds.length > 0) {
-          const tmRows = must(
-            await db.client
-              .from("v_current_tm")
-              .select("exercise_id, value_kg")
-              .eq("user_id", db.ownerId)
-              .in("exercise_id", pctIds),
-            "training max lookup",
-          ) as { exercise_id: string; value_kg: number }[];
-          for (const row of tmRows) tms.set(row.exercise_id, row.value_kg);
-          const missingTm = pctIds.filter((id) => !tms.has(id));
-          if (missingTm.length > 0) {
-            // A future-dated TM exists but is invisible to v_current_tm until
-            // its date arrives — say so instead of just "no TM".
-            // gte, not gt: the boundary day belongs to the database, which
-            // decides currency with its own now() at app_tz(). A row dated
-            // exactly today is either already current (so it is not in
-            // missingTm and cannot be listed here) or it is one the view has
-            // not reached yet — and gt() dropped exactly that row, leaving the
-            // "no current training max" error with nothing to explain.
-            const futureRows = must(
-              await db.client
-                .from("training_maxes")
-                .select("exercise_id, value_kg, effective_date")
-                .eq("user_id", db.ownerId)
-                .in("exercise_id", missingTm)
-                .gte("effective_date", await todayIso(db))
-                .order("effective_date", { ascending: true }),
-              "future TM lookup",
-            ) as {
-              exercise_id: string;
-              value_kg: number;
-              effective_date: string;
-            }[];
-            const futureNote =
-              futureRows.length > 0
-                ? " Note: future-dated TMs exist but are not yet current: " +
-                  futureRows
-                    .map(
-                      (r) =>
-                        `${r.exercise_id} (${r.value_kg} kg effective ${r.effective_date})`,
-                    )
-                    .join(", ") +
-                  "."
-                : "";
-            throw new ToolError(
-              `These exercises use load_pct_tm but have no current training max: ` +
-                `${missingTm.join(", ")}. Set one with set_training_max first; ` +
-                "%TM programs must be resolvable." +
-                futureNote,
-            );
-          }
-        }
+        // Both validations are shared with update_planned_workout, so an
+        // exercise or a %TM that fails here fails there identically.
+        const allRx = program.workouts.flatMap((w) => w.prescriptions);
+        await assertExercisesExist(db, allRx);
+        const tms = await resolveTrainingMaxes(db, allRx);
 
         // Upsert semantics: replace an UNCONFIRMED program with the same name.
         // Confirmed programs are never touched. The old program is deleted only
@@ -415,33 +206,21 @@ export function registerUpsertProgram(
             workoutRows.map((w) => [w.day_index, w.id]),
           );
 
+          // Same row builder update_planned_workout uses: order comes from
+          // the array, not from a caller-supplied position.
           const rxRows = program.workouts.flatMap((w) =>
-            w.prescriptions.map((p) => ({
-              user_id: db.ownerId,
-              planned_workout_id: workoutIdByDay.get(w.day_index)!,
-              exercise_id: p.exercise_id,
-              position: p.position,
-              sets: p.sets,
-              reps_min: p.reps_min,
-              reps_max: p.reps_max,
-              load_kg: p.load_kg ?? null,
-              load_pct_tm: p.load_pct_tm ?? null,
-              rest_seconds: p.rest_seconds ?? null,
-              notes: p.notes ?? null,
-              superset_group: p.superset_group ?? null,
-              load_entry: p.load_entry ?? null,
-              // Column default is 'working'; omit rather than write a guess.
-              ...(p.set_type === undefined ? {} : { set_type: p.set_type }),
-              section: p.section ?? null,
-              // Column default is 'reps'; omit rather than write a guess.
-              ...(p.tracking === undefined ? {} : { tracking: p.tracking }),
-            })),
+            prescriptionRows(
+              db.ownerId,
+              workoutIdByDay.get(w.day_index)!,
+              w.prescriptions,
+            )
           );
           const { error: rxError } = await db.client
             .from("prescriptions")
             .insert(rxRows);
-          if (rxError)
+          if (rxError) {
             throw new Error(`insert prescriptions: ${rxError.message}`);
+          }
         } catch (err) {
           // Compensating delete. If it fails, a half-written program (program
           // row, maybe workouts, no prescriptions) survives in Postgres and
@@ -491,21 +270,33 @@ export function registerUpsertProgram(
           "| Day | Date | Label | Section | # | Exercise | SS | Type | Sets x Reps | Load | Rest |",
           "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ];
-        for (const w of [...program.workouts].sort(
-          (a, b) => a.day_index - b.day_index,
-        )) {
-          for (const p of [...w.prescriptions].sort(
-            (a, b) => a.position - b.position,
-          )) {
+        for (
+          const w of [...program.workouts].sort(
+            (a, b) => a.day_index - b.day_index,
+          )
+        ) {
+          // Array order IS the order written, so the review table shows it
+          // rather than re-sorting by a field that no longer exists.
+          for (const [position, p] of w.prescriptions.entries()) {
             lines.push(
-              `| ${w.day_index} | ${w.scheduled_date ?? ""} | ${w.label ?? ""} ` +
-                `| ${p.section ?? ""} | ${p.position} | ${p.exercise_id} ` +
+              `| ${w.day_index} | ${w.scheduled_date ?? ""} | ${
+                w.label ?? ""
+              } ` +
+                `| ${p.section ?? ""} | ${position} | ${p.exercise_id} ` +
                 // The superset group is the thing most worth catching in
                 // review: a mis-parsed A1/A2 pairing changes how the session is
                 // actually performed, and it was written but never shown back.
-                `| ${p.superset_group == null ? "" : String.fromCharCode(64 + p.superset_group)} ` +
+                `| ${
+                  p.superset_group == null
+                    ? ""
+                    : String.fromCharCode(64 + p.superset_group)
+                } ` +
                 `| ${p.set_type ?? "working"} ` +
-                `| ${p.tracking === "done" ? "tick" : formatRepRange(p.sets, p.reps_min, p.reps_max)} ` +
+                `| ${
+                  p.tracking === "done"
+                    ? "tick"
+                    : formatRepRange(p.sets, p.reps_min, p.reps_max)
+                } ` +
                 `| ${p.tracking === "done" ? "" : loadLabel(p, tms)} ` +
                 `| ${p.rest_seconds != null ? `${p.rest_seconds}s` : ""} |`,
             );
@@ -535,9 +326,9 @@ export function registerUpsertProgram(
             replaced_unconfirmed: staleWarning ? 0 : oldUnconfirmedIds.length,
             ...(staleWarning
               ? {
-                  warning: staleWarning,
-                  stale_unconfirmed_program_ids: oldUnconfirmedIds,
-                }
+                warning: staleWarning,
+                stale_unconfirmed_program_ids: oldUnconfirmedIds,
+              }
               : {}),
             workouts: program.workouts.length,
             prescriptions: program.workouts.reduce(
