@@ -1130,6 +1130,44 @@
     color: var(--warn);
   }
 
+  /* HOW TO, beside the open entry's name: the seed's photos and steps */
+  .wk-demo {
+    flex: 0 0 auto;
+    margin-left: var(--s-4);
+    padding: var(--s-1) var(--s-4);
+    background: transparent;
+    color: var(--info);
+    border: var(--bw-hair) solid var(--info);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    min-height: 32px;
+  }
+
+  .demo-photos {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s-4);
+    margin-bottom: var(--s-6);
+  }
+
+  .demo-photos img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: var(--radius);
+    background: var(--paper-raised);
+  }
+
+  .demo-steps {
+    margin: 0 0 var(--s-6);
+    padding-left: var(--s-9);
+    display: grid;
+    gap: var(--s-4);
+    line-height: 1.4;
+  }
+
   .chev {
     color: var(--text-dim);
     font-size: var(--fs-sm);

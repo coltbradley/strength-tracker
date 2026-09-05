@@ -41,6 +41,7 @@ import { RestTimer, type ActiveRest } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
+import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
 import { prefersReducedMotion, useKeyboardInset } from "../components/Sheet";
@@ -222,6 +223,10 @@ export function Session() {
   // editor sits deep in the scroller with its Save/Cancel row underneath
   const kbInset = useKeyboardInset();
   const [sheet, setSheet] = useState<"search" | "swap" | "plates" | null>(null);
+  /** the movement whose how-to sheet is open (photos + steps from the seed) */
+  const [demoFor, setDemoFor] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   const [pad, setPad] = useState<PadSpec | null>(null);
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
@@ -1455,7 +1460,7 @@ export function Session() {
   };
 
   const req = padRequest();
-  const sheetOpen = sheet !== null || pad !== null;
+  const sheetOpen = sheet !== null || pad !== null || demoFor !== null;
 
   return (
     <div className="session-shell">
@@ -1556,18 +1561,36 @@ export function Session() {
                       </span>
                     )}
                     {isOpen ? (
-                      <button
-                        type="button"
-                        className="wk-header-open"
-                        aria-expanded={isOpen}
-                        aria-label={`collapse ${entry.name}`}
-                        onClick={() => toggleOpen(entry.key)}
-                      >
-                        {entry.name}{" "}
-                        <span className="chev" aria-hidden="true">
-                          ▾
-                        </span>
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="wk-header-open"
+                          aria-expanded={isOpen}
+                          aria-label={`collapse ${entry.name}`}
+                          onClick={() => toggleOpen(entry.key)}
+                        >
+                          {entry.name}{" "}
+                          <span className="chev" aria-hidden="true">
+                            ▾
+                          </span>
+                        </button>
+                        {/* How to do it. A sibling, not a child: the header
+                            is itself a button and buttons do not nest. Shown
+                            on the OPEN entry only — that is the one being
+                            done — and offered for every movement, because
+                            whether the seed has a demo is only known once
+                            the sheet asks. */}
+                        <button
+                          type="button"
+                          className="wk-demo"
+                          aria-label={`how to do ${entry.name}`}
+                          onClick={() =>
+                            setDemoFor({ id: entry.exercise_id, name: entry.name })
+                          }
+                        >
+                          HOW TO
+                        </button>
+                      </>
                     ) : (
                       <button
                         type="button"
@@ -2131,6 +2154,14 @@ export function Session() {
           busy={false}
           onCancel={() => setDeclaring(null)}
           onSave={(groups) => void saveDeclared(declaring, groups)}
+        />
+      )}
+
+      {demoFor && (
+        <ExerciseDemoSheet
+          exerciseId={demoFor.id}
+          exerciseName={demoFor.name}
+          onClose={() => setDemoFor(null)}
         />
       )}
 

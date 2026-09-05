@@ -1079,6 +1079,45 @@ export async function getExercises(): Promise<CacheRead<ExerciseRow[]>> {
   });
 }
 
+// ---- exercise demo ---------------------------------------------------------
+
+/** What the seed knows about HOW to do a movement: photos (as paths, see
+ *  lib/exerciseMedia.ts) and numbered steps. Empty arrays for custom rows. */
+export interface ExerciseDemo {
+  name: string;
+  images: string[];
+  instructions: string[];
+}
+
+/** Read lazily, one exercise at a time, and cached per exercise: the steps
+ *  for 873 movements are far too much to ride along in the exercise list
+ *  every plan editor mount loads, and a person opens this for the one or two
+ *  movements they do not know. Null means the exercise is not visible to this
+ *  account, which for a shared library means it does not exist. */
+export async function getExerciseDemo(
+  exerciseId: string,
+): Promise<CacheRead<ExerciseDemo | null>> {
+  return fetchWithCache(cacheKeys.exerciseDemo(exerciseId), async () => {
+    const { data, error } = await supabase
+      .from("exercises")
+      .select("name,images,instructions")
+      .eq("id", exerciseId)
+      .maybeSingle();
+    throwIf(error);
+    if (!data) return null;
+    const row = data as {
+      name: string;
+      images: string[] | null;
+      instructions: string[] | null;
+    };
+    return {
+      name: row.name,
+      images: row.images ?? [],
+      instructions: row.instructions ?? [],
+    };
+  });
+}
+
 // ---- last actuals ----------------------------------------------------------
 
 /** One set as "last time" quotes it back. */

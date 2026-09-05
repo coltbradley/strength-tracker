@@ -283,6 +283,10 @@ export const cacheKeys = {
   adherence: (exerciseId: string) => `${P.adherence}${exerciseId}`,
   /** every training max ever set */
   trainingMaxes: P.trainingMaxes,
+  /** one exercise's demo photos (paths) and how-to steps. Library data, so in
+   *  no invalidation family: nothing a set or a session does can stale it,
+   *  and a re-seed reaches the device only through the user-change clear. */
+  exerciseDemo: (exerciseId: string) => `exerciseDemo:${exerciseId}`,
 };
 
 /**
