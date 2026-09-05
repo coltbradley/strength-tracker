@@ -1,10 +1,11 @@
 // The prescription — the unit both plan-writing tools share.
 //
 // `upsert_program` writes a whole program; `update_planned_workout` writes one
-// day of an existing one. They validate identically on purpose: an exercise
-// that is unknown, or a %TM with no current training max, must fail the same
-// way whichever door it came through. Divergence here would mean a program
-// could hold a prescription a day-level edit would have refused.
+// day of an existing one; `repeat_planned_workout` clones one forward. They
+// validate identically on purpose: an exercise that is unknown must fail the
+// same way whichever door it came through, and a %TM with no current training
+// max must be REPORTED the same way. Divergence here would mean a program could
+// hold a prescription a day-level edit would have refused.
 
 import { z } from "zod";
 import type { Db } from "./db.ts";
@@ -91,8 +92,12 @@ export const prescriptionSchema = z
       .optional()
       .describe(
         "Load as a percent of training max (e.g. 72.5). Mutually exclusive with " +
-          "load_kg. Requires a current training max for the exercise. Omit both " +
-          "load fields when the coach said 'by feel'.",
+          "load_kg. Write it whenever the coach wrote a percentage, whether or " +
+          "not a training max exists yet: with none, the app shows the " +
+          "percentage and 'no TM set', and the tool result lists the exercise " +
+          "under unresolved_pct so you can propose a TM from the first session " +
+          "(set_training_max). Never turn a percentage into prose in `notes`. " +
+          "Omit both load fields when the coach said 'by feel'.",
       ),
     load_entry: z
       .enum(["total", "per_side"])
@@ -120,11 +125,15 @@ export const prescriptionSchema = z
       .max(300)
       .optional()
       .describe(
-        "Coach notes for this ONE exercise on this ONE day, brief (a cue, a " +
-          "tempo, a caveat). Capped at 300 characters, like the day's notes: " +
-          "this renders next to the exercise on a phone mid-set, so an essay " +
-          "here buries the sets and reps it is supposed to qualify. Parse " +
-          "commentary belongs in chat.",
+        "The COACH's cue for this ONE exercise on this ONE day, in the " +
+          "coach's own words, brief (a cue, a tempo, a caveat: 'pause 2s at " +
+          "the bottom', 'stop 2 reps shy'). It renders next to the exercise on " +
+          "a phone mid-set, so an essay here buries the sets and reps it is " +
+          "supposed to qualify; capped at 300 characters like the day's notes. " +
+          "NEVER parse commentary: not what the screenshot left blank, not " +
+          "what you assumed, not the lifter's name, not a date, not a " +
+          "percentage you could not resolve (that is load_pct_tm). Those go " +
+          "in chat.",
       ),
     superset_group: z
       .number()
@@ -219,16 +228,45 @@ export async function assertExercisesExist(
   }
 }
 
+/** The one sentence every tool attaches to an unresolved %TM. One string, so
+ *  the three doors say the same thing. */
+export const UNRESOLVED_PCT_NOTE =
+  "no training max yet; the first session sets it — propose one with " +
+  "set_training_max afterwards";
+
+export interface TrainingMaxResolution {
+  /** exercise_id -> current TM in kg, for every %TM exercise that has one */
+  tms: Map<string, number>;
+  /** %TM exercises with NO current TM, in first-seen order. Empty is the
+   *  ordinary case. */
+  unresolved_pct: string[];
+  /** What to tell the caller about `unresolved_pct`, or null when it is
+   *  empty. Carries the future-dated-TM explanation when one applies. */
+  note: string | null;
+}
+
 /**
- * Resolve every %TM prescription against a CURRENT training max, or explain
- * precisely why it cannot be. A future-dated TM is invisible to v_current_tm
- * until its date arrives, and saying "no training max" about a TM the user can
- * see in the app is the kind of answer that costs trust.
+ * Resolve every %TM prescription against a CURRENT training max, and report
+ * the ones that could not be — never refuse them.
+ *
+ * This REFUSED until 2026-09-05. The strictness was right for a %TM program
+ * someone trains tomorrow and wrong for a FIRST session, which is the
+ * calibration the TM would come from: a real coach wrote "60-75% of 1RM" for a
+ * lifter with no TMs, the tool said no, and the model did the only thing left
+ * and put the percentage in `notes` as prose with the load empty. The number
+ * the session then produced (130 lb x 5) had nothing to become. Now the
+ * percentage is stored as a percentage, `v_resolved_prescriptions` yields a
+ * null load for it, the app shows "70% TM · no TM set", and the tool result
+ * names the exercise so the post-session review can propose the TM.
+ *
+ * A future-dated TM is invisible to v_current_tm until its date arrives, and
+ * saying "no training max" about a TM the user can see in the app is the kind
+ * of answer that costs trust, so the note still explains that case.
  */
 export async function resolveTrainingMaxes(
   db: Db,
   prescriptions: Prescription[],
-): Promise<Map<string, number>> {
+): Promise<TrainingMaxResolution> {
   const pctIds = [
     ...new Set(
       prescriptions.filter((p) => p.load_pct_tm != null).map((p) =>
@@ -237,7 +275,7 @@ export async function resolveTrainingMaxes(
     ),
   ];
   const tms = new Map<string, number>();
-  if (pctIds.length === 0) return tms;
+  if (pctIds.length === 0) return { tms, unresolved_pct: [], note: null };
 
   const tmRows = must(
     await db.client
@@ -250,7 +288,7 @@ export async function resolveTrainingMaxes(
   for (const row of tmRows) tms.set(row.exercise_id, row.value_kg);
 
   const missingTm = pctIds.filter((id) => !tms.has(id));
-  if (missingTm.length === 0) return tms;
+  if (missingTm.length === 0) return { tms, unresolved_pct: [], note: null };
 
   // gte, not gt: the boundary day belongs to the database, which decides
   // currency with its own now() at app_tz().
@@ -273,12 +311,13 @@ export async function resolveTrainingMaxes(
         .join(", ") +
       "."
     : "";
-  throw new ToolError(
-    `These exercises use load_pct_tm but have no current training max: ` +
-      `${missingTm.join(", ")}. Set one with set_training_max first; ` +
-      "%TM programs must be resolvable." +
-      futureNote,
-  );
+  return {
+    tms,
+    unresolved_pct: missingTm,
+    note: `${missingTm.join(", ")}: ${UNRESOLVED_PCT_NOTE}. The percentage ` +
+      "is stored and the app shows it with 'no TM set'; the load resolves " +
+      "the moment a TM exists." + futureNote,
+  };
 }
 
 /** Insert rows for one day. Positions are renumbered from the array order:

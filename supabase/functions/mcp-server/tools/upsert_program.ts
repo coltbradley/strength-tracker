@@ -130,9 +130,11 @@ export function registerUpsertProgram(
         "used by the app until confirm_program is called after the user approves " +
         "it in chat. If an unconfirmed program with the same name already exists " +
         "it is replaced (safe to iterate on a parse); confirmed programs are " +
-        "never touched. Every exercise_id must exist (use search_exercises) and " +
-        "every %TM prescription requires a current training max (use " +
-        "set_training_max first).",
+        "never touched. Every exercise_id must exist (use search_exercises). " +
+        "A %TM prescription with no current training max is written as " +
+        "written and listed under unresolved_pct in the result: propose the " +
+        "TM from the first session with set_training_max rather than turning " +
+        "the percentage into prose.",
       inputSchema: {
         program: programSchema.describe("The full program to write."),
       },
@@ -180,7 +182,8 @@ export function registerUpsertProgram(
         // exercise or a %TM that fails here fails there identically.
         const allRx = program.workouts.flatMap((w) => w.prescriptions);
         await assertExercisesExist(db, allRx);
-        const tms = await resolveTrainingMaxes(db, allRx);
+        const tmRes = await resolveTrainingMaxes(db, allRx);
+        const tms = tmRes.tms;
 
         // Upsert semantics: replace an UNCONFIRMED program with the same name.
         // Confirmed programs are never touched. The old program is deleted only
@@ -344,6 +347,9 @@ export function registerUpsertProgram(
           "This program is UNCONFIRMED. Review it with the user; after explicit " +
             `approval in chat, call confirm_program with program_id ${programId}.`,
         );
+        if (tmRes.note !== null) {
+          lines.push("", `Unresolved %TM: ${tmRes.note}`);
+        }
         if (confirmedSameName > 0) {
           lines.push(
             "",
@@ -372,6 +378,8 @@ export function registerUpsertProgram(
               (n, w) => n + w.prescriptions.length,
               0,
             ),
+            unresolved_pct: tmRes.unresolved_pct,
+            ...(tmRes.note === null ? {} : { unresolved_pct_note: tmRes.note }),
           },
           lines.join("\n"),
         );

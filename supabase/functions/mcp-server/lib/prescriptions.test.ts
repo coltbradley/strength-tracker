@@ -5,11 +5,14 @@
 //   deno test --allow-env --allow-net lib/
 
 import { assertEquals, assertThrows } from "jsr:@std/assert@^1";
+import type { Db } from "./db.ts";
 import { ToolError } from "./errors.ts";
 import {
   assertSupersetGroups,
   prescriptionRows,
   prescriptionSchema,
+  resolveTrainingMaxes,
+  UNRESOLVED_PCT_NOTE,
 } from "./prescriptions.ts";
 
 const OWNER = "00000000-0000-4000-8000-000000000001";
@@ -202,3 +205,106 @@ Deno.test("set_type and tracking are present on every row, defaulted, never omit
   }
 });
 
+
+// %TM with no training max. This REFUSED until 2026-09-05 and the refusal
+// pushed a real coach's "60-75% of 1RM" into the notes column as prose, with
+// the load empty. Now the percentage is written and the exercise is REPORTED,
+// so the review after the first session can propose the TM.
+//
+// A fake Db: the only two relations this function reads, answered from
+// fixtures. Chainable like postgrest-js and awaitable at the end of the chain.
+
+function fakeDb(fixtures: {
+  current: { exercise_id: string; value_kg: number }[];
+  future: { exercise_id: string; value_kg: number; effective_date: string }[];
+}): Db {
+  const answer = (table: string) => {
+    const data = table === "v_current_tm"
+      ? fixtures.current
+      : table === "training_maxes"
+      ? fixtures.future
+      : null;
+    // deno-lint-ignore no-explicit-any
+    const chain: any = {};
+    for (const m of ["select", "eq", "in", "gte", "order"]) {
+      chain[m] = () => chain;
+    }
+    chain.then = (
+      resolve: (v: { data: unknown; error: null }) => void,
+    ) => resolve({ data, error: null });
+    return chain;
+  };
+  return {
+    ownerId: OWNER,
+    client: {
+      from: answer,
+      rpc: () => Promise.resolve({ data: "UTC", error: null }),
+      // deno-lint-ignore no-explicit-any
+    } as any,
+  };
+}
+
+Deno.test("a %TM with a current TM resolves, and nothing is unresolved", async () => {
+  const res = await resolveTrainingMaxes(
+    fakeDb({
+      current: [{ exercise_id: "Barbell_Squat", value_kg: 140 }],
+      future: [],
+    }),
+    [{ ...base, load_pct_tm: 75 }],
+  );
+  assertEquals(res.tms.get("Barbell_Squat"), 140);
+  assertEquals(res.unresolved_pct, []);
+  assertEquals(res.note, null);
+});
+
+Deno.test("a %TM with NO current TM is reported, not refused", async () => {
+  // The old behaviour threw a ToolError here. It must not.
+  const res = await resolveTrainingMaxes(
+    fakeDb({ current: [], future: [] }),
+    [
+      { ...base, exercise_id: "Leg_Extensions", load_pct_tm: 70 },
+      { ...base, exercise_id: "Leg_Extensions", load_pct_tm: 85 },
+      { ...base, exercise_id: "Barbell_Squat", load_kg: 100 },
+    ],
+  );
+  assertEquals(res.tms.size, 0);
+  // once per exercise, not once per row, and absolute-load rows stay out
+  assertEquals(res.unresolved_pct, ["Leg_Extensions"]);
+  // the ONE sentence every tool quotes
+  assertEquals(res.note?.includes(UNRESOLVED_PCT_NOTE), true);
+  assertEquals(res.note?.includes("Leg_Extensions"), true);
+});
+
+Deno.test("a future-dated TM is still explained alongside the report", async () => {
+  // Saying "no training max" about a TM the lifter can see in the app is the
+  // answer that costs trust; the relaxation must not lose that explanation.
+  const res = await resolveTrainingMaxes(
+    fakeDb({
+      current: [],
+      future: [{
+        exercise_id: "Pullups",
+        value_kg: 95,
+        effective_date: "2099-01-01",
+      }],
+    }),
+    [{ ...base, exercise_id: "Pullups", load_pct_tm: 80 }],
+  );
+  assertEquals(res.unresolved_pct, ["Pullups"]);
+  assertEquals(res.note?.includes("future-dated"), true);
+  assertEquals(res.note?.includes("2099-01-01"), true);
+});
+
+Deno.test("no %TM rows means no lookups and an empty report", async () => {
+  let asked = false;
+  const db = fakeDb({ current: [], future: [] });
+  const inner = db.client.from;
+  // deno-lint-ignore no-explicit-any
+  (db.client as any).from = (t: string) => {
+    asked = true;
+    return inner(t);
+  };
+  const res = await resolveTrainingMaxes(db, [base, { ...base, load_kg: 60 }]);
+  assertEquals(asked, false);
+  assertEquals(res.unresolved_pct, []);
+  assertEquals(res.note, null);
+});
