@@ -201,6 +201,11 @@ export function registerUpdatePlannedWorkout(
         // which is also why the trained-day refusal below does not apply to
         // it: moving a day changes nothing adherence reads.
         let replaced = 0;
+        // %TM rows with no current TM are written anyway and named here, so
+        // the caller can propose the TM after the first session instead of
+        // turning the percentage into prose (see resolveTrainingMaxes).
+        let unresolvedPct: string[] = [];
+        let unresolvedNote: string | null = null;
         if (args.prescriptions !== undefined) {
         const prescriptions = args.prescriptions;
         // Both plan-writing doors validate identically, on purpose: a day
@@ -208,7 +213,9 @@ export function registerUpdatePlannedWorkout(
         // and vice versa.
         assertSupersetGroups(prescriptions, "this day");
         await assertExercisesExist(db, prescriptions);
-        await resolveTrainingMaxes(db, prescriptions);
+        const tmRes = await resolveTrainingMaxes(db, prescriptions);
+        unresolvedPct = tmRes.unresolved_pct;
+        unresolvedNote = tmRes.note;
 
         // What is on the day now, and has any of it been trained?
         const existing = must(
@@ -326,6 +333,8 @@ export function registerUpdatePlannedWorkout(
           },
           exercises_replaced: args.prescriptions !== undefined,
           replaced,
+          unresolved_pct: unresolvedPct,
+          ...(unresolvedNote === null ? {} : { unresolved_pct_note: unresolvedNote }),
           now: args.prescriptions?.length ?? null,
           exercises: (args.prescriptions ?? []).map((p, i) => ({
             position: i,

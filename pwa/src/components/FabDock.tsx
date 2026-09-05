@@ -7,12 +7,13 @@
 // works underground on purpose — sets queue and sync later — but the coach is
 // an API call and simply cannot. A disabled button that says why is honest;
 // one that looks live and fails after a spinner is not.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSetting } from "../hooks/useSettings";
 import { useFabDrag, useOnline } from "../hooks/useFabDrag";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
 import { CoachSheet } from "./CoachSheet";
 import { ReportBugSheet } from "./ReportBugSheet";
+import { onCoachOpen } from "../lib/coachOpen";
 import { toast } from "../lib/errors";
 
 interface FabDockProps {
@@ -26,19 +27,46 @@ export function FabDock({ userId, route }: FabDockProps) {
   const online = useOnline();
   const status = useOutboxStatus();
   const [open, setOpen] = useState<"coach" | "bug" | null>(null);
+  /** a first turn a screen asked to have sent when the coach opens */
+  const [prefill, setPrefill] = useState<string | undefined>(undefined);
+
+  const offlineNote = () =>
+    toast(
+      "The coach needs a connection. Your sets still log offline as usual.",
+      "info",
+    );
 
   // A drag ends with a click on whichever button was under the finger; that
   // click must not open anything.
   const tap = (what: "coach" | "bug") => () => {
     if (drag.movedRef.current) return;
     if (what === "coach" && !online) {
-      toast(
-        "The coach needs a connection. Your sets still log offline as usual.",
-        "info",
-      );
+      offlineNote();
       return;
     }
+    setPrefill(undefined);
     setOpen(what);
+  };
+
+  // Screens open the coach through this rather than mounting their own sheet
+  // (lib/coachOpen.ts). Same offline rule as the button: a review that cannot
+  // be sent is a toast, not a sheet with a spinner.
+  useEffect(
+    () =>
+      onCoachOpen((req) => {
+        if (!online) {
+          offlineNote();
+          return;
+        }
+        setPrefill(req.prefill);
+        setOpen("coach");
+      }),
+    [online],
+  );
+
+  const close = () => {
+    setOpen(null);
+    setPrefill(undefined);
   };
 
   return (
@@ -92,13 +120,9 @@ export function FabDock({ userId, route }: FabDockProps) {
         </button>
       </div>
 
-      {open === "coach" && <CoachSheet onClose={() => setOpen(null)} />}
+      {open === "coach" && <CoachSheet onClose={close} prefill={prefill} />}
       {open === "bug" && (
-        <ReportBugSheet
-          userId={userId}
-          route={route}
-          onClose={() => setOpen(null)}
-        />
+        <ReportBugSheet userId={userId} route={route} onClose={close} />
       )}
     </>
   );

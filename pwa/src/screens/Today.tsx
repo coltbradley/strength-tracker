@@ -41,6 +41,14 @@ import {
   type WorkoutList,
 } from "../lib/data";
 import { groupRamps } from "../lib/entries";
+import { openCoach } from "../lib/coachOpen";
+import {
+  getRecentlyEndedSessions,
+  reviewableByDay,
+  reviewPrompt,
+  type EndedSession,
+} from "../lib/review";
+import { useOnline } from "../hooks/useFabDrag";
 import { addDays, startOfWeek, weekDates } from "../lib/calendar";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
@@ -428,6 +436,31 @@ export function Today() {
       .then((r) => setDoneIds(new Set(r.data)))
       .catch((e: unknown) => reportError(e, "load week state"));
   }, [program, workouts, doneTick]);
+
+  // Which DONE days get "Review with the coach": the ones whose session ended
+  // in the last 24 hours (lib/review.ts). Read only while online — the coach
+  // needs a connection, so an offline device has nothing to offer — and re-read
+  // whenever the DONE set can have changed. A failed read is reported, not
+  // swallowed, and leaves the card without the button rather than blank.
+  const online = useOnline();
+  const [reviewable, setReviewable] = useState<Map<string, EndedSession>>(
+    new Map(),
+  );
+  useEffect(() => {
+    if (!online || doneIds.size === 0) {
+      setReviewable(new Map());
+      return;
+    }
+    let cancelled = false;
+    getRecentlyEndedSessions()
+      .then((rows) => {
+        if (!cancelled) setReviewable(reviewableByDay(rows));
+      })
+      .catch((e: unknown) => reportError(e, "load reviewable sessions"));
+    return () => {
+      cancelled = true;
+    };
+  }, [online, doneIds]);
 
   const anyDates = workouts.some((w) => w.scheduled_date !== null);
   const weekStart = useWeekStartsOn();
@@ -909,6 +942,27 @@ export function Today() {
             onClick={() => void start(w)}
           >
             Start again
+          </button>
+        )}
+        {/* The turn after the session. For a day, while the session that
+            finished it is less than 24 hours old: the coach compares what was
+            logged to what was planned, proposes a training max where a
+            percentage had none, and turns the set notes into cues or next
+            time's loads — and writes nothing without a yes. It opens the ONE
+            coach sheet (the dock's) with the first turn already sent; the
+            offline case is the dock's toast. Not gated on canStart: reviewing
+            is not starting, and an open session elsewhere is no reason to
+            hide yesterday's review. */}
+        {state === "DONE" && reviewable.has(w.id) && (
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => {
+              const s = reviewable.get(w.id);
+              if (s) openCoach({ prefill: reviewPrompt(s) });
+            }}
+          >
+            Review with the coach
           </button>
         )}
         {/* Train a day the calendar puts somewhere else, without moving it.

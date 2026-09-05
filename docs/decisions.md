@@ -1936,3 +1936,100 @@ test it.
 Until then: the wake lock keeps the screen on while the app is open, the tone
 fires while it is open, and a reopened app shows the right time.
 
+
+## The loop: a percentage with no training max is written, a day is recognised and repeated, and the session gets a review
+
+Built from the first real coach-parsed session
+(`docs/superpowers/plans/2026-09-05-plan-and-review-loop.md`). Parse, train,
+review and repeat each existed; nothing connected them, and the evidence was in
+the edges of one 52-minute session.
+
+**A `load_pct_tm` with no current TM is reported, not refused.** This reverses a
+rule that had been in CLAUDE.md since the first tools: "%TM programs must be
+resolvable". The strictness was right for a program someone trains tomorrow and
+wrong for a FIRST session, which is the calibration the TM would come from. A
+coach wrote "60-75% of 1 rep max" for a lifter with no TMs, `upsert_program`
+said no, and the model did the only thing left: the percentage went into
+`prescriptions.notes` as prose and the load stayed empty. The session then
+produced exactly the number a TM needs (130 lb x 5) and nothing could turn it
+into one. Now `resolveTrainingMaxes` returns what it could resolve plus an
+`unresolved_pct` list, every plan-writing tool carries that list in its result
+with one shared sentence ("no training max yet; the first session sets it —
+propose one with set_training_max afterwards"), and the future-dated-TM
+explanation survives. Nothing changes in the database: `v_resolved_prescriptions`
+already yielded a null load for these rows, and Today and the session screen
+already rendered "70% TM" with a "no TM set" badge, so the honest display
+existed before the tool allowed the row to exist. Rejected: allowing it only on
+unconfirmed writes, as the design doc first suggested. `update_planned_workout`
+on a confirmed program is the normal way a coach adds a day, and refusing there
+would have recreated the prose escape hatch on the path people actually use.
+Rejected: inventing a TM from history to make the row resolve. A number nobody
+set is a number nobody can correct.
+
+**Prescription notes are the coach's cue, and the rule is now written down.**
+The day-level rule (coach's own words, parse caveats in chat) existed for
+`planned_workouts.notes` and never for `prescriptions.notes`, so "Coach's app
+left the reps column blank; 10/side set by Colt 2026-09-05" rendered next to an
+exercise mid-set. The schema description and the prompt now say the same thing
+for both: a cue, brief, never commentary, never a name, a date, or a percentage
+that belongs in `load_pct_tm`.
+
+**`find_similar_days` before `upsert_program`.** One program per screenshot was
+the trajectory: sixteen one-day programs by November and a `list_programs`
+nobody can read. The tool scores this user's planned days by Jaccard over
+exercise ids (threshold 0.6: a nine-exercise day still matches with two swapped
+out; a day that merely shares squats and rows does not), newest first, and
+returns what was LOGGED against each the last time it was trained — every live
+set with its note and, where the set had a prescription, `v_adherence`'s
+prescribed load and rep outcome — plus the order the exercises were actually
+performed in (by first `performed_at`). Similarity is over exercise IDENTITY
+only, on purpose: sets, loads, sections and order are exactly what the repeat
+will change, so they must not count against recognising the day.
+
+**`repeat_planned_workout` clones a day forward with three adjustments, each one
+made and named in the result.** Same program, `day_index` max+1 (counting
+templates and discarded days, because the unique constraint does), new date.
+Loads logged last time replace the planned loads by the SAME rule the app's
+saved-workout apply uses (`pwa/src/lib/templateLoads.ts`): the unit is the
+ramp, the top set lands exactly on what was lifted and the rest keep their
+shape; %TM rows, no-load rows and exercises never logged are left alone. The
+rule is ported into `lib/loop.ts` rather than imported: Deno cannot bundle a
+file from `pwa/` into an edge function, and the Deno test uses the PWA test's
+own fixture (60/85/112.5 against 110 gives 58.5/83/110) so the two cannot
+drift silently. Entries follow the order actually performed, with structure
+kept whole: a ramp moves as one entry, a named section moves as one block and
+is reordered inside itself, an unsectioned entry moves freely (CLAUDE.md: each
+one IS its own block), and anything not performed keeps the slot it had. Set
+notes that read as instructions come back as `notes_to_consider` and are not
+copied — a note to next time belongs to the person writing next time, not on
+the phone mid-set. "Reads as instruction" is a loose heuristic
+(`readsAsInstruction`: forward-looking words, load or band direction words, a
+trailing question mark); the remaining notes are returned too under
+`other_set_notes_last_time`, so a miss costs nothing but a glance. `plan_note`
+is deliberately not copied: it is the user's own note about THAT day. A
+template is refused (no last time; applied from the app), an empty day is
+refused (a draft has nothing to repeat), and a confirmed program takes
+`confirm_change` exactly as `update_planned_workout` does. Rejected: taking
+"last time's loads" from the most recent set of each exercise anywhere in
+history rather than from the last session against this day. It is what the app
+does for templates, but a repeat is a statement about THIS day, and "what you
+did last time you did this" is the sentence the coach will say.
+
+**The review turn.** Today's DONE card offers "Review with the coach" for 24
+hours after the session ended (`lib/review.ts`; server-filtered on `ended_at`,
+re-filtered in a pure function so clock skew cannot offer a three-day-old
+session). It opens the ONE coach sheet — FabDock's, through a window event in
+`lib/coachOpen.ts` — with a first turn already sent: "Review my session from
+FRI 5 SEP with me. Session id: …". The turn names the session; the system
+prompt says what a review IS (compare logged to prescribed, propose the TM a
+percentage prescription implies, turn set notes into `exercise_notes` cues or
+next-time loads, note what the plan's phase would say) and that nothing is
+written without a yes. The turn is appended to the existing thread rather than
+starting a new one: the coach's earlier answers are context a review benefits
+from, and the thread cap bounds the bill either way. Rejected: a second sheet
+mounted by Today. Two sheets is two threads and two places to fix one bug.
+Rejected: gating the review button on `canStart`. Reviewing is not starting,
+and an open session on another device is no reason to hide yesterday's review.
+
+Not done here: `phase` in the `find_similar_days` result, which needs the plan
+layer's `programs.phase_id`; one select once that migration lands.

@@ -114,6 +114,25 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   the trigger that guards the same thing in Postgres. Editing a day of a
   CONFIRMED program takes `confirm_change=true` after approval in chat and is
   live the moment it lands; there is no confirm step after it.
+- A `load_pct_tm` prescription with NO current training max is WRITTEN, not
+  refused (since 2026-09-05; `resolveTrainingMaxes` returns
+  `{tms, unresolved_pct, note}` and every plan-writing tool reports
+  `unresolved_pct`). The refusal was right for a %TM program someone trains
+  tomorrow and wrong for a FIRST session, which is the calibration the TM would
+  come from: a real coach wrote "60-75% of 1RM", the tool said no, and the model
+  put the percentage in `prescriptions.notes` as prose with the load empty, so
+  the 130 lb x 5 the session then produced had nothing to become.
+  `v_resolved_prescriptions` yields a null load for these and both Today and
+  the session screen already say "no TM set" beside the percentage. The
+  post-session review proposes the TM; nothing invents one. `prescriptions.notes`
+  is the coach's cue and only that — never parse commentary, a name, a date or
+  an unresolved percentage. The third plan-writing door is
+  `repeat_planned_workout`: same program, `day_index` max+1, last time's
+  working loads by the ramp-preserving rule the app's saved-workout apply uses,
+  entries in the order actually performed with ramps and sections kept whole,
+  instruction-like set notes RETURNED as `notes_to_consider` and never copied.
+  `find_similar_days` (Jaccard >= 0.6 over exercise ids) is called before
+  `upsert_program` so the same screenshot does not become a second program.
 - Derived metrics (e1RM, volume, adherence, rest) live in SQL views only,
   never stored. Views are `security_invoker` so RLS applies, and every
   set-derived view reads `v_live_sets` (voids and discards excluded) — never
