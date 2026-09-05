@@ -108,7 +108,7 @@ export function registerGetRecentSessions(
               .from("v_live_sets")
               .select(
                 "id, session_id, exercise_id, set_index, set_type, load_kg, " +
-                  "load_entry, reps, performed_at",
+                  "load_entry, reps, rpe, duration_seconds, performed_at",
               )
               .eq("user_id", db.ownerId)
               .in(

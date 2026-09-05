@@ -74,7 +74,15 @@ export function registerGetLiftHistory(
         "be corrected. For a NULL-mode dumbbell or unilateral movement, say " +
         "the figure is ambiguous rather than reporting it as fact — and note " +
         "that a run of NULL-mode sets may mix both conventions, so trends " +
-        "across that boundary can be an artefact.",
+        "across that boundary can be an artefact.\n\n" +
+        "rpe is how hard the set FELT, 5 to 10 in half points. NULL means " +
+        "unrated, which is the ordinary case and never means easy: rating " +
+        "is one optional tap and an unrated set cannot be rated later, " +
+        "because `sets` is append-only. Never average over the NULLs and " +
+        "never infer effort from their absence. duration_seconds is set on " +
+        "work measured in TIME rather than reps (a plank, a carry); those " +
+        "rows carry reps 0 on purpose, so read them as a hold of that many " +
+        "seconds at load_kg, not as a set of zero reps.",
       inputSchema: {
         exercise_id: z
           .string()
@@ -116,7 +124,7 @@ export function registerGetLiftHistory(
             const rows = must(
               await base(
                 "v_live_sets",
-                "id, session_id, prescription_id, set_index, set_type, load_kg, load_entry, reps, performed_at",
+                "id, session_id, prescription_id, set_index, set_type, load_kg, load_entry, reps, rpe, duration_seconds, performed_at",
               )
                 .order("performed_at", { ascending: false })
                 .limit(500),
