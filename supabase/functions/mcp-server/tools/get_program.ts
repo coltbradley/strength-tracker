@@ -52,6 +52,38 @@ interface WorkoutRow {
   plan_note: string | null;
 }
 
+/** The plan phase a program is filed under (programs.phase_id), as PostgREST
+ *  embeds it: an object for a many-to-one join, but typed loosely because the
+ *  client cannot know that. */
+interface PhaseEmbed {
+  id: string;
+  name: string;
+  starts_on: string;
+  ends_on: string;
+}
+
+interface ProgramRow {
+  id: string;
+  name: string;
+  source_note: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+  phase_id: string | null;
+  plan_phases: PhaseEmbed | PhaseEmbed[] | null;
+}
+
+// The phase is the one thing above a program, and the reason two months of
+// parsed screenshots stops being sixteen one-day programs: filed under a
+// phase, they read as "Accumulation" rather than as sixteen names.
+const PROGRAM_COLUMNS =
+  "id, name, source_note, confirmed_at, created_at, phase_id, " +
+  "plan_phases(id, name, starts_on, ends_on)";
+
+function phaseOf(p: ProgramRow): PhaseEmbed | null {
+  const e = Array.isArray(p.plan_phases) ? p.plan_phases[0] : p.plan_phases;
+  return e ?? null;
+}
+
 export function registerGetProgram(
   server: McpServer,
   db: Db,
@@ -106,7 +138,7 @@ export function registerGetProgram(
         // role bypasses RLS; nothing below is doing this for us.
         let q = db.client
           .from("programs")
-          .select("id, name, source_note, confirmed_at, created_at")
+          .select(PROGRAM_COLUMNS)
           .eq("user_id", db.ownerId)
           .is("discarded_at", null);
         if (args.program_id !== undefined) {
@@ -123,13 +155,7 @@ export function registerGetProgram(
           if (!args.include_unconfirmed) q = q.not("confirmed_at", "is", null);
         }
 
-        const programs = must(await q, "programs") as unknown as {
-          id: string;
-          name: string;
-          source_note: string | null;
-          confirmed_at: string | null;
-          created_at: string;
-        }[];
+        const programs = must(await q, "programs") as unknown as ProgramRow[];
         const program = programs[0];
         if (program === undefined && args.program_id !== undefined) {
           // A named id that is not here is a mistake to report, not an empty
@@ -206,6 +232,10 @@ export function registerGetProgram(
               source_note: program.source_note,
               created_at: program.created_at,
               confirmed: program.confirmed_at !== null,
+              // The plan phase this program is filed under, or null for a
+              // program written outside a plan. get_training_plan has the
+              // phase's focus and progression.
+              phase: phaseOf(program),
             },
             workouts: workouts.map((w) => ({
               ...w,
@@ -268,18 +298,12 @@ export function registerListPrograms(
         const programs = must(
           await db.client
             .from("programs")
-            .select("id, name, source_note, confirmed_at, created_at")
+            .select(PROGRAM_COLUMNS)
             .eq("user_id", db.ownerId)
             .is("discarded_at", null)
             .order("created_at", { ascending: false }),
           "programs",
-        ) as unknown as {
-          id: string;
-          name: string;
-          source_note: string | null;
-          confirmed_at: string | null;
-          created_at: string;
-        }[];
+        ) as unknown as ProgramRow[];
 
         // Counted through v_plan_workouts, the same view get_program reads, so
         // a program's day count here is the number of days it will actually
@@ -332,6 +356,7 @@ export function registerListPrograms(
             confirmed: p.confirmed_at !== null,
             confirmed_at: p.confirmed_at,
             created_at: p.created_at,
+            phase: phaseOf(p),
             workout_count: s?.count ?? 0,
             first_scheduled_date: s?.first ?? null,
             last_scheduled_date: s?.last ?? null,
@@ -348,7 +373,9 @@ export function registerListPrograms(
               "leave the date range unchanged, so a program can hold days and " +
               "still show a null range. Pass an id to get_program to read one " +
               "of these in full; an unconfirmed program needs confirm_program " +
-              "after the user approves it in chat.",
+              "after the user approves it in chat. `phase` is the plan phase " +
+              "a program is filed under (get_training_plan), null for one " +
+              "written outside a plan.",
           },
         });
       }),

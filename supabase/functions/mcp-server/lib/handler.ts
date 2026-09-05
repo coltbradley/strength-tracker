@@ -44,6 +44,12 @@ import { registerManageExercises } from "../tools/manage_exercises.ts";
 import { registerSearchExercises } from "../tools/search_exercises.ts";
 import { registerSetGoal } from "../tools/set_goal.ts";
 import { registerSetTrainingMax } from "../tools/set_training_max.ts";
+// B · plan layer
+import {
+  registerConfirmTrainingPlan,
+  registerGetTrainingPlan,
+  registerSetTrainingPlan,
+} from "../tools/training_plan.ts";
 import { registerUpdatePlannedWorkout } from "../tools/update_planned_workout.ts";
 import { registerUpsertProgram } from "../tools/upsert_program.ts";
 
@@ -72,6 +78,12 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerManageExercises(server, db, ctx);
   registerFeedback(server, db, ctx);
   registerExerciseNotes(server, db, ctx);
+  // B · plan layer. get_ is a read; set_ and confirm_ are switched off for
+  // the in-app coach at the connector (coach/index.ts), not here: Desktop
+  // keeps them.
+  registerGetTrainingPlan(server, db, ctx);
+  registerSetTrainingPlan(server, db, ctx);
+  registerConfirmTrainingPlan(server, db, ctx);
   return server;
 }
 

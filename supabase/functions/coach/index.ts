@@ -836,6 +836,16 @@ Deno.serve(async (req) => {
                 delete_program: { enabled: false },
                 delete_exercise: { enabled: false },
                 update_exercise: { enabled: false },
+                // B · plan layer. The in-app coach READS the training plan on
+                // every turn (get_training_plan stays on, and the context
+                // block carries the current phase) and cannot write it. This
+                // is a deliberate authority split, not a safety patch:
+                // strategy is set at a desk with time to think, and tactics
+                // are set between sets. A coach that can rewrite the strategy
+                // mid-workout because the lifter is tired is the wrong coach.
+                // Claude Desktop keeps both.
+                set_training_plan: { enabled: false },
+                confirm_training_plan: { enabled: false },
               },
             },
           ],
