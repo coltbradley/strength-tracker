@@ -437,6 +437,33 @@ await check("set_voids is append-only: update/delete affect 0 rows", async () =>
   assertEq(del.affectedRows ?? 0, 0, "no delete policy");
 });
 
+await check("the void anti-join has an index that covers both its columns", async () => {
+  // v_live_sets probes set_voids on (set_id, user_id) for every set-derived
+  // view, and on the PWA path RLS adds a user_id scan on top of it. The PK
+  // covers set_id; 20260906000000 adds the user_id half. Asserted from the
+  // catalog rather than from a plan, because PGlite's planner sees a
+  // three-row table and would seq-scan whatever exists.
+  const r = await db.query(
+    `select indexdef from pg_indexes
+      where tablename = 'set_voids' and indexname = 'idx_set_voids_user'`,
+  );
+  assertEq(r.rows.length, 1, "idx_set_voids_user exists");
+  if (!r.rows[0].indexdef.includes("(user_id, set_id)"))
+    throw new Error(`user_id must lead: ${r.rows[0].indexdef}`);
+});
+
+await check("set notes are indexed newest-first per owner", async () => {
+  // search_exercises reads the 60 most recent notes for one user on every
+  // exercise search, which is the coach's per-turn path.
+  const r = await db.query(
+    `select indexdef from pg_indexes
+      where tablename = 'set_notes' and indexname = 'idx_set_notes_user_recent'`,
+  );
+  assertEq(r.rows.length, 1, "idx_set_notes_user_recent exists");
+  if (!r.rows[0].indexdef.includes("updated_at DESC"))
+    throw new Error(`the order matters: ${r.rows[0].indexdef}`);
+});
+
 await check("discarded session leaves every view, rows survive", async () => {
   await asUser(
     OWNER,

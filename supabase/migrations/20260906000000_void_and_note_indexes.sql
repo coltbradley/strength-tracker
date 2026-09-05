@@ -1,0 +1,58 @@
+-- Two indexes on the set-adjacent tables the PWA owns. No behaviour changes;
+-- as with 20260901020000, each one is here because a real call site runs the
+-- query, not because a column looked unindexed.
+--
+-- Worth saying up front what is NOT missing: `set_id` is the PRIMARY KEY of
+-- both tables, so the "which set is this about" half of every query already
+-- has an index and a second one on the same column would buy nothing and cost
+-- every write. What neither table has is anything on `user_id`, and that is
+-- the half that sits on the hot path.
+
+-- 1. Voids, by owner.
+--
+-- `v_live_sets` is where "a set that counts" is defined and every set-derived
+-- view reads it, so its anti-join
+--
+--     not exists (select 1 from set_voids v
+--                  where v.set_id = s.id and v.user_id = s.user_id)
+--
+-- runs on every read of volume, e1RM, adherence and rest — the whole analysis
+-- surface, on both the PWA and the service-role path.
+--
+-- Two plan shapes, and this index is for the expensive one. Probing one set at
+-- a time, the primary key answers `v.set_id = s.id` and then pays a heap fetch
+-- to read `user_id`; carrying both columns here makes that probe index-only.
+-- But a read that spans a lot of history — a volume trend, an export, anything
+-- the coach asks — is planned as a hash anti-join that reads set_voids IN FULL
+-- to build the hash. The views are `security_invoker`, so on the PWA path
+-- `set_voids_select` (user_id = auth.uid()) is AND'ed into that scan, and
+-- without an index Postgres reads every user's voids to keep one user's.
+-- Leading with user_id makes it an index scan of just the caller's rows.
+--
+-- user_id is also a `references auth.users on delete cascade` column, and
+-- Postgres does not index a referencing column for you, so deleting an account
+-- scans this table in full — the same reasoning as idx_sessions_planned.
+--
+-- Column order: user_id first because it is the only one of the two ever bound
+-- on its own (the RLS scan, the cascade). Where both are bound, either order
+-- serves equally.
+create index idx_set_voids_user on set_voids (user_id, set_id);
+
+-- 2. Notes, newest first, by owner.
+--
+-- search_exercises asks for the 60 most recent notes this lifter has written
+-- about a set, `user_id = ... order by updated_at desc limit 60`, and that runs
+-- on the coach's per-turn path for every exercise search. Unindexed it reads
+-- every note the user owns and sorts the lot to return sixty of them, so it
+-- gets slower for every note they ever write — and notes are the one place the
+-- lifter's own words live, so the set only grows.
+--
+-- Leading with user_id also serves the two plain owner scans that have no
+-- ordering of their own: the paged export walk in pwa/src/lib/export.ts, which
+-- sees only its own rows through RLS, and the auth.users cascade again.
+--
+-- Nothing here for set_id. The by-set reads (get_lift_history,
+-- get_recent_sessions, data.ts getSetNotesByIds) are all
+-- `.in("set_id", <a handful of ids>)`, which is exactly what the primary key
+-- is for.
+create index idx_set_notes_user_recent on set_notes (user_id, updated_at desc);
