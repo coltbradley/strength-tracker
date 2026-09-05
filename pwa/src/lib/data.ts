@@ -1290,12 +1290,31 @@ export async function syncOpenSessions(
     if (last) {
       // complete at the last logged set (clamped: the DB requires
       // ended_at >= started_at)
+      // Completing is safe from ANY device: sets that arrive afterwards still
+      // belong to this session, and ended_at only says the day is over.
       await port.complete(s.id, last > s.started_at ? last : s.started_at);
       autoCompleted++;
-    } else {
+    } else if (s.id === activeId) {
+      // Only the device that STARTED the session may discard it. Both
+      // "empty" signals above are local truths dressed as global ones:
+      // `queuedSetCount` reads THIS device's outbox and `lastSetAt` reads a
+      // server that has not heard from the other phone yet. On a second
+      // device they both say zero for a session that logged 25 sets at the
+      // gym last night and is still waiting for signal — and discarding
+      // there is unrecoverable, because the queued sets then flush into a
+      // session `v_live_sets` excludes and the PWA has no un-discard.
+      // Owning the active pointer is the one piece of evidence that the
+      // absent outbox is OUR absent outbox.
       await port.discard(s.id, new Date().toISOString());
       await cacheDeleteByPrefix(cacheFamilies.sessionClosed);
       autoDiscarded++;
+    } else {
+      // Someone else's open session that looks empty from here. Leave it
+      // OPEN: its own device will either flush its sets (after which any
+      // device auto-completes it) or discard it there. An open session left
+      // open is a card on Today; a wrongly discarded one is training that
+      // only SQL can find again.
+      continue;
     }
     if (activeId === s.id) {
       await cacheDelete(cacheKeys.activeSession);

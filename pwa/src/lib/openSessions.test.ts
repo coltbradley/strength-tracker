@@ -6,7 +6,10 @@
 //
 // The matrix below was captured against the pre-injection implementation, so
 // it proves the refactor preserved behaviour rather than describing new
-// behaviour.
+// behaviour. The exception is the auto-discard ownership rule: discarding
+// now requires the active pointer, because only the device that STARTED a
+// session can read "no sets" as anything but "no sets HERE". The cases that
+// discard therefore pass an activeId where they used to pass null.
 
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
@@ -107,9 +110,11 @@ describe("syncOpenSessions", () => {
   });
 
   it("still discards a session the device agrees is empty", async () => {
+    // "agrees" now means the device that STARTED it: it holds the active
+    // pointer, so an empty outbox here really is that session's outbox
     const s = session();
     const { port, calls } = makePort([s], {}, {}, { [s.id]: 0 });
-    const r = await syncOpenSessions(null, localDayOf, TODAY, new Set(), port);
+    const r = await syncOpenSessions(s.id, localDayOf, TODAY, new Set(), port);
     expect(r.autoDiscarded).toBe(1);
     expect(calls[0]?.op).toBe("discard");
   });
@@ -140,15 +145,71 @@ describe("syncOpenSessions", () => {
   });
 
   it("auto-DISCARDS yesterday's session when it logged nothing", async () => {
-    // an accidental start must not mark the planned workout done
+    // an accidental start must not mark the planned workout done — on the
+    // device that made it, which is the one holding the active pointer
     const s = session();
     const { port, calls } = makePort([s]);
-    const r = await syncOpenSessions(null, localDayOf, TODAY, new Set(), port);
+    const r = await syncOpenSessions(s.id, localDayOf, TODAY, new Set(), port);
     expect(r.autoDiscarded).toBe(1);
     expect(r.autoCompleted).toBe(0);
     expect(calls[0].op).toBe("discard");
     // the week's DONE state referenced that session
     expect(await cacheGet(cacheKeys.doneWorkouts("prog1"))).toBeUndefined();
+  });
+
+  // The second half of the same bug. "Empty" was read off the server AND
+  // this device's outbox, which is the whole truth on one device and a
+  // half-truth on two: the phone that logged 25 sets at the gym is still
+  // offline, so from the iPad the session looks like an accidental start.
+  it("leaves ANOTHER device's apparently-empty session open", async () => {
+    const s = session(); // started on the phone yesterday, never synced
+    const { port, calls } = makePort([s], {}, {}, { [s.id]: 0 });
+    const r = await syncOpenSessions(null, localDayOf, TODAY, new Set(), port);
+    expect(calls).toEqual([]);
+    expect(r.autoDiscarded).toBe(0);
+    expect(r.autoCompleted).toBe(0);
+    // the week's DONE state is untouched: nothing about that day changed
+    expect(await cacheGet(cacheKeys.doneWorkouts("prog1"))).toEqual(["pw1"]);
+  });
+
+  it("leaves it open even while this device owns a DIFFERENT session", async () => {
+    // holding a pointer at some other session is not evidence about this one
+    const s = session();
+    const { port, calls } = makePort([s]);
+    const r = await syncOpenSessions(
+      "sess-mine",
+      localDayOf,
+      TODAY,
+      new Set(),
+      port,
+    );
+    expect(calls).toEqual([]);
+    expect(r.autoDiscarded).toBe(0);
+  });
+
+  it("still discards the device's OWN empty session from yesterday", async () => {
+    // the guard is about foreign sessions only: an accidental start on THIS
+    // device must still not leave the planned day looking trained
+    const s = session();
+    const { port, calls } = makePort([s]);
+    const r = await syncOpenSessions(s.id, localDayOf, TODAY, new Set(), port);
+    expect(r.autoDiscarded).toBe(1);
+    expect(calls).toEqual([
+      { op: "discard", id: s.id, at: expect.any(String) },
+    ]);
+    expect(r.clearedActive).toBe(true);
+  });
+
+  it("auto-completes ANOTHER device's session once its sets have landed", async () => {
+    // completing stays cross-device: sets arriving later still belong to the
+    // session, and the phone that started it may never open the app again
+    const s = session();
+    const last = "2026-08-26T19:12:00.000Z";
+    const { port, calls } = makePort([s], { [s.id]: last });
+    const r = await syncOpenSessions(null, localDayOf, TODAY, new Set(), port);
+    expect(r.autoCompleted).toBe(1);
+    expect(r.autoDiscarded).toBe(0);
+    expect(calls).toEqual([{ op: "complete", id: s.id, at: last }]);
   });
 
   it("leaves a session with a QUEUED end/discard completely alone", async () => {
@@ -256,7 +317,8 @@ describe("syncOpenSessions", () => {
     const { port, calls } = makePort([withSets, empty, todays], {
       a: "2026-08-26T19:30:00.000Z",
     });
-    const r = await syncOpenSessions(null, localDayOf, TODAY, new Set(), port);
+    // "b" is this device's own start, so the empty one is ours to discard
+    const r = await syncOpenSessions("b", localDayOf, TODAY, new Set(), port);
     expect(r.autoCompleted).toBe(1);
     expect(r.autoDiscarded).toBe(1);
     expect(r.orphan).toEqual(todays);
