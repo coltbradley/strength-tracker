@@ -1,10 +1,20 @@
 name: deploy
 
 # Every push to main that touches the PWA redeploys GitHub Pages. The
-# installed app then picks the new version up automatically on next launch
-# (service worker autoUpdate). Deploys never touch user data: training data
-# lives in Postgres, and device-local IndexedDB/localStorage survive service
-# worker updates untouched.
+# installed app does NOT reload itself to get it: registerType is "prompt", so
+# main.tsx applies a waiting worker only when no session is open and otherwise
+# defers to the next time the app is hidden. A mid-set reload would take the
+# staged reps and any half-typed note. Expect a lifter on the new build at
+# their next visit, not seconds after the push.
+#
+# This publishes the CLIENT ONLY. Migrations (`supabase db push`) and both edge
+# functions (`supabase functions deploy mcp-server --no-verify-jwt`, `supabase
+# functions deploy coach`) are still by hand — see docs/deploy.md. Nothing here
+# sequences them, so shipping a build that reads a column whose migration has
+# not been pushed breaks that read for everyone until someone runs it.
+#
+# Deploys never touch user data: training data lives in Postgres, and
+# device-local IndexedDB/localStorage survive service worker updates untouched.
 
 on:
   push:
