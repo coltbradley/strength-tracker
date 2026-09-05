@@ -22,6 +22,10 @@ supabase/.temp/
 supabase/seed/exercises.generated.sql
 scripts/.cache/
 
+# downloaded dev binaries (PostgREST for the coach eval; see
+# scripts/coach-eval/README.md)
+.bin/
+
 # os / editor
 .DS_Store
 *.log

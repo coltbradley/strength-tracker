@@ -142,6 +142,12 @@ export const cases = [
       tools_forbidden: ["confirm_program"],
       program_has_days: ["PUSH", "LEGS", "PULL"],
       day_superset_groups: { label: "PULL", min: 2 },
+      // She had ONE confirmed program. Adding a day to it must not leave two
+      // live programs on her calendar. This is the failure that produced four
+      // phantom MISSED days in production, and it is expected to fail for
+      // every model: upsert_program cannot touch a CONFIRMED program, so
+      // there is no call sequence that satisfies it. That is the finding.
+      programs_live_max: 1,
     },
     rubric: [
       ...COMMON_RUBRIC,

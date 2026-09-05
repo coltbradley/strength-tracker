@@ -17,7 +17,8 @@ PGlite (migrations + seed + fixture)
        └─ PostgREST :54330
             └─ proxy :54321          strips /rest/v1 so supabase-js is none the wiser
                  └─ mcp-server :8000  the real Deno edge function, unmodified
-                      └─ run.mjs      drives the tool loop against the Anthropic API
+                      └─ a driver     run.mjs (Anthropic API) or serve.mjs (a
+                                      Claude Code subagent over tool.mjs)
 ```
 
 The MCP server authenticates through its legacy env path (`MCP_SECRET` +
@@ -29,9 +30,12 @@ Valentine's 13-turn session on 2026-08-31 (the transcript the cases are built
 from) failed in four ways: the coach cloned her program instead of editing it,
 never saved a standing preference she stated five times, listed alternatives
 four times before asking what she actually wanted, and made her type "Yes" then
-"Confirm". Two of those are structural and two are judgment. Judgment is what
-this eval measures; the structural ones are tasks in
-`docs/superpowers/plans/2026-09-04-gaps-roadmap.md`.
+"Confirm".
+
+Which of those are structural (the tool surface cannot express the right move)
+and which are judgment (a capable model chose wrong) is the question that
+decides whether to build a tool, rewrite a prompt, or change the model. Run 1
+answered it: `docs/superpowers/plans/2026-09-04-coach-eval-run1.md`.
 
 ## Setup
 
@@ -48,18 +52,22 @@ mkdir -p ../../.bin && cd ../../.bin
 curl -sL https://github.com/PostgREST/postgrest/releases/download/v16.2/postgrest-v16.2-macos-aarch64.tar.xz | tar -xJ
 ```
 
-`run.mjs` looks for `.bin/postgrest` at the repo root, or `$POSTGREST`.
+The stack looks for `.bin/postgrest` at the repo root, or `$POSTGREST`. `.bin/`
+is gitignored.
 
 **libpq**: the PostgREST binary dynamically links `libpq.5.dylib` and
 `libgssapi_krb5.2.2.dylib`. `brew install libpq krb5` is the normal fix. If you
-would rather not install them system-wide, fetch the bottles and point the
-loader at them:
+would rather not install them system-wide — installing libpq on 2026-09-04 sent
+Homebrew off rebuilding llvm, rust and go — drop the bottles under `.bin/lib`
+and the stack finds them on its own:
 
 ```bash
 brew fetch libpq krb5                     # downloads only, installs nothing
-# extract both tarballs from $(brew --cache libpq) / $(brew --cache krb5), then:
-export POSTGREST_DYLD="/path/to/libpq/lib:/path/to/krb5/lib:/opt/homebrew/opt/openssl@3/lib"
+mkdir -p ../../.bin/lib
+for f in libpq krb5; do tar -xzf "$(brew --cache $f)" -C ../../.bin/lib; done
 ```
+
+`$POSTGREST_DYLD` overrides the search if you keep them elsewhere.
 
 API key, gitignored, never on a command line:
 
@@ -77,7 +85,10 @@ node fetch-turns.mjs --user <uuid>
 
 Without it the harness still runs, with the six synthesized cases only.
 
-## Running
+## Two drivers
+
+**The API driver** answers "which model and effort should the coach run at". It
+calls the Anthropic API directly and needs a key.
 
 ```bash
 node run.mjs --smoke                  # boots the stack, no model calls, no spend
@@ -87,8 +98,29 @@ node grade.mjs --out out/run1         # optional Opus judge over the rubric clai
 node report.mjs --out out/run1        # writes out/run1/report.md
 ```
 
-`--smoke` is the one to run after any change to the stack, the fixture or the
-checks. It exercises every moving part and costs nothing.
+**The subagent driver** answers "is this failure structural or judgment", and
+needs no key. `serve.mjs` holds the stack up and a Claude Code subagent plays
+the coach against it over `tool.mjs`.
+
+```bash
+node serve.mjs                        # leave running
+node agent-case.mjs --case v12 --setup   # writes out/agent/v12.pack.md
+# hand that pack to a subagent; it writes out/agent/v12.answer.txt
+node agent-case.mjs --case v12 --grade
+node agent-case.mjs --summary
+```
+
+Tool calls are read from the MCP server's own log either way, so an agent that
+says it called `remember` and did not is caught. `GET /inspect` on :54331 dumps
+the fixture user's programs, memory and prescriptions for reading a result by
+hand.
+
+It cannot answer the model question: a subagent runs under Claude Code's own
+harness prompt with no `effort` control. See
+`docs/superpowers/plans/2026-09-04-coach-eval-run1.md` for what it did settle.
+
+`run.mjs --smoke` is the one to run after any change to the stack, the fixture
+or the checks. It exercises every moving part and costs nothing.
 
 Configs are in `run.mjs`: `sonnet-low` (what production runs today),
 `sonnet-medium`, `opus-low`, `opus-medium`, `fable-low`. Cases can be selected
@@ -124,8 +156,9 @@ lifter is avoiding before offering a fourth alternative"). The judge sees the
 exchange and the tool results, never the system prompt under test. Unknown
 counts as fail.
 
-Traces land in `out/<run>/traces/*.json`, one per turn, with the full tool
-calls and their results. Read those before believing any number in the report.
+Traces land in `out/<run>/traces/*.json` (API driver) or `out/agent/*.trace.json`
+(subagent driver), one per turn, with the answer and the tool calls the server
+saw. Read those before believing any number in a report.
 
 ## Adding a case
 

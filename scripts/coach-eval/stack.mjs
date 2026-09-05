@@ -56,6 +56,29 @@ async function waitFor(url, label, tries = 60) {
   throw new Error(`${label} did not come up at ${url}`);
 }
 
+/** Every `lib` directory under .bin/lib, joined for DYLD_LIBRARY_PATH. */
+async function discoverLibs() {
+  const base = join(root, ".bin", "lib");
+  const found = [];
+  const walk = async (dir, depth) => {
+    if (depth > 3) return;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      if (e.name === "lib") found.push(join(dir, e.name));
+      else await walk(join(dir, e.name), depth + 1);
+    }
+  };
+  await walk(base, 0);
+  if (found.length === 0) return null;
+  return [...found, "/opt/homebrew/opt/openssl@3/lib"].join(":");
+}
+
 export async function createDb() {
   const db = await PGlite.create();
   // Same shim validate-db.mjs uses, plus the service role PostgREST will SET ROLE into.
@@ -110,14 +133,16 @@ log-level = "error"
   // reads PGRST_* for anything the file does not set, and this way the key
   // never touches disk.
   //
-  // POSTGREST_DYLD: a library search path for a PostgREST binary whose libpq
-  // is not installed system-wide (see the README).
+  // The binary dynamically links libpq and krb5. If they are not installed
+  // system-wide, the README's fallback drops the bottles under .bin/lib and
+  // this finds them; POSTGREST_DYLD overrides.
+  const dyld = process.env.POSTGREST_DYLD ?? (await discoverLibs());
   const postgrest = spawn(bin, [confPath], {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       PGRST_JWT_SECRET: JWT_SECRET,
-      ...(process.env.POSTGREST_DYLD ? { DYLD_LIBRARY_PATH: process.env.POSTGREST_DYLD } : {}),
+      ...(dyld ? { DYLD_LIBRARY_PATH: dyld } : {}),
     },
   });
   postgrest.stderr.on("data", (d) => log(`postgrest: ${String(d).trim()}`));

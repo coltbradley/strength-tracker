@@ -24,14 +24,32 @@
   coach architecture decisions on model, cost, triggers).
 - **The coach eval harness**, `scripts/coach-eval/`. Real MCP server against a
   PGlite-backed PostgREST, Valentine's 13 real turns plus 6 synthesized cases,
-  end-state checks, an optional Opus judge, a report builder. `--smoke` passes
-  end to end: 21 tools listed, plan reads, memory writes, exercise search.
-  See its README for setup and the cost table.
+  end-state checks, an optional Opus judge, a report builder. Two drivers: the
+  API one (`run.mjs`) and a **subagent** one (`serve.mjs` + `agent-case.mjs`)
+  that needs no API key. See its README.
+- **Eval run 1, seven cases, subagent driver** —
+  [2026-09-04-coach-eval-run1.md](2026-09-04-coach-eval-run1.md). It settled
+  what is structural and what is judgment, and turned up one gap the audit
+  missed. Summary:
+  - The **program clone is structural**. `upsert_program` cannot touch a
+    confirmed program, so adding a day to her plan leaves two live programs no
+    matter which model runs. Task 3.3's `update_planned_workout` is the only
+    fix.
+  - **An empty planned day cannot survive a rewrite** (`minItems: 1` on
+    prescriptions). One subagent silently dropped her blank day; another
+    refused to do a simple exercise swap rather than destroy it. New finding.
+  - The **`remember` misses are the prompt, not Sonnet**. A capable model with
+    the same prompt skipped it on both of the clearest cues.
+  - **Per-hand loads, injection defence and the no-invented-training rule all
+    work** through the coach. The half-weight bug is PWA-only, so Task 0.9 is
+    correctly scoped.
 
 ### The one thing blocking the next step
 
-The eval has **never been run against a model**. This machine has no Anthropic
-API key. To run it:
+The eval has **never been run against the production model configuration**.
+This machine has no Anthropic API key, so run 1 used subagents, which cannot
+answer the model question (different harness, no `effort` control). To settle
+that:
 
 ```bash
 echo 'ANTHROPIC_API_KEY=sk-ant-...' > scripts/coach-eval/.env
@@ -40,24 +58,36 @@ node run.mjs --configs sonnet-low,opus-medium --trials 1 --out out/run1   # ~$2
 node report.mjs --out out/run1
 ```
 
-PostgREST is not vendored and its `libpq` was deliberately NOT installed
-system-wide on 2026-09-04 (Homebrew tried to rebuild llvm/rust/go as a side
-effect and was killed). The README documents both the normal `brew install
-libpq krb5` path and the bottle-only workaround.
+PostgREST is not vendored; `.bin/` (gitignored) holds it plus the libpq and
+krb5 bottles, and `stack.mjs` finds them automatically. The README documents
+the normal `brew install libpq krb5` path too. Note that installing libpq
+through Homebrew on 2026-09-04 made it try to rebuild llvm, rust and go, which
+is why the bottle-only route exists.
 
 Read `out/run1/report.md`, then the failing traces. The decision it exists to
 settle: **stay on `sonnet-low`, move to `sonnet-medium`, or move the
 conversation loop to `opus-medium`** (Task C.2 below). Do not change the model
 in `supabase/functions/coach/index.ts:487` without that report.
 
+**But do not wait on it for the plan work.** Run 1 already showed the two worst
+bugs are unaffected by model choice.
+
 ### Then, in order
 
-1. **Phase 0** — record safety. Task 0.1 (offline open shows Login) and 0.9
+1. **Task 3.3's `update_planned_workout`, promoted to first.** Run 1 proved it
+   is the only fix for two bugs that corrupt a live user's calendar, and that
+   no model or prompt change touches either. It was buried in Phase 3 because
+   the audit read the clone as a judgment failure; it is not. Ship the day-level
+   edit tool, teach the coach to reach for it instead of `upsert_program`, and
+   leave `upsert_program` for a genuinely new program.
+2. **Phase 0** — record safety. Task 0.1 (offline open shows Login) and 0.9
    (plan editor stores `load_entry`, so dumbbell prescriptions stop prefilling
-   at half) are the two that bite a real user today.
-2. **Task C.2** — whatever the eval says, plus TTL to 5 minutes and the week in
-   the context block.
-3. **Phase 1** — the set loop.
+   at half) are the two that bite a real user today. Run 1 confirmed 0.9 is a
+   PWA-only fix.
+3. **Task C.2** — whatever the API eval says, plus TTL to 5 minutes and the
+   week in the context block. Fold in the `remember` prompt wording; run 1 says
+   the current wording does not survive contact with a real conversation.
+4. **Phase 1** — the set loop.
 
 ### Loose ends worth knowing
 
