@@ -247,15 +247,32 @@ on a measurement, and the monthly cap is paying Opus prices on faith.
 | 6b | The outbox is visible on the phone: dead items, Retry, Export, honest sign-out copy. | 0.5 | not started |
 | 6c | MCP gaps: `program_id` and `list_programs`; `confirm_program` on a discarded program; `upsert_program` date and length validation; `resolve_feedback` error type; `search_exercises` quoting. | 1.0 | **done** (`659de92`) |
 | 6d | Indexes on `set_voids`/`set_notes` by user; a `since` predicate in `get_volume`. | 0.5 | not started |
+| 6e | Exercise demos: the seed's two photos and numbered steps behind a HOW TO tap on the session screen. Seed-only paths, CHECK-pinned; steps cached, photos online-only. | 0.75 | **done** (`277639c`) |
+| 6f | Rest alert while the app is CLOSED: Web Push to the installed PWA, sent by a server at the deadline, cancelled by the next log. Designed in decisions.md; needs a VAPID secret, an injectManifest service worker and a phone to test on. | 2.0 | **designed, not built** |
+
+Two MCP bugs fell out of the one feedback-table entry (filed by the coach,
+2026-09-05): `prescriptionRows` omitted defaulted columns and PostgREST's bulk
+insert turned that into NULLs on a mixed day (three 500s), and
+`update_planned_workout` could not move a day. Both fixed in `da552e4`.
+**`da552e4` is committed and NOT yet deployed to `mcp-server`**: the coach
+(v10) went out through the Supabase MCP, but the server's 28 files did not fit
+through that path. Until `supabase functions deploy mcp-server --no-verify-jwt`
+runs (or the three deploy settings exist and the workflow does it), the coach
+will still 500 on any day that mixes an explicit set_type or tracking with unset
+rows, and `scheduled_date` is described to the model by a prompt the server does
+not yet honour.
 
 ## Not doing, and why
 
 Social features, badges, streaks, month grids and swipe gestures stay rejected;
 the research is clear they are not why coached lifters stay. Video attached to a
 set is a real coach want and a separate project. Cross-device settings stay
-accepted as a limitation. Background rest notifications on iOS are not possible
-from a web app, which is why 3b buys a wake lock and a sound instead. A native
-app buys nothing here except the timer, and the offline story is the product.
+accepted as a limitation. Background rest alerts on iOS ARE possible from an
+installed web app since iOS 16.4, but only as Web Push sent by a server at the
+deadline; nothing can schedule a local notification from a closed page. That is
+6f, designed and not built. 3b's wake lock and tone remain the answer while the
+app is open. A native app buys nothing here except the timer, and the offline
+story is the product.
 Switching the coach off Anthropic would mean rebuilding the tool loop for a
 model tier whose side-effect error rate is worse, which is the wrong direction
 for something that writes to a plan; revisit above about 50 users.

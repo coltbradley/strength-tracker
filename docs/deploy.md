@@ -45,6 +45,30 @@ dashboard SQL editor. Both files are single idempotent statements and each
 only updates rows it owns (`source = 'free-exercise-db'` / `'curated'`), so
 re-running is always safe and never touches custom or edited exercises.
 
+With no CLI and no way to paste 800 KB (the 2026-09-05 wrap-up ran from a
+remote session with only the Supabase MCP), the generated seed's `images` and
+`instructions` were applied SERVER-SIDE instead: enable the `http` extension,
+have Postgres fetch `dist/exercises.json` itself, update from the JSON, and
+drop the extension in the same transaction. Nothing about the schema survives
+it. It refreshes only those two columns; the full seed still goes through the
+commands above.
+
+```sql
+begin;
+create extension if not exists http with schema extensions;
+select extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '60000');
+with src as (select (content::jsonb) as doc from extensions.http_get(
+  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json')),
+rows as (select e->>'id' as id,
+  coalesce(array(select jsonb_array_elements_text(e->'images')), '{}'::text[]) as images,
+  coalesce(array(select jsonb_array_elements_text(e->'instructions')), '{}'::text[]) as instructions
+  from src, jsonb_array_elements(src.doc) e)
+update exercises x set images = r.images, instructions = r.instructions
+  from rows r where x.id = r.id and x.source = 'free-exercise-db';
+drop extension http;
+commit;
+```
+
 ## MCP server changed (supabase/functions/mcp-server/)
 
 ```bash

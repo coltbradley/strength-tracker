@@ -80,6 +80,21 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   after user approval); logged sessions/sets always survive it.
 - Programs written by Claude land unconfirmed (`confirmed_at IS NULL`) and
   require a separate `confirm_program` call after user approval in chat.
+- A PostgREST BULK insert fills a row's missing key with NULL, not with the
+  column default: the array is inserted with the union of every row's keys.
+  So a row builder must emit every defaulted column on EVERY row
+  (`prescriptionRows` writes `set_type` and `tracking` explicitly), or one row
+  that says 'warmup' turns eight rows that said nothing into eight NULLs in a
+  NOT NULL column. That was three 500s on a real "Lower + Activation" day.
+  Omitting a key to "let the default apply" is only true for a single row.
+- `exercises.images` and `exercises.instructions` (20260905040000) are the
+  seed's demo photos and how-to steps. `images` holds PATHS under the upstream
+  repo, never URLs, and a CHECK pins that shape: the library is shared, so an
+  image URL a person could type into a shared row would be a tracking pixel in
+  every other account's session screen. The host is one constant in
+  `pwa/src/lib/exerciseMedia.ts`. Photos are cross-origin and deliberately not
+  cached by the service worker; the steps ride on the row and are cached like
+  every other read.
 - `update_planned_workout` edits ONE day of an existing program in place, and
   it is the correct tool for ANY change to a program that already exists:
   filling in an empty day, swapping an exercise, adding a superset, changing

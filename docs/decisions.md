@@ -1859,3 +1859,80 @@ republish the client. The Pages build stamps the sha into the bundle, so a
 republish of identical code still shows every phone an "update available" for
 nothing. Rejected: `cancel-in-progress: true`, which the old workflow had. It
 is fine to abandon a Pages publish; it is not fine to abandon a `db push`.
+
+## The seed's photos and steps, one tap from the exercise name
+
+The spec never asked for exercise demos, and the plan's non-goals leaned
+against media. The second user changed the calculus: she trains movements the
+coach invented for her, and a name with nothing behind it is a movement she
+does wrong or skips. TrainingPeaks answers this with licensed video. We have no
+budget for a filmed library and there is no free one at 873-exercise scale.
+
+What there is: free-exercise-db, the library this app seeded from, ships two
+photos per exercise (start and end position) and numbered instructions, under
+the same Unlicense, and `build-exercise-seed.mjs` had thrown both away since the
+first seed. So the smallest version is two columns and one sheet, not a content
+project.
+
+Two columns on `exercises`, and they pass that table's rule: neither varies per
+viewer, the generated seed populates all 873, and '{}' is "none" for a custom
+or curated row. `images` stores PATHS, never URLs, and a CHECK pins the shape.
+This is the security decision in the feature: the library is SHARED, an
+'edited' row is read by every account, and an image URL a person could type
+into a shared row is a tracking pixel in every other account's session screen.
+Seed-only by construction. The one host is a constant in
+`lib/exerciseMedia.ts`, which also refuses any non-path client-side, so a
+mirror or a move is one edit and no row can ever choose the origin.
+
+Read lazily per exercise and cached per exercise. The steps for 873 movements
+have no business riding along in the exercise list every plan-editor mount
+loads, and a person opens this for one or two movements they do not know. The
+steps therefore survive a basement once opened. The photos are cross-origin,
+deliberately uncached by the service worker (the same rule that self-hosts
+the fonts), and vanish quietly when they cannot load rather than leaving a
+broken-image glyph over the text.
+
+Rejected: video. No free source; a per-user link can live in `exercise_notes`,
+which is already the standing cue per movement, if a coach wants to paste one.
+Rejected: a targeted runtime cache for this week's photos. It would break the
+cross-origin rule for a nicety, and whether anyone misses the photos offline is
+a question to answer with the online-only version first. Rejected: user-set
+image URLs on custom rows. Custom rows are private, so the tracking-pixel
+argument does not apply to them, but a second write path for a column whose
+whole safety rests on being seed-only is not worth a feature nobody asked for.
+
+Not done: the plan editor. Its exercise row is itself a button, so HOW TO needs
+a home in the row editor, which is a separate change.
+
+## The rest timer survives the app closing; the alert does not, yet
+
+Reported as "make the rest timer persistent when the app is closed". The timer
+already is: `startedAt` is a wall-clock instant mirrored to IndexedDB per
+session, and the strip is rehydrated on mount, so an app iOS killed mid-rest
+comes back showing the right number. What does not survive is the ALERT. The
+tone needs a running JavaScript context and an unlocked AudioContext, and a
+suspended or killed app has neither.
+
+The sequenced plan said background rest notifications "are not possible from a
+web app" on iOS. That is out of date. Since iOS 16.4 an installed Home Screen
+web app can receive Web Push through its service worker, with permission. What
+remains true is that nothing can schedule a LOCAL notification from a closed
+page (Notification Triggers never shipped on iOS), so an alert while closed
+needs a SERVER to send a push at the deadline.
+
+That is a real feature, not a fix, and it has parts this session could not
+build honestly: a `push_subscriptions` table and RLS; a service worker `push`
+handler, which means moving vite-plugin-pwa from generateSW to injectManifest
+(the riskiest file in the repo to touch, per the update-mechanics rules); a
+subscribe flow in Settings; an edge function that receives {deadline, label} on
+LOG and sends a VAPID-signed push AT the deadline; and a cancel path, because a
+set logged before the deadline must stop the buzz. The "at the deadline" half
+is the hard one: pg_cron is minute-granular, and holding a function open until
+the deadline runs into the platform's wall-clock limit. It also needs a VAPID
+private key set as a secret and an iPhone to test on, and the session had
+neither. Built blind, it ships broken. Designed here, it ships when someone can
+test it.
+
+Until then: the wake lock keeps the screen on while the app is open, the tone
+fires while it is open, and a reopened app shows the right time.
+
