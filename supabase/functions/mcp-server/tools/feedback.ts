@@ -2,7 +2,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
-import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
+import {
+  guard,
+  jsonResult,
+  type RequestContext,
+  ToolError,
+} from "../lib/errors.ts";
 
 /**
  * The assistant's way of saying "I could not do that".
@@ -153,7 +158,14 @@ export function registerFeedback(
           "feedback",
         ) as unknown as { id: string; title: string }[];
         if (rows.length === 0) {
-          throw new Error(
+          // ToolError, not Error: this is the caller passing an id that is not
+          // theirs (or no longer exists), which is a validation failure the
+          // model can act on — the same shape `forget` uses in memory.ts. As a
+          // plain Error it was swallowed by the guard's unexpected branch, so
+          // the model was told "Unexpected server error. Reference request_id
+          // ..." and could only give up, while the logs collected an
+          // error-level entry with a stack trace for a mistyped uuid.
+          throw new ToolError(
             `No feedback with id ${args.id} belongs to this user. Use ` +
               `list_feedback to get a valid id.`,
           );

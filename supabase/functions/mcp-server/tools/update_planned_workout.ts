@@ -30,6 +30,7 @@ import {
 } from "../lib/errors.ts";
 import {
   assertExercisesExist,
+  assertSupersetGroups,
   prescriptionRows,
   prescriptionSchema,
   resolveTrainingMaxes,
@@ -153,6 +154,10 @@ export function registerUpdatePlannedWorkout(
           );
         }
 
+        // Both plan-writing doors validate identically, on purpose: a day
+        // this tool would refuse must not be writable through upsert_program,
+        // and vice versa.
+        assertSupersetGroups(args.prescriptions, "this day");
         await assertExercisesExist(db, args.prescriptions);
         await resolveTrainingMaxes(db, args.prescriptions);
 

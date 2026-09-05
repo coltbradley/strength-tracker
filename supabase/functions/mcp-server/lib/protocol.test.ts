@@ -71,6 +71,11 @@ Deno.test("tools/list advertises every tool with a usable schema", async () => {
     "get_lift_history",
     "get_recent_sessions",
     "get_goal_progress",
+    "get_program",
+    // The index that makes get_program's program_id usable. Without it the
+    // model can only ever read the NEWEST program, which stopped being the
+    // right one when the PWA started writing confirmed programs of its own.
+    "list_programs",
     "upsert_program",
     "confirm_program",
     "delete_program",

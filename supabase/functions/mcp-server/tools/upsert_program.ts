@@ -10,8 +10,10 @@ import {
 } from "../lib/errors.ts";
 import { formatRepRange } from "../lib/format.ts";
 import { log } from "../lib/log.ts";
+import { assertIsoDate } from "../lib/dates.ts";
 import {
   assertExercisesExist,
+  assertSupersetGroups,
   prescriptionRows,
   prescriptionSchema,
   resolveTrainingMaxes,
@@ -23,7 +25,12 @@ const workoutSchema = z.object({
     .int()
     .min(0)
     .describe("Day within the program, 0-based. Unique per program."),
-  label: z.string().optional().describe("Human label, e.g. 'Day 1 - Squat'."),
+  label: z
+    .string()
+    .min(1)
+    .max(60)
+    .describe("Human label, e.g. 'Day 1 - Squat'.")
+    .optional(),
   notes: z
     .string()
     .max(300)
@@ -51,7 +58,15 @@ const workoutSchema = z.object({
 });
 
 const programSchema = z.object({
-  name: z.string().min(1).describe("Program name, e.g. 'Block 3 - Strength'."),
+  name: z
+    .string()
+    .min(1)
+    .max(120)
+    .describe(
+      "Program name, e.g. 'Block 3 - Strength'. Short: it is the handle the " +
+        "user and every other tool refer to this program by, and it is what " +
+        "upsert_program matches on when replacing an unconfirmed draft.",
+    ),
   source_note: z
     .string()
     .max(120)
@@ -133,6 +148,28 @@ export function registerUpsertProgram(
             "Duplicate day_index values in program.workouts.",
           );
         }
+        // A regex proves SHAPE, not that the date exists: 2026-02-30 and
+        // 2026-13-01 both match ^\d{4}-\d{2}-\d{2}$ and then arrive at
+        // Postgres as an opaque date-out-of-range error, which the guard turns
+        // into "Unexpected server error" — a generic 500 for what is really a
+        // typo the model could fix on the next call. assertIsoDate names the
+        // parameter and the value.
+        for (const [i, w] of program.workouts.entries()) {
+          if (w.scheduled_date !== undefined) {
+            assertIsoDate(
+              w.scheduled_date,
+              `program.workouts[${i}].scheduled_date`,
+            );
+          }
+        }
+
+        // A superset group with one member is a pairing that lost its other
+        // half somewhere in the parse. Checked per day, because that is the
+        // scope the group has.
+        for (const w of program.workouts) {
+          assertSupersetGroups(w.prescriptions, `day ${w.day_index}`);
+        }
+
         // Every exercise_id must exist AND be one this caller can see.
         //
         // This ran as a bare existence check, and the service role bypasses

@@ -5,7 +5,12 @@
 //   deno test --allow-env --allow-net lib/
 
 import { assertEquals, assertThrows } from "jsr:@std/assert@^1";
-import { prescriptionRows, prescriptionSchema } from "./prescriptions.ts";
+import { ToolError } from "./errors.ts";
+import {
+  assertSupersetGroups,
+  prescriptionRows,
+  prescriptionSchema,
+} from "./prescriptions.ts";
 
 const OWNER = "00000000-0000-4000-8000-000000000001";
 const DAY = "22222222-0000-4000-8000-000000000001";
@@ -111,3 +116,74 @@ Deno.test(
     assertEquals(row.load_entry, "per_side");
   },
 );
+
+// A superset group of one. Not a schema question -- "is anything else in
+// group A" is a fact about the whole day, so it is checked over the list.
+
+Deno.test("a superset group with one member is refused", () => {
+  const err = assertThrows(
+    () =>
+      assertSupersetGroups(
+        [
+          { ...base, exercise_id: "Barbell_Row", superset_group: 1 },
+          { ...base, exercise_id: "Barbell_Curl" },
+        ],
+        "day 0",
+      ),
+    ToolError,
+  );
+  // The message has to name the day and the exercise, or the model cannot
+  // tell WHICH half of the pairing went missing.
+  assertEquals(err.message.includes("day 0"), true);
+  assertEquals(err.message.includes("Barbell_Row"), true);
+  // Groups are reported as the letters the coach wrote, not as 1/2/3.
+  assertEquals(err.message.includes("superset_group A"), true);
+});
+
+Deno.test("a real pairing passes, and so does a day with no groups", () => {
+  assertSupersetGroups(
+    [
+      { ...base, exercise_id: "Barbell_Row", superset_group: 1 },
+      { ...base, exercise_id: "Push_Up", superset_group: 1 },
+    ],
+    "day 0",
+  );
+  assertSupersetGroups([base, base], "day 0");
+  assertSupersetGroups([], "day 0");
+});
+
+Deno.test("members of one group need not be adjacent to count", () => {
+  // Adjacency is how the app RENDERS a superset, but the group is what makes
+  // it one; a check that required adjacency would reject a legal parse.
+  assertSupersetGroups(
+    [
+      { ...base, exercise_id: "A1", superset_group: 1 },
+      { ...base, exercise_id: "Filler" },
+      { ...base, exercise_id: "A2", superset_group: 1 },
+    ],
+    "day 0",
+  );
+});
+
+Deno.test("every lonely group is reported at once, in group order", () => {
+  const err = assertThrows(
+    () =>
+      assertSupersetGroups(
+        [
+          { ...base, exercise_id: "C_only", superset_group: 3 },
+          { ...base, exercise_id: "A_only", superset_group: 1 },
+          { ...base, exercise_id: "B_one", superset_group: 2 },
+          { ...base, exercise_id: "B_two", superset_group: 2 },
+        ],
+        "this day",
+      ),
+    ToolError,
+  );
+  // One call, one list: fixing A and coming back to be told about C is two
+  // round trips for a parse the model can correct in one.
+  assertEquals(
+    err.message.indexOf("A_only") < err.message.indexOf("C_only"),
+    true,
+  );
+  assertEquals(err.message.includes("B_one"), false);
+});

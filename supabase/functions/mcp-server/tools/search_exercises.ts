@@ -2,7 +2,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
-import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
+import {
+  guard,
+  jsonResult,
+  type RequestContext,
+  ToolError,
+} from "../lib/errors.ts";
+import { safeFilterTerm } from "../lib/filters.ts";
 
 export function registerSearchExercises(
   server: McpServer,
@@ -55,8 +61,19 @@ export function registerSearchExercises(
     },
     (args) =>
       guard(ctx, "search_exercises", async () => {
-        // Strip PostgREST or() delimiters so user input can't break the filter.
-        const q = args.query.trim().replace(/[,()%]/g, " ");
+        // Strip everything reserved by the PostgREST or() grammar so user
+        // input cannot break the filter. This used to miss `"` and `\`, and an
+        // unbalanced quote made PostgREST fail to parse the filter at all —
+        // surfacing to the model as "Unexpected server error" and to the logs
+        // as an error with a stack trace. See lib/filters.ts.
+        const q = safeFilterTerm(args.query);
+        if (q === "") {
+          throw new ToolError(
+            `Search query '${args.query}' has no searchable characters — it is ` +
+              "punctuation the exercise-name filter cannot use. Search for a " +
+              "word from the movement's name, e.g. 'bench press'.",
+          );
+        }
         const slugQ = q.replace(/\s+/g, "_");
 
         // The seeded library is shared; a CUSTOM exercise belongs to one

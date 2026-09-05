@@ -115,7 +115,17 @@ export const prescriptionSchema = z
       .max(3600)
       .optional()
       .describe("Prescribed rest between sets, in seconds."),
-    notes: z.string().optional().describe("Coach notes for this prescription."),
+    notes: z
+      .string()
+      .max(300)
+      .optional()
+      .describe(
+        "Coach notes for this ONE exercise on this ONE day, brief (a cue, a " +
+          "tempo, a caveat). Capped at 300 characters, like the day's notes: " +
+          "this renders next to the exercise on a phone mid-set, so an essay " +
+          "here buries the sets and reps it is supposed to qualify. Parse " +
+          "commentary belongs in chat.",
+      ),
     superset_group: z
       .number()
       .int()
@@ -145,6 +155,52 @@ export const prescriptionSchema = z
   );
 
 export type Prescription = z.infer<typeof prescriptionSchema>;
+
+/**
+ * A superset is exercises ALTERNATED with each other, so a group of one is not
+ * a superset — it is a mis-parse. The schema cannot see it: `superset_group`
+ * is validated per prescription, and "is anything else in group A" is a fact
+ * about the whole day.
+ *
+ * It matters because the group is not decoration. The app pairs the members
+ * and walks the lifter between them; a lone member renders as an A with
+ * nothing to alternate with, and the far more likely truth is that the coach
+ * wrote A1/A2 and the second one landed in the wrong day, lost its group, or
+ * never got parsed at all. Refusing is how that gets noticed while the
+ * screenshot is still on screen.
+ *
+ * `where` names the day in the message ("day 2", "this day") — a program-wide
+ * write reports which day, a single-day edit has only one.
+ */
+export function assertSupersetGroups(
+  prescriptions: Prescription[],
+  where: string,
+): void {
+  const members = new Map<number, string[]>();
+  for (const p of prescriptions) {
+    if (p.superset_group == null) continue;
+    const list = members.get(p.superset_group);
+    if (list === undefined) members.set(p.superset_group, [p.exercise_id]);
+    else list.push(p.exercise_id);
+  }
+  const lonely = [...members.entries()]
+    .filter(([, list]) => list.length < 2)
+    .sort(([a], [b]) => a - b);
+  if (lonely.length === 0) return;
+
+  throw new ToolError(
+    `On ${where}, ${lonely
+      .map(
+        ([group, list]) =>
+          `superset_group ${String.fromCharCode(64 + group)} has only ` +
+          `${list[0]}`,
+      )
+      .join("; ")}. A superset is two or more exercises alternated, so a ` +
+      "group of one is either a mis-parse or a pairing whose other half went " +
+      "missing. Add the exercise it pairs with, or drop superset_group from " +
+      "it.",
+  );
+}
 
 /** Every exercise must exist AND be visible to this owner. */
 export async function assertExercisesExist(
