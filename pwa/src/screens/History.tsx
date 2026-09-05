@@ -1,6 +1,15 @@
 // History: per-exercise e1RM chart (goal % in teal), weekly working-set bars,
 // recent sets grouped by session date. Exactly two charts.
 //
+// Then the same record read the OTHER way round. Everything above is
+// organised by movement, which cannot answer "what did I actually do on
+// Tuesday" — the only way to get that was to ask the coach, at a round trip
+// and a token bill, for something SQL already knows. THIS WEEK and SESSIONS
+// sit below the exercise sections rather than above them because the screen's
+// h1 is the exercise picker and the three sections under it are its subject;
+// wedging two unrelated sections between a control and what it controls costs
+// more than one scroll does.
+//
 // ADHERENCE (v_adherence) reads back here as ONE line above each session's
 // sets: what the plan asked for, in the plan's own words. Not a compliance
 // score — the decisions log rejected streaks and badges as motivational-app
@@ -21,6 +30,7 @@ import {
   getGoalProgress,
   getLoggedExerciseIds,
   getRecentSets,
+  getServerSessionSets,
   getSessionMeta,
   getSetNotesForExercise,
   getWeeklyVolume,
@@ -30,6 +40,16 @@ import {
   type RxOutcome,
   type SessionMetaRow,
 } from "../lib/data";
+import { SessionList, WeekLine } from "../components/SessionHistory";
+import {
+  getSessionLog,
+  getWeeklySummary,
+  liveSets,
+  weekStartIso,
+  type SessionLogEntry,
+  type WeeklySummaryRow,
+} from "../lib/sessionHistory";
+import { useLocalToday } from "../hooks/useLocalToday";
 import { reportError, toast } from "../lib/errors";
 import { formatRepRange, formatSessionDate } from "../lib/format";
 import { cacheGet, cacheKeys } from "../lib/db";
@@ -103,6 +123,21 @@ export function History() {
    *  that just changed, so they have to be refetched, not just repainted */
   const [reloadTick, setReloadTick] = useState(0);
 
+  // ---- the day-shaped half: this week, and the log of finished sessions ----
+  // `useLocalToday` rather than a date read during render: an installed PWA
+  // is suspended and resumed with the same heap, so a screen left open on
+  // Sunday night would otherwise keep reporting LAST week for ever.
+  const today = useLocalToday();
+  const weekStart = useMemo(() => weekStartIso(today), [today]);
+  const [week, setWeek] = useState<WeeklySummaryRow | null>(null);
+  const [weekLoading, setWeekLoading] = useState(true);
+  const [sessions, setSessions] = useState<SessionLogEntry[]>([]);
+  const [logLoading, setLogLoading] = useState(true);
+  const [openId, setOpenId] = useState<string | null>(null);
+  /** sets of the open session; undefined means "still reading", which is not
+   *  the same claim as the empty array */
+  const [openSets, setOpenSets] = useState<SetInsert[] | undefined>(undefined);
+
   useEffect(() => {
     void cacheGet<ActiveSession>(cacheKeys.activeSession)
       .then((a) => setActiveId(a?.id ?? null))
@@ -120,6 +155,64 @@ export function History() {
       .catch((e: unknown) => reportError(e, "load history index"))
       .finally(() => setIndexLoading(false));
   }, [reloadTick]);
+
+  // The log and the week are independent of the selected exercise, so they
+  // load once (and again on a void or a discard, both of which change what
+  // the week counted and what a day contains).
+  useEffect(() => {
+    let cancelled = false;
+    setLogLoading(true);
+    setWeekLoading(true);
+    void (async () => {
+      try {
+        const discarded = await outbox.pendingDiscardIds();
+        const log = await getSessionLog(discarded);
+        if (cancelled) return;
+        setSessions(log.data);
+      } catch (e) {
+        // leave whatever is on screen: a refetch that cannot reach the server
+        // must not blank the log it already drew
+        if (!cancelled) reportError(e, "load session log");
+      } finally {
+        if (!cancelled) setLogLoading(false);
+      }
+    })();
+    void getWeeklySummary(weekStart)
+      .then((w) => {
+        if (!cancelled) setWeek(w.data);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) reportError(e, "load weekly summary");
+      })
+      .finally(() => {
+        if (!cancelled) setWeekLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [weekStart, reloadTick]);
+
+  // The open session's sets. Loaded on demand rather than with the list: a
+  // day is only ever opened one at a time, and twenty days of sets is a read
+  // nobody asked for. `getServerSessionSets` is the existing helper and
+  // already caches per session and falls back to that cache offline.
+  useEffect(() => {
+    if (openId === null) return;
+    let cancelled = false;
+    setOpenSets(undefined);
+    void (async () => {
+      const [rows, voided] = await Promise.all([
+        getServerSessionSets(openId),
+        outbox.pendingVoidIds(),
+      ]);
+      // v_live_sets has already dropped voids that LANDED; this subtracts the
+      // ones still in the outbox, exactly as the per-exercise list above does
+      if (!cancelled) setOpenSets(liveSets(rows, voided));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openId, reloadTick]);
 
   // which exercise the charts on screen belong to
   const shownFor = useRef<string | null>(null);
@@ -257,6 +350,10 @@ export function History() {
         patch: { discarded_at: new Date().toISOString() },
       });
       setRecent((prev) => prev.filter((s) => s.session_id !== sessionId));
+      // the same day is very likely the one open in the log below; leaving it
+      // expanded would keep its sets on screen under a "discarded" toast
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      setOpenId((id) => (id === sessionId ? null : id));
       setDiscardArm(null);
       // same race as voidPastSet: the queued patch has to reach the server
       // before the refetch asks it what is still live
@@ -284,6 +381,18 @@ export function History() {
 
   const tonnage = useMemo(() => latestTonnage(volume), [volume]);
 
+  /** A set that happened must never render as nothing, so an id the library
+   *  cannot name falls back to the id rather than to a blank line. */
+  const exerciseName = useMemo(() => {
+    const byId = new Map(exercises.map((e) => [e.id, e.name]));
+    return (id: string) => byId.get(id) ?? id;
+  }, [exercises]);
+
+  /** First run: no logged exercise AND no finished session. One empty state,
+   *  not three stacked ones saying the same thing in different words. */
+  const bare =
+    !indexLoading && !logLoading && !selected && sessions.length === 0;
+
   return (
     <div className="screen">
       {/* the screen's h1 is the exercise on show; the button is the control */}
@@ -306,7 +415,7 @@ export function History() {
 
       {indexLoading && !selected && <p className="muted">Loading…</p>}
 
-      {!indexLoading && !selected && (
+      {bare && (
         <p className="muted">
           Nothing logged yet — finish a session and it shows up here.
         </p>
@@ -447,6 +556,37 @@ export function History() {
                 </div>
               );
             })}
+          </section>
+        </>
+      )}
+
+      {!bare && (
+        <>
+          <section className="rule-section">
+            <div className="section-head">
+              <span className="field-label">THIS WEEK</span>
+              {/* the Monday the numbers are counted from, so the line cannot
+                  be mistaken for a rolling seven days */}
+              <span className="section-meta">
+                FROM {formatSessionDate(weekStart)}
+              </span>
+            </div>
+            <WeekLine row={week} unit={unit} loading={weekLoading} />
+          </section>
+
+          <section className="rule-section">
+            <div className="section-head">
+              <span className="field-label">SESSIONS</span>
+            </div>
+            <SessionList
+              sessions={sessions}
+              loading={logLoading}
+              unit={unit}
+              openId={openId}
+              onToggle={(id) => setOpenId((cur) => (cur === id ? null : id))}
+              openSets={openSets}
+              exerciseName={exerciseName}
+            />
           </section>
         </>
       )}

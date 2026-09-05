@@ -632,6 +632,8 @@
   .sheet-row > *,
   .logged-set > *,
   .rx-row > *,
+  .log-row > *,
+  .week-line > *,
   .stepper-inline > *,
   .stepper-value-row > * {
     min-width: 0;
@@ -650,6 +652,8 @@
   .detail-note,
   .orphan-title,
   .set-note-preview,
+  .log-name,
+  .log-exercise-name,
   .toast,
   .microcopy {
     overflow-wrap: break-word;
@@ -2072,6 +2076,119 @@
     align-items: center;
     gap: var(--s-5);
     margin-bottom: var(--s-2);
+  }
+
+  /* ---- the week in one line ---- */
+
+  /* Wraps rather than truncates: both halves are the answer, and a
+     "4 PLANNED · 3 DONE" that falls off the right edge on a small phone is
+     the half that took the work to earn. */
+  .week-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-2) var(--s-5);
+    padding: var(--s-5) 0 var(--s-2);
+  }
+
+  .week-line-effort {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: var(--track-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --text-dim, not the accent: this is small prose, and #bd5410 is 4.08:1 —
+     AA for large text and UI only. */
+  .week-line-plan {
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-weight: 500;
+    letter-spacing: var(--track-2);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+  }
+
+  /* ---- the session log ---- */
+
+  .log-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .log-item {
+    border-bottom: var(--rule-hair);
+  }
+
+  /* open day: the same inset accent rule the plan editor's current entry
+     uses, so "this is the one you are looking at" means one thing app-wide */
+  .log-item-on {
+    box-shadow: var(--rail-accent);
+  }
+
+  /* date and chevron pin to the edges; name and meta stack between them */
+  .log-row {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--s-1) var(--s-5);
+    align-items: baseline;
+    padding: var(--s-6) 0;
+    min-height: var(--tap);
+    text-align: left;
+  }
+
+  .log-item-on .log-row {
+    padding-left: var(--s-6);
+  }
+
+  .log-date {
+    grid-column: 1;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 600;
+    letter-spacing: var(--track-3);
+    color: var(--text-dim);
+  }
+
+  .log-name {
+    grid-column: 1;
+    font-size: var(--fs-body);
+    font-weight: 500;
+    line-height: 1.25;
+  }
+
+  .log-meta {
+    grid-column: 1;
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+  }
+
+  .log-row .chev {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: center;
+  }
+
+  .log-open {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    padding: 0 0 var(--s-7);
+  }
+
+  .log-item-on .log-open {
+    padding-left: var(--s-6);
+  }
+
+  .log-exercise-name {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
   }
 
   /* ---- charts ---- */
