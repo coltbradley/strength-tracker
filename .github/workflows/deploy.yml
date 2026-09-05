@@ -105,6 +105,9 @@ jobs:
         run: supabase functions deploy mcp-server --no-verify-jwt
       - if: steps.gate.outputs.on == 'true'
         run: supabase functions deploy coach
+      # Same shape as the coach: the caller has a session, so verify_jwt stays on.
+      - if: steps.gate.outputs.on == 'true'
+        run: supabase functions deploy push-alerts
 
   pages:
     name: publish PWA
