@@ -35,13 +35,25 @@ Supabase sends the stock link email and the paste path is the working one.
   red for MISSED, a hairline underline for an upcoming planned day, dim for
   a rest day. The selected cell takes a border. Tapping a cell previews that
   day inline below the strip without losing the week; the preview leads with
-  its ONE action (Start session / Start again / Move to today), then the
-  exercise list (ramp brackets grouped into one row per exercise, superset
+  its actions, then the exercise list (ramp brackets grouped into one row per exercise, superset
   letters when a group actually has a partner, coach cues per exercise as a
   clamped note, a "no TM set" badge where a %TM target can't resolve), then
   the plan note and coach note, then Edit / Skip. Today is selected by
   default. State labels as the user sees them: DONE, SKIPPED, TODAY, MISSED,
-  TO COME, NO DATE.
+  TO COME, NO DATE, EMPTY.
+
+  EMPTY is a day nothing has been programmed into yet. "Plan a workout"
+  creates the day before its contents, so an abandoned one used to become a
+  MISSED workout the day after — a session someone failed to do that was
+  never written. `v_plan_workouts.exercise_count` is what lets the strip tell
+  the difference without loading every day's prescriptions.
+
+  A day that is not today carries TWO actions, and the copy separates them
+  because they mean opposite things. "Do this workout now" starts the session
+  against that planned day and changes no dates: the plan is fine, the lifter
+  is ahead or behind. "Reschedule to today" rewrites `scheduled_date`: the
+  plan itself was wrong. It was called "Move to today", which reads as "do it
+  today" and sent people to the destructive one.
   Days scheduled outside this week, and undated days, live in a compact
   LATER list. Programs with no dates at all keep the original ruled list.
   Offline: cached plan + note; no cache: warning; no program: empty state +
@@ -70,8 +82,8 @@ Supabase sends the stock link email and the paste path is the working one.
   Offline with a cold prescription cache: starts by feel with an explanatory
   toast.
 - **Exactly one Start affordance is ever live.** Every Start button — the
-  day card, Start again, Move to today, Start empty session — is gated on
-  the same check: no active session locally, no unrecovered open session on
+  day card, Start again, Do this workout now, Reschedule to today, Start
+  empty session — is gated on the same check: no active session locally, no unrecovered open session on
   the server, and that check having answered. It answers within 2.5 s or
   gives up and unblocks, because a slow network must not hold the gym
   hostage. While a session is running, the day that owns it says so and
