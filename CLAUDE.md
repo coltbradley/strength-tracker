@@ -17,7 +17,10 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 - `docs/`: plan, architecture, decisions, setup, deploy. `docs/decisions.md`
   is the log of every deviation from the original spec and why.
   `docs/deploy.md` is the per-release runbook — follow it instead of
-  rediscovering the deploy steps.
+  rediscovering the deploy steps. `docs/endurance-research.md` is the evidence
+  base for the endurance layer, including the list of metrics this system
+  refuses to compute and why; `docs/endurance-plan.md` is its phased build plan,
+  whose every gate re-checks that the strength app still works untouched.
 
 ## Hard rules
 

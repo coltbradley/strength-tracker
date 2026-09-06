@@ -2265,3 +2265,163 @@ inside a regex literal into the raw character, which is an unterminated regex
 and a failed bundle. `push-alerts` spells its label guard as a code-point loop
 now, and deploy.md says to keep `\u` out of anything that has to go through
 that door.
+
+
+## The endurance layer, and the metrics it refuses to compute
+
+The log grew a strategy tier in 20260905060000 (`training_plans` /
+`plan_phases`) and the obvious next question was whether that tier could carry a
+modality it had never seen. A user who has stopped working with a coach wants to
+train for a 50K and keep lifting, and wants the system to plan both. Six
+research lanes went out before any schema was drawn, which turned out to be the
+right order, because the most useful thing they returned was a list of things
+NOT to build. That list is in
+[endurance-research.md](endurance-research.md); the sequence is in
+[endurance-plan.md](endurance-plan.md). What follows is why the shape is what it
+is.
+
+**The seam is the DAY, not the prescription.** A run does not fit in
+`prescriptions` and forcing it there is the bug class this repository already
+has a chapter on. `load_kg` is total system load, `v_e1rm` reads working sets at
+1-8 reps, and `v_adherence` compares prescribed reps to achieved ones; a row
+that said "90 minutes easy" would be silently wrong in all three. So
+`planned_efforts` hangs off `planned_workouts` beside `prescriptions`, one day
+holds a lift and a run, and every existing view keeps the meaning it had. The
+shape of an effort is not invented: TrainingPeaks structured JSON, Zwift .zwo,
+Garmin's FIT `workout_step` and the intervals.icu text DSL all reduce to
+`workout -> step -> repeat-block(steps)` and none nests deeper than one repeat.
+Matching it costs nothing now and buys a `.fit` export to a watch later.
+
+**Endurance actuals are a third write-ownership class, and that is the part that
+needed a decision rather than a migration.** `sets` are written by the PWA and
+nothing else. Planned tables are written by the PWA and the MCP server. An
+`activities` row is written by neither: it arrives from a sync against a third
+party the user does not control and this deployment cannot fix. The rule that
+falls out, and that every phase gate re-checks, is that the endurance half may
+never become a dependency of the strength half. Strength data is the only copy,
+written by a phone in a basement, and it has to flush with the endurance
+integration unreachable. Two reliability classes, one direction of dependency.
+
+**The integration is intervals.icu, not the Strava API, and that reverses where
+the scoping started.** Strava's 2026 Standard tier caps at about ten users,
+requires the DEVELOPER to hold a paid subscription, allows roughly 100 reads per
+15 minutes, bars use of the data in AI models, restricts display to the owning
+athlete, and belongs to the company that bought Runna and now sells the
+competing product. intervals.icu gives a free instant API key, activities,
+streams, FIT in and out, and a wellness endpoint carrying resting HR, HRV and
+sleep, auto-synced from Garmin, Polar, Suunto, Coros, Oura, Whoop and others,
+with terms that explicitly grant commercial use against one condition (Garmin
+attribution). Garmin direct is closed to new developers as of 2026 and Fitbit's
+API turns down in September, so routing through intervals.icu is also the only
+practical way to reach a Garmin watch at all. What it costs: a one-person free
+service with no SLA sits in the path. The fallback is FIT parsing, which carries
+raw R-R intervals and running dynamics no API returns.
+
+Strava's MCP stays, for ad-hoc reading in Claude Desktop, because probing it
+against the real account found more than expected:
+`get_activity_performance` returns per-lap `avg_grade`, so climbing and
+descending performance separate without touching streams; repeated segment
+efforts carry `avg_hr` and `avg_watts`, which makes a weekly Twin Peaks run a
+free repeated-measures fitness test; and `has_device_watts` is true, so running
+power is available and grade-independent pace stops being a problem to model.
+The same probe settled the other direction: `get_strength_workout_details`
+returns `exercise_name: "Unknown"` and a step count, so Strava holds nothing
+usable about lifting and there is no reconciliation problem to design around.
+
+**Three metrics are refused outright, and the refusals are the load-bearing
+part.** ACWR is mathematically coupled (acute load is inside chronic load),
+meta-analyses disagree on the sign, and its effect in ultrarunners specifically
+was non-significant at p = 0.3. TSB, CTL and ATL carry the identical coupling
+defect, since the 7-day window is a subset of the 42-day one, with constants
+that are asserted rather than derived and no independent validation; the
+Banister model beneath them is descriptive, with ill-conditioned parameters that
+shift with the fitting window. And a single composite readiness score merges
+signals the evidence says do not correlate: subjective and objective recovery
+measures generally did not move together across 56 studies. Every one of these
+is something the market ships and something a plausible implementation reaches
+for first. A `v_readiness` view returning one number would have looked like the
+most finished part of the system and been the least defensible.
+
+What replaces them is smaller and honest. Session-RPE, which has about 36
+validity studies and is one unit across running and lifting, which makes it the
+cross-modality currency. A daily subjective panel with each item its own column,
+because a composite hides which one moved. Submaximal HR and RPE at a fixed
+benchmark effort, the one objective marker with overreaching evidence behind it,
+and the reason `benchmark_efforts` exists. The timing of the RPE is stored, not
+assumed, because validity depends on it being collected around 30 minutes post.
+
+**Two state variables, not one fitness number.** This is the finding that
+changed the design. Aerobic capacity falls 4 to 8% over three weeks off and
+comes back within days to two weeks, because the early loss is plasma volume.
+Tissue tolerance decays and rebuilds far slower: bone stress injuries appear 3
+to 4 weeks after a load shift and tendon lags muscle by 6 to 12 weeks. After a
+gap the engine is ready first and the structures are ready last. A single
+fitness score reflects the fast variable and therefore says "ramp", which is
+exactly the wrong instruction. The first user's own log has a 26-day zero-running
+gap after a 75 km/wk peak, so this is not hypothetical, and Phase E2's gate is
+that the two states move on visibly different timescales across that gap. If
+they move together the model is wrong and the phase is not done.
+
+**Injury is self-reported, threaded, and never predicted.** There is no
+prospective evidence that cadence, ground contact time asymmetry or vertical
+oscillation detect emerging injury before the athlete says something; ML models
+run at about AUC 0.52; and at a base rate near 7.7 injuries per 1000 hours any
+daily passive alarm is almost entirely false positives. So passive signals may
+annotate a report the athlete made and may never raise one, and Phase E6's gate
+fabricates a large cadence drop and asserts silence. The questions themselves
+are copied rather than invented: OSTRC-O2, four items, seven-day recall, weekly,
+with published case definitions that the triage branches on. The individual
+smallest detectable change (35) exceeds the minimal important change (18.5),
+which means one person's week-to-week delta is mostly noise, so the rule that
+catches things is persistence rather than intensity: the same region three weeks
+running. Bone-stress red flags are separate booleans and any single one refers,
+because a score invites a threshold and there is not one.
+
+A symptom is an episode, not a daily slider. The only question worth asking
+about an Achilles is whether it is better or worse than three weeks ago, and
+unlinked rows cannot answer it. That is also why check-ins split three ways
+rather than one: an anchored daily reading that trends, a weekly instrument
+whose seven-day recall IS the measurement and which must not be prompted more
+often, and an unlimited episodic log that is read as context and never averaged
+into either. Merging them produces a pleasant UI and uninterpretable data.
+
+**The plan-writing tool is built fifth.** The instinct is to build `draft_block`
+first, and it is wrong: a generator with no state estimate writes confident
+twelve-week plans out of nothing. Capture (E0, E1), then state (E2), then the
+facts that cannot be derived (E3), then days on the calendar (E4), then the
+generator (E5), then adaptation (E6). E1 in particular starts as early as
+possible regardless of anything else, because subjective data only accrues
+forward and a week without it cannot be recovered.
+
+**Two things the survey found nobody does, which is where the value is.** No
+platform models elevation LOSS or terrain technicality: Runna's terrain field is
+a four-value enum describing where the user lives, Uphill Athlete counts gain
+only, Vert.run's Mountain Index is gain-only density. Yet descent is what
+destroys the athlete, producing about 40% knee-extensor strength loss at the
+finish of a mountain ultra, and the repeated bout effect that protects against
+it is cheap (one exposure gives most of the protection, lasting 2 to 3 weeks),
+which makes it a scheduling decision nobody exposes. And no platform absorbs a
+gap that already happened: the consistent complaint across Runna and Garmin
+Coach is no retroactive logging and no backdating an adjustment. `disruptions`
+being backdate-able and `replan` re-deriving forward is therefore not a
+nice-to-have; it is the thing the incumbents are worst at and the thing this
+user's history says he needs twice a year.
+
+**What the engine is not allowed to claim.** Strength training's
+injury-prevention effect did not survive the pass: Lauersen's RR 0.34 sits
+against more recent meta-analyses at RR 0.97 (CI 0.57 to 1.63) and RR 0.94 with
+I2 = 81%. Two research lanes disagreed and the disagreement is recorded rather
+than resolved in favour of the convenient answer. Practically it changes
+nothing about scheduling, because strength earns its place on running economy
+(pooled g = -0.32 for heavy work) and descent durability. It changes what the
+product says. Likewise no predicted finish time, and no overtraining diagnosis,
+since the ECSS/ACSM consensus is that diagnosis is by exclusion.
+
+One thing is blocked rather than decided. The 6-hour separation between lifting
+and running, which is the defensible number and equivalent to 24 hours for
+strength outcomes, cannot be expressed against a date-keyed `planned_workouts`.
+The planner can only say "not the same day", which is too blunt and, for this
+user, wrong: his log shows weight training at 08:07 and a run at 09:10 as
+routine. Planned days need a time of day before E5 can enforce the rule that
+matters most to the one constraint he actually stated, which is that strength
+does not get cut.

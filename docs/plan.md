@@ -162,6 +162,25 @@ timer cannot get attention on a locked iPhone.
 - [ ] Run 2, API driver, to verify the move to `opus-low` against `sonnet-low`.
       About $2. A verification, not a blocker.
 
+## Phase 6: the endurance layer (scoped, not started)
+
+Researched 2026-09-06 in six parallel lanes. The strength log grows an endurance
+half and a planning engine above both, on the `training_plans` / `plan_phases`
+tier that already exists.
+
+- Evidence base, including what this system refuses to compute and why:
+  [endurance-research.md](endurance-research.md).
+- Phased build with gates: [endurance-plan.md](endurance-plan.md). E0 activities
+  land, E1 subjective capture, E2 state estimation, E3 target and constraints,
+  E4 endurance days on the calendar, E5 the block generator, E6 adaptation,
+  E7 deep session data.
+- Reasoning and the decisions taken: the endurance entry in
+  [decisions.md](decisions.md).
+
+The invariant across every phase is that the strength app keeps working,
+unchanged, at every commit, and that the endurance half never becomes a
+dependency of the strength half.
+
 ## Out of scope (per spec)
 
 Social, nutrition, running data, RIR, per-set subjective ratings.
