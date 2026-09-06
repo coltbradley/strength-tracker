@@ -2,7 +2,11 @@
 
 The strength log grows an endurance half and a planning engine above both. The
 evidence base is [endurance-research.md](endurance-research.md); every rule
-referenced by a phase below is tagged and cited there.
+referenced by a phase below is tagged and cited there. The build itself, with
+assigned migration numbers, exact table shapes and file ownership, is
+[superpowers/plans/2026-09-06-endurance-implementation-spec.md](superpowers/plans/2026-09-06-endurance-implementation-spec.md),
+which also records the six assumptions in this document that turned out to be
+wrong or unexamined.
 
 ## The invariant
 
@@ -196,7 +200,26 @@ The facts that cannot be derived. Mostly a conversation, stored once.
 
 The schema for a planned run, and both renderers.
 
+This is the highest-risk phase, because it is the first one that changes what
+the existing app renders. Two current behaviours break silently unless they are
+fixed in the same migration that causes them:
+
+- `v_plan_workouts.exercise_count` counts `prescriptions` rows only, so a day
+  holding only a run renders as a DRAFT. The draft rule exists because an empty
+  dated day accused someone of skipping a session nobody programmed; a
+  programmed run day reading as a draft is that bug with the sign flipped.
+- DONE is decided in `pwa/src/lib/data.ts` from a session with `ended_at not
+  null`. A run has no session, so a completed run day would read as MISSED.
+
 **Build**
+- `entry_count` on `v_plan_workouts` (prescriptions plus efforts), with
+  `exercise_count` left unchanged so existing selects are unaffected.
+- `v_training_days`, the union of finished sessions and non-discarded
+  activities, so the PWA and the MCP server answer "did I train" identically.
+- `time_of_day` on `prescriptions` and `planned_efforts`. This gives a day
+  holding both a total order AND unblocks the 6-hour separation rule below, in
+  one nullable column, using the adjacency idiom the repo already uses for
+  `section` and `superset_group`.
 - `planned_efforts`, hanging off `planned_workouts` beside `prescriptions`, so
   one day holds a lift and a run. Shape is `workout -> step -> repeat-block`,
   matching TrainingPeaks JSON, .zwo, FIT `workout_step` and the intervals.icu
@@ -252,11 +275,11 @@ The tool the whole project is for. It arrives fifth because now it has inputs.
   `plan_phases.progression` is generated from the rule, not authored beside it.
   A service that cannot re-derive is just a conversation with a database.
 
-**Blocked on**
-Planned days need a time-of-day field, or the 6-hour separation rule cannot be
-expressed and the generator can only enforce "not the same day". That is both
-too blunt and, for this user, wrong: his log shows lifting at 08:07 and running
-at 09:10 routinely.
+**Formerly blocked, now resolved.** The 6-hour separation rule needed a
+time-of-day on planned days. That column lands in E4 on both `prescriptions` and
+`planned_efforts`, so E5 is unblocked. Where `time_of_day` is null the rule
+warns rather than blocks, because a plan that does not say when is unverifiable
+rather than wrong.
 
 **Gate**
 - A generated 12-week block satisfies every constraint above, proven by the
@@ -331,6 +354,24 @@ used weekly. Any injury inference.
 - The invariant holds.
 
 ---
+
+---
+
+## Phase E8: the coach learns the layer
+
+E0 to E7 produce a schema and a generator with nobody driving them. E8 adds the
+STATE line to the context block, gates `draft_block` / `confirm_block` /
+`replan` to Claude Desktop only (the `set_training_plan` precedent: strategy is
+set at a desk, tactics between sets), and adds the prompt rules that stop the
+coach predicting finish times, claiming injury prevention, or averaging the two
+states. See the spec for the gate.
+
+## Phase E9: evals and deploy
+
+The phase that decides whether any of it works. Nine planning-eval cases
+asserted against the constraint checker rather than against prose, the existing
+coach eval extended, and `docs/deploy.md` walked end to end. Without E9 there is
+no way to tell a working planner from a plausible one.
 
 ## Sequencing notes
 
