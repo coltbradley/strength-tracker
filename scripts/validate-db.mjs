@@ -1704,5 +1704,78 @@ await check("deleting a user takes their subscriptions and alerts with them", as
   assertEq(cfg.rows[0].n, 1, "the deployment key pair is nobody's and survives");
 });
 
+// --- coach cost, priced by model (20260907010000) ----------------------------
+// The view charged Sonnet rates for whatever ran, so every Opus turn was
+// reported at 40% of its cost. These pin the two behaviours that fix it: rates
+// follow the `model` column, and a model with no rates is reported as UNPRICED
+// rather than as cheap.
+console.log("\ncoach cost (priced by the model that ran):");
+await db.exec("reset role;");
+
+const COST_U = "00000000-0000-4000-8000-0000000000c1";
+await db.exec(`
+  insert into auth.users (id, email) values ('${COST_U}', 'cost@example.test')
+  on conflict do nothing;
+`);
+
+// One million input and one million output tokens, so cost_usd reads as the
+// per-MTok rate directly and an arithmetic slip is visible rather than subtle.
+await db.exec(`
+  insert into coach_usage (user_id, model, input_tokens, output_tokens,
+                           cache_read_tokens, cache_write_tokens)
+  values
+    ('${COST_U}', 'claude-sonnet-5', 1000000, 1000000, 0, 0),
+    ('${COST_U}', 'claude-opus-5',   1000000, 1000000, 0, 0),
+    ('${COST_U}', 'claude-haiku-4-5', 1000000, 1000000, 0, 0);
+`);
+
+await check("each model is charged its own rates, not the last one hard-coded", async () => {
+  const r = await db.query(
+    `select model, cost_usd from v_coach_cost
+      where user_id = '${COST_U}' order by model`,
+  );
+  const by = Object.fromEntries(r.rows.map((x) => [x.model, x.cost_usd]));
+  assertEq(Number(by["claude-sonnet-5"]), 12, "sonnet 5: $2 in + $10 out");
+  assertEq(Number(by["claude-opus-5"]), 30, "opus 5: $5 in + $25 out");
+  assert(
+    Number(by["claude-opus-5"]) > Number(by["claude-sonnet-5"]),
+    "the expensive model costs more, which is the whole bug",
+  );
+});
+
+await check("an unknown model is unpriced, never silently cheap", async () => {
+  const r = await db.query(
+    `select cost_usd from v_coach_cost
+      where user_id = '${COST_U}' and model = 'claude-haiku-4-5'`,
+  );
+  assertEq(r.rows[0].cost_usd, null, "no rates means no number");
+});
+
+await check("the daily rollup admits the total is a floor", async () => {
+  const r = await db.query(
+    `select turns, unpriced_turns, cost_usd from v_coach_spend_daily
+      where user_id = '${COST_U}'`,
+  );
+  assertEq(Number(r.rows[0].turns), 3, "three turns");
+  assertEq(Number(r.rows[0].unpriced_turns), 1, "one of them unpriced");
+  // 12 + 30, with the unpriced turn contributing nothing: a sum() over a null
+  // would otherwise shrink the total with nothing to show for it.
+  assertEq(Number(r.rows[0].cost_usd), 42, "priced turns only");
+});
+
+await check("cache tokens derive from the input rate rather than drifting", async () => {
+  await db.exec(`
+    insert into coach_usage (user_id, model, input_tokens, output_tokens,
+                             cache_read_tokens, cache_write_tokens)
+    values ('${COST_U}', 'claude-opus-5', 0, 0, 1000000, 1000000);
+  `);
+  const r = await db.query(
+    `select cost_usd from v_coach_cost
+      where user_id = '${COST_U}' and input_tokens = 0 and cache_read_tokens = 1000000`,
+  );
+  // Opus input is $5: writes at 1.25x = $6.25, reads at 0.10x = $0.50.
+  assertEq(Number(r.rows[0].cost_usd), 6.75, "6.25 write + 0.50 read");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
