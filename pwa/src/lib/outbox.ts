@@ -43,7 +43,14 @@ export interface OutboxTransport {
    *  elsewhere); null on success. set_notes MERGES on conflict (note edits
    *  are last-write-wins); every other table ignores duplicates. */
   insert(
-    table: "sessions" | "sets" | "set_voids" | "set_notes",
+    table:
+      | "sessions"
+      | "sets"
+      | "set_voids"
+      | "set_notes"
+      | "daily_readiness"
+      | "checkins"
+      | "pain_checks",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(

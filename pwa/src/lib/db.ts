@@ -4,6 +4,9 @@
 
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type {
+  CheckinInsert,
+  DailyReadinessUpsert,
+  PainCheckInsert,
   SessionInsert,
   SessionPatch,
   SetInsert,
@@ -18,7 +21,18 @@ export type OutboxOp =
   // set_notes is the one MERGING insert: replaying overwrites (a note edit
   // is last-write-wins), unlike the do-nothing semantics everywhere else
   | { kind: "insert"; table: "set_notes"; payload: SetNoteUpsert }
-  | { kind: "update"; table: "sessions"; id: string; patch: SessionPatch };
+  | { kind: "update"; table: "sessions"; id: string; patch: SessionPatch }
+  // Subjective capture rides the SAME queue as sets, which is safe in the one
+  // direction that matters: the flusher dead-letters a permanently failing item
+  // and keeps going ("keep flushing past dead items"), so a broken check-in
+  // cannot hold up somebody's sets. The dependency points endurance -> shared
+  // infrastructure, never the reverse.
+  //
+  // daily_readiness MERGES like set_notes, because a morning panel is
+  // correctable within the day and the id is stable per (user, local_date).
+  | { kind: "insert"; table: "daily_readiness"; payload: DailyReadinessUpsert }
+  | { kind: "insert"; table: "checkins"; payload: CheckinInsert }
+  | { kind: "insert"; table: "pain_checks"; payload: PainCheckInsert };
 
 export interface OutboxItem {
   op: OutboxOp;

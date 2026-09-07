@@ -140,6 +140,92 @@ export async function buildCoachContext(): Promise<string> {
     // Offline or unreachable: answering with less beats not answering.
   }
 
+  // How they are TODAY, and anything currently hurting.
+  //
+  // In the context block rather than behind a tool call, for the reason
+  // coach_memory is: something the coach must fetch is something it will
+  // forget to fetch, and an open symptom episode is the one fact that should
+  // change what it says before it says anything else.
+  //
+  // Each item carries the COUNT of answers behind its mean, because a
+  // seven-day average over two answers and one over seven are different
+  // claims and the coach must not treat them alike.
+  try {
+    const { data: r } = await supabase
+      .from("v_readiness_trend")
+      .select(
+        "local_date, sleep_hours, fatigue, soreness, mood, fatigue_7d, fatigue_7d_n, soreness_7d, soreness_7d_n, answered_items, days_of_history",
+      )
+      .order("local_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (r) {
+      const today0 = r.local_date === today;
+      const bits: string[] = [];
+      if (r.sleep_hours !== null) bits.push(`slept ${r.sleep_hours}h`);
+      if (r.fatigue !== null) bits.push(`fatigue ${r.fatigue}/5`);
+      if (r.soreness !== null) bits.push(`soreness ${r.soreness}/5`);
+      if (r.mood !== null) bits.push(`mood ${r.mood}/5`);
+      lines.push(
+        "",
+        bits.length > 0
+          ? `CHECK-IN (${today0 ? "today" : r.local_date}): ${bits.join(", ")}.`
+          : `CHECK-IN (${today0 ? "today" : r.local_date}): opened and skipped.`,
+      );
+      if (Number(r.fatigue_7d_n) >= 3 && r.fatigue_7d !== null) {
+        lines.push(
+          `  7-day fatigue ${Number(r.fatigue_7d).toFixed(1)}/5 over ` +
+            `${r.fatigue_7d_n} answers; soreness ` +
+            `${r.soreness_7d === null ? "n/a" : Number(r.soreness_7d).toFixed(1)}` +
+            ` over ${r.soreness_7d_n}.`,
+        );
+      }
+      if (Number(r.days_of_history) < 28) {
+        // Nothing inferred from a short series is a finding, and the coach
+        // should say so rather than reading a trend off four days.
+        lines.push(
+          `  Only ${r.days_of_history} days of check-ins so far — too few to ` +
+            "call a trend. Say that rather than reading one.",
+        );
+      }
+    }
+  } catch {
+    // Offline: answering with less beats not answering.
+  }
+
+  try {
+    const { data: eps } = await supabase
+      .from("v_symptom_episode_state")
+      .select("body_region, side, consecutive_weeks, persistent, latest_is_substantial")
+      .eq("is_open", true)
+      .order("consecutive_weeks", { ascending: false });
+    const open = (eps ?? []) as {
+      body_region: string;
+      side: string | null;
+      consecutive_weeks: number;
+      persistent: boolean;
+      latest_is_substantial: boolean | null;
+    }[];
+    if (open.length > 0) {
+      lines.push("", "CURRENTLY BOTHERING THEM:");
+      for (const e of open) {
+        const where = e.side && e.side !== "n/a" ? `${e.side} ${e.body_region}` : e.body_region;
+        const weeks = `${e.consecutive_weeks} week${e.consecutive_weeks === 1 ? "" : "s"} running`;
+        const flags = [
+          e.latest_is_substantial ? "substantial (training modified)" : null,
+          // Persistence, not intensity, is the overuse signature: one person's
+          // week-to-week severity change is mostly measurement noise.
+          e.persistent ? "3+ weeks — suggest they see someone" : null,
+        ].filter(Boolean);
+        lines.push(
+          `  - ${where}, ${weeks}${flags.length ? ` (${flags.join("; ")})` : ""}`,
+        );
+      }
+    }
+  } catch {
+    // As above.
+  }
+
   // The plan, before today: it is the frame every day is written inside.
   // Cached, so a basement still knows which phase this is; a read that has
   // never succeeded on this device says so rather than claiming there is none.

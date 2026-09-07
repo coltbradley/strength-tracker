@@ -895,6 +895,76 @@
     color: var(--bg);
   }
 
+  /* ---- morning check-in ----
+     Built on .chip / .chip-on rather than a parallel set of controls: the
+     1-5 scale is the same affordance as every other chip row in the app, and
+     a second visual language for the same gesture is how a stylesheet doubles.
+     Tapping the chosen chip again clears it, which is why these are
+     aria-pressed toggles and not a radio group. */
+
+  .scale-row {
+    margin-top: var(--s-4);
+  }
+
+  .scale-chip {
+    /* Five across on the narrowest phone, without wrapping to a ragged
+       second line that makes the scale read as two groups. */
+    flex: 1 1 0;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .scale-ends {
+    display: flex;
+    justify-content: space-between;
+    margin-top: var(--s-4);
+    font-size: var(--fs-meta);
+    color: var(--text-dim);
+  }
+
+  .checkin-open {
+    /* A quiet line, not a call to action. The Start button is this screen's
+       job and nothing here may compete with it for the eye. */
+    display: block;
+    width: 100%;
+    text-align: left;
+    border: 0;
+    border-bottom: var(--rule-hair);
+    background: none;
+    padding: var(--s-4) 0;
+    font: inherit;
+    color: var(--text-dim);
+    min-height: var(--tap-min);
+  }
+
+  .checkin-intro {
+    margin-bottom: var(--s-2);
+  }
+
+  .checkbox-field {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+  }
+
+  .checkin-actions {
+    margin-top: var(--s-2);
+  }
+
+  .checkin-actions .btn {
+    width: 100%;
+  }
+
+  .link-btn {
+    border: 0;
+    background: none;
+    padding: var(--s-5) 0;
+    font: inherit;
+    color: var(--text-dim);
+    text-decoration: underline;
+    min-height: var(--tap-min);
+  }
+
   /* ---- login ---- */
 
   .login {

@@ -268,3 +268,54 @@ export interface ActiveSession {
   plan_note?: string | null;
   coach_note?: string | null;
 }
+
+
+// ---- subjective capture (E1) ------------------------------------------------
+//
+// Every field on the daily panel is OPTIONAL. A panel somebody must complete is
+// a panel somebody stops opening, and the views carry per-item counts so a
+// half-filled row cannot be mistaken for a full one.
+
+export interface DailyReadinessUpsert {
+  /** Stable per (user, local_date): a correction MERGES onto the same row. */
+  id: string;
+  user_id: string;
+  local_date: string;
+  sleep_hours?: number | null;
+  sleep_quality?: number | null;
+  fatigue?: number | null;
+  soreness?: number | null;
+  stress?: number | null;
+  mood?: number | null;
+  bodyweight_kg?: number | null;
+  resting_hr?: number | null;
+  illness?: boolean | null;
+  alcohol_units?: number | null;
+  travel?: boolean | null;
+  note?: string | null;
+  custom?: Record<string, unknown>;
+  recorded_at?: string;
+}
+
+export interface CheckinInsert {
+  id: string;
+  user_id: string;
+  kind: "pre_session" | "post_session" | "spontaneous" | "prompted";
+  session_id?: string | null;
+  activity_id?: string | null;
+  energy?: number | null;
+  feeling?: number | null;
+  note?: string | null;
+  recorded_at?: string;
+}
+
+export interface PainCheckInsert {
+  id: string;
+  user_id: string;
+  episode_id?: string | null;
+  session_id?: string | null;
+  activity_id?: string | null;
+  phase: "during" | "post" | "next_morning";
+  nrs_0_10: number;
+  captured_at?: string;
+}

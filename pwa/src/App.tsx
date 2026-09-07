@@ -109,12 +109,12 @@ function Shell({ userId }: { userId: string }) {
         }
       >
         <Routes>
-          <Route path="/" element={<Today />} />
+          <Route path="/" element={<Today userId={userId} />} />
           <Route path="/session" element={<Session />} />
           <Route path="/history" element={<History />} />
           <Route path="/end" element={<End />} />
           <Route path="/plan/:id" element={<Plan />} />
-          <Route path="*" element={<Today />} />
+          <Route path="*" element={<Today userId={userId} />} />
         </Routes>
       </main>
 

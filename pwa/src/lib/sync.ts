@@ -27,12 +27,17 @@ function toTransportError(
 const transport: OutboxTransport = {
   async insert(table, payload) {
     const keyed = table === "set_voids" || table === "set_notes";
+    // Two tables MERGE on replay rather than ignoring the duplicate, and for
+    // the same reason: they are last-write-wins self-reports rather than
+    // append-only training records. A set note is an edit; a morning readiness
+    // panel is correctable within its own day, and its id is stable per
+    // (user, local_date) so the correction lands on the row it is correcting.
+    const merges = table === "set_notes" || table === "daily_readiness";
     const { error, status } = await supabase
       .from(table)
       .upsert(payload as Record<string, unknown>, {
         onConflict: keyed ? "set_id" : "id",
-        // note edits overwrite; everything else is insert-if-absent
-        ignoreDuplicates: table !== "set_notes",
+        ignoreDuplicates: !merges,
       });
     return toTransportError(error, status ?? null);
   },

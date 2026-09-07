@@ -212,7 +212,7 @@ export class PlanEditRefused extends Error {
   }
 }
 
-function throwIf(
+export function throwIf(
   error: { message: string; code?: string | null } | null,
 ): void {
   if (error)

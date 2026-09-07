@@ -21,6 +21,7 @@ import { useNavigate } from "react-router-dom";
 import { Note } from "../components/Note";
 import { CalendarSheet, type CalendarDay } from "../components/CalendarSheet";
 import { TemplateSheet } from "../components/TemplateSheet";
+import { CheckInSheet } from "../components/CheckInSheet";
 import {
   applyTemplate,
   createPlannedWorkout,
@@ -248,8 +249,12 @@ export function weekRangeLabel(dates: string[]): string {
     : `${a.getDate()} ${month(a)} – ${b.getDate()} ${month(b)}`;
 }
 
-export function Today() {
+export function Today({ userId }: { userId?: string | null } = {}) {
   const navigate = useNavigate();
+  // The morning panel. Optional prop rather than a context read so the screen
+  // stays constructible in a test without an auth provider, and so a signed-out
+  // render simply has no check-in rather than throwing.
+  const [checkInOpen, setCheckInOpen] = useState(false);
   const unit = useUnit();
   const [list, setList] = useState<WorkoutList | null>(null);
   const [stale, setStale] = useState<StaleReason | null>(null);
@@ -1163,6 +1168,16 @@ export function Today() {
           the subject; where a program came from lives with Claude/the coach */}
       {program && <div className="today-context">{program.name}</div>}
 
+      {userId && (
+        <button
+          type="button"
+          className="checkin-open"
+          onClick={() => setCheckInOpen(true)}
+        >
+          How are you today?
+        </button>
+      )}
+
       {stale === "offline" && (
         <div className="cache-note">offline — showing cached plan</div>
       )}
@@ -1543,6 +1558,13 @@ export function Today() {
             setCalendarOpen(false);
           }}
           onClose={() => setCalendarOpen(false)}
+        />
+      )}
+      {checkInOpen && userId && (
+        <CheckInSheet
+          userId={userId}
+          localDate={today}
+          onClose={() => setCheckInOpen(false)}
         />
       )}
     </div>
