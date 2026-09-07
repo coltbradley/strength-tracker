@@ -19,6 +19,9 @@ export interface DemoStore {
   sets: Row[];
   set_voids: Row[];
   set_notes: Row[];
+  /** weigh-ins with no session attached; unioned with sessions.bodyweight_kg
+   *  by the v_bodyweight stand-in, the same as in SQL */
+  bodyweight_log: Row[];
 }
 
 export type DemoScenario =
@@ -665,6 +668,7 @@ function emptyStore(): DemoStore {
     sets: [],
     set_voids: [],
     set_notes: [],
+    bodyweight_log: [],
   };
 }
 

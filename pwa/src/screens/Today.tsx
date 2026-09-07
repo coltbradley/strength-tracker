@@ -19,6 +19,8 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { Note } from "../components/Note";
+import { BodyweightRow } from "../components/BodyweightRow";
+import { RateSessionCard } from "../components/RateSessionCard";
 import { CalendarSheet, type CalendarDay } from "../components/CalendarSheet";
 import { TemplateSheet } from "../components/TemplateSheet";
 import {
@@ -1158,6 +1160,13 @@ export function Today() {
         </div>
       )}
 
+      {/* A session that ended without a rating, for a day afterwards. Gated on
+          `active` for the same reason the orphan card is: someone mid-workout
+          is being asked about a DIFFERENT session, and a RESUME banner with a
+          "rate yesterday" card under it reads as one question about one thing.
+          It renders nothing at all when there is nothing to ask. */}
+      {!active && <RateSessionCard />}
+
       <h1 className="today-heading">{formatTodayHeading()}</h1>
       {/* provenance (source_note) deliberately not shown here — the week is
           the subject; where a program came from lives with Claude/the coach */}
@@ -1512,6 +1521,14 @@ export function Today() {
           Start empty session
         </button>
       )}
+
+      {/* Bodyweight lives here rather than only on End, because End is reached
+          only by tapping Finish and the figure matters most on the days there
+          was no session to finish at all. Top level, below the plan: it is a
+          standing fact about the person rather than part of today's workout,
+          and it must not sit inside the no-program branch — someone WITH a
+          program is exactly who has been weighing in before training. */}
+      <BodyweightRow />
 
       {templatesOpen && (
         <TemplateSheet

@@ -41,3 +41,25 @@ export const RPE_FLOOR_OFFERED = 6.5;
 export const RPE_CHOICES: readonly number[] = RPE_SCALE.filter(
   (v) => v >= RPE_FLOOR_OFFERED,
 );
+
+// ---- session RPE ----------------------------------------------------------
+//
+// How hard the WHOLE workout was, which is a different question from how hard
+// one set was and has a different column: `sessions.session_rpe`, a smallint
+// checked `between 0 and 10`. Whole points, and the floor really is 0, because
+// a session at 0 is a rest day someone opened the app on — where a SET at 0
+// is not a set. Written here for the same reason the set scale is: the app
+// must not offer a value Postgres refuses.
+//
+// Captured on the End screen, and from Today for a day afterwards, because End
+// is only reached by tapping Finish and the sessions that go unrated are
+// exactly the ones that were hardest to finish.
+
+export const SESSION_RPE_MIN = 0;
+export const SESSION_RPE_MAX = 10;
+
+/** Every value `sessions.session_rpe` accepts, ascending. */
+export const SESSION_RPE_CHOICES: readonly number[] = Array.from(
+  { length: SESSION_RPE_MAX - SESSION_RPE_MIN + 1 },
+  (_, i) => SESSION_RPE_MIN + i,
+);

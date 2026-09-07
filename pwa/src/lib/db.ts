@@ -284,6 +284,7 @@ const P = {
   setNotes: "setNotes:",
   adherence: "adherence:",
   bodyweight: "bodyweight",
+  rateSkipped: "rateSkipped:",
 } as const;
 
 export const cacheKeys = {
@@ -331,6 +332,16 @@ export const cacheKeys = {
   trainingMaxes: P.trainingMaxes,
   /** the recent bodyweight series, BOTH sources (v_bodyweight) */
   bodyweight: P.bodyweight,
+  /**
+   * "Not now" on the rate-this-session prompt, for one session.
+   *
+   * In NO invalidation family, and that is the whole point: this records an
+   * ANSWER the lifter gave, and nothing a later set or session close does can
+   * make that answer untrue. Dropping it would put the card back on the screen
+   * asking a question they have already declined once, which is the same
+   * failure as asking twice for a rating already given.
+   */
+  rateSkipped: (sessionId: string) => `${P.rateSkipped}${sessionId}`,
   /** the live training plan and its phases (the strategy above programs),
    *  read for the coach's context block. Plan-scoped, so in no invalidation
    *  family: nothing a set or a session does can stale it, and the plan is

@@ -387,7 +387,122 @@ function vPlanWorkouts(s: DemoStore): Row[] {
     .map((w) => ({ ...w, exercise_count: counts.get(w.id as string) ?? 0 }));
 }
 
+/**
+ * v_bodyweight: the standalone log unioned with the per-session weigh-in.
+ *
+ * Reimplemented here for the reason every other view is: a demo that answered
+ * only from `bodyweight_log` would show a blank row for the very lifter this
+ * feature exists for — someone whose only figures were taken on the End
+ * screen. Discarded sessions leave, exactly as they do in SQL.
+ */
+function vBodyweight(s: DemoStore): Row[] {
+  const log = (s.bodyweight_log ?? []).map((b: Row) => ({
+    user_id: b.user_id,
+    measured_at: b.measured_at,
+    weight_kg: b.weight_kg,
+    source: "log",
+    source_id: b.id,
+  }));
+  const sessions = (s.sessions ?? [])
+    .filter((x) => x.bodyweight_kg != null && (x.discarded_at ?? null) === null)
+    .map((x) => ({
+      user_id: x.user_id,
+      measured_at: x.ended_at ?? x.started_at,
+      weight_kg: x.bodyweight_kg,
+      source: "session",
+      source_id: x.id,
+    }));
+  return [...log, ...sessions];
+}
+
+/**
+ * v_weekly_summary: one row per week the person has training or a plan in.
+ *
+ * Buckets on the ISO Monday, like `date_trunc('week', ...)`, because the
+ * client looks a week up BY that key — a stand-in that bucketed on Sunday
+ * would return nothing and read as "you did not train this week".
+ *
+ * Reports planned_days and planned_days_done as two counts and never a ratio,
+ * for the reason the SQL comment gives: a week nobody planned has no
+ * adherence, and a percentage renders that as zero.
+ */
+function vWeeklySummary(s: DemoStore): Row[] {
+  const monday = (iso: string): string => {
+    const d = new Date(iso);
+    const day = (d.getUTCDay() + 6) % 7;
+    const m = new Date(
+      Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day),
+    );
+    return m.toISOString().slice(0, 10);
+  };
+
+  const live = vLiveSets(s);
+  const weeks = new Map<string, Row>();
+  const at = (w: string): Row => {
+    let r = weeks.get(w);
+    if (r === undefined) {
+      r = {
+        user_id: DEMO_USER_ID,
+        week_start: w,
+        sessions: 0,
+        working_sets: 0,
+        tonnage_kg: 0,
+        avg_session_rpe: null,
+        planned_days: 0,
+        planned_days_done: 0,
+      };
+      weeks.set(w, r);
+    }
+    return r;
+  };
+
+  for (const set of live) {
+    if (set.set_type !== "working") continue;
+    const r = at(monday(set.performed_at as string));
+    r.working_sets = (r.working_sets as number) + 1;
+    r.tonnage_kg =
+      (r.tonnage_kg as number) +
+      Number(set.load_kg ?? 0) * Number(set.reps ?? 0);
+  }
+
+  // Only FINISHED sessions count, the same rule Today uses to call a planned
+  // day done: an open one is someone mid-workout or an abandoned start.
+  const rpe = new Map<string, number[]>();
+  for (const x of s.sessions ?? []) {
+    if ((x.discarded_at ?? null) !== null || x.ended_at == null) continue;
+    const w = monday(x.started_at as string);
+    const r = at(w);
+    r.sessions = (r.sessions as number) + 1;
+    if (x.session_rpe != null) {
+      rpe.set(w, [...(rpe.get(w) ?? []), Number(x.session_rpe)]);
+    }
+  }
+  for (const [w, vals] of rpe) {
+    at(w).avg_session_rpe =
+      Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+  }
+
+  const done = new Set(
+    (s.sessions ?? [])
+      .filter((x) => x.ended_at != null && (x.discarded_at ?? null) === null)
+      .map((x) => x.planned_workout_id),
+  );
+  for (const d of vPlanWorkouts(s)) {
+    // A day with nothing programmed into it is a DRAFT, not a workout owed.
+    if (d.scheduled_date == null || (d.exercise_count as number) === 0) continue;
+    const r = at(monday(`${String(d.scheduled_date)}T00:00:00Z`));
+    r.planned_days = (r.planned_days as number) + 1;
+    if (done.has(d.id)) {
+      r.planned_days_done = (r.planned_days_done as number) + 1;
+    }
+  }
+
+  return [...weeks.values()];
+}
+
 const VIEWS: Record<string, (s: DemoStore) => Row[]> = {
+  v_bodyweight: vBodyweight,
+  v_weekly_summary: vWeeklySummary,
   v_plan_workouts: vPlanWorkouts,
   v_live_sets: vLiveSets,
   v_current_tm: vCurrentTm,

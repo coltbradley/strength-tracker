@@ -29,6 +29,8 @@ const EX = "back_squat";
 const SESS = "sess-1";
 const PROG = "prog-1";
 const PW = "pw-1";
+/** the doneWorkouts prefix, taken from the producer so it cannot drift */
+const P_DONE = cacheKeys.doneWorkouts("");
 
 /** One live kv entry for every key `cacheKeys` can produce. */
 const ALL_KEYS: string[] = [
@@ -59,6 +61,8 @@ const ALL_KEYS: string[] = [
   cacheKeys.trainingMaxes,
   cacheKeys.exerciseDemo(EX),
   cacheKeys.trainingPlan,
+  cacheKeys.bodyweight,
+  cacheKeys.rateSkipped(SESS),
 ];
 
 async function seedAll(): Promise<void> {
@@ -90,6 +94,7 @@ const UNTOUCHED = [
   cacheKeys.trainingMaxes,
   cacheKeys.exerciseDemo(EX),
   cacheKeys.trainingPlan,
+  cacheKeys.rateSkipped(SESS),
 ].sort();
 
 beforeEach(async () => {
@@ -106,7 +111,7 @@ describe("cache families", () => {
   it("invalidateForSetChange drops every set-derived family and nothing else", async () => {
     await invalidateForSetChange();
     expect(await survivors()).toEqual(
-      [...UNTOUCHED, cacheKeys.doneWorkouts(PROG)].sort(),
+      [...UNTOUCHED, cacheKeys.doneWorkouts(PROG), cacheKeys.bodyweight].sort(),
     );
   });
 
@@ -133,7 +138,12 @@ describe("cache families", () => {
 
     const extra = afterFinish.filter((k) => !afterDiscard.includes(k));
     const missing = afterDiscard.filter((k) => !afterFinish.includes(k));
-    expect(extra).toEqual([cacheKeys.doneWorkouts(PROG)]);
+    // bodyweight rides with doneWorkouts: both are patched by a finish and
+    // dropped by a discard, because a discarded session's weigh-in leaves
+    // v_bodyweight with it.
+    expect(extra.sort()).toEqual(
+      [cacheKeys.doneWorkouts(PROG), cacheKeys.bodyweight].sort(),
+    );
     expect(missing).toEqual([]);
   });
 
@@ -142,8 +152,14 @@ describe("cache families", () => {
     // exactly what cannot run, and the day keeps reading as unfinished
     await cacheSet(cacheKeys.doneWorkouts(PROG), ["pw-other"]);
     await invalidateForSetChange();
-    const keys = await cacheKeysWithPrefix(cacheFamilies.sessionClosed);
+    // The family holds the bodyweight series too, and finish patches that
+    // separately with a weigh-in rather than a workout id. What this test is
+    // about is the DONE state, so it walks that prefix alone — reusing the
+    // whole family here would append a planned-workout id to the bodyweight
+    // array and pass while proving nothing.
+    const keys = await cacheKeysWithPrefix([P_DONE]);
     expect(keys).toEqual([cacheKeys.doneWorkouts(PROG)]);
+    expect(await cacheGet(cacheKeys.bodyweight)).toBeDefined();
     for (const key of keys) {
       const ids = (await cacheGet<string[]>(key)) ?? [];
       await cacheSet(key, [...ids, PW]);

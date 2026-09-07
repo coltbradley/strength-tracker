@@ -3747,6 +3747,49 @@
       margin-bottom: var(--s-4);
     }
   }
+
+  /* Bodyweight row (Today) --------------------------------------------------
+   *
+   * One line: the last figure, and the way to add today's. The value and the
+   * button sit on one baseline and the value is allowed to shrink, because
+   * "82.5 lb · 2 weeks ago · before training" is the longest thing it can say
+   * and the button must not be the thing that wraps. */
+  .bw-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-3);
+  }
+
+  .bw-value {
+    /* Wraps rather than truncates. An ellipsis here ate "· before training",
+     * which is the one part of the line the lifter cannot reconstruct — it
+     * says the figure was taken on a training day rather than a rest one.
+     * min-width:0 so the wrap can happen inside a flex child at all. */
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .bw-when {
+    color: var(--text-dim);
+  }
+
+  .bw-row .btn {
+    flex: none;
+  }
+
+  /* Rate-this-session card (Today) ------------------------------------------
+   *
+   * Deliberately NOT the orphan card's treatment. That card is an unresolved
+   * session someone has to deal with; this is an optional question they may
+   * ignore, and giving it the same weight would teach people to dismiss both. */
+  .rate-card .microcopy {
+    margin-bottom: var(--s-3);
+  }
+
+  .rate-card .btn-ghost {
+    margin-top: var(--s-3);
+  }
 }
 
 /* ---------------------------------------------------------------------------

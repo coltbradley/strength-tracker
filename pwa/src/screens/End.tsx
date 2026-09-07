@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
+import { SESSION_RPE_CHOICES } from "../lib/rpe";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import {
   cacheGet,
@@ -24,7 +25,12 @@ import { outbox } from "../lib/sync";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
-import { fromDisplay, stepKg, toDisplay } from "../lib/units";
+import {
+  fromDisplay,
+  MAX_BODYWEIGHT_KG,
+  stepKg,
+  toDisplay,
+} from "../lib/units";
 import { formatStoredTwin } from "../lib/format";
 import type {
   ActiveSession,
@@ -34,7 +40,6 @@ import type {
 
 // Mirror of the DB check: sessions.session_rpe between 0 and 10
 // (supabase/migrations/20260825120001_schema.sql) — keep in sync.
-const RPE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const LAST_BW_KEY = "lastBodyweightKg";
 const NOTE_CHIPS = [
   "Felt strong",
@@ -42,7 +47,6 @@ const NOTE_CHIPS = [
   "Left shoulder",
   "Bar speed good",
 ];
-const MAX_BW_KG = 400;
 /** the summary's elapsed figure is minute-resolution, so a minute is as
  *  often as it can change */
 const DURATION_TICK_MS = 60_000;
@@ -361,7 +365,7 @@ export function End() {
         initial: String(toDisplay(bwKg, unit)),
         allowDecimal: true,
         onCommit: (v) => {
-          const kg = Math.min(MAX_BW_KG, Math.max(1, fromDisplay(v, unit)));
+          const kg = Math.min(MAX_BODYWEIGHT_KG, Math.max(1, fromDisplay(v, unit)));
           setBwKg(Math.round(kg * 10) / 10);
           setBwPad(false);
         },
@@ -392,7 +396,7 @@ export function End() {
           <span className="field-label">SESSION RPE</span>
         </div>
         <div className="rpe-grid">
-          {RPE.map((n) => (
+          {SESSION_RPE_CHOICES.map((n) => (
             <button
               key={n}
               type="button"
@@ -418,7 +422,7 @@ export function End() {
             onTapValue={() => setBwPad(true)}
             value={bwKg}
             min={1}
-            max={MAX_BW_KG}
+            max={MAX_BODYWEIGHT_KG}
             onChange={setBwKg}
             steps={[
               { label: "−", delta: -stepKg(unit, true) },

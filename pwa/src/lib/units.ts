@@ -31,6 +31,16 @@ export function fromDisplay(value: number, unit: Unit): number {
 }
 
 /**
+ * The highest bodyweight either capture path accepts, in kg.
+ *
+ * Lived in End.tsx while End was the only way to record one. It is a bound on
+ * a COLUMN, not a property of a screen, and `numeric(5,2)` cannot hold four
+ * digits and two decimals anyway — a second screen with its own ceiling is how
+ * one of them ends up writing a row the database refuses.
+ */
+export const MAX_BODYWEIGHT_KG = 400;
+
+/**
  * A bodyweight as `bodyweight_log.weight_kg` stores it: numeric(5,2).
  *
  * TWO decimals, not one, and that is the whole point of the function. `lb` is
