@@ -162,6 +162,26 @@ timer cannot get attention on a locked iPhone.
 - [ ] Run 2, API driver, to verify the move to `opus-low` against `sonnet-low`.
       About $2. A verification, not a blocker.
 
+## Phase 6: the 2026-09-06 round (shipped)
+
+Two parallel rounds had forked; this merged them and deployed the result.
+
+- [x] Merge: 14 local commits (RPE, session history, the week in one query,
+      memory extraction, per-model coach pricing) against 28 on origin (the
+      plan layer, rest alerts, find_similar_days, %TM without a TM).
+- [x] Seven migrations (20260906*) applied to production, and the migration
+      ledger realigned — `apply_migration` stamps its own clock, which would
+      have made the next `db push` re-run DDL that had already landed.
+- [x] `mcp-server` and `coach` deployed FROM SOURCE, retiring the pinned-bundle
+      shim; `deploy/mcp-server-bundle` is now unreferenced and deletable.
+- [x] 5b Bodyweight without a session: a row on Today reading `v_bodyweight`.
+- [x] 5c sRPE from Today for 24 hours, through a one-column patch that cannot
+      blank the session's note.
+- [ ] The three CI deploy settings (`SUPABASE_ACCESS_TOKEN`,
+      `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`). Until they exist,
+      `deploy.yml` skips the Supabase job and the schema half stays manual —
+      which is the ordering hazard docs/deploy.md exists to describe.
+
 ## Out of scope (per spec)
 
 Social, nutrition, running data, RIR, per-set subjective ratings.

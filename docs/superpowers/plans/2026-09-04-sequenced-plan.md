@@ -233,8 +233,8 @@ on a measurement, and the monthly cap is paying Opus prices on faith.
 | #   | Work                                                                                                                                                                          | Days |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
 | 5a  | Per-set RPE (Decision 3): migration, a 6.5 to 10 chip row hidden until tapped, carried through corrections and the MCP reads. Migration ships before the code that writes it. | 1.0  |
-| 5b  | Bodyweight without a session: its own table and a one-line row on Today. Three sessions logged, zero bodyweights, because End is only seen if you tap Finish.                 | 1.0  |
-| 5c  | sRPE reachable from Today's completed-session card for 24 hours, and the End draft persisted on change rather than on unmount.                                                | 0.5  |
+| 5b✓ | Bodyweight without a session: its own table and a one-line row on Today. Three sessions logged, zero bodyweights, because End is only seen if you tap Finish.                 | 1.0  |
+| 5c✓ | sRPE reachable from Today's completed-session card for 24 hours, and the End draft persisted on change rather than on unmount.                                                | 0.5  |
 | 5d  | PR feedback at the log tap: e1RM and rep PRs, toast, and the best point marked on the chart.                                                                                  | 1.0  |
 | 5e  | A sessions view in History plus a weekly summary view and MCP tool. "What did I do Tuesday" currently needs the coach.                                                        | 1.5  |
 | 5f  | Time-tracked work (`tracking = 'time'`) so planks and carries stop being ticks.                                                                                               | 1.0  |
