@@ -78,14 +78,22 @@ supabase functions deploy mcp-server --no-verify-jwt
 `--no-verify-jwt` is required every deploy: the function does its own bearer
 auth and the gateway must not demand a Supabase JWT.
 
-### Without the CLI: the Supabase MCP and a pinned bundle
+### Without the CLI: the Supabase MCP and a pinned bundle (retired 2026-09-06)
+
+**Production no longer runs a shim.** On 2026-09-06 `mcp-server` was deployed
+from source again (version 23, entrypoint
+`supabase/functions/mcp-server/index.ts`), which is exactly the "next deploy
+replaces it and nothing else has to change" the workaround was designed for.
+The orphan branch `deploy/mcp-server-bundle` is now unreferenced and deletable.
+Keep the rest of this section: the situation it solves recurs whenever a
+session can reach the Supabase MCP but not the CLI.
 
 The 2026-09-05 round went out from a remote session with no CLI and no deploy
 settings, through the Supabase MCP's `deploy_edge_function`. That tool takes
 file contents inline. `coach` (4 files) and `push-alerts` (3 files) went
 through as source; `mcp-server` (28 files, 162 KB) did not fit, and a 100 KB
-minified bundle is too long to retype by hand without error. So the DEPLOYED
-`mcp-server` is currently a two-line shim: an `index.ts` that imports the bundle
+minified bundle is too long to retype by hand without error. So the deployed
+`mcp-server` was a two-line shim: an `index.ts` that imported the bundle
 by immutable commit sha from the orphan branch `deploy/mcp-server-bundle`
 (`42a3c20`, bundle sha256 `29120c41…`), plus the real `deno.json`. The platform
 bundler snapshots that file at deploy time; the running function never fetches
@@ -106,9 +114,12 @@ Two things this path taught, both permanent:
 
 - The next `supabase functions deploy mcp-server --no-verify-jwt` (by hand or
   from `deploy.yml`) replaces the shim with the source tree, and nothing else
-  has to change. The dashboard shows a shim until then; `get_edge_function`
-  cannot byte-diff it against the repo, so verify a shim deploy by the bundle
-  sha and the `/health` endpoint instead.
+  has to change. This is what happened on 2026-09-06, and nothing had to be
+  undone. While a shim IS deployed, `get_edge_function` cannot byte-diff it
+  against the repo, so verify by the bundle sha and the `/health` endpoint
+  instead — `entrypoint_path` in `list_edge_functions` is the quickest way to
+  tell the two states apart: a shim's is bare `index.ts`, a source deploy's is
+  the full repo path.
 - The tool carries source as a JSON string, and a backslash-u escape inside a
   regex literal arrived as the raw control character, which is an unterminated
   regex and a failed bundle. `push-alerts` now spells its label guard as code

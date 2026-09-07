@@ -2377,3 +2377,38 @@ inside a regex literal into the raw character, which is an unterminated regex
 and a failed bundle. `push-alerts` spells its label guard as a code-point loop
 now, and deploy.md says to keep `\u` out of anything that has to go through
 that door.
+
+**Retired 2026-09-06.** `mcp-server` deployed from source again (version 23),
+which is the escape hatch the design anticipated: the shim was replaced by the
+source tree and nothing had to be undone. `deploy/mcp-server-bundle` is now
+unreferenced and deletable. The reasoning above stays in the log because the
+situation recurs whenever a session can reach the Supabase MCP but not the CLI.
+
+## The migration ledger records the repo's filename, not the tool's clock
+
+Seven migrations written on 2026-09-06 reached production through the Supabase
+MCP's `apply_migration` rather than `supabase db push`, because that session
+had no CLI. The DDL is identical either way; the ledger is not.
+`apply_migration` stamps `supabase_migrations.schema_migrations.version` with
+its own wall clock, so work from a file named `20260906010000_set_rpe.sql` was
+recorded as `20260907015730`.
+
+Left alone that is a trap with a delay on it. Nothing looks wrong — the columns
+are there, the app works — until the next `supabase db push`, which compares
+the ledger against the filenames, finds seven versions it has never seen, and
+re-runs DDL that has already landed. `add column` is not idempotent; the push
+fails partway and the person running it is debugging a schema that was correct
+before they started.
+
+So the seven rows were updated in place to carry the filenames' versions. The
+repo owns migration identity: a migration IS its file, and the ledger is a
+record of which files have run, not an independent naming authority. Editing
+that table is otherwise off limits — it is the one write that can make Postgres
+and the repo disagree about reality — and it is defensible here only because it
+made them agree again about work that had already happened, changing no schema.
+
+The general rule this leaves: after any `apply_migration` against this project,
+check `list_migrations` against `supabase/migrations/` and realign the version
+before the session ends. A push job that would otherwise deploy the schema is
+also why `deploy.yml` staying skipped (no deploy settings) is load-bearing —
+see deploy.md.
