@@ -48,6 +48,21 @@ jobs:
       # discovered by a person waiting on an answer that never comes.
       - run: deno check index.ts
         working-directory: supabase/functions/coach
+      # push-alerts and its web-push implementation. webpush_test.ts existed and
+      # nothing ran it: the crypto that signs every notification was covered by
+      # a test file CI never opened. No flags -- it is pure computation over
+      # fixed vectors and makes no request.
+      - run: deno check index.ts
+        working-directory: supabase/functions/push-alerts
+      - run: deno test lib/
+        working-directory: supabase/functions/push-alerts
+      # The endurance sync. normalize.test.ts pins the rule the whole endurance
+      # schema rests on -- absent is null and ZERO IS ZERO -- and an impossible
+      # heart rate being dropped rather than clamped.
+      - run: deno check index.ts
+        working-directory: supabase/functions/endurance-sync
+      - run: deno test normalize.test.ts
+        working-directory: supabase/functions/endurance-sync
 
   pwa:
     name: pwa build + tests

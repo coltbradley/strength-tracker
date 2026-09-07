@@ -1,5 +1,92 @@
 # Release runbook
 
+## This round (2026-09-07) — release checklist
+
+Thirteen commits: the coach moves back to Sonnet 5, a per-person coach switch,
+sign-in mail on AgentMail, E0 (endurance activities + sync) and E1 (subjective
+capture), alert kinds + app badging, and prompt delivery on pg_cron.
+
+### What CI does on merge to main
+
+`deploy.yml` runs `supabase db push`, then deploys the functions, then publishes
+the PWA — in that order, so the client can never ship ahead of its schema.
+
+- **6 migrations**: `20260907010000` cost-by-model · `…020000` coach_access ·
+  `…030000` activities · `…040000` subjective capture · `…050000` alert kinds ·
+  `…060000` alert sweep cron.
+- **4 functions**: mcp-server, coach, push-alerts, **endurance-sync** (new; the
+  workflow did not know about it until this round).
+
+### Your side, in this order
+
+**1. Sign-in mail (AgentMail).** Nothing works without it — `config.toml` now
+points at `smtp.agentmail.to` and the old Gmail credentials will not
+authenticate. Create a **dedicated inbox** for this app; do not reuse a
+listening address (see the comment in `config.toml` for why).
+
+```bash
+# .env.local, gitignored
+SMTP_USER=<inbox>@agentmail.to     # this is also the From address
+SMTP_PASS=<AgentMail API key, Dashboard → API Keys>
+./scripts/push-auth-config.sh
+```
+
+Verify by requesting a sign-in code and reading where it came from.
+
+**2. The prompt sweep.** Two halves that must match, or the sweep 401s:
+
+```bash
+supabase secrets set SWEEP_SECRET="$(openssl rand -base64 32)"
+```
+```sql
+select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
+select vault.create_secret('<the same value as SWEEP_SECRET>', 'sweep_secret');
+```
+
+Set the secret **before** the deploy if you can; if not, nothing is lost —
+`/sweep` returns 503 until it exists rather than running unauthenticated.
+
+**3. Watch the cron migration land.** `20260907060000` installs `pg_cron` and
+`pg_net`, which were available on this project and not installed. If
+`supabase db push` refuses (some setups will not create these inside a
+transaction), enable both from Dashboard → Database → Extensions and re-run the
+push; the migration is guarded and idempotent, so a second run is safe.
+
+Confirm:
+
+```sql
+select jobname, schedule, active from cron.job where jobname = 'alert-sweep';
+```
+
+### Optional, any time after
+
+- **Connect an endurance source** — see setup.md. intervals.icu first: it is the
+  only one that carries elevation LOSS, and `inserted_with_descent` on the first
+  backfill is the number to read.
+- **Add the second person** — account, MCP token (`--project-ref` makes the
+  printed config paste-ready), and optionally a `coach_access` row.
+
+### What needs a phone, and cannot be checked from CI
+
+Push has never been verified end to end: no iPhone, no push service and no edge
+runtime have been reachable in any session that built it. What IS pinned is the
+crypto (RFC 8291 Appendix A, byte for byte, now actually run by CI), the RLS,
+the client's network behaviour and the built worker's shape.
+
+On the phone, in one session:
+
+1. Turn rest alerts on; confirm the permission prompt appears.
+2. Start a session, log a set, lock the phone. The alert should arrive, and the
+   **app icon should show a badge** (new this round).
+3. Open the app. The badge should clear.
+4. Answer the morning check-in; confirm three items and no Save button, and that
+   closing it keeps the answers.
+5. Tap "Not today" on another day; confirm it does not ask again that day.
+
+If the badge never appears but the notification does, that is iOS below 16.4 or
+notification permission not actually granted — the badge is gated on both.
+
+
 What to run after changing each layer. `docs/setup.md` is the one-time
 bootstrap; this is the every-release path. Everything here is idempotent and
 additive — nothing destroys data.

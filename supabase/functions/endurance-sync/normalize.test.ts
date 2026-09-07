@@ -2,8 +2,18 @@
 // "unknown is not zero" rule is actually pinned.
 //
 //   deno test supabase/functions/endurance-sync/normalize.test.ts
-import { assertEquals } from "jsr:@std/assert@^1";
+// No assertion library, following lib/webpush_test.ts in push-alerts and for
+// the reason it gives: jsr.io is not reachable from every place this runs, and
+// an equality check does not need a dependency.
 import { bpm, name, nonNeg, num, secs, when } from "./normalize.ts";
+
+function assertEquals(actual: unknown, expected: unknown, what?: string): void {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) {
+    throw new Error(`${what ? what + ": " : ""}got ${a}, expected ${e}`);
+  }
+}
 
 Deno.test("num: absent is null, zero is zero", () => {
   assertEquals(num(undefined), null);
