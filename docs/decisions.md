@@ -2425,3 +2425,117 @@ user, wrong: his log shows weight training at 08:07 and a run at 09:10 as
 routine. Planned days need a time of day before E5 can enforce the rule that
 matters most to the one constraint he actually stated, which is that strength
 does not get cut.
+
+
+## Endurance actuals: a third writer, and the row that arrived twice
+
+E0 of the endurance layer (20260907030000). The design is
+[endurance-plan.md](endurance-plan.md), the evidence
+[endurance-research.md](endurance-research.md), the build
+[the implementation spec](superpowers/plans/2026-09-06-endurance-implementation-spec.md).
+What follows is the part that had to be decided rather than looked up.
+
+**A run is not a session, and that cost something to keep true.** `sessions` is
+written only by the PWA, and that rule is what makes `sets` being append-only
+mean anything. A run arrives from a sync against a third party. Putting one in
+`sessions` would have been cheap -- sRPE and `planned_workout_id` are already
+columns there, and "did I train today" would stay one query -- and it would have
+put a foreign writer inside the table the strength half depends on. So
+`activities` is its own table and "did I train" becomes a union, paid once. The
+rule this makes explicit, and that every later phase re-checks: the endurance
+half may never become a dependency of the strength half. Strength data is the
+only copy of itself and is written by a phone in a basement; endurance data can
+always be re-fetched.
+
+**Two sources are the normal case, not an edge case.** The point of allowing
+intervals.icu AND Strava at once is that they carry different things: Strava has
+segment efforts (a weekly Twin Peaks run is a free repeated-measures fitness
+test) and intervals.icu has descent, streams and wellness. But one Garmin upload
+reaches both, so one effort becomes two rows and a week's volume doubles.
+
+Marked rather than deleted, for the reason `set_voids` exists: the duplicate is
+still the only copy of its own source's detail. `duplicate_of` is a separate
+column from `discarded_at` because they are different facts -- "the user says
+this was not training" and "we already have this from somewhere else" -- and
+collapsing them would lose the ability to say which.
+
+The trigger is in SQL rather than in the sync. Two reasons: a third provider
+added later cannot forget a rule it never has to call, and a rule in Postgres is
+testable in PGlite without a running edge function, which is the whole reason
+this repository validates the way it does.
+
+**The thresholds are asymmetric on purpose, and that is the actual decision.**
+A missed duplicate double-counts a week: visible, irritating, fixable by hand. A
+wrong match hides a real training day from every view that reads
+`v_live_activities`: silent, and discovered months later wondering why a week
+looks light. So the matcher would rather keep two rows than lose one --
+different source, same sport spelled the same way, within two minutes, durations
+within 60 s or 5% -- and three checks pin the conservative direction: a genuine
+split "Part 1 / Part 2" pair, a shorter second run 25 minutes later, and a
+different sport at the same instant all survive. Two rows from ONE source are
+never matched against each other at all; that is the source's business and is
+probably a real pair.
+
+**Descent is a column because nothing else has one.** Runna's terrain field is a
+four-value enum describing where the athlete LIVES; Uphill Athlete counts gain
+at +10 hrTSS per 1,000 ft; Vert.run's Mountain Index is gain-only density. Not
+one of the platforms surveyed stores elevation loss. Yet descent is what
+produces roughly 40% knee-extensor strength loss at the finish of a mountain
+ultra, and the repeated bout effect that protects against it is cheap and
+schedulable. So `descent_m` is its own nullable column and the eccentric block
+is dosed against it.
+
+Which exposes a real limitation rather than hiding one: Strava's activity list
+carries GAIN only. Descent is left null rather than inferred from gain, because
+a fabricated number in the one column this layer is built around is worse than
+an absent one. A Strava-only deployment cannot dose that block. The sync reports
+`inserted_with_descent` for exactly this reason -- a backfill that lands zero
+should be discovered at E0, not at E5 when the descent rules quietly have
+nothing to gate on.
+
+**NULL is unknown; zero is zero.** A treadmill has no vert rather than zero
+vert, and zero ascent on a track session is a measurement. `normalize.ts` keeps
+these apart deliberately, because folding 0 into null is how a flat week becomes
+an unknown one. The same file drops an impossible heart rate instead of clamping
+it: 300 bpm is a broken strap, and recording it as 250 turns a sensor fault into
+a training fact.
+
+**Measurements are the sync's, annotations are the owner's.** Postgres has no
+per-column update policy, so wanting this in a comment would have been wanting
+it. A `before update` trigger names the five columns a user may change
+(`perceived_rpe`, `rpe_recorded_at`, `name`, `planned_workout_id`,
+`discarded_at`) and refuses the rest, and the insert policy allows only `manual`
+and `fit_upload` so nobody forges a row claiming to have come from a sync. The
+RPE and its timestamp travel together because session-RPE's validity depends on
+being collected about 30 minutes after the session: an RPE with no timestamp is
+an RPE that cannot be trusted, which makes the timestamp part of the
+measurement rather than metadata about it.
+
+**Polling, not webhooks.** A webhook needs a public unauthenticated endpoint and
+a shared secret to defend, and nothing in this app blocks on a run appearing
+within seconds. The poll re-reads a 48-hour window rather than syncing strictly
+after the newest row held, because upstream activities are edited after upload
+-- renamed, re-uploaded, sport corrected -- and a strict cursor would never see
+any of it. The unique key makes the re-read free.
+
+**Nothing connected is a 200.** Both, either or neither is supported, and a
+client polling on foreground must not learn to treat "no source" as a failure.
+One provider failing never stops the other, and the failure is recorded on the
+credentials row so a broken connection is visible without reading logs.
+
+The integration itself is intervals.icu first and Strava second, and that
+ordering is the research pass talking: Strava's 2026 Standard tier caps at about
+ten users, requires the DEVELOPER to hold a paid subscription, allows roughly
+100 reads per 15 minutes, bars use of the data in AI models, and belongs to the
+company that acquired Runna. intervals.icu is a free instant key with terms that
+explicitly permit commercial use, and it is also the only practical route to a
+Garmin watch now that Garmin's own developer program is closed to new
+applicants. Strava's MCP surface stays as the ad-hoc reading path in Claude
+Desktop, where the segment and lap data lives and costs nothing.
+
+Found while running the gate, and unrelated: the `v_weekly_volume counts working
+sets` check read `rows[0]`, and its fixture seeds sets at `now() - 41..55
+minutes`. For about an hour after every ISO Monday boundary those straddle two
+buckets and the count is partial. It failed at 00:47 UTC on a Monday and looked
+exactly like the new migration having broken something. Summed across weeks now;
+which bucket they land in is what the timezone checks are for.

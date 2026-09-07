@@ -357,6 +357,45 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   memory that must be fetched is memory that gets forgotten. It is deletable,
   unlike the training record, because a fact that stopped being true makes
   every future answer worse.
+- `activities` (20260907030000) are endurance actuals and a THIRD
+  write-ownership class. `sets` are written by the PWA and nothing else; planned
+  tables by the PWA and the MCP server; an activity by NEITHER, because it
+  arrives from a sync against a third party the user does not control. The rule
+  that falls out and that every endurance phase re-checks: the endurance half
+  may never become a dependency of the strength half. Strength data is the only
+  copy of itself and is written by a phone in a basement; endurance data can be
+  re-fetched. No delete policy (soft delete is `discarded_at`, the idiom of
+  `sessions`/`programs`/`planned_workouts`), and every endurance-derived read
+  goes through `v_live_activities` -- never `activities` -- for the same reason
+  set-derived views read `v_live_sets`.
+  `ascent_m` and `descent_m` are SEPARATE and nullable, and that is the point of
+  the table: no platform surveyed stores elevation LOSS, descent is what
+  produces ~40% knee-extensor strength loss at the finish of a mountain ultra,
+  and it is what the eccentric block is dosed against. NULL means unknown, never
+  flat: a treadmill has no vert rather than zero vert, and zero on a track
+  session is a real measurement. Strava's activity list carries gain only, so a
+  Strava-only deployment has null descent and cannot dose that block; the sync
+  reports `inserted_with_descent` so this is found at E0 rather than at E5.
+  Two sources may be connected at once, and one Garmin upload reaching both is
+  TWO rows for one effort. A `before insert` trigger marks the later arrival
+  `duplicate_of` the earlier and `v_live_activities` drops it; both rows stay,
+  because each holds its own source's detail. The matcher is deliberately
+  conservative (different source, same sport case-insensitively, within two
+  minutes, durations within 60 s or 5%) because the failure modes are not
+  symmetrical: a missed duplicate double-counts a week and is visible, a wrong
+  match hides a real training day and is not. The rule lives in SQL, not in the
+  sync, so a third provider cannot forget it.
+  Measurements belong to the sync and annotations to the owner. Postgres has no
+  per-column update policy, so a trigger pins it: a user may set
+  `perceived_rpe`, `rpe_recorded_at`, `name`, `planned_workout_id` and
+  `discarded_at`, and nothing else. `perceived_rpe` without `rpe_recorded_at` is
+  an RPE that cannot be trusted -- session-RPE's validity depends on being
+  collected about 30 minutes post, so the timestamp is part of the measurement.
+  `integration_credentials` is service-role only (RLS on, NO policies, the
+  `push_config` pattern), and a missing row means that provider is simply not
+  connected: both, either or neither is supported and the app works in all four
+  cases.
+
 - `training_plans` / `plan_phases` (20260905060000) are the STRATEGY above
   programs: an objective over months in dated, ordered phases, each with a
   focus and a progression rule. Not goals (measured against sets), not memory

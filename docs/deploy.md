@@ -115,6 +115,36 @@ Two things this path taught, both permanent:
   points for that reason. Avoid `\u` escapes in anything that has to go through
   this door; a regex with `\s` or `\d` is fine.
 
+## Endurance sync changed (supabase/functions/endurance-sync/)
+
+```bash
+supabase functions deploy endurance-sync
+```
+
+No `--no-verify-jwt`, same reason as the coach: the caller authenticates with
+their Supabase session and the gateway should demand a JWT.
+
+Nothing to set as a secret. The provider credentials are per USER and live in
+`integration_credentials` (service role only), not in the function's
+environment, because they are user data rather than deployment configuration.
+A user with no row for a provider simply has that provider not connected.
+
+Smoke test after deploying, with any user's session JWT:
+
+```bash
+curl -X POST "$FUNCTIONS_URL/endurance-sync/poll" -H "Authorization: Bearer <jwt>"
+```
+
+A user with nothing connected must come back **200** with
+`"connected": []`, not an error. If that is a 4xx or 5xx, the "neither source"
+path has regressed and the endurance layer has started being a dependency of
+an app that must work without it.
+
+On a first backfill, read `inserted_with_descent` in the response. Zero from a
+full backfill means the descent rules later in the plan have nothing to gate on.
+Expect zero if only Strava is connected: its activity list carries elevation
+gain only.
+
 ## Coach changed (supabase/functions/coach/)
 
 ```bash
