@@ -297,3 +297,48 @@ export async function cancelRestAlert(alertId: string): Promise<void> {
     reportSilently(e, "rest alert cancel");
   }
 }
+
+
+/**
+ * Arm a long-dated prompt (the morning panel, the weekly OSTRC, the pain check
+ * the morning after).
+ *
+ * Separate from `scheduleRestAlert` because the two have opposite needs. A rest
+ * is minutes away and wants latency, so the function holds a worker open for
+ * it. A prompt is hours or days away, which no worker survives -- so this only
+ * WRITES the row, and delivery is a sweep somebody else runs.
+ *
+ * Which means this returns "armed", not "will arrive". If no sweep is wired,
+ * these rows sit unsent and the app should fall back to asking in-app on
+ * foreground, which is why `duePrompts` in ./prompts.ts is deliberately free of
+ * any of this.
+ */
+export async function armPrompt(
+  kind: "daily_readiness" | "ostrc_weekly" | "next_morning_pain",
+  fireAt: Date,
+  label?: string,
+): Promise<{ armed: boolean; alertId?: string }> {
+  if (!online()) return { armed: false };
+  const sub = await currentSubscription();
+  if (!sub) return { armed: false };
+  try {
+    const res = await call("arm", {
+      method: "POST",
+      body: {
+        kind,
+        fire_at: fireAt.toISOString(),
+        ...(label ? { label } : {}),
+      },
+    });
+    if (!res || res.status !== 202) return { armed: false };
+    const { alert_id } = (await res.json()) as { alert_id?: unknown };
+    return {
+      armed: true,
+      alertId: typeof alert_id === "string" ? alert_id : undefined,
+    };
+  } catch {
+    // Offline, or push not configured. A prompt that could not be armed is not
+    // an error worth showing anyone: the in-app path still asks.
+    return { armed: false };
+  }
+}

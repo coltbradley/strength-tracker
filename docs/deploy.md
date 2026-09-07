@@ -115,6 +115,63 @@ Two things this path taught, both permanent:
   points for that reason. Avoid `\u` escapes in anything that has to go through
   this door; a regex with `\s` or `\d` is fine.
 
+## Prompt delivery (the sweep) — NOT WIRED YET
+
+Rest alerts and long-dated prompts use the same table and opposite mechanisms,
+and only one of them is wired end to end.
+
+**Rest alerts** go through `POST /schedule`, which holds the edge worker open
+until the alert fires. That works because a rest is two to five minutes, and the
+function refuses anything longer rather than promising what the platform will
+kill.
+
+**Prompts** (morning panel, weekly OSTRC, next-morning pain) cannot use that:
+07:30 tomorrow outlives any worker. They are split in two:
+
+- `POST /arm` writes the row and returns 202. Already wired; the PWA calls it
+  through `armPrompt()`.
+- `POST /sweep` sends whatever is due. **Nothing calls this yet.**
+
+The sweep is a plain HTTP endpoint authenticated by a shared secret, precisely
+so the scheduler stays a deployment decision:
+
+```bash
+supabase secrets set SWEEP_SECRET="$(openssl rand -base64 32)"
+supabase functions deploy push-alerts
+```
+
+Then point anything at it, on any cadence from every minute to every fifteen:
+
+```bash
+curl -X POST "$FUNCTIONS_URL/push-alerts/sweep" -H "x-sweep-secret: <secret>"
+```
+
+Options, none of which the function cares about:
+
+| Caller | Notes |
+| --- | --- |
+| `pg_cron` + `pg_net` | Stays inside Supabase; the secret lives in the database |
+| Supabase scheduled function | Native, dashboard-configured |
+| GitHub Actions `schedule:` | Free, already used to deploy; coarse (~5 min floor, best-effort timing) |
+| Anything else with cron | It is one authenticated POST |
+
+Until one of those exists, armed prompts sit unsent. That is a known and
+deliberate state, not a bug: the PWA still asks in-app on foreground, because
+`duePrompts()` in `pwa/src/lib/prompts.ts` is pure and knows nothing about push.
+The only thing missing without a sweep is being asked when the app is CLOSED.
+
+Two behaviours worth knowing before wiring one:
+
+- **It is idempotent.** `sent_at` is stamped on send and the query only takes
+  rows where it is null, so running the sweep twice sends nothing twice, and a
+  scheduler that fires late or double-fires costs nothing.
+- **It has a six-hour grace window.** An alert whose moment passed longer ago
+  than that is stamped stale and not sent, because asking about this morning at
+  3pm is worse than not asking. A sweep that stops running for a day therefore
+  drops that day's prompts rather than delivering a pile of them at once.
+
+`SWEEP_SECRET` unset makes `/sweep` return 503 rather than running unauthenticated.
+
 ## Endurance sync changed (supabase/functions/endurance-sync/)
 
 ```bash

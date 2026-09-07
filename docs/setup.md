@@ -177,9 +177,19 @@ npm run dev             # local test
 npm run build           # deploy dist/ to any static host
 ```
 
-Hosting: Cloudflare Pages or Vercel free tier, or Supabase hosting if
-enabled on the project. Then open it on the phone, sign in with the magic
-link, and add to home screen.
+Hosting: **GitHub Pages**, published by `.github/workflows/deploy.yml` on every
+push to main. That is the actual deployment, not a suggestion -- see
+[deploy.md](deploy.md), which gates the Supabase migration job in FRONT of the
+Pages publish so the client can never ship ahead of its schema.
+
+(An earlier draft of this line offered Cloudflare Pages or Vercel as
+alternatives. Any static host still serves `dist/`, but two things are built
+around Pages specifically: the app is served from a SUBPATH, which `PAGES_BASE`
+threads through the router and the service worker scope, and the
+migrations-before-publish ordering lives in that workflow. Moving hosts means
+redoing both, not changing a deploy target.)
+
+Then open it on the phone, sign in with the magic link, and add to home screen.
 
 ## Adding another user
 
