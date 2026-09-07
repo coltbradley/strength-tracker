@@ -116,6 +116,22 @@
     --burnt-press: #a34a0c;
     --burnt-deep: #9c4407;
     --brick: #a8321f;
+
+    /* Competition plate colours. These are INFORMATION, not decoration: a
+     * lifter reads the stack by colour before reading any number, which is the
+     * whole reason the plate diagram is worth drawing. Desaturated from the
+     * IWF hues so a 44px strip cannot out-shout the load it describes — the
+     * plates explain the number, they do not compete with it. Nothing else on
+     * the set screen carries a hue. */
+    --plate-25: #b2404a;
+    --plate-20: #4a6fb8;
+    --plate-15: #c9a227;
+    --plate-10: #3f8a5c;
+    --plate-5: #3a3f47;
+    --plate-2h: #9c4750;
+    --plate-1h: #8a8f97;
+    --plate-steel: #6f757e;
+    --plate-collar: #565b63;
     --olive: #7a5f10;
     --teal: #2e6e7e;
 
@@ -3805,6 +3821,112 @@
     /* the collected values are data, not prose: keep any newline the app put
      * in them (the recent-error tail is one line per error) */
     white-space: pre-wrap;
+  }
+
+  /* The loaded bar, under the load field (components/PlateBar.tsx) ----------
+   *
+   * The plate breakdown existed as a 10.5px `.plate-hint` button in the section
+   * head. A design review of six equipment states called that line "the answer
+   * to the question the screen exists to ask", set in the smallest type on the
+   * screen. This is the same arithmetic, promoted, plus the silhouette you
+   * actually check against the bar in front of you. */
+  .plate-bar-wrap {
+    margin-top: var(--s-5);
+  }
+
+  .plate-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 232px;
+    max-width: 100%;
+    margin: 0 auto;
+    height: 46px;
+    position: relative;
+  }
+
+  /* the shaft runs behind the stacks; a machine has no bar and omits it */
+  .pb-shaft {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 6px;
+    transform: translateY(-50%);
+    background: var(--plate-steel);
+    border-radius: 1px;
+  }
+
+  .pb-stack {
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+
+  .pb-plate {
+    width: 13px;
+    margin: 0 1px;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
+  }
+
+  .pb-collar {
+    width: 6px;
+    height: 17px;
+    background: var(--plate-collar);
+    border-radius: 1px;
+  }
+
+  /* heights are proportional to real plate diameters, so the silhouette is the
+   * one you are about to look at on the bar */
+  .pb-25 {
+    height: 46px;
+    background: var(--plate-25);
+  }
+  .pb-20 {
+    height: 46px;
+    background: var(--plate-20);
+  }
+  .pb-15 {
+    height: 38px;
+    background: var(--plate-15);
+  }
+  .pb-10 {
+    height: 32px;
+    background: var(--plate-10);
+  }
+  .pb-5 {
+    height: 26px;
+    background: var(--plate-5);
+  }
+  .pb-2h {
+    height: 21px;
+    width: 9px;
+    background: var(--plate-2h);
+  }
+  .pb-1h {
+    height: 16px;
+    width: 7px;
+    background: var(--plate-1h);
+  }
+
+  /* the words, not a micro-label: this is the instruction for THIS set, and it
+   * is also the only version of it a screen reader or a colour-blind lifter
+   * gets. --text, not --text-dim. */
+  .plate-bar-key {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text);
+    text-align: center;
+    margin-top: var(--s-3);
+  }
+
+  /* split() reports when the plates on hand cannot make the target. Saying so
+   * beats drawing a bar that is quietly the wrong weight. */
+  .plate-bar-warn {
+    font-weight: 400;
+    color: var(--text-dim);
   }
 
   @media (max-width: 359px) {
