@@ -1,0 +1,34 @@
+/* SEED mu97SfzzTSriEOI3GaNkabRL — doubled 'zz', lowercase-soft, hand-set.
+   DIRECTION: two-ink risograph zine. Misregistration, halftone, paper tooth.
+   A training log as something photocopied and passed around, not an app. */
+:root {
+  --paper: #f2ece0;
+  --paper-raised: #fbf7ee;
+  --paper-input: #fffdf8;
+  --ink-rgb: 32 30 38;
+  --burnt: #d6296b;      /* riso fluorescent pink */
+  --burnt-press: #b41f58;
+  --burnt-deep: #a81a50;
+  --teal: #1f5fd6;       /* the second ink */
+  --radius: 0px;
+  --bw-hair: 1.5px;
+}
+body {
+  background-image:
+    radial-gradient(rgb(31 95 214 / .10) 1px, transparent 1.4px),
+    radial-gradient(rgb(214 41 107 / .09) 1px, transparent 1.4px);
+  background-size: 7px 7px, 7px 7px;
+  background-position: 0 0, 3px 3px;   /* the misregistration */
+}
+.today-heading {
+  color: #d6296b; font-weight: 900; letter-spacing: -.02em;
+  text-shadow: 2px 2px 0 rgb(31 95 214 / .55);   /* off-plate second pass */
+}
+.field-label { color: #1f5fd6; letter-spacing: .18em; }
+.rule-section { border-top-style: solid; border-top-color: rgb(31 95 214 / .35); }
+.btn-primary {
+  background: #d6296b; color: #fffdf8; border: 0;
+  box-shadow: 3px 3px 0 #1f5fd6;
+  font-weight: 800; letter-spacing: .12em;
+}
+.week-state { color: #1f5fd6; }

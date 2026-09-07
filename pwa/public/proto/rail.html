@@ -1,0 +1,559 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1,viewport-fit=cover"
+/>
+<title>THE RAIL</title>
+<!--
+  STRUCTURAL REDESIGN 1 — THE RAIL
+  Seed: Zwe7e5GANgAUEtx1jSaFLas9
+
+  What changed, and why it is not a reskin:
+
+  1. The session is no longer a DOCUMENT you scroll. It is a TRACK you descend.
+     Your position on the rail is your position in the workout, so "where am I"
+     is answered by a glance at a physical thing rather than by reading.
+  2. Load is drawn as PLATES ON A BAR. "112.5 kg" is a number you then have to
+     do arithmetic on, chalked up, between sets. 25+20+1.25 a side is the actual
+     instruction. This is the single highest-value thing on the screen and no
+     mainstream app shows it.
+  3. Only the current station is open. Everything else collapses to a tick and a
+     name. AI design adds; this removes.
+  4. Every control sits in the bottom third, because the other hand is holding
+     a bar and the phone is being used with one thumb.
+  5. Rest is not a modal timer. The rail itself fills between stations, so
+     recovery is spatial: you can see how far you have to go.
+-->
+<style>
+  @font-face {
+    font-family: Chivo;
+    src: url(/fonts/chivo-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Chivo Mono";
+    src: url(/fonts/chivo-mono-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+
+  :root {
+    --ground: #0e0f12;
+    --raised: #16181d;
+    --line: rgb(226 232 240 / 0.14);
+    --ink: #e9edf3;
+    --dim: rgb(233 237 243 / 0.62);
+    --live: #ff5b1f; /* one accent, used for POSITION only */
+    --rail-w: 3px;
+    --p25: #c8202a;
+    --p20: #1b58c4;
+    --p15: #e5b60a;
+    --p10: #1f9d4e;
+    --p5: #e8e6e0;
+    --p2h: #b4232c;
+    --p1h: #c9c6bd;
+    --bar: #8b9099;
+    color-scheme: dark;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font:
+      400 16px/1.45 Chivo,
+      system-ui,
+      sans-serif;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overscroll-behavior: none;
+  }
+  .mono {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+  }
+
+  /* ---- header: the least it can be ---------------------------------------- */
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 14px 18px 10px;
+  }
+  h1 {
+    font-size: 13px;
+    letter-spacing: 0.2em;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .elapsed {
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- the rail ------------------------------------------------------------ */
+  .track {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 0 4px;
+    position: relative;
+    scrollbar-width: none;
+  }
+  .track::-webkit-scrollbar {
+    display: none;
+  }
+
+  .station {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    align-items: start;
+    position: relative;
+  }
+  /* the continuous line lives on the spine cell, so it never breaks between rows */
+  .spine {
+    position: relative;
+  }
+  .spine::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: var(--rail-w);
+    transform: translateX(-50%);
+    background: var(--line);
+  }
+  .station:first-child .spine::before {
+    top: 22px;
+  }
+  .station:last-child .spine::before {
+    bottom: calc(100% - 22px);
+  }
+  /* the travelled portion */
+  .station.done .spine::before,
+  .station.live .spine::before {
+    background: linear-gradient(var(--live), var(--live));
+  }
+  .station.live .spine::before {
+    background: linear-gradient(var(--live) 22px, var(--line) 22px);
+  }
+
+  .node {
+    position: absolute;
+    left: 50%;
+    top: 14px;
+    transform: translate(-50%, 0);
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: var(--ground);
+    border: var(--rail-w) solid var(--line);
+  }
+  .done .node {
+    background: var(--live);
+    border-color: var(--live);
+  }
+  .live .node {
+    border-color: var(--live);
+    background: var(--ground);
+    box-shadow: 0 0 0 5px rgb(255 91 31 / 0.16);
+  }
+  .body {
+    padding: 10px 18px 18px 2px;
+    min-width: 0;
+  }
+
+  /* collapsed stations: a tick and a name. Nothing else. */
+  .station.rest .body,
+  .station.todo .body {
+    padding-bottom: 12px;
+  }
+  .name {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  .done .name {
+    color: var(--dim);
+  }
+  .todo .name {
+    color: var(--dim);
+  }
+  .sub {
+    font-family: "Chivo Mono", monospace;
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: 0.06em;
+    margin-top: 2px;
+  }
+
+  /* ---- the live station ---------------------------------------------------- */
+  .live .body {
+    background: var(--raised);
+    border-left: 2px solid var(--live);
+    margin-left: -2px;
+    padding: 12px 16px 16px;
+    border-radius: 0 3px 3px 0;
+  }
+  .live .name {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  /* set pips: how many done, how many left, no counting sentence */
+  .pips {
+    display: flex;
+    gap: 5px;
+    margin: 10px 0 12px;
+  }
+  .pip {
+    width: 100%;
+    height: 5px;
+    background: rgb(233 237 243 / 0.16);
+  }
+  .pip.on {
+    background: var(--live);
+  }
+
+  /* ---- the bar: the useful part ------------------------------------------- */
+  .barwrap {
+    margin: 2px 0 4px;
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 64px;
+    gap: 0;
+    position: relative;
+  }
+  .sleeve {
+    height: 7px;
+    background: var(--bar);
+    flex: 0 0 26px;
+    border-radius: 1px;
+  }
+  .plate {
+    width: 13px;
+    margin: 0 1px;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
+  }
+  .plate.p25 {
+    height: 62px;
+    background: var(--p25);
+  }
+  .plate.p20 {
+    height: 62px;
+    background: var(--p20);
+  }
+  .plate.p15 {
+    height: 54px;
+    background: var(--p15);
+  }
+  .plate.p10 {
+    height: 46px;
+    background: var(--p10);
+  }
+  .plate.p5 {
+    height: 36px;
+    background: var(--p5);
+  }
+  .plate.p2h {
+    height: 28px;
+    background: var(--p2h);
+    width: 9px;
+  }
+  .plate.p1h {
+    height: 22px;
+    background: var(--p1h);
+    width: 7px;
+  }
+  .collar {
+    width: 5px;
+    height: 16px;
+    background: #5a6068;
+    border-radius: 1px;
+    margin: 0 1px;
+  }
+
+  .readout {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+    font-family: "Chivo Mono", monospace;
+  }
+  .load {
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  .unit {
+    font-size: 13px;
+    color: var(--dim);
+  }
+  .perside {
+    text-align: center;
+    font-family: "Chivo Mono", monospace;
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: 0.08em;
+    margin-top: 3px;
+  }
+  .perside b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .target {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: "Chivo Mono", monospace;
+    font-size: 12px;
+    color: var(--dim);
+    letter-spacing: 0.08em;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+  }
+  .target b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ---- rest, as distance rather than a modal ------------------------------- */
+  .station.rest .node {
+    border-color: var(--line);
+    background: var(--ground);
+    width: 9px;
+    height: 9px;
+    top: 17px;
+  }
+  .rest .body {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .restline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .restbar {
+    flex: 1;
+    height: 2px;
+    background: rgb(233 237 243 / 0.16);
+    position: relative;
+    overflow: hidden;
+  }
+  .restbar i {
+    position: absolute;
+    inset: 0 62% 0 0;
+    background: var(--live);
+  }
+  .resttime {
+    font-family: "Chivo Mono", monospace;
+    font-size: 12px;
+    color: var(--live);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- action zone: bottom third, thumb country ---------------------------- */
+  .actions {
+    padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: var(--ground);
+    display: grid;
+    grid-template-columns: 64px 1fr 64px;
+    gap: 10px;
+    align-items: stretch;
+  }
+  button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    background: none;
+  }
+  .step {
+    background: var(--raised);
+    border: 1px solid var(--line);
+    font-family: "Chivo Mono", monospace;
+    font-size: 24px;
+    font-weight: 600;
+    border-radius: 3px;
+  }
+  .log {
+    background: var(--live);
+    color: #12100e;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    font-size: 15px;
+    text-transform: uppercase;
+    border-radius: 3px;
+    min-height: 60px;
+  }
+</style>
+
+<header>
+  <h1>Full Body · Squat Focus</h1>
+  <span class="elapsed">41:12</span>
+</header>
+
+<div class="track" id="track"></div>
+
+<div class="actions">
+  <button class="step">−</button>
+  <button class="log">Log set</button>
+  <button class="step">+</button>
+</div>
+
+<script type="module">
+  import { perSide, BAR_KG } from "./plates.js";
+
+  const plan = [
+    {
+      name: "Barbell Squat",
+      note: "warm-up",
+      load: 60,
+      reps: "8–15",
+      sets: 1,
+      done: 1,
+      state: "done",
+    },
+    {
+      name: "Barbell Squat",
+      note: "build",
+      load: 85,
+      reps: "6–8",
+      sets: 1,
+      done: 1,
+      state: "done",
+    },
+    { name: "REST", state: "rest", left: "1:14" },
+    {
+      name: "Barbell Squat",
+      note: "top set",
+      load: 112.5,
+      reps: "3–5",
+      sets: 3,
+      done: 1,
+      state: "live",
+    },
+    {
+      name: "Barbell Bench Press",
+      load: 85,
+      reps: "5",
+      sets: 4,
+      state: "todo",
+    },
+    {
+      name: "Romanian Deadlift",
+      load: 100,
+      reps: "8–10",
+      sets: 3,
+      state: "todo",
+      sup: "A",
+    },
+    {
+      name: "Face Pull",
+      load: 25,
+      reps: "12–15",
+      sets: 3,
+      state: "todo",
+      sup: "A",
+    },
+    { name: "Hanging Leg Raise", reps: "10–15", sets: 3, state: "todo" },
+  ];
+
+  const track = document.getElementById("track");
+
+  function barHTML(kg) {
+    const side = perSide(kg);
+    if (!side.length)
+      return `<div class="bar"><div class="sleeve"></div></div>`;
+    const left = side.map((p) => `<i class="plate ${p.cls}"></i>`).join("");
+    const right = [...side]
+      .reverse()
+      .map((p) => `<i class="plate ${p.cls}"></i>`)
+      .join("");
+    return `<div class="bar">
+      <div class="sleeve"></div>${left}<i class="collar"></i>
+      <div class="sleeve" style="flex-basis:34px"></div>
+      <i class="collar"></i>${right}<div class="sleeve"></div>
+    </div>`;
+  }
+  function sideText(kg) {
+    const s = perSide(kg);
+    if (!s.length) return `bar only`;
+    const counts = {};
+    for (const p of s) counts[p.kg] = (counts[p.kg] || 0) + 1;
+    return (
+      Object.entries(counts)
+        .sort((a, b) => b[0] - a[0])
+        .map(([kg, n]) => (n > 1 ? `<b>${n}×${kg}</b>` : `<b>${kg}</b>`))
+        .join(" + ") + " per side"
+    );
+  }
+
+  track.innerHTML = plan
+    .map((s) => {
+      if (s.state === "rest")
+        return `
+    <section class="station rest">
+      <div class="spine"><i class="node"></i></div>
+      <div class="body"><div class="restline">
+        <span class="sub" style="margin:0">REST</span>
+        <span class="restbar"><i></i></span>
+        <span class="resttime">${s.left}</span>
+      </div></div>
+    </section>`;
+
+      if (s.state === "live")
+        return `
+    <section class="station live">
+      <div class="spine"><i class="node"></i></div>
+      <div class="body">
+        <div class="name">${s.name}</div>
+        <div class="sub">${(s.note || "").toUpperCase()} · SET ${s.done + 1} OF ${s.sets}</div>
+        <div class="pips">${Array.from(
+          { length: s.sets },
+          (_, i) => `<i class="pip ${i < s.done ? "on" : ""}"></i>`,
+        ).join("")}</div>
+        <div class="barwrap">
+          ${barHTML(s.load)}
+          <div class="readout"><span class="load">${s.load}</span><span class="unit">KG</span></div>
+          <div class="perside">${sideText(s.load)}</div>
+        </div>
+        <div class="target"><span>TARGET</span><span><b>${s.reps}</b> REPS</span></div>
+      </div>
+    </section>`;
+
+      const meta = [
+        s.sup ? `${s.sup} ·` : "",
+        `${s.sets}×${s.reps}`,
+        s.load ? `@ ${s.load} kg` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return `
+    <section class="station ${s.state}">
+      <div class="spine"><i class="node"></i></div>
+      <div class="body">
+        <div class="name">${s.name}</div>
+        <div class="sub">${meta.toUpperCase()}</div>
+      </div>
+    </section>`;
+    })
+    .join("");
+</script>

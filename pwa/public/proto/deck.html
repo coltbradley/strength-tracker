@@ -1,0 +1,311 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1,viewport-fit=cover"
+/>
+<title>THE DECK</title>
+<!--
+  STRUCTURAL REDESIGN 2 — THE DECK
+  Seed: 9NoUfcFq4nGAL6OtJ3zGr7LB
+
+  The most aggressive cut available: there is NO LIST. One set fills the screen.
+  The rest of the workout exists as a 4px ribbon at the top and a single peeked
+  line at the bottom — enough to know what is coming, not enough to read.
+
+  Why this is useful rather than merely minimal:
+  - The screen is read at arm's length, on a bench, upside-down in a mirror,
+    with sweat on it. Everything here is legible across a room.
+  - The load is the largest object on the display because it is the only thing
+    you must not get wrong.
+  - Logging is a SWIPE across the whole card, not a tap on a target. A missed
+    tap mid-set costs a rep; a swipe cannot miss.
+  - No scrolling. Scrolling with one thumb while holding a bar is the thing
+    that makes people put the phone down and stop logging.
+-->
+<style>
+  @font-face {
+    font-family: Chivo;
+    src: url(/fonts/chivo-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Chivo Mono";
+    src: url(/fonts/chivo-mono-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  :root {
+    --ground: #f2efe7;
+    --ink: #16181c;
+    --dim: rgb(22 24 28 / 0.58);
+    --live: #0f5c46; /* deep green: reads at distance, AA on paper */
+    --p25: #c8202a;
+    --p20: #1b58c4;
+    --p15: #e5b60a;
+    --p10: #1f9d4e;
+    --p5: #2b2f36;
+    --p2h: #b4232c;
+    --p1h: #7d828b;
+    --bar: #6f757e;
+    color-scheme: light;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font:
+      400 16px Chivo,
+      system-ui,
+      sans-serif;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .mono {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+  }
+
+  /* progress ribbon: the entire workout, 4px tall, no words */
+  .ribbon {
+    display: flex;
+    gap: 2px;
+    padding: 10px 12px 0;
+  }
+  .ribbon i {
+    flex: 1;
+    height: 4px;
+    background: rgb(22 24 28 / 0.14);
+  }
+  .ribbon i.on {
+    background: var(--live);
+  }
+  .ribbon i.now {
+    background: var(--live);
+    box-shadow: 0 0 0 2px rgb(15 92 70 / 0.22);
+  }
+
+  .crumb {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 16px 0;
+    font-family: "Chivo Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    color: var(--dim);
+  }
+
+  /* the card is everything */
+  .card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 0 20px;
+    text-align: center;
+    position: relative;
+  }
+  .exercise {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+  }
+  .phase {
+    font-family: "Chivo Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    color: var(--live);
+    font-weight: 700;
+    margin-top: 8px;
+  }
+
+  .load {
+    font-family: "Chivo Mono", monospace;
+    font-size: 104px;
+    font-weight: 700;
+    letter-spacing: -0.05em;
+    line-height: 0.9;
+    margin: 14px 0 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .unit {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    letter-spacing: 0.3em;
+    color: var(--dim);
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 54px;
+    margin: 14px 0 6px;
+  }
+  .sleeve {
+    height: 6px;
+    background: var(--bar);
+    flex: 0 0 22px;
+  }
+  .plate {
+    width: 12px;
+    margin: 0 1px;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.28);
+  }
+  .p25 {
+    height: 52px;
+    background: var(--p25);
+  }
+  .p20 {
+    height: 52px;
+    background: var(--p20);
+  }
+  .p15 {
+    height: 44px;
+    background: var(--p15);
+  }
+  .p10 {
+    height: 38px;
+    background: var(--p10);
+  }
+  .p5 {
+    height: 30px;
+    background: var(--p5);
+  }
+  .p2h {
+    height: 24px;
+    background: var(--p2h);
+    width: 8px;
+  }
+  .p1h {
+    height: 18px;
+    background: var(--p1h);
+    width: 6px;
+  }
+  .collar {
+    width: 5px;
+    height: 14px;
+    background: #565b63;
+    margin: 0 1px;
+  }
+  .perside {
+    font-family: "Chivo Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+  }
+  .perside b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  .reps {
+    margin-top: 22px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    letter-spacing: 0.2em;
+    color: var(--dim);
+  }
+  .reps b {
+    font-size: 26px;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+
+  /* swipe-to-log: the target is the whole width */
+  .swipe {
+    margin: 0 12px calc(14px + env(safe-area-inset-bottom));
+    position: relative;
+    height: 76px;
+    background: var(--live);
+    color: #f2efe7;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .swipe span {
+    font-family: "Chivo Mono", monospace;
+    font-size: 14px;
+    letter-spacing: 0.28em;
+    font-weight: 700;
+  }
+  .thumb {
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    bottom: 6px;
+    width: 64px;
+    background: #f2efe7;
+    color: var(--live);
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    font-weight: 700;
+  }
+  .next {
+    padding: 0 16px 12px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: var(--dim);
+    text-align: center;
+  }
+</style>
+
+<div class="ribbon" id="ribbon"></div>
+<div class="crumb"><span>SET 2 / 3</span><span>41:12</span></div>
+
+<div class="card">
+  <div class="exercise">Barbell Squat</div>
+  <div class="phase">TOP SET</div>
+  <div class="load">112.5</div>
+  <div class="unit">KG</div>
+  <div class="bar" id="bar"></div>
+  <div class="perside" id="perside"></div>
+  <div class="reps">TARGET &nbsp;<b>3–5</b>&nbsp; REPS</div>
+</div>
+
+<div class="next">NEXT · BARBELL BENCH PRESS · 4×5 @ 85</div>
+<div class="swipe">
+  <div class="thumb">›</div>
+  <span>SWIPE TO LOG</span>
+</div>
+
+<script type="module">
+  import { perSide } from "./plates.js";
+  const KG = 112.5;
+  const side = perSide(KG);
+  document.getElementById("bar").innerHTML =
+    `<div class="sleeve"></div>${side.map((p) => `<i class="plate ${p.cls}"></i>`).join("")}<i class="collar"></i>` +
+    `<div class="sleeve" style="flex-basis:30px"></div>` +
+    `<i class="collar"></i>${[...side]
+      .reverse()
+      .map((p) => `<i class="plate ${p.cls}"></i>`)
+      .join("")}<div class="sleeve"></div>`;
+  const c = {};
+  side.forEach((p) => (c[p.kg] = (c[p.kg] || 0) + 1));
+  document.getElementById("perside").innerHTML =
+    Object.entries(c)
+      .sort((a, b) => b[0] - a[0])
+      .map(([kg, n]) => (n > 1 ? `<b>${n}×${kg}</b>` : `<b>${kg}</b>`))
+      .join(" + ") + " PER SIDE";
+  // 14 sets in the day; 5 done, this is the 6th
+  document.getElementById("ribbon").innerHTML = Array.from(
+    { length: 14 },
+    (_, i) => `<i class="${i < 5 ? "on" : i === 5 ? "now" : ""}"></i>`,
+  ).join("");
+</script>

@@ -1,0 +1,35 @@
+/* SEED WU3iyDn7u1vuLgxQju1LhHX9 — spiky ascenders/descenders, a waveform.
+   DIRECTION: laboratory oscilloscope. Phosphor on glass, scanlines, the set
+   log as instrument readout. Not a lifestyle app: a measuring device. */
+:root {
+  color-scheme: dark;
+  --paper: #05100b;
+  --paper-raised: #08170f;
+  --paper-input: #0b1f14;
+  --cream: #030906;
+  --ink-rgb: 168 255 196;
+  --burnt: #6bff9e;
+  --burnt-press: #4fe084;
+  --burnt-deep: #8dffb4;
+  --text-inverse: #030906;
+  --rule-hair-color: rgb(107 255 158 / 0.14);
+  --rule-color: rgb(107 255 158 / 0.3);
+  --rule-strong-color: rgb(107 255 158 / 0.5);
+  --control-border-color: rgb(107 255 158 / 0.62);
+  --radius: 0px;
+  --font-sans: "Chivo Mono", ui-monospace, monospace;
+}
+body {
+  background:
+    repeating-linear-gradient(0deg, rgb(0 0 0 / .34) 0 1px, transparent 1px 3px),
+    radial-gradient(120% 80% at 50% 0%, #0b2417 0%, #05100b 70%);
+}
+.today-heading, .field-label, .section-meta {
+  text-transform: uppercase; letter-spacing: .2em;
+  text-shadow: 0 0 6px rgb(107 255 158 / .5);
+}
+.btn-primary {
+  background: transparent; color: #6bff9e;
+  border: 1.5px solid #6bff9e; letter-spacing: .28em;
+  box-shadow: 0 0 12px rgb(107 255 158 / .28), inset 0 0 12px rgb(107 255 158 / .1);
+}

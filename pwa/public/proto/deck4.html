@@ -1,0 +1,389 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1,viewport-fit=cover"
+/>
+<title>THE BAR</title>
+<!--
+  ROUND 4 — THE BAR.
+
+  The critic's move, which is better than anything I proposed: stop drawing a
+  number NEXT TO a picture of plates. Make the plate diagram BE the weight
+  display. One object.
+
+  Why it is functional rather than decorative: from four feet away you read the
+  SILHOUETTE of the load before you read digits, and the silhouette is exactly
+  what you are about to verify against the actual bar in front of you. It also
+  collapses three elements — the number, the plate maths, and the visual check —
+  into one, which is the only kind of distinctiveness that survives a chalky
+  hand and a two-second glance.
+
+  The numeral sits ON the shaft; the shaft passes behind it. The per-side values
+  are printed under the plates they label, so the KEY IS THE DIAGRAM. Round 3
+  deleted the legend and kept the colour code, which was the worst call in it.
+
+  Textures are generated (fal.ai, FLUX) and SELF-HOSTED under /tex/ — 16 KB
+  total. The service worker caches nothing cross-origin, so a hotlinked asset
+  would silently break the offline promise. Paper grain replaces a CSS gradient;
+  the knurl is the real surface of the one object a lifter actually touches.
+-->
+<style>
+  @font-face {
+    font-family: Chivo;
+    src: url(/fonts/chivo-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Chivo Mono";
+    src: url(/fonts/chivo-mono-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  :root {
+    --ground: #f2efe7;
+    --ink: #16181c;
+    --dim: #6b6b60; /* (F) darkened to clear AA */
+    --act: #0f5c46;
+    --p25: #c8202a;
+    --p20: #1b58c4;
+    --p15: #e5b60a;
+    --p10: #1f9d4e;
+    --p5: #2b2f36;
+    --p2h: #b4232c;
+    --p1h: #7d828b;
+    --gut: 24px;
+    color-scheme: light;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font:
+      400 16px Chivo,
+      system-ui,
+      sans-serif;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+  /* real paper grain, not a CSS gradient pretending to be one */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background: url(/tex/paper.webp) center/cover;
+    mix-blend-mode: multiply;
+    opacity: 0.55;
+  }
+  body > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .head {
+    padding: 24px var(--gut) 0;
+  }
+  .ex {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+  }
+  .pos {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim);
+    margin-top: 7px;
+  }
+
+  /* (A) ONE deliberate gap, isolating the weight. Nothing else gets one. */
+  .gap {
+    height: 150px;
+  }
+
+  /* ---- THE BAR: number, plate maths and visual check as a single object ---- */
+  .rig {
+    padding: 0 var(--gut);
+  }
+  .bar {
+    position: relative;
+    height: 132px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  /* the shaft runs the full gutter-to-gutter width, behind everything */
+  .shaft {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 13px;
+    transform: translateY(-50%);
+    background: url(/tex/knurl.webp) center/auto 100% repeat-x;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
+  }
+  .stack {
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+  .plate {
+    width: 20px;
+    margin: 0 2px;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.32);
+  }
+  .p25 {
+    height: 126px;
+    background: var(--p25);
+  }
+  .p20 {
+    height: 126px;
+    background: var(--p20);
+  }
+  .p15 {
+    height: 104px;
+    background: var(--p15);
+  }
+  .p10 {
+    height: 86px;
+    background: var(--p10);
+  }
+  .p5 {
+    height: 66px;
+    background: var(--p5);
+  }
+  .p2h {
+    height: 52px;
+    background: var(--p2h);
+    width: 13px;
+  }
+  .p1h {
+    height: 38px;
+    background: var(--p1h);
+    width: 10px;
+  }
+  .collar {
+    width: 8px;
+    height: 26px;
+    background: #565b63;
+    border-radius: 1px;
+    margin: 0 2px;
+  }
+
+  /* the numeral sits ON the shaft; the cream box is what makes the shaft pass
+   BEHIND it rather than through it */
+  .num {
+    position: relative;
+    background: var(--ground);
+    padding: 0 10px;
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    font-size: 80px;
+    letter-spacing: -0.055em;
+    line-height: 0.9;
+    font-variant-numeric: tabular-nums;
+  }
+  .num u {
+    text-decoration: none;
+    font-size: 17px;
+    font-weight: 400;
+    color: var(--dim);
+    letter-spacing: 0.18em;
+    margin-left: 6px;
+    vertical-align: 0.42em;
+  }
+
+  /* (C) the key IS the diagram: each value printed under the plate it labels */
+  .key {
+    display: flex;
+    gap: 0;
+    padding-top: 9px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  .key i {
+    display: block;
+    text-align: center;
+    font-style: normal;
+  }
+  .key .tail {
+    margin-left: 8px;
+  }
+
+  /* (E) out-ranks the "next" line, directly beneath the weight */
+  .last {
+    font-family: "Chivo Mono", monospace;
+    font-size: 17px;
+    color: var(--dim);
+    margin-top: 24px;
+  }
+  .last b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  /* (G) 8px of air, baseline aligned, not sunk */
+  .reps {
+    margin-top: 22px;
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    font-size: 52px;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .reps span {
+    font-size: 17px;
+    font-weight: 400;
+    color: var(--dim);
+    margin-left: 8px;
+  }
+
+  .grow {
+    flex: 1;
+    min-height: 12px;
+  }
+
+  /* (I) joins the timer block instead of floating under a void */
+  .next {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim);
+    padding: 0 var(--gut) 12px;
+  }
+  .rest {
+    padding: 0 var(--gut) 8px;
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+  }
+  .rest .t {
+    font-family: "Chivo Mono", monospace;
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .rest .lab {
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  /* (H) the filled portion is thicker, so the track cannot read as a divider */
+  .track {
+    margin: 0 var(--gut) 14px;
+    height: 3px;
+    background: rgb(22 24 28 / 0.13);
+    position: relative;
+  }
+  .track i {
+    position: absolute;
+    left: 0;
+    top: -1px;
+    bottom: -1px;
+    right: 38%;
+    background: var(--ink);
+  }
+
+  /* (D) ± on OPPOSITE sides of the action: a wrong tap is physically distinct */
+  .actions {
+    display: flex;
+    gap: 9px;
+    padding: 0 var(--gut) calc(16px + env(safe-area-inset-bottom));
+  }
+  button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    background: none;
+    border-radius: 3px;
+  }
+  .step {
+    width: 74px;
+    height: 114px;
+    border: 1.5px solid rgb(22 24 28 / 0.5);
+    font-family: "Chivo Mono", monospace;
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .log {
+    flex: 1;
+    height: 114px;
+    background: var(--act);
+    color: #f2efe7;
+    font-family: "Chivo Mono", monospace;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+  }
+</style>
+
+<div class="head">
+  <div class="ex">Barbell Squat</div>
+  <div class="pos">set 2 of 3</div>
+</div>
+
+<div class="gap"></div>
+
+<div class="rig">
+  <div class="bar">
+    <div class="shaft"></div>
+    <div class="stack" id="left"></div>
+    <div class="num">112.5<u>KG</u></div>
+    <div class="stack" id="right"></div>
+  </div>
+  <div class="key" id="key"></div>
+  <div class="last">last time <b>107.5</b> kg × 5, 5, 4</div>
+  <div class="reps">3–5<span>reps</span></div>
+</div>
+
+<div class="grow"></div>
+
+<div class="next">next · Barbell Bench Press · 4×5 @ 85</div>
+<div class="rest"><span class="t">1:14</span><span class="lab">rest</span></div>
+<div class="track"><i></i></div>
+<div class="actions">
+  <button class="step">−2.5</button>
+  <button class="log">LOG SET</button>
+  <button class="step">+2.5</button>
+</div>
+
+<script type="module">
+  import { perSide } from "./plates.js";
+  const side = perSide(112.5); // [25, 20, 1.25] per side
+  const L = document.getElementById("left"),
+    R = document.getElementById("right");
+  L.innerHTML =
+    side.map((p) => `<i class="plate ${p.cls}"></i>`).join("") +
+    `<i class="collar"></i>`;
+  R.innerHTML =
+    `<i class="collar"></i>` +
+    [...side]
+      .reverse()
+      .map((p) => `<i class="plate ${p.cls}"></i>`)
+      .join("");
+  // the key sits under the LEFT stack, each value beneath the plate it names, so
+  // the colour code explains itself instead of needing a legend elsewhere
+  document.getElementById("key").innerHTML =
+    side
+      .map((p) => {
+        const w = p.kg === 2.5 ? 13 : p.kg === 1.25 ? 10 : 20;
+        return `<i style="width:${w + 4}px">${p.kg}</i>`;
+      })
+      .join("") + `<i class="tail">per side</i>`;
+</script>

@@ -1,0 +1,34 @@
+/* SEED ftX3MRdWHjLbp0Y8dIXLu9eb — drafting-ledger cadence.
+   DIRECTION: cyanotype engineering drawing. The body as a mechanism under
+   revision; loads as dimensions, the week as a parts schedule. */
+:root {
+  color-scheme: dark;
+  --paper: #0d2b4e;
+  --paper-raised: #11365f;
+  --paper-input: #16406e;
+  --cream: #0a2340;
+  --ink-rgb: 226 238 252;
+  --burnt: #ffd9a0;
+  --burnt-press: #eec489;
+  --burnt-deep: #ffe3b8;
+  --text-inverse: #0a2340;
+  --rule-hair-color: rgb(226 238 252 / 0.16);
+  --rule-color: rgb(226 238 252 / 0.32);
+  --rule-strong-color: rgb(226 238 252 / 0.5);
+  --control-border-color: rgb(226 238 252 / 0.6);
+  --radius: 0px;
+  --font-sans: "Chivo Mono", ui-monospace, monospace;
+}
+body {
+  background:
+    linear-gradient(rgb(226 238 252 / .07) 1px, transparent 1px) 0 0/100% 24px,
+    linear-gradient(90deg, rgb(226 238 252 / .07) 1px, transparent 1px) 0 0/24px 100%,
+    var(--paper);
+}
+.today-heading { letter-spacing: .1em; text-transform: uppercase; font-weight: 700; }
+.field-label { letter-spacing: .2em; }
+.rule-section { border-top-style: dashed; }
+.btn-primary {
+  background: transparent; color: #ffd9a0;
+  border: 1.5px dashed #ffd9a0; letter-spacing: .24em;
+}
