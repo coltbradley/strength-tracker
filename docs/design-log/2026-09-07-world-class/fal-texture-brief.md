@@ -123,3 +123,61 @@ dollar.
 
 `pwa/public/tex/rubber.webp` — 11 KB at 256px, measured seamless, tiled at
 128px in the cast-iron prototype. Whole texture directory is 28 KB.
+
+---
+
+## Round 2: the other three textures, and what measurement said
+
+Regenerated paper, cast iron and knurl on `z-image/turbo/tiling` with the
+prompt structure above. Measured, not eyeballed:
+
+| texture | seam h | seam v | light spread | contrast | verdict |
+|---|---|---|---|---|---|
+| paper | 1.03 | 0.99 | 1.3 | 2.3 | seamless |
+| cast iron | 0.94 | 1.01 | 4.3 | 11.6 | seamless |
+| knurl | 1.00 | **5.46** | **68.7** | 32.8 | horizontal only |
+
+The knurl's vertical seam of 5.46 is expected — `tiling_mode: "horizontal"` was
+chosen deliberately, because a bar shaft repeats along one axis and the free
+axis lets the model vary. Its 68.7-level lighting spread is the specular glare
+the brief warned metal would add; cropping a band from the vertical centre cut
+it to 16.8.
+
+**The coarse-and-high-contrast rule works.** The regenerated knurl survives
+downscaling where the first attempt became noise:
+
+| height | contrast |
+|---|---|
+| 24px | 18.9 |
+| 16px | 17.2 |
+| 13px | 16.1 |
+| 9px | 14.0 |
+
+The original knurl was "fine precision knurling" at 1024px squeezed to 8px and
+aliased into grey mush. This one is "large widely spaced diamonds, deep grooves"
+and still reads at 9px. Same model family, same pipeline; the difference is
+entirely the noun and the coarseness.
+
+Whole texture set: **24 KB** for four textures, down from 28 KB for three, at
+much higher quality.
+
+## What the design critic then said about them, measured independently
+
+- **Ground (rubber): "dither, not rubber."** Amplitude measured stdev 1.58 —
+  about one and a half levels of 8-bit noise. Imperceptible at arm's length. Its
+  one real function is anti-banding on a flat dark field, which is worth having,
+  but the claim that the largest surface carries the room's material does not
+  survive measurement.
+- **Knurl on the shaft: earns its place.** stdev 36, range 21-178 on an 11pt
+  shaft. "The single element that separates a loaded barbell from a schematic
+  line." One open risk: an 11px source period on an 11pt shaft is ~22 device px
+  at 2x and could alias — verify on an SE.
+- **Cast iron on collars and dumbbell heads: "the claim doesn't cash."** At 6pt
+  and 11pt wide, high-variance grey reads as mottling or a compression
+  artifact. "The texture doing the least work per byte."
+- **Untextured plates: the best decision in the material system.** Measured
+  stdev 1.02, genuinely flat, because the colour is carrying information.
+
+The general lesson, which cost four generations to learn: **a texture has to be
+measured at the size it ships, in the role it plays.** Seamlessness is
+necessary and nowhere near sufficient.

@@ -91,7 +91,7 @@
     inset: 0;
     pointer-events: none;
     z-index: 0;
-    background: url(/tex/paper.webp) center/cover;
+    background: url(/tex/paper.webp) 0 0/150px repeat;
     mix-blend-mode: multiply;
     opacity: 0.9;
   }
@@ -105,7 +105,7 @@
   }
 
   .head {
-    padding: 24px var(--gut) 0;
+    padding: calc(24px + env(safe-area-inset-top, 34px)) var(--gut) 0;
   }
   .ex {
     font-size: 30px;
@@ -125,7 +125,7 @@
   }
   /* the constant across every state: hero box top y=296, glyph band 404-460 */
   .lead {
-    height: 112px;
+    height: 64px;
     flex: none;
   }
   .band {
@@ -316,13 +316,13 @@
     align-items: center;
   }
   .dbend {
-    width: 13px;
-    height: 38px;
+    width: 16px;
+    height: 28px;
     background: #4b5058;
     border-radius: 2px;
   }
   .dbbar {
-    width: 26px;
+    width: 32px;
     height: 7px;
     background: #8f949c;
   }
@@ -344,12 +344,12 @@
   .slab {
     flex: 1;
     height: 42px;
-    background: rgb(22 24 28 / 0.13);
+    background: #6a6862;
     border-radius: 2px;
     position: relative;
   }
   .slab.above {
-    background: rgb(22 24 28 / 0.3);
+    background: #b0ada3;
   }
   .slab.pin {
     background: var(--ink);
@@ -420,7 +420,7 @@
   .track {
     margin: 0 var(--gut) 14px;
     height: 3px;
-    background: rgb(22 24 28 / 0.13);
+    background: #6a6862;
     position: relative;
   }
   .track i {
@@ -444,7 +444,7 @@
   .actions {
     display: flex;
     gap: 9px;
-    padding: 0 var(--gut) calc(16px + env(safe-area-inset-bottom));
+    padding: 0 var(--gut) calc(16px + env(safe-area-inset-bottom, 34px));
   }
   button {
     font: inherit;
