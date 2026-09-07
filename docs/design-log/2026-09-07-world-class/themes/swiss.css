@@ -1,0 +1,38 @@
+/* SEED 6CH0BXvfoC37ZuvHSMnmFa3I — opens numeric, 'CH0' reads chemical.
+   DIRECTION: Swiss pharmaceutical packaging. Ruthless grid, enormous air,
+   one accent used once. Load as DOSAGE. The discipline is the design. */
+:root {
+  --paper: #ffffff;
+  --paper-raised: #ffffff;
+  --paper-input: #fafafa;
+  --cream: #ffffff;
+  --ink-rgb: 17 17 17;
+  --burnt: #e2231a;
+  --burnt-press: #c01c15;
+  --burnt-deep: #b81a13;
+  --text-inverse: #ffffff;
+  --rule-hair-color: rgb(17 17 17 / 0.10);
+  --rule-color: rgb(17 17 17 / 0.16);
+  --rule-strong-color: rgb(17 17 17 / 1);
+  --rule-heavy-color: rgb(17 17 17 / 1);
+  --control-border-color: rgb(17 17 17 / 0.55);
+  --radius: 0px;
+  --bw-hair: 1px;
+  /* air is the whole idea */
+  --screen-gap: 34px;
+  --s-9: 34px;
+  --s-10: 64px;
+}
+.today-heading {
+  font-weight: 700; letter-spacing: -.035em; font-size: 34px; line-height: 1.02;
+}
+.field-label, .section-meta {
+  font-family: var(--font-sans); font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase; font-size: 10px;
+}
+.rule-section { border-top-width: 2px; border-top-color: #111; padding-top: 18px; }
+.btn-primary {
+  background: #111; color: #fff; border: 0; border-radius: 0;
+  font-weight: 700; letter-spacing: .02em; text-transform: none;
+}
+.today-context { color: #e2231a; font-weight: 700; }

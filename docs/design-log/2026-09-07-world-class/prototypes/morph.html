@@ -1,0 +1,602 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1,viewport-fit=cover"
+/>
+<title>MORPH</title>
+<!--
+  NEW APPROACH — the hero is defined by the EQUIPMENT, not by a template.
+  ?state=barbell|dumbbell|cable|bodyweight|carry|activation
+
+  The previous five rounds optimised one screen: a barbell top set. Half of that
+  same session is not a barbell. Face Pull is a cable, the landmine press is
+  one-handed, Hanging Leg Raise carries no load at all. A plate diagram is the
+  wrong hero for three of the six things in this workout, and "big number + bar"
+  had no answer for any of them.
+
+  Every mainstream logger shows ONE field shape — weight × reps — for
+  everything, and makes the lifter do the translation. This schema already knows
+  better: `equipment`, `tracking` (reps | done | time) and `load_entry`
+  (total | per_side) are all columns. The UI was throwing that away.
+
+  So: ONE RULE, applied six ways —
+
+      the hero is whatever is HARD TO GET RIGHT for this movement.
+
+    barbell     plate maths          "112.5" is arithmetic you do chalked up
+    dumbbell    PER HAND            the DB stores 60; the rack is labelled 30
+    cable       the pin position    a stack has no plate maths and its own steps
+    bodyweight  reps, and no load   a load field showing "—" is a lie with a box
+    carry/hold  a clock             reps are meaningless; the DB stores reps 0
+    activation  one tick            a number here invents precision nobody has
+
+  The dumbbell case is not hypothetical in this repo: load_kg is ALWAYS the
+  total system load, so a pair of 30s is stored as 60 — and a real user's whole
+  plan was once stored at half because a screen forgot which convention it was
+  in. The per-hand reading is the bug fix, made visible.
+-->
+<style>
+  @font-face {
+    font-family: Chivo;
+    src: url(/fonts/chivo-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Chivo Mono";
+    src: url(/fonts/chivo-mono-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  :root {
+    --ground: #efeada;
+    --ink: #16181c;
+    --dim: #63635a; /* dim measured 4.75:1 */
+    --act: #0f5c46;
+    --p25: #b2404a;
+    --p20: #4a6fb8;
+    --p15: #c9a227;
+    --p10: #3f8a5c;
+    --p5: #3a3f47;
+    --p2h: #9c4750;
+    --p1h: #8a8f97;
+    --gut: 24px;
+    --tight: 10px;
+    --loose: 40px;
+    color-scheme: light;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font:
+      400 16px Chivo,
+      system-ui,
+      sans-serif;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background: url(/tex/paper.webp) 0 0/150px repeat;
+    mix-blend-mode: multiply;
+    opacity: 0.9;
+  }
+  body > * {
+    position: relative;
+    z-index: 1;
+    flex: none; /* only .grow may absorb slack; spacers are promises */
+  }
+  .grow {
+    flex: 1 1 auto;
+  }
+
+  .head {
+    padding: calc(24px + env(safe-area-inset-top, 34px)) var(--gut) 0;
+  }
+  .ex {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+  }
+  .pos {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim);
+    margin-top: 7px;
+  }
+  .grow {
+    flex: 1;
+    min-height: 0;
+  }
+  /* the constant across every state: hero box top y=296, glyph band 404-460 */
+  .lead {
+    height: 64px;
+    flex: none;
+  }
+  .band {
+    height: 56px;
+    margin-top: 20px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* today's sets — what you did four minutes ago, which the old design lost
+     entirely while still showing what you did last week */
+  .today {
+    margin-top: 20px;
+    height: 46px;
+    flex: none;
+    padding: 0 var(--gut);
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .today b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+  .rig {
+    padding: 0 var(--gut) var(--loose);
+  }
+
+  /* THE HERO SLOT — one meaning in every state: the primary value you are
+   about to COMMIT. Round 2 let it mean three things (editable value, editable
+   load with reps invisible, uneditable prescription), which for a system costs
+   more than the original uniform error did. */
+  .hero {
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    letter-spacing: -0.06em;
+    line-height: 0.86;
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: baseline;
+    font-size: 104px;
+    height: 74px;
+  }
+  .hero small {
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--dim);
+    letter-spacing: 0.18em;
+    margin-left: 10px;
+  }
+  .dot {
+    letter-spacing: -0.1em;
+    margin: 0 -0.02em 0 -0.06em;
+  }
+
+  /* An editable value is UNDERLINED, and the ± row edits whichever is focused.
+   One control serving two fields, because a set is two numbers and a screen
+   that can only commit one of them records less than the app it replaces.
+   Tapping a field types directly: stepping 112.5 to 60 is 21 taps otherwise. */
+  /* (5) TWO signals, not one. A hairline alone could not carry "this number
+     cannot be changed": the editable 13 REPS and the fixed 10 REPS were
+     pixel-identical typography separated only by a rule 84px below. Editable
+     fields now also carry a tinted bed. */
+  /* TWO signals, not one, and neither is a box. A hairline alone could not
+     carry "this number cannot be changed": bodyweight's editable 13 REPS and
+     activation's fixed 10 REPS were pixel-identical typography separated only
+     by a rule 84px below. So: COLOUR says whether a value is yours to change
+     (ink = editable, dim = fixed), and the underline says which one the ± row
+     is currently acting on. A tinted bed was tried and dropped — at 104px it
+     read as a form input and fought the numeral. */
+  .f {
+    border-bottom: 2px solid #78725f;
+    padding-bottom: 3px;
+    display: inline-block;
+  }
+  /* only the small field needs a widened target; the hero is already 200px */
+  .second .f {
+    min-width: 88px;
+  }
+  .f.on {
+    border-bottom: 2px solid var(--ink);
+  }
+  .fixed {
+    color: var(--ink);
+  }
+
+  /* the committed REP count, at the rank a committed value deserves, in every
+   state that has one — not only the bodyweight screen where it was patched in */
+  .second {
+    margin-top: var(--loose);
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    font-size: 40px;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    display: flex;
+    align-items: baseline;
+  }
+  .second .t {
+    font-size: 15px;
+    font-weight: 400;
+    color: #55524a;
+    margin-left: 12px;
+    letter-spacing: 0.01em;
+  }
+
+  /* ---- barbell: plate maths ------------------------------------------------ */
+  .bar {
+    position: relative;
+    width: 296px;
+    max-width: 100%;
+    height: 44px;
+    margin-top: var(--tight);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .shaft {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 7px;
+    transform: translateY(-50%);
+    background: linear-gradient(#8f949c, #5d626a 55%, #7d828a);
+    border-radius: 1px;
+  }
+  .stack {
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+  .plate {
+    width: 15px;
+    margin: 0 1px;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
+  }
+  .p25 {
+    height: 44px;
+    background: var(--p25);
+  }
+  .p20 {
+    height: 44px;
+    background: var(--p20);
+  }
+  .p15 {
+    height: 37px;
+    background: var(--p15);
+  }
+  .p10 {
+    height: 31px;
+    background: var(--p10);
+  }
+  .p5 {
+    height: 25px;
+    background: var(--p5);
+  }
+  .p2h {
+    height: 20px;
+    background: var(--p2h);
+    width: 10px;
+  }
+  .p1h {
+    height: 15px;
+    background: var(--p1h);
+    width: 8px;
+  }
+  .collar {
+    width: 6px;
+    height: 18px;
+    background: #565b63;
+    border-radius: 1px;
+  }
+
+  /* ---- dumbbell: two objects, because you pick up two ---------------------- */
+  .dbs {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    margin-top: 14px;
+  }
+  .db {
+    display: flex;
+    align-items: center;
+  }
+  .dbend {
+    width: 16px;
+    height: 28px;
+    background: #4b5058;
+    border-radius: 2px;
+  }
+  .dbbar {
+    width: 32px;
+    height: 7px;
+    background: #8f949c;
+  }
+  .dbnote {
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+    margin-top: 10px;
+  }
+
+  /* ---- cable: the pin in the stack ---------------------------------------- */
+  .rack {
+    display: flex;
+    gap: 3px;
+    width: 244px;
+    height: 42px;
+    position: relative; /* the caret hangs below without adding box height */
+  }
+  .slab {
+    flex: 1;
+    height: 42px;
+    background: #6a6862;
+    border-radius: 2px;
+    position: relative;
+  }
+  .slab.above {
+    background: #b0ada3;
+  }
+  .slab.pin {
+    background: var(--ink);
+  }
+  .slab.pin::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -7px;
+    width: 3px;
+    height: 7px;
+    transform: translateX(-50%);
+    background: var(--ink);
+  }
+
+  /* ---- bodyweight: no load slot at all ------------------------------------ */
+  /* ---- carry: a clock is the hero ----------------------------------------- */
+  /* ---- activation: one tick ----------------------------------------------- */
+  .tick {
+    width: 96px;
+    height: 96px;
+    border: 3px solid var(--ink);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 52px;
+    margin-top: 6px;
+  }
+
+  .sub {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink); /* the instruction for THIS set */
+    padding-top: 10px;
+  }
+  .last {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim); /* history, deliberately quieter than the instruction */
+    margin-top: var(--loose);
+  }
+  .last b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  .rest {
+    padding: 0 var(--gut) 8px;
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+  }
+  .rest .t {
+    font-family: "Chivo Mono", monospace;
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .rest .lab {
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  .track {
+    margin: 0 var(--gut) 14px;
+    height: 3px;
+    background: #6a6862;
+    position: relative;
+  }
+  .track i {
+    position: absolute;
+    left: 0;
+    top: -1px;
+    bottom: -1px;
+    right: 38%;
+    background: var(--ink);
+  }
+
+  .hint {
+    height: 22px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 12px;
+    color: #55524a;
+    text-align: center;
+    padding: 0 var(--gut);
+    margin-bottom: 10px;
+  }
+  .actions {
+    display: flex;
+    gap: 9px;
+    padding: 0 var(--gut) calc(16px + env(safe-area-inset-bottom, 34px));
+  }
+  button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    background: none;
+    border-radius: 3px;
+  }
+  .step {
+    width: 76px;
+    height: 114px;
+    background: #e2ddca;
+    border: 2px solid #1a1a1a;
+    font-family: "Chivo Mono", monospace;
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+  .step b {
+    display: block;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 400;
+    color: #55524a;
+    letter-spacing: 0.06em;
+  }
+  .log {
+    flex: 1;
+    height: 114px;
+    background: var(--act);
+    color: #efeada;
+    font-family: "Chivo Mono", monospace;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+  }
+</style>
+
+<div class="head">
+  <div class="ex" id="ex"></div>
+  <div class="pos" id="pos"></div>
+</div>
+<div class="today" id="today"></div>
+<div class="lead"></div>
+<div class="rig" id="rig"></div>
+<div class="grow"></div>
+<div class="rest" id="restrow">
+  <span class="t">1:14</span><span class="lab">rest</span>
+</div>
+<div class="track" id="trackrow"><i></i></div>
+<div class="actions" id="actions"></div>
+
+<script type="module">
+  import { perSide } from "./plates.js";
+
+  const bar = (kg) => {
+    const side = perSide(kg);
+    const L = `<i class="collar"></i>` + [...side].reverse().map((p) => `<i class="plate ${p.cls}"></i>`).join("");
+    const R = side.map((p) => `<i class="plate ${p.cls}"></i>`).join("") + `<i class="collar"></i>`;
+    return {
+      band: `<div class="bar"><div class="shaft"></div><div class="stack">${L}</div><div class="stack">${R}</div></div>`,
+      sub: `${side.map((p) => p.kg).join(" + ")} per side`,
+    };
+  };
+  const dbs = `<div class="dbs">
+      <div class="db"><i class="dbend"></i><i class="dbbar"></i><i class="dbend"></i></div>
+      <div class="db"><i class="dbend"></i><i class="dbbar"></i><i class="dbend"></i></div>
+    </div>`;
+
+  // Keyed on (tracking mode x load source x what you COMMIT). The third axis is
+  // the one that was missing: "how many reps did you actually do" is orthogonal
+  // to the other two, which is why it fell out of four states.
+  const S = {
+    barbell: {
+      ex: "Barbell Squat", pos: "set 2 of 3", today: ["1 · <b>112.5</b> × 5"],
+      hero: `112<span class="dot">.</span>5`, unit: "KG", ...bar(112.5),
+      last: `last time <b>107.5</b> kg × 5, 5, 4`,
+      reps: "5", target: "target 3–5", step: ["−2.5", "+2.5"], stepsub: "kg",
+    },
+    dumbbell: {
+      ex: "Dumbbell Bench Press", pos: "set 1 of 4", today: [],
+      hero: `30`, unit: "KG EACH", band: dbs, sub: "two — 60 kg total",
+      last: `last time <b>27.5</b> each × 10, 10, 9`,
+      reps: "10", target: "target 8–10", step: ["−2.5", "+2.5"], stepsub: "each",
+    },
+    cable: {
+      ex: "Face Pull", pos: "set 3 of 3 · superset A",
+      today: ["1 · <b>25</b> × 15", "2 · <b>25</b> × 15"],
+      hero: `25`, unit: "KG", band: `<div class="rack" id="rack"></div>`,
+      sub: "pin at 5 of 12", last: `last time <b>25</b> kg × 15, 15, 12`,
+      reps: "15", target: "target 12–15", step: ["−5", "+5"], stepsub: "kg",
+      hint: "±5 kg · one plate per side",
+    },
+    bodyweight: {
+      ex: "Hanging Leg Raise", pos: "set 2 of 3", today: ["1 · <b>15</b>"],
+      hero: `13`, unit: "REPS", band: "", sub: "no load — bodyweight",
+      last: `last time <b>15, 13, 11</b>`,
+      reps: null, target: "target 10–15", step: ["−1", "+1"], stepsub: "rep",
+    },
+    carry: {
+      ex: "Farmer's Carry", pos: "set 1 of 3", today: [],
+      hero: `0<span class="dot">:</span>45`, unit: "HOLD", band: dbs,
+      sub: "32 kg each — 64 kg carried",
+      last: `last time <b>0:40</b> at 32 kg each`,
+      reps: null, target: "target 0:40–0:60", step: ["−5", "+5"], stepsub: "sec",
+    },
+    activation: {
+      ex: "Glute Bridge", pos: "set 1 of 2 · activation", today: [],
+      // commits a tick, not a number, so its hero is DIM and un-underlined
+      hero: `10`, unit: "REPS", noEdit: true,
+      band: "", sub: "no load — tap when done",
+      last: `last time <b>done</b> · both rounds`,
+      reps: null, target: "", step: null,
+    },
+  };
+
+  const key = new URLSearchParams(location.search).get("state") || "barbell";
+  const s = S[key];
+  document.getElementById("ex").textContent = s.ex;
+  document.getElementById("pos").textContent = s.pos;
+  document.getElementById("today").innerHTML = s.today.length
+    ? s.today.map((r) => `<div>${r}</div>`).join("")
+    : `<div style="color:#63635a">first set</div>`;
+
+  document.getElementById("rig").innerHTML =
+    `<div class="hero"><span class="${s.noEdit ? "fixed" : "f on"}">${s.hero}</span><small>${s.unit}</small></div>` +
+    `<div class="band">${s.band}</div>` +
+    (s.sub ? `<div class="sub">${s.sub}</div>` : "") +
+    (s.last ? `<div class="last">${s.last}</div>` : "") +
+    (s.reps
+      ? `<div class="second"><span class="f">${s.reps}</span><span class="t">reps · ${s.target}</span></div>`
+      : `<div class="second"><span class="t" style="margin:0">${s.target || ""}</span></div>`);
+
+  if (key === "cable") {
+    document.getElementById("rack").innerHTML = Array.from({ length: 12 }, (_, i) => {
+      const c = i < 4 ? "above" : i === 4 ? "pin" : "";
+      return `<i class="slab ${c}"></i>`;
+    }).join("");
+  }
+  // activation keeps the shared rest row: it was the only state without one,
+  // and that absence was also what left it holding a 249px void.
+  if (key === "activation") {
+    document.querySelector("#restrow .lab").textContent = "until next";
+  }
+  // the hint row is reserved in EVERY state, empty where there is nothing to
+  // say, so the column above it cannot shift between exercises
+  const h = document.createElement("div");
+  h.className = "hint";
+  h.textContent = s.hint || "";
+  document.getElementById("actions").before(h);
+  document.getElementById("actions").innerHTML =
+    (s.step ? `<button class="step">${s.step[0]}<b>${s.stepsub}</b></button>` : "") +
+    `<button class="log">${key === "activation" ? "✓&nbsp;&nbsp;DONE" : "LOG SET"}</button>` +
+    (s.step ? `<button class="step">${s.step[1]}<b>${s.stepsub}</b></button>` : "");
+</script>

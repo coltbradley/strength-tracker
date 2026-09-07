@@ -1,0 +1,373 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1,viewport-fit=cover"
+/>
+<title>THE BAR v2</title>
+<!--
+  ROUND 5 — the number is the hero again.
+
+  Round 4 followed the critic's "make the plate diagram BE the weight display"
+  too literally and let 126px plates out-shout an 80px numeral. That inverts the
+  point of the feature: reading and computing plates is the PROBLEM the plate
+  calculator exists to solve. The number is the fact. The plates are the
+  instruction for executing it. Hierarchy must say so.
+
+  So the two stay ONE object — that is the distinctive, verifiable idea — but
+  the numeral dominates and the bar is subordinate to it: same left axis, same
+  width, locked 10px beneath, at half the visual weight.
+
+  SPACING RHYTHM (a real finding from the design hook, fixed rather than
+  waived): 10px inside a group, 40px between groups. Weight+bar+key is one
+  group. "last time" is its own. Reps is its own. Nothing is separated by the
+  same amount as everything else, so the gaps now carry grouping information.
+-->
+<style>
+  @font-face {
+    font-family: Chivo;
+    src: url(/fonts/chivo-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Chivo Mono";
+    src: url(/fonts/chivo-mono-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  :root {
+    --ground: #f2efe7;
+    --ink: #16181c;
+    --dim: #63635a;
+    --act: #0f5c46;
+    --p25: #b2404a;
+    --p20: #4a6fb8;
+    --p15: #e5b60a;
+    --p10: #1f9d4e;
+    --p5: #2b2f36;
+    --p2h: #b4232c;
+    --p1h: #7d828b;
+    --gut: 24px;
+    --tight: 10px;
+    --loose: 40px; /* the only two vertical values */
+    color-scheme: light;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font:
+      400 16px Chivo,
+      system-ui,
+      sans-serif;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background: url(/tex/paper.webp) center/cover;
+    mix-blend-mode: multiply;
+    opacity: 0.9;
+  }
+  body > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .head {
+    padding: 24px var(--gut) 0;
+  }
+  .ex {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+  }
+  .pos {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim);
+    margin-top: 7px;
+  }
+
+  .rig {
+    padding: 0 var(--gut);
+    padding-bottom: var(--loose);
+  }
+
+  /* THE FACT. Nothing on this screen competes with it. */
+  .num .dot {
+    letter-spacing: -0.1em;
+    margin: 0 -0.02em 0 -0.06em;
+  }
+  .num {
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    font-size: 104px;
+    letter-spacing: -0.06em;
+    line-height: 0.86;
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: baseline;
+    margin-left: -7px;
+  }
+  .num u {
+    text-decoration: none;
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--dim);
+    letter-spacing: 0.18em;
+    margin-left: 10px;
+  }
+
+  /* THE INSTRUCTION. Same axis, same width, locked to the number above it, and
+   deliberately subordinate: half the height it had in round 4. */
+  .bar {
+    position: relative;
+    width: 296px;
+    max-width: 100%;
+    height: 44px;
+    margin-top: var(--tight);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .shaft {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 7px;
+    transform: translateY(-50%);
+    background: linear-gradient(#8f949c, #5d626a 55%, #7d828a);
+    border-radius: 1px;
+  }
+  .stack {
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+  .plate {
+    width: 15px;
+    margin: 0 1px;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
+  }
+  .p25 {
+    height: 44px;
+    background: var(--p25);
+  }
+  .p20 {
+    height: 44px;
+    background: var(--p20);
+  }
+  .p15 {
+    height: 37px;
+    background: var(--p15);
+  }
+  .p10 {
+    height: 31px;
+    background: var(--p10);
+  }
+  .p5 {
+    height: 25px;
+    background: var(--p5);
+  }
+  .p2h {
+    height: 20px;
+    background: var(--p2h);
+    width: 10px;
+  }
+  .p1h {
+    height: 15px;
+    background: var(--p1h);
+    width: 8px;
+  }
+  .collar {
+    width: 6px;
+    height: 18px;
+    background: #565b63;
+    border-radius: 1px;
+    margin: 0;
+  }
+  .mid {
+    position: relative;
+    background: var(--ground);
+    padding: 0 8px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+  }
+
+  /* the key IS the diagram: each value under the plate it labels */
+  .key {
+    padding-top: 8px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  .key i {
+    display: block;
+    text-align: center;
+    font-style: normal;
+  }
+
+  .last {
+    font-family: "Chivo Mono", monospace;
+    font-size: 17px;
+    color: var(--dim);
+    margin-top: var(--loose);
+  }
+  .last b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  .reps {
+    margin-top: var(--loose);
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    font-size: 52px;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .reps span {
+    font-size: 17px;
+    font-weight: 400;
+    color: var(--dim);
+    margin-left: 8px;
+  }
+
+  .grow {
+    flex: 1;
+    min-height: 12px;
+  }
+
+  .rest {
+    padding: 0 var(--gut) 8px;
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+  }
+  .rest .t {
+    font-family: "Chivo Mono", monospace;
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .rest .lab {
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  .track {
+    margin: 0 var(--gut) 14px;
+    height: 3px;
+    background: rgb(22 24 28 / 0.13);
+    position: relative;
+  }
+  .track i {
+    position: absolute;
+    left: 0;
+    top: -1px;
+    bottom: -1px;
+    right: 38%;
+    background: var(--ink);
+  }
+
+  .actions {
+    display: flex;
+    gap: 9px;
+    padding: 0 var(--gut) calc(16px + env(safe-area-inset-bottom));
+  }
+  button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    background: none;
+    border-radius: 3px;
+  }
+  .step {
+    width: 80px;
+    height: 114px;
+    background: #e3decb;
+    border: 2px solid #a9a79a;
+    font-family: "Chivo Mono", monospace;
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+  .step b {
+    display: block;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--dim);
+    letter-spacing: 0.06em;
+  }
+  .log {
+    flex: 1;
+    height: 114px;
+    background: var(--act);
+    color: #f2efe7;
+    font-family: "Chivo Mono", monospace;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+  }
+</style>
+
+<div class="head">
+  <div class="ex">Barbell Squat</div>
+  <div class="pos">set 2 of 3</div>
+</div>
+
+<div class="grow"></div>
+
+<div class="rig">
+  <div class="num">112<span class="dot">.</span>5<u>KG</u></div>
+  <div class="bar">
+    <div class="shaft"></div>
+    <div class="stack" id="left"></div>
+    <div class="stack" id="right"></div>
+  </div>
+  <div class="key" id="key"></div>
+
+  <div class="last">last time <b>107.5</b> kg × 5, 5, 4</div>
+  <div class="reps">3–5<span>reps</span></div>
+</div>
+
+<div class="rest"><span class="t">1:14</span><span class="lab">rest</span></div>
+<div class="track"><i></i></div>
+<div class="actions">
+  <button class="step">−2.5<b>kg</b></button>
+  <button class="log">LOG SET</button>
+  <button class="step">+2.5<b>kg</b></button>
+</div>
+
+<script type="module">
+  import { perSide } from "./plates.js";
+  const side = perSide(112.5);
+  document.getElementById("left").innerHTML =
+  `<i class="collar"></i>` +
+  [...side].reverse().map((p) => `<i class="plate ${p.cls}"></i>`).join("");
+document.getElementById("right").innerHTML =
+  side.map((p) => `<i class="plate ${p.cls}"></i>`).join("") +
+  `<i class="collar"></i>`;
+document.getElementById("key").innerHTML =
+  side.map((p) => p.kg).join(" + ") + " per side";
+</script>

@@ -1,0 +1,414 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1,viewport-fit=cover"
+/>
+<title>THE DECK v2</title>
+<!--
+  STRUCTURAL REDESIGN 2, ROUND 2 — every numbered item from critique-round-1.
+
+  The one judgement call I made against the critic: it asked for the rest
+  countdown AND the working set on the same screen. Those are two different
+  moments and showing both is the density mistake it flagged elsewhere. Rest is
+  a STATE here: when the clock is running it owns the top band and the load
+  dims; when it expires the band collapses and the load is the only thing left.
+
+  Added beyond the list: LAST TIME. The critic marked its absence on the rail
+  ("Missing: any reference to what you lifted last time") and it is the number
+  progressive overload is actually decided against.
+-->
+<style>
+  @font-face {
+    font-family: Chivo;
+    src: url(/fonts/chivo-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Chivo Mono";
+    src: url(/fonts/chivo-mono-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  :root {
+    --ground: #f2efe7;
+    --ink: #16181c;
+    --dim: rgb(22 24 28 / 0.56);
+    --act: #0f5c46; /* (9) green does ONE job: act */
+    --p25: #c8202a;
+    --p20: #1b58c4;
+    --p15: #e5b60a;
+    --p10: #1f9d4e;
+    --p5: #2b2f36;
+    --p2h: #b4232c;
+    --p1h: #7d828b;
+    --bar: #6f757e;
+    color-scheme: light;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font:
+      400 16px Chivo,
+      system-ui,
+      sans-serif;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .mono {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* (6) SESSION ribbon: flush to the very top edge, hairline, neutral. Its
+   position and scale say "whole session"; the set counter lives far away and
+   is worded per-exercise, so the two granularities cannot be confused. */
+  .session {
+    display: flex;
+    gap: 2px;
+    padding: 0;
+  }
+  .session i {
+    flex: 1;
+    height: 3px;
+    background: rgb(22 24 28 / 0.13);
+  }
+  .session i.on {
+    background: rgb(22 24 28 / 0.42);
+  }
+  .session i.now {
+    background: var(--ink);
+  }
+
+  /* (3) REST owns the top band while it runs. (11) 15px, not 11. */
+  .rest {
+    padding: 12px 16px 0;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .rest .t {
+    font-family: "Chivo Mono", monospace;
+    font-size: 38px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .rest .lab {
+    font-family: "Chivo Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    color: var(--dim);
+  }
+  .restbar {
+    height: 2px;
+    background: rgb(22 24 28 / 0.14);
+    margin: 8px 16px 0;
+    position: relative;
+  }
+  .restbar i {
+    position: absolute;
+    inset: 0 38% 0 0;
+    background: var(--ink);
+  }
+
+  /* (1) content sits high. No vertical centring, no dead bands. */
+  .card {
+    padding: 22px 20px 0;
+    text-align: center;
+  }
+  .ex {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.08;
+  }
+  .setof {
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    color: var(--dim);
+    margin-top: 7px;
+  }
+
+  /* (2) the decimal. 112 at full size, .5 at 58px, tracking tightened, and the
+   two are one optical object rather than a number, a gap, and a number. */
+  .load {
+    margin-top: 10px;
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    letter-spacing: -0.045em;
+    font-variant-numeric: tabular-nums;
+    line-height: 0.86;
+  }
+  .load .whole {
+    font-size: 132px;
+  }
+  .load .frac {
+    font-size: 70px;
+    letter-spacing: -0.03em;
+    margin-left: 1px;
+  }
+  .load .kg {
+    font-size: 15px;
+    font-weight: 400;
+    letter-spacing: 0.26em;
+    color: var(--dim);
+    margin-left: 10px;
+    align-self: center;
+  }
+
+  /* (10) plates at 70px: countable, therefore a check rather than a picture */
+  .bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 92px;
+    margin: 20px 0 7px;
+  }
+  .sleeve {
+    height: 9px;
+    background: var(--bar);
+    flex: 0 0 22px;
+  }
+  .plate {
+    width: 19px;
+    margin: 0 2px;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
+  }
+  .p25 {
+    height: 90px;
+    background: var(--p25);
+  }
+  .p20 {
+    height: 90px;
+    background: var(--p20);
+  }
+  .p15 {
+    height: 75px;
+    background: var(--p15);
+  }
+  .p10 {
+    height: 63px;
+    background: var(--p10);
+  }
+  .p5 {
+    height: 50px;
+    background: var(--p5);
+  }
+  .p2h {
+    height: 40px;
+    background: var(--p2h);
+    width: 10px;
+  }
+  .p1h {
+    height: 30px;
+    background: var(--p1h);
+    width: 8px;
+  }
+  .collar {
+    width: 6px;
+    height: 22px;
+    background: #565b63;
+    margin: 0 1.5px;
+  }
+  .perside {
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+  }
+  .perside b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  /* (4) reps at 48px, no TARGET, no REPS-in-caps. Two numbers, one clearly second. */
+  .reps {
+    margin-top: 26px;
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    font-size: 58px;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .reps span {
+    font-size: 20px;
+    font-weight: 400;
+    color: var(--dim);
+    letter-spacing: 0.02em;
+    margin-left: 6px;
+  }
+
+  /* the number progressive overload is decided against */
+  .last {
+    margin-top: 22px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim);
+    letter-spacing: 0.04em;
+  }
+  .last b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  .sets {
+    list-style: none;
+    margin: 16px auto 0;
+    padding: 0;
+    width: 190px;
+    text-align: left;
+  }
+  .sets li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 30px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim);
+    border-top: 1px solid rgb(22 24 28 / 0.12);
+  }
+  .sets li:last-child {
+    border-bottom: 1px solid rgb(22 24 28 / 0.12);
+  }
+  .sets i {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border: 1.5px solid rgb(22 24 28 / 0.3);
+    border-radius: 50%;
+  }
+  .sets .done {
+    color: var(--ink);
+  }
+  .sets .done i {
+    background: var(--ink);
+    border-color: var(--ink);
+  }
+  .sets .now {
+    color: var(--ink);
+    font-weight: 700;
+  }
+  .sets .now i {
+    border-color: var(--ink);
+    box-shadow: 0 0 0 3px rgb(22 24 28 / 0.12);
+  }
+
+  .spacer {
+    flex: 1;
+    min-height: 8px;
+  }
+
+  /* (11) 15px. (8) − / + flanking. (7) tap primary, 96px. (12) one shape. */
+  .next {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim);
+    letter-spacing: 0.04em;
+    text-align: center;
+    padding: 0 16px 10px;
+  }
+  .actions {
+    display: grid;
+    grid-template-columns: 76px 1fr 76px;
+    gap: 8px;
+    padding: 0 12px calc(12px + env(safe-area-inset-bottom));
+  }
+  button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    background: none;
+  }
+  .step {
+    height: 96px;
+    background: transparent;
+    border: 1.5px solid rgb(22 24 28 / 0.5);
+    border-radius: 3px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 30px;
+    font-weight: 600;
+  }
+  .log {
+    height: 96px;
+    background: var(--act);
+    color: #f2efe7;
+    border-radius: 3px;
+    font-family: "Chivo Mono", monospace;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+  }
+</style>
+
+<div class="session" id="session"></div>
+
+<div class="rest"><span class="t">1:14</span><span class="lab">REST</span></div>
+<div class="restbar"><i></i></div>
+
+<div class="card">
+  <div class="ex">Barbell Squat</div>
+  <div class="load">
+    <span class="whole">112</span><span class="frac">.5</span
+    ><span class="kg">KG</span>
+  </div>
+  <div class="bar" id="bar"></div>
+  <div class="perside" id="perside"></div>
+  <div class="reps">3–5<span>reps</span></div>
+  <div class="last">last time <b>107.5</b> × 5, 5, 4</div>
+</div>
+
+<div class="spacer"></div>
+  <!-- Replaces "SET 2 OF 3". Same fact, one encoding instead of two, plus the
+       thing that fact was standing in for: what you have already done on this
+       exercise today, which is the number the next set is judged against. -->
+  <ol class="sets">
+    <li class="done"><i></i>112.5 × 5</li>
+    <li class="now"><i></i>now</li>
+    <li><i></i></li>
+  </ol>
+<div class="next">next · Barbell Bench Press · 4×5 @ 85</div>
+<div class="actions">
+  <button class="step">−</button>
+  <button class="log">LOG SET</button>
+  <button class="step">+</button>
+</div>
+
+<script type="module">
+  import { perSide } from "./plates.js";
+  const side = perSide(112.5);
+  document.getElementById("bar").innerHTML =
+    `<div class="sleeve"></div>${side.map((p) => `<i class="plate ${p.cls}"></i>`).join("")}<i class="collar"></i>` +
+    `<div class="sleeve" style="flex-basis:28px"></div>` +
+    `<i class="collar"></i>${[...side]
+      .reverse()
+      .map((p) => `<i class="plate ${p.cls}"></i>`)
+      .join("")}<div class="sleeve"></div>`;
+  const c = {};
+  side.forEach((p) => (c[p.kg] = (c[p.kg] || 0) + 1));
+  document.getElementById("perside").innerHTML =
+    Object.entries(c)
+      .sort((a, b) => b[0] - a[0])
+      .map(([kg, n]) => (n > 1 ? `<b>${n}×${kg}</b>` : `<b>${kg}</b>`))
+      .join(" + ") + " per side";
+  document.getElementById("session").innerHTML = Array.from(
+    { length: 14 },
+    (_, i) => `<i class="${i < 5 ? "on" : i === 5 ? "now" : ""}"></i>`,
+  ).join("");
+</script>

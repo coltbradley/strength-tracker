@@ -1,0 +1,37 @@
+/* SEED Zwe7e5GANgAUEtx1jSaFLas9 — reads as a container/freight manifest code.
+   DIRECTION: shipping-container yard. Hazard yellow on bitumen, stencilled,
+   everything stamped rather than printed. A plate is freight; a session is a
+   load-out. */
+:root {
+  color-scheme: dark;
+  --paper: #14140f;
+  --paper-raised: #1c1c16;
+  --paper-input: #23231b;
+  --cream: #12120e;
+  --ink-rgb: 240 236 214;
+  --burnt: #ffd400;
+  --burnt-press: #e6bf00;
+  --burnt-deep: #ffdd33;
+  --text-inverse: #12120e;
+  --rule-hair-color: rgb(255 212 0 / 0.18);
+  --rule-color: rgb(255 212 0 / 0.34);
+  --rule-strong-color: rgb(255 212 0 / 0.55);
+  --rule-heavy-color: rgb(255 212 0 / 0.75);
+  --control-border-color: rgb(255 212 0 / 0.6);
+  --bw-hair: 2px;
+  --radius: 0px;
+}
+body { background:
+  repeating-linear-gradient(135deg, transparent 0 22px, rgb(255 212 0 / .028) 22px 44px),
+  var(--paper); }
+.today-heading { font-family: var(--font-mono); text-transform: uppercase;
+  letter-spacing: .16em; font-weight: 800; color: var(--burnt); }
+.field-label, .section-meta, .week-state {
+  font-family: var(--font-mono); letter-spacing: .22em; }
+.rule-section { border-top-width: 2px; }
+.btn-primary {
+  background: var(--burnt); color: #12120e; border: 0;
+  font-family: var(--font-mono); letter-spacing: .3em; font-weight: 800;
+  clip-path: polygon(14px 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
+}
+.week-cell, .week-day { font-family: var(--font-mono); }

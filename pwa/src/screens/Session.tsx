@@ -47,6 +47,7 @@ import { SetRow } from "../components/SetRow";
 import { RpeChips } from "../components/RpeChips";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
+import { PlateBar } from "../components/PlateBar";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
@@ -1442,9 +1443,12 @@ export function Session() {
         ).id;
 
   // plate maths is always about the whole loaded implement
-  const hint = plateable
+  const plateSplit = plateable
+    ? split(totalLoadKg, exerciseBarKg, inventory)
+    : null;
+  const hint = plateSplit
     ? (() => {
-        const r = split(totalLoadKg, exerciseBarKg, inventory);
+        const r = plateSplit;
         return r.plates.length > 0
           ? r.plates
               .map(
@@ -1998,6 +2002,17 @@ export function Session() {
                            custom increment can never make the button lie */
                               steps={loadSteps(entry.exercise_id, unit)}
                             />
+                            {/* The bar you are about to load, drawn. Renders
+                                nothing when the movement is not plateable or
+                                the target is the bar alone, so a dumbbell press
+                                never grows an empty diagram. */}
+                            {plateSplit && (
+                              <PlateBar
+                                split={plateSplit}
+                                barKg={exerciseBarKg}
+                                unit={unit}
+                              />
+                            )}
                           </section>
 
                           {/* Below the numbers and above LOG, where the

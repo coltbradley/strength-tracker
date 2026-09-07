@@ -1,0 +1,313 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1,viewport-fit=cover"
+/>
+<title>THE DECK v3</title>
+<!--
+  ROUND 3. Every item from critique-round-2, including the four regressions
+  round 2 introduced.
+
+  The composition changed rather than the details. Round 2 was a centred column
+  with controls in both far corners; the critic's point that "right-thumb reach
+  cannot cover x<80 and x>310 in the same grip" is a fact about hands, not a
+  matter of taste, and it forces the layout:
+
+    - ONE alignment axis. Left, 24px gutter, everything, including the numeral.
+    - Mass in the middle third, where the thumb and the eye already are.
+    - Every control on the RIGHT EDGE, stacked, reachable in one grip.
+    - The increment printed on the button face, because "+" alone could mean
+      reps on a screen that shows both.
+
+  112.5 is now ONE number at ONE size. Round 2 "solved" the decimal ambiguity by
+  shrinking the half-kilo until it fell out of the glance, which on a barbell is
+  the difference between right and wrong. That was the worst thing in round 2.
+-->
+<style>
+  @font-face {
+    font-family: Chivo;
+    src: url(/fonts/chivo-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Chivo Mono";
+    src: url(/fonts/chivo-mono-latin.woff2) format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+  :root {
+    --ground: #f2efe7;
+    --ink: #16181c;
+    --dim: rgb(22 24 28 / 0.58);
+    --act: #0f5c46;
+    --p25: #c8202a;
+    --p20: #1b58c4;
+    --p15: #e5b60a;
+    --p10: #1f9d4e;
+    --p5: #2b2f36;
+    --p2h: #b4232c;
+    --p1h: #7d828b;
+    --bar: #6f757e;
+    --gut: 24px;
+    color-scheme: light;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font:
+      400 16px Chivo,
+      system-ui,
+      sans-serif;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ---- head: one line of identity, one of position. Both left. ------------- */
+  .head {
+    padding: 26px var(--gut) 0;
+  }
+  .ex {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+  }
+  .pos {
+    font-family: "Chivo Mono", monospace;
+    font-size: 16px;
+    color: var(--dim);
+    margin-top: 6px;
+  }
+
+  .grow {
+    flex: 1;
+  }
+
+  /* ---- the mass, in the middle third --------------------------------------- */
+  .main {
+    padding: 0 var(--gut);
+  }
+
+  /* ONE number, ONE size. Never scale the fraction. */
+  .load {
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    font-size: 96px;
+    letter-spacing: -0.055em;
+    line-height: 0.9;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* the number the next load is actually decided against — directly beneath the
+   weight, and larger than the plate maths it used to be smaller than */
+  .last {
+    font-family: "Chivo Mono", monospace;
+    font-size: 17px;
+    color: var(--dim);
+    margin-top: 10px;
+    letter-spacing: 0.01em;
+  }
+  .last b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  /* plates: the ONLY remaining second encoding of the load. The "25 + 20 + 1.25
+   per side" text row is gone — diagram plus text plus numeral was one fact
+   three times. */
+  .bar {
+    display: flex;
+    align-items: center;
+    height: 92px;
+    margin-top: 20px;
+  }
+  .sleeve {
+    height: 9px;
+    background: var(--bar);
+    flex: 0 0 20px;
+  }
+  .plate {
+    width: 19px;
+    margin: 0 2px;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
+  }
+  .p25 {
+    height: 90px;
+    background: var(--p25);
+  }
+  .p20 {
+    height: 90px;
+    background: var(--p20);
+  }
+  .p15 {
+    height: 75px;
+    background: var(--p15);
+  }
+  .p10 {
+    height: 63px;
+    background: var(--p10);
+  }
+  .p5 {
+    height: 50px;
+    background: var(--p5);
+  }
+  .p2h {
+    height: 40px;
+    background: var(--p2h);
+    width: 13px;
+  }
+  .p1h {
+    height: 30px;
+    background: var(--p1h);
+    width: 10px;
+  }
+  .collar {
+    width: 7px;
+    height: 22px;
+    background: #565b63;
+    margin: 0 2px;
+  }
+
+  /* the second number, unambiguously second, with air between it and its noun */
+  .reps {
+    margin-top: 26px;
+    font-family: "Chivo Mono", monospace;
+    font-weight: 700;
+    font-size: 58px;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .reps span {
+    font-size: 17px;
+    font-weight: 400;
+    color: var(--dim);
+    margin-left: 10px;
+  }
+
+  /* ---- rest: bottom third, beside the control it relates to ---------------- */
+  .rest {
+    padding: 0 var(--gut) 10px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .rest .t {
+    font-family: "Chivo Mono", monospace;
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .rest .lab {
+    font-family: "Chivo Mono", monospace;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  .restbar {
+    height: 2px;
+    background: rgb(22 24 28 / 0.14);
+    margin: 0 var(--gut) 16px;
+    position: relative;
+  }
+  .restbar i {
+    position: absolute;
+    inset: 0 38% 0 0;
+    background: var(--ink);
+  }
+
+  /* ---- every control on the right edge, one grip -------------------------- */
+  .actions {
+    display: flex;
+    gap: 10px;
+    padding: 0 var(--gut) calc(16px + env(safe-area-inset-bottom));
+  }
+  button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    background: none;
+    border-radius: 3px;
+  }
+  .log {
+    flex: 1;
+    height: 112px;
+    background: var(--act);
+    color: #f2efe7;
+    font-family: "Chivo Mono", monospace;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+  }
+  .stepcol {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 92px;
+  }
+  .step {
+    flex: 1;
+    border: 1.5px solid rgb(22 24 28 / 0.5);
+    font-family: "Chivo Mono", monospace;
+    font-size: 17px;
+    font-weight: 700;
+  }
+
+  /* nothing sits inside the button's fat-finger zone */
+  .next {
+    font-family: "Chivo Mono", monospace;
+    font-size: 15px;
+    color: var(--dim);
+    padding: 0 var(--gut) 20px;
+  }
+</style>
+
+<div class="head">
+  <div class="ex">Barbell Squat</div>
+  <div class="pos">set 2 of 3</div>
+</div>
+
+<div class="grow"></div>
+
+<div class="main">
+  <div class="load">112.5</div>
+  <div class="last">last time <b>107.5</b> × 5, 5, 4</div>
+  <div class="bar" id="bar"></div>
+  <div class="reps">3–5<span>reps</span></div>
+</div>
+
+<div class="grow"></div>
+
+<div class="next">next · Barbell Bench Press · 4×5 @ 85</div>
+<div class="rest"><span class="t">1:14</span><span class="lab">rest</span></div>
+<div class="restbar"><i></i></div>
+<div class="actions">
+  <button class="log">LOG SET</button>
+  <div class="stepcol">
+    <button class="step">+2.5</button>
+    <button class="step">−2.5</button>
+  </div>
+</div>
+
+<script type="module">
+  import { perSide } from "./plates.js";
+  const side = perSide(112.5);
+  document.getElementById("bar").innerHTML =
+    `<div class="sleeve"></div>${side.map((p) => `<i class="plate ${p.cls}"></i>`).join("")}<i class="collar"></i>` +
+    `<div class="sleeve" style="flex-basis:26px"></div>` +
+    `<i class="collar"></i>${[...side]
+      .reverse()
+      .map((p) => `<i class="plate ${p.cls}"></i>`)
+      .join("")}<div class="sleeve"></div>`;
+</script>
