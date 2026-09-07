@@ -49,7 +49,7 @@ This is the opposite order from where the interest is. It is still the order.
 
 ---
 
-## Phase E0: activities land
+## Phase E0: activities land  [BUILT 2026-09-07]
 
 Endurance actuals become rows, with no planning and no UI.
 

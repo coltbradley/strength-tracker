@@ -252,6 +252,66 @@ server setting there would be a third write-ownership class — see CLAUDE.md).
 That last row is the one to know: two people sharing one phone share its plate
 inventory and per-exercise preferences. Two phones, no overlap.
 
+## Connecting an endurance source (optional)
+
+The endurance layer takes activities from intervals.icu, from Strava, from both,
+or from neither. Neither is a supported state: the views are simply empty and
+nothing else in the app changes.
+
+**intervals.icu is the one to connect first.** Free, an instant API key from
+Settings -> Developer Settings, and it already carries whatever watch you own
+(Garmin, Polar, Suunto, Coros, Oura, Whoop). It also carries elevation LOSS,
+which Strava's activity list does not, and the endurance layer is built around
+descent.
+
+```sql
+insert into integration_credentials (user_id, provider, secret, external_id)
+values ('<uuid>', 'intervals_icu',
+        '{"api_key":"<key>"}'::jsonb, '<athlete id, like i123456>');
+```
+
+**Strava is supported and is not the default.** Read
+[endurance-research.md](endurance-research.md) first: the 2026 Standard tier
+caps at about ten users, requires the developer to hold a paid Strava
+subscription, allows roughly 100 reads per 15 minutes, and bars use of the data
+in AI models. None of that stops a personal deployment; all of it is your call.
+
+```sql
+insert into integration_credentials (user_id, provider, secret)
+values ('<uuid>', 'strava', '{"access_token":"<token>"}'::jsonb);
+```
+
+Then pull:
+
+```bash
+# everything (defaults to 400 days)
+curl -X POST "$FUNCTIONS_URL/endurance-sync/backfill" \
+  -H "Authorization: Bearer <a supabase session jwt>" -d '{}'
+
+# just what is new, re-reading a 48h window because upstream activities get
+# edited after upload
+curl -X POST "$FUNCTIONS_URL/endurance-sync/poll" \
+  -H "Authorization: Bearer <a supabase session jwt>"
+```
+
+The response reports each provider separately: `not_connected`, `disabled`,
+`ok`, or `failed` with the reason. One provider failing never stops the other,
+and nothing connected is a 200 rather than an error.
+
+**Check `inserted_with_descent` on the first backfill.** It is reported for a
+reason: if a full backfill lands zero descent measurements, the eccentric and
+descent rules later in the plan have nothing to gate on, and it is much better
+to find that out now than in E5. A Strava-only connection will always report
+zero here, because Strava's activity list carries gain only.
+
+Connecting both is fine and does not double-count. A before-insert trigger
+marks the second copy of the same effort as `duplicate_of` the first, and
+`v_live_activities` drops it. Both rows are kept, because each still holds its
+own source's detail.
+
+To disconnect: `update integration_credentials set enabled = false where ...`,
+or delete the row. Activities already synced stay.
+
 ## Sign-in email (AgentMail SMTP)
 
 Sign-in codes go out over AgentMail rather than a personal Gmail. A Gmail app
