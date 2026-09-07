@@ -24,12 +24,23 @@ const flag = (name) => {
 
 const userId = flag("user");
 const label = flag("label");
+// Optional, and worth passing. Without it the printed config carries a
+// <project-ref> placeholder that whoever receives it has to know to replace,
+// which is one more step between a friend and a working connector. Falls back
+// to the env var so it can be set once per shell.
+const projectRef =
+  flag("project-ref") ?? process.env.SUPABASE_PROJECT_REF ?? null;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 if (!userId || !label) {
   console.error(`Usage:
-  node scripts/issue-mcp-token.mjs --user <uuid> --label "<who and which client>"
+  node scripts/issue-mcp-token.mjs --user <uuid> --label "<who and which client>" \
+    [--project-ref <ref>]
+
+--project-ref (or SUPABASE_PROJECT_REF) fills the URL in, so the printed config
+is paste-ready. Without it the output says <project-ref> and the recipient has
+to be told what to put there.
 
 Find the uuid in the Supabase dashboard under Authentication > Users, or:
   select id, email from auth.users order by created_at;
@@ -50,6 +61,11 @@ if (!UUID.test(userId)) {
 const token = `stl_${randomBytes(32).toString("base64url")}`;
 const digest = createHash("sha256").update(token).digest("hex");
 const sqlLabel = label.replace(/'/g, "''");
+// The placeholder is kept, rather than guessed at, when no ref is given: a
+// wrong-looking URL somebody pastes anyway is worse than an obvious blank.
+const url = projectRef
+  ? `https://${projectRef}.supabase.co/functions/v1/mcp-server`
+  : "https://<project-ref>.supabase.co/functions/v1/mcp-server";
 
 console.log(`
 Token (copy it now — it is not stored and cannot be shown again):
@@ -69,7 +85,7 @@ Claude Desktop / Claude Code — claude_desktop_config.json:
         "command": "npx",
         "args": [
           "-y", "mcp-remote",
-          "https://<project-ref>.supabase.co/functions/v1/mcp-server",
+          "${url}",
           "--header", "Authorization: Bearer ${token}"
         ]
       }
@@ -79,7 +95,7 @@ Claude Desktop / Claude Code — claude_desktop_config.json:
 Any client that takes a URL and an API key (claude.ai custom connectors,
 ChatGPT custom connectors, the MCP Inspector) — point it at:
 
-  https://<project-ref>.supabase.co/functions/v1/mcp-server
+  ${url}
 
   header  Authorization: Bearer ${token}
   or      x-api-key: ${token}

@@ -22,9 +22,29 @@ additional_redirect_urls = [
 subject = "Strength Log sign-in code"
 content_path = "./supabase/templates/magic_link.html"
 
+# AgentMail rather than a personal Gmail. Sign-in codes are transactional mail
+# and should not ride on someone's own mailbox: a Gmail app password is a
+# credential to that whole account, the sender is a human being's address, and
+# Google's send limits are shaped for a person rather than for an app.
+#
+# Two things about AgentMail that constrain what may be set here:
+#
+#   1. The From address MUST match the inbox being authenticated as, so
+#      SMTP_USER is the sender and admin_email is not free to differ.
+#   2. Port 587 rejects AUTH issued before STARTTLS with a 538, so an SMTP
+#      client that authenticates eagerly must use 465 (implicit TLS) instead.
+#      587 is kept here because it is what Supabase's sender does and what the
+#      previous Gmail config used; if sign-in mail starts failing with 538,
+#      that is the one line to change.
+#
+# USE A DEDICATED INBOX. Not a.lupin@agentmail.to: that is a listening address
+# subscribed to campaign mailing lists, and the workspace's own account notes
+# say never to use it for transactional sends. Its deliverability reputation is
+# also the wrong one to hang sign-in codes on, and a friend receiving a login
+# code from an unfamiliar research alias reads it as phishing.
 [auth.email.smtp]
 enabled = true
-host = "smtp.gmail.com"
+host = "smtp.agentmail.to"
 port = 587
 user = "env(SMTP_USER)"
 pass = "env(SMTP_PASS)"

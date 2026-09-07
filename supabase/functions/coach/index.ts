@@ -271,6 +271,34 @@ async function revokeToken(
   }
 }
 
+/**
+ * Whether the in-app coach is switched on for this person (coach_access,
+ * 20260907020000). NO ROW MEANS ON: the table landed on a running deployment
+ * and must not have turned the coach off for everyone the moment it existed.
+ *
+ * Returns the reason to show when it is off, or null when it is on. A read that
+ * FAILS is neither — it throws, and the caller answers 503, because "we could
+ * not find out" is not "you are not allowed" and must not be reported as one.
+ * The turn would fail anyway: a turn whose usage cannot be recorded must not
+ * run, and this read and that write are the same database.
+ */
+async function coachSwitchedOff(
+  db: ReturnType<typeof serviceClient>,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await db
+    .from("coach_access")
+    .select("enabled, reason")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`coach access: ${error.message}`);
+  if (!data || data.enabled) return null;
+  return (
+    data.reason ??
+    "The coach is switched off for this account. Your log and your MCP token are unaffected."
+  );
+}
+
 async function overLimit(
   db: ReturnType<typeof serviceClient>,
   userId: string,
@@ -688,6 +716,13 @@ Deno.serve(async (req) => {
   const db = serviceClient();
 
   try {
+    // The per-person switch, before the quota. Someone switched off should be
+    // told that, not told they are out of messages, and their refusal must not
+    // land in coach_usage: a refusal row exists to keep a rolling quota honest
+    // for someone who HAS one, and a switched-off account does not.
+    const off = await coachSwitchedOff(db, userId);
+    if (off) return json({ error: off }, 403);
+
     const refusal = await overLimit(db, userId);
     if (refusal) {
       await db.from("coach_usage").insert({

@@ -1777,5 +1777,100 @@ await check("cache tokens derive from the input rate rather than drifting", asyn
   assertEq(Number(r.rows[0].cost_usd), 6.75, "6.25 write + 0.50 read");
 });
 
+// --- coach access, the per-person switch (20260907020000) --------------------
+// COACH_ALLOWED_USERS is the door (an env var, checked before any db read);
+// this is the switch (a row, per person, readable by the app). What has to hold:
+// no row means ON, the subject can read their own row but cannot flip it, and
+// nobody reads anyone else's.
+console.log("\ncoach access (the per-person switch):");
+await db.exec("reset role;");
+
+const CA_A = "00000000-0000-4000-8000-0000000000d1";
+const CA_B = "00000000-0000-4000-8000-0000000000d2";
+await db.exec(`
+  insert into auth.users (id, email) values
+    ('${CA_A}', 'ca-a@example.test'), ('${CA_B}', 'ca-b@example.test')
+  on conflict do nothing;
+`);
+
+await check("no row means the coach is ON, so this table changed nothing", async () => {
+  const r = await db.query(`select coach_enabled('${CA_A}') as on`);
+  assertEq(r.rows[0].on, true, "absent row reads as enabled");
+});
+
+await check("the service role switches one person off, and only that person", async () => {
+  await db.exec(`
+    insert into coach_access (user_id, enabled, reason)
+    values ('${CA_A}', false, 'paused while we sort out the bill');
+  `);
+  const a = await db.query(`select coach_enabled('${CA_A}') as on`);
+  const b = await db.query(`select coach_enabled('${CA_B}') as on`);
+  assertEq([a.rows[0].on, b.rows[0].on], [false, true], "one off, one untouched");
+});
+
+await check("the person reads their own row, and the reason meant for them", async () => {
+  const r = await asUser(CA_A, `select enabled, reason from coach_access`);
+  assertEq(r.rows.length, 1, "sees their own row");
+  assertEq(r.rows[0].enabled, false, "and that it is off");
+  assert(
+    typeof r.rows[0].reason === "string" && r.rows[0].reason.length > 0,
+    "with something to show them",
+  );
+});
+
+await check("nobody reads anyone else's switch", async () => {
+  const r = await asUser(CA_B, `select * from coach_access`);
+  assertEq(r.rows.length, 0, "B sees nothing of A's");
+});
+
+// The reason this is not a column on user_config, which carries an owner UPDATE
+// policy: a switch its subject can flip is not an administrative control. RLS
+// refuses an update with no policy by matching ZERO ROWS rather than by
+// erroring, so the assertion is affectedRows and not a rejection.
+await check("the subject cannot switch themselves back on", async () => {
+  const upd = await asUser(
+    CA_A,
+    `update coach_access set enabled = true where user_id = '${CA_A}'`,
+  );
+  assertEq(upd.affectedRows ?? 0, 0, "no update policy");
+  const still = await db.query(`select coach_enabled('${CA_A}') as on`);
+  assertEq(still.rows[0].on, false, "still off");
+});
+
+await check("nor delete the row, nor insert one for themselves", async () => {
+  const del = await asUser(
+    CA_A,
+    `delete from coach_access where user_id = '${CA_A}'`,
+  );
+  assertEq(del.affectedRows ?? 0, 0, "no delete policy");
+  // Insert is the one that DOES raise: a with-check violation is an error,
+  // where a missing row to update simply is not there.
+  let rejected = false;
+  try {
+    await asUser(
+      CA_B,
+      `insert into coach_access (user_id, enabled) values ('${CA_B}', true)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "no insert policy");
+});
+
+await check("coach_enabled leaks nothing when asked about someone else", async () => {
+  // SECURITY INVOKER on purpose. B asking about A reads nothing through RLS and
+  // gets the default; definer would have made this a probe for anyone's state.
+  const r = await asUser(CA_B, `select coach_enabled('${CA_A}') as on`);
+  assertEq(r.rows[0].on, true, "the default, not A's real answer");
+});
+
+await check("deleting a user takes their switch with them", async () => {
+  await db.exec(`delete from auth.users where id = '${CA_A}'`);
+  const n = await db.query(
+    `select count(*)::int as n from coach_access where user_id = '${CA_A}'`,
+  );
+  assertEq(n.rows[0].n, 0, "cascaded");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

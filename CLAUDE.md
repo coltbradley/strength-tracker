@@ -376,10 +376,28 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   current phase, questioning a request that contradicts it. Strategy is set at
   a desk with time to think; tactics are set between sets.
 
+- Who gets the in-app coach is TWO gates and both must pass.
+  `COACH_ALLOWED_USERS` is the door: an env var, checked before any database
+  read, unset means everyone, and it exists so an open sign-up cannot mint
+  accounts that spend the deployment owner's Anthropic key. `coach_access`
+  (20260907020000) is the switch: one row per person, NO ROW MEANS ON so it
+  changed nothing when it landed, with a `reason` written for the person to
+  read. It is not a column on `user_config` because that table has an owner
+  UPDATE policy and a switch its subject can flip is not an administrative
+  control; it has a select policy for the owner and NO insert/update/delete
+  policies, the `push_config` pattern. `coach_enabled(uuid)` is SECURITY
+  INVOKER on purpose, so asking about somebody else reads nothing through RLS
+  and returns the default rather than their real answer. The PWA reads it only
+  to hide the chat entrance and treats every uncertain answer as ON, because
+  the edge function is the boundary; a read that FAILS there is a 503, never a
+  403, since "we could not find out" is not "no". The MCP server is untouched
+  by this: a switched-off person still reads and writes their own log from
+  Claude Desktop.
+
 ## The coach (supabase/functions/coach)
 
-- An edge function calling the Anthropic API with `claude-opus-5` at effort
-  `low`, giving it
+- An edge function calling the Anthropic API with `claude-sonnet-5` at effort
+  `medium`, giving it
   the EXISTING MCP server as its tool surface via the MCP connector. One
   authorization boundary, not two. The API key is a Supabase secret and never
   reaches the browser; the caller authenticates with their Supabase session.

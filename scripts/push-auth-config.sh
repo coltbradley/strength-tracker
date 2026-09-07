@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Applies the auth config (code-only sign-in email + Gmail SMTP) to the
+# Applies the auth config (code-only sign-in email + AgentMail SMTP) to the
 # linked Supabase project. Needs SMTP_USER and SMTP_PASS in .env.local:
-#   SMTP_USER=you@gmail.com
-#   SMTP_PASS=<a Google app password, myaccount.google.com/apppasswords>
+#   SMTP_USER=<inbox>@agentmail.to   # a DEDICATED inbox for this app
+#   SMTP_PASS=<an AgentMail API key, Dashboard -> API Keys>
+#
+# SMTP_USER is also the From address: AgentMail requires the sender to match the
+# inbox it authenticates as. Use an inbox created for this app rather than an
+# existing one, so a login code never arrives from a research alias and this
+# app's deliverability is its own.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ ! -f .env.local ]]; then
