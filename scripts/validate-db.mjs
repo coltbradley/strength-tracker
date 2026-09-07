@@ -2447,5 +2447,39 @@ await check("deleting a user takes every subjective row with them", async () => 
   assertEq(Number(n.rows[0].n), 0, "cascaded");
 });
 
+// --- the alert sweep scheduler (20260907060000) ------------------------------
+// This migration is a no-op HERE and a real install on Supabase, which is the
+// whole point of the pg_available_extensions guard. What can be checked in
+// PGlite is that the guard held (no extension was created, nothing threw) and
+// that the function it leaves behind is not callable by a client.
+console.log("\nalert sweep scheduler (guarded for PGlite):");
+await db.exec("reset role;");
+
+await check("the guard holds: no pg_cron or pg_net here, and no error", async () => {
+  const r = await db.query(
+    `select count(*)::int as n from pg_extension where extname in ('pg_cron','pg_net')`,
+  );
+  assertEq(r.rows[0].n, 0, "absent, and the migration chain still applied");
+});
+
+await check("run_alert_sweep exists even where it cannot run", async () => {
+  // Created outside the guard on purpose: the function is the same everywhere
+  // and only its scheduling is conditional, so a drifting definition is not
+  // possible between the validation path and production.
+  const r = await db.query(
+    `select prosecdef from pg_proc where proname = 'run_alert_sweep'`,
+  );
+  assertEq(r.rows.length, 1, "one definition");
+  assertEq(r.rows[0].prosecdef, true, "security definer: it reads the vault");
+});
+
+await check("no client role can make Postgres call out", async () => {
+  const r = await db.query(
+    `select has_function_privilege('authenticated', 'run_alert_sweep()', 'execute') as auth,
+            has_function_privilege('anon', 'run_alert_sweep()', 'execute') as anon`,
+  );
+  assertEq([r.rows[0].auth, r.rows[0].anon], [false, false], "revoked from both");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

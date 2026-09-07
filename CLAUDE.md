@@ -433,6 +433,25 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   by this: a switched-off person still reads and writes their own log from
   Claude Desktop.
 
+- A migration that needs an extension PGlite does not have is GUARDED, not
+  forked. `scripts/validate-db.mjs` replays the whole chain in PGlite, so a bare
+  `create extension pg_cron` fails the gate. `20260907060000` asks
+  `pg_available_extensions` first, which is a catalog view PGlite does have, so
+  one body of SQL is a no-op there and a real install on Supabase and the two
+  cannot drift. Prompt delivery is `pg_cron` every five minutes calling
+  `run_alert_sweep()`, which uses `pg_net` to POST `push-alerts/sweep` with
+  credentials read from VAULT at run time -- never a migration literal, because
+  this repository is public. Missing Vault rows make it do nothing and say so,
+  rather than firing unauthenticated requests forever. `rest_alerts.kind`
+  separates a rest (delivered by `POST /schedule`, which holds a worker open and
+  refuses anything longer than it can survive) from a prompt (`POST /arm` writes
+  the row, the sweep delivers it); the one-live-alert rule and the service
+  worker's notification `tag` are both PER KIND, or a check-in prompt cancels a
+  rest timer and replaces its notification. The sweep is idempotent and drops
+  anything more than six hours stale. If the cron is removed nothing breaks:
+  `pwa/src/lib/prompts.ts` decides WHEN to ask and is pure, so the app still
+  asks in-app on foreground; only asking while the app is CLOSED is lost.
+
 ## The coach (supabase/functions/coach)
 
 - An edge function calling the Anthropic API with `claude-sonnet-5` at effort
