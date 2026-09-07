@@ -1,5 +1,92 @@
 # Release runbook
 
+## This round (2026-09-07) — release checklist
+
+Thirteen commits: the coach moves back to Sonnet 5, a per-person coach switch,
+sign-in mail on AgentMail, E0 (endurance activities + sync) and E1 (subjective
+capture), alert kinds + app badging, and prompt delivery on pg_cron.
+
+### What CI does on merge to main
+
+`deploy.yml` runs `supabase db push`, then deploys the functions, then publishes
+the PWA — in that order, so the client can never ship ahead of its schema.
+
+- **6 migrations**: `20260907010000` cost-by-model · `…020000` coach_access ·
+  `…030000` activities · `…040000` subjective capture · `…050000` alert kinds ·
+  `…060000` alert sweep cron.
+- **4 functions**: mcp-server, coach, push-alerts, **endurance-sync** (new; the
+  workflow did not know about it until this round).
+
+### Your side, in this order
+
+**1. Sign-in mail (AgentMail).** Nothing works without it — `config.toml` now
+points at `smtp.agentmail.to` and the old Gmail credentials will not
+authenticate. Create a **dedicated inbox** for this app; do not reuse a
+listening address (see the comment in `config.toml` for why).
+
+```bash
+# .env.local, gitignored
+SMTP_USER=<inbox>@agentmail.to     # this is also the From address
+SMTP_PASS=<AgentMail API key, Dashboard → API Keys>
+./scripts/push-auth-config.sh
+```
+
+Verify by requesting a sign-in code and reading where it came from.
+
+**2. The prompt sweep.** Two halves that must match, or the sweep 401s:
+
+```bash
+supabase secrets set SWEEP_SECRET="$(openssl rand -base64 32)"
+```
+```sql
+select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
+select vault.create_secret('<the same value as SWEEP_SECRET>', 'sweep_secret');
+```
+
+Set the secret **before** the deploy if you can; if not, nothing is lost —
+`/sweep` returns 503 until it exists rather than running unauthenticated.
+
+**3. Watch the cron migration land.** `20260907060000` installs `pg_cron` and
+`pg_net`, which were available on this project and not installed. If
+`supabase db push` refuses (some setups will not create these inside a
+transaction), enable both from Dashboard → Database → Extensions and re-run the
+push; the migration is guarded and idempotent, so a second run is safe.
+
+Confirm:
+
+```sql
+select jobname, schedule, active from cron.job where jobname = 'alert-sweep';
+```
+
+### Optional, any time after
+
+- **Connect an endurance source** — see setup.md. intervals.icu first: it is the
+  only one that carries elevation LOSS, and `inserted_with_descent` on the first
+  backfill is the number to read.
+- **Add the second person** — account, MCP token (`--project-ref` makes the
+  printed config paste-ready), and optionally a `coach_access` row.
+
+### What needs a phone, and cannot be checked from CI
+
+Push has never been verified end to end: no iPhone, no push service and no edge
+runtime have been reachable in any session that built it. What IS pinned is the
+crypto (RFC 8291 Appendix A, byte for byte, now actually run by CI), the RLS,
+the client's network behaviour and the built worker's shape.
+
+On the phone, in one session:
+
+1. Turn rest alerts on; confirm the permission prompt appears.
+2. Start a session, log a set, lock the phone. The alert should arrive, and the
+   **app icon should show a badge** (new this round).
+3. Open the app. The badge should clear.
+4. Answer the morning check-in; confirm three items and no Save button, and that
+   closing it keeps the answers.
+5. Tap "Not today" on another day; confirm it does not ask again that day.
+
+If the badge never appears but the notification does, that is iOS below 16.4 or
+notification permission not actually granted — the badge is gated on both.
+
+
 What to run after changing each layer. `docs/setup.md` is the one-time
 bootstrap; this is the every-release path. Everything here is idempotent and
 additive — nothing destroys data.
@@ -125,6 +212,120 @@ Two things this path taught, both permanent:
   regex and a failed bundle. `push-alerts` now spells its label guard as code
   points for that reason. Avoid `\u` escapes in anything that has to go through
   this door; a regex with `\s` or `\d` is fine.
+
+## Prompt delivery (the sweep)
+
+Rest alerts and long-dated prompts share a table and use opposite mechanisms.
+
+**Rest alerts** go through `POST /schedule`, which holds the edge worker open
+until the alert fires. That works because a rest is two to five minutes, and the
+function refuses anything longer rather than promising what the platform will
+kill.
+
+**Prompts** (morning panel, weekly OSTRC, next-morning pain) cannot use that:
+07:30 tomorrow outlives any worker. They are split in two:
+
+- `POST /arm` writes the row and returns 202. The PWA calls it via `armPrompt()`.
+- `POST /sweep` sends whatever is due, driven by **pg_cron** (migration
+  `20260907060000`).
+
+### What the migration does, and what it cannot do
+
+It installs `pg_cron` and `pg_net` (both available on this project, neither
+previously installed), creates `run_alert_sweep()`, and schedules it every five
+minutes as the job `alert-sweep`.
+
+It deliberately does NOT contain the credentials. Those go in **Vault**, read at
+run time, because a secret in a committed migration is a secret in a public
+repository. Two rows, set once, in the SQL editor:
+
+```sql
+select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
+select vault.create_secret('<the same value as SWEEP_SECRET>', 'sweep_secret');
+```
+
+and the matching function secret:
+
+```bash
+supabase secrets set SWEEP_SECRET="$(openssl rand -base64 32)"
+supabase functions deploy push-alerts
+```
+
+Until both Vault rows exist, `run_alert_sweep()` does nothing and raises a
+notice each tick. That is on purpose: the alternative is firing an
+unauthenticated request every five minutes forever and collecting 401s nobody
+reads.
+
+### Checking it
+
+```sql
+-- the job exists and when it last ran
+select jobname, schedule, active from cron.job where jobname = 'alert-sweep';
+select status, return_message, start_time
+  from cron.job_run_details
+ where jobid = (select jobid from cron.job where jobname = 'alert-sweep')
+ order by start_time desc limit 5;
+
+-- what pg_net got back (async: the response lands here, not in the cron result)
+select status_code, content from net._http_response order by created desc limit 5;
+
+-- alerts that were armed but never sent
+select kind, fire_at, sent_at, error from rest_alerts
+ where sent_at is null and cancelled_at is null order by fire_at;
+```
+
+A healthy tick returns 200 with a JSON body counting `sent`, `stale` and
+`failed`. A 401 means the Vault `sweep_secret` and the function's
+`SWEEP_SECRET` do not match. A 503 means `SWEEP_SECRET` is unset on the
+function.
+
+### Two behaviours to know
+
+- **Idempotent.** `sent_at` is stamped on send and the query only takes rows
+  where it is null, so a double-firing or late scheduler costs nothing.
+- **Six-hour grace window.** An alert whose moment passed longer ago than that
+  is stamped stale and not sent, because asking about this morning at 3pm is
+  worse than not asking. A sweep that stops for a day therefore drops that
+  day's prompts rather than delivering a pile at once.
+
+Five minutes rather than every minute: the prompts are daily and weekly, so the
+latency is invisible and it is a twelfth of the wake-ups.
+
+### If the cron is ever removed
+
+Nothing breaks. Armed prompts sit unsent, and the PWA still asks in-app on
+foreground, because `duePrompts()` in `pwa/src/lib/prompts.ts` is pure and knows
+nothing about push. The only thing lost is being asked while the app is CLOSED.
+
+## Endurance sync changed (supabase/functions/endurance-sync/)
+
+```bash
+supabase functions deploy endurance-sync
+```
+
+No `--no-verify-jwt`, same reason as the coach: the caller authenticates with
+their Supabase session and the gateway should demand a JWT.
+
+Nothing to set as a secret. The provider credentials are per USER and live in
+`integration_credentials` (service role only), not in the function's
+environment, because they are user data rather than deployment configuration.
+A user with no row for a provider simply has that provider not connected.
+
+Smoke test after deploying, with any user's session JWT:
+
+```bash
+curl -X POST "$FUNCTIONS_URL/endurance-sync/poll" -H "Authorization: Bearer <jwt>"
+```
+
+A user with nothing connected must come back **200** with
+`"connected": []`, not an error. If that is a 4xx or 5xx, the "neither source"
+path has regressed and the endurance layer has started being a dependency of
+an app that must work without it.
+
+On a first backfill, read `inserted_with_descent` in the response. Zero from a
+full backfill means the descent rules later in the plan have nothing to gate on.
+Expect zero if only Strava is connected: its activity list carries elevation
+gain only.
 
 ## Coach changed (supabase/functions/coach/)
 

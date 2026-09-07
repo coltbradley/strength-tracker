@@ -187,11 +187,19 @@ await check("v_e1rm: Epley on working sets 1-8 reps only", async () => {
 });
 
 await check("v_weekly_volume counts working sets", async () => {
+  // Summed across weeks rather than read off rows[0]. The fixture seeds these
+  // sets at `now() - 41..55 minutes`, so for about an hour after every ISO
+  // Monday boundary they straddle two buckets and rows[0] is a partial count.
+  // Caught at 00:47 UTC on a Monday. What this check is about is that three
+  // working sets are counted and the warmup and backoff are not; which bucket
+  // they land in is v_weekly_volume's own business and is asserted by the
+  // timezone checks instead.
   const r = await db.query(
-    `select working_sets::int as n from v_weekly_volume where user_id = $1 and exercise_id = 'Barbell_Squat'`,
+    `select coalesce(sum(working_sets), 0)::int as n
+       from v_weekly_volume where user_id = $1 and exercise_id = 'Barbell_Squat'`,
     [OWNER],
   );
-  assertEq(r.rows[0].n, 3, "working sets this week");
+  assertEq(r.rows[0].n, 3, "working sets, warmup and backoff excluded");
 });
 
 await check("v_adherence: hit / missed / exceeded vs prescription", async () => {
@@ -1832,6 +1840,793 @@ await check("deleting a user takes their subscriptions and alerts with them", as
   assertEq([subs.rows[0].n, alerts.rows[0].n], [0, 0], "cascaded");
   const cfg = await db.query(`select count(*)::int as n from push_config`);
   assertEq(cfg.rows[0].n, 1, "the deployment key pair is nobody's and survives");
+});
+
+// --- coach cost, priced by model (20260906060000 + 20260907010000) -----------
+// The view charged Sonnet rates for whatever ran, so every Opus turn was
+// reported at 40% of its cost. These pin the behaviours that fix it: rates
+// follow the `model` column, a DATED snapshot id prices as its family, and a
+// model with no rates is reported as UNPRICED rather than as cheap.
+//
+// haiku-4-5 is a PRICED model here, which is the correction the merge forced.
+// It arrived as this file's stand-in for "unknown", written when the rate
+// table had no haiku row — but haiku is the model the post-turn memory
+// extraction runs on, so pricing it is the entire point of 20260906060000.
+// A genuinely unknown model is used below instead.
+console.log("\ncoach cost (priced by the model that ran):");
+await db.exec("reset role;");
+
+const COST_U = "00000000-0000-4000-8000-0000000000c1";
+await db.exec(`
+  insert into auth.users (id, email) values ('${COST_U}', 'cost@example.test')
+  on conflict do nothing;
+`);
+
+// One million input and one million output tokens, so cost_usd reads as the
+// per-MTok rate directly and an arithmetic slip is visible rather than subtle.
+await db.exec(`
+  insert into coach_usage (user_id, model, input_tokens, output_tokens,
+                           cache_read_tokens, cache_write_tokens)
+  values
+    ('${COST_U}', 'claude-sonnet-5', 1000000, 1000000, 0, 0),
+    ('${COST_U}', 'claude-opus-5',   1000000, 1000000, 0, 0),
+    ('${COST_U}', 'claude-haiku-4-5', 1000000, 1000000, 0, 0),
+    -- A dated snapshot id. The rate table matches on a PREFIX for exactly this
+    -- reason: the extraction pass records 'claude-haiku-4-5-20251001', and an
+    -- exact-equality table would report every one of those as unpriced.
+    ('${COST_U}', 'claude-haiku-4-5-20251001', 1000000, 1000000, 0, 0),
+    -- A model this deployment does not run. THIS is the unpriced case.
+    ('${COST_U}', 'claude-nonesuch-1', 1000000, 1000000, 0, 0);
+`);
+
+await check("each model is charged its own rates, not the last one hard-coded", async () => {
+  const r = await db.query(
+    `select model, cost_usd from v_coach_cost
+      where user_id = '${COST_U}' order by model`,
+  );
+  const by = Object.fromEntries(r.rows.map((x) => [x.model, x.cost_usd]));
+  assertEq(Number(by["claude-sonnet-5"]), 12, "sonnet 5: $2 in + $10 out");
+  assertEq(Number(by["claude-opus-5"]), 30, "opus 5: $5 in + $25 out");
+  assertEq(Number(by["claude-haiku-4-5"]), 6, "haiku 4.5: $1 in + $5 out");
+  assertEq(
+    Number(by["claude-haiku-4-5-20251001"]),
+    6,
+    "a dated snapshot prices as its family, not as unknown",
+  );
+  assert(
+    Number(by["claude-opus-5"]) > Number(by["claude-sonnet-5"]),
+    "the expensive model costs more, which is the whole bug",
+  );
+});
+
+await check("an unknown model is unpriced, never silently cheap", async () => {
+  const r = await db.query(
+    `select cost_usd from v_coach_cost
+      where user_id = '${COST_U}' and model = 'claude-nonesuch-1'`,
+  );
+  assertEq(r.rows[0].cost_usd, null, "no rates means no number");
+});
+
+await check("the daily rollup admits the total is a floor", async () => {
+  const r = await db.query(
+    `select turns, unpriced_turns, cost_usd from v_coach_spend_daily
+      where user_id = '${COST_U}'`,
+  );
+  assertEq(Number(r.rows[0].turns), 5, "five turns");
+  assertEq(Number(r.rows[0].unpriced_turns), 1, "one of them unpriced");
+  // 12 + 30 + 6 + 6, with the unpriced turn contributing nothing: a sum() over
+  // a null would otherwise shrink the total with nothing to show for it.
+  assertEq(Number(r.rows[0].cost_usd), 54, "priced turns only");
+});
+
+await check("cache tokens derive from the input rate rather than drifting", async () => {
+  await db.exec(`
+    insert into coach_usage (user_id, model, input_tokens, output_tokens,
+                             cache_read_tokens, cache_write_tokens)
+    values ('${COST_U}', 'claude-opus-5', 0, 0, 1000000, 1000000);
+  `);
+  const r = await db.query(
+    `select cost_usd from v_coach_cost
+      where user_id = '${COST_U}' and input_tokens = 0 and cache_read_tokens = 1000000`,
+  );
+  // Opus input is $5: writes at 1.25x = $6.25, reads at 0.10x = $0.50.
+  assertEq(Number(r.rows[0].cost_usd), 6.75, "6.25 write + 0.50 read");
+});
+
+// --- coach access, the per-person switch (20260907020000) --------------------
+// COACH_ALLOWED_USERS is the door (an env var, checked before any db read);
+// this is the switch (a row, per person, readable by the app). What has to hold:
+// no row means ON, the subject can read their own row but cannot flip it, and
+// nobody reads anyone else's.
+console.log("\ncoach access (the per-person switch):");
+await db.exec("reset role;");
+
+const CA_A = "00000000-0000-4000-8000-0000000000d1";
+const CA_B = "00000000-0000-4000-8000-0000000000d2";
+await db.exec(`
+  insert into auth.users (id, email) values
+    ('${CA_A}', 'ca-a@example.test'), ('${CA_B}', 'ca-b@example.test')
+  on conflict do nothing;
+`);
+
+await check("no row means the coach is ON, so this table changed nothing", async () => {
+  const r = await db.query(`select coach_enabled('${CA_A}') as on`);
+  assertEq(r.rows[0].on, true, "absent row reads as enabled");
+});
+
+await check("the service role switches one person off, and only that person", async () => {
+  await db.exec(`
+    insert into coach_access (user_id, enabled, reason)
+    values ('${CA_A}', false, 'paused while we sort out the bill');
+  `);
+  const a = await db.query(`select coach_enabled('${CA_A}') as on`);
+  const b = await db.query(`select coach_enabled('${CA_B}') as on`);
+  assertEq([a.rows[0].on, b.rows[0].on], [false, true], "one off, one untouched");
+});
+
+await check("the person reads their own row, and the reason meant for them", async () => {
+  const r = await asUser(CA_A, `select enabled, reason from coach_access`);
+  assertEq(r.rows.length, 1, "sees their own row");
+  assertEq(r.rows[0].enabled, false, "and that it is off");
+  assert(
+    typeof r.rows[0].reason === "string" && r.rows[0].reason.length > 0,
+    "with something to show them",
+  );
+});
+
+await check("nobody reads anyone else's switch", async () => {
+  const r = await asUser(CA_B, `select * from coach_access`);
+  assertEq(r.rows.length, 0, "B sees nothing of A's");
+});
+
+// The reason this is not a column on user_config, which carries an owner UPDATE
+// policy: a switch its subject can flip is not an administrative control. RLS
+// refuses an update with no policy by matching ZERO ROWS rather than by
+// erroring, so the assertion is affectedRows and not a rejection.
+await check("the subject cannot switch themselves back on", async () => {
+  const upd = await asUser(
+    CA_A,
+    `update coach_access set enabled = true where user_id = '${CA_A}'`,
+  );
+  assertEq(upd.affectedRows ?? 0, 0, "no update policy");
+  const still = await db.query(`select coach_enabled('${CA_A}') as on`);
+  assertEq(still.rows[0].on, false, "still off");
+});
+
+await check("nor delete the row, nor insert one for themselves", async () => {
+  const del = await asUser(
+    CA_A,
+    `delete from coach_access where user_id = '${CA_A}'`,
+  );
+  assertEq(del.affectedRows ?? 0, 0, "no delete policy");
+  // Insert is the one that DOES raise: a with-check violation is an error,
+  // where a missing row to update simply is not there.
+  let rejected = false;
+  try {
+    await asUser(
+      CA_B,
+      `insert into coach_access (user_id, enabled) values ('${CA_B}', true)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "no insert policy");
+});
+
+await check("coach_enabled leaks nothing when asked about someone else", async () => {
+  // SECURITY INVOKER on purpose. B asking about A reads nothing through RLS and
+  // gets the default; definer would have made this a probe for anyone's state.
+  const r = await asUser(CA_B, `select coach_enabled('${CA_A}') as on`);
+  assertEq(r.rows[0].on, true, "the default, not A's real answer");
+});
+
+await check("deleting a user takes their switch with them", async () => {
+  await db.exec(`delete from auth.users where id = '${CA_A}'`);
+  const n = await db.query(
+    `select count(*)::int as n from coach_access where user_id = '${CA_A}'`,
+  );
+  assertEq(n.rows[0].n, 0, "cascaded");
+});
+
+// --- E0 activities: two sources, either, or neither (20260907030000) ---------
+console.log("\nendurance activities (both sources, either, or neither):");
+await db.exec("reset role;");
+
+const EA = "00000000-0000-4000-8000-0000000000e1";
+const EB = "00000000-0000-4000-8000-0000000000e2";
+await db.exec(`
+  insert into auth.users (id, email) values
+    ('${EA}', 'ea@example.test'), ('${EB}', 'eb@example.test')
+  on conflict do nothing;
+`);
+
+const act = (o) => `
+  insert into activities (user_id, source, external_id, sport, started_at,
+                          elapsed_s, moving_s, distance_m, ascent_m, descent_m)
+  values ('${o.user}', '${o.source}', '${o.ext}', '${o.sport ?? "Run"}',
+          timestamptz '${o.at}', ${o.elapsed}, ${o.moving},
+          ${o.dist ?? "null"}, ${o.up ?? "null"}, ${o.down ?? "null"})`;
+
+// NONE configured is a supported state and must not be an error anywhere.
+await check("with no source connected, the endurance views are simply empty", async () => {
+  const a = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EA}'`,
+  );
+  const w = await db.query(
+    `select count(*)::int as n from v_weekly_endurance where user_id = '${EA}'`,
+  );
+  assertEq([a.rows[0].n, w.rows[0].n], [0, 0], "empty, not broken");
+});
+
+await check("one source alone lands its activities", async () => {
+  await db.exec(
+    act({ user: EA, source: "strava", ext: "s1", at: "2026-09-01T07:00:00Z",
+          elapsed: 3600, moving: 3500, dist: 10000, up: 300, down: 290 }),
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EA}'`,
+  );
+  assertEq(r.rows[0].n, 1, "one run");
+});
+
+// The reason the dedup rule exists: one Garmin upload reaching both providers.
+await check("the same effort from a second source is marked, not counted twice", async () => {
+  await db.exec(
+    act({ user: EA, source: "intervals_icu", ext: "i1", at: "2026-09-01T07:00:40Z",
+          elapsed: 3600, moving: 3510, dist: 10010, up: 301, down: 291 }),
+  );
+  const raw = await db.query(
+    `select count(*)::int as n from activities where user_id = '${EA}'`,
+  );
+  const live = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EA}'`,
+  );
+  assertEq(raw.rows[0].n, 2, "both rows kept -- the duplicate is evidence");
+  assertEq(live.rows[0].n, 1, "counted once");
+  const dup = await db.query(
+    `select duplicate_of is not null as marked from activities
+      where user_id = '${EA}' and source = 'intervals_icu'`,
+  );
+  assertEq(dup.rows[0].marked, true, "the later arrival is the one marked");
+});
+
+await check("weekly endurance counts the effort once, descent kept separate", async () => {
+  const r = await db.query(
+    `select activities::int as n, ascent_m::float as up, descent_m::float as down
+       from v_weekly_endurance where user_id = '${EA}'`,
+  );
+  assertEq(r.rows[0].n, 1, "not doubled");
+  assertEq([r.rows[0].up, r.rows[0].down], [300, 290], "gain and loss are different numbers");
+});
+
+// The conservative direction: rather leave two rows than hide a real session.
+await check("a genuinely separate effort is not swallowed by the matcher", async () => {
+  await db.exec(
+    act({ user: EA, source: "intervals_icu", ext: "i2", at: "2026-09-01T07:25:00Z",
+          elapsed: 1200, moving: 1200, dist: 4000 }),
+  );
+  const live = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EA}'`,
+  );
+  assertEq(live.rows[0].n, 2, "a second, shorter run 25 minutes later still counts");
+});
+
+await check("two rows from ONE source at the same instant are both real", async () => {
+  // A split "Part 1 / Part 2" run is a real pair; dedup is cross-source only.
+  await db.exec(
+    act({ user: EA, source: "strava", ext: "s2", at: "2026-09-01T07:00:30Z",
+          elapsed: 3600, moving: 3500, dist: 10000 }),
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_live_activities
+      where user_id = '${EA}' and source = 'strava'`,
+  );
+  assertEq(r.rows[0].n, 2, "same source is never deduped against itself");
+});
+
+await check("a different sport at the same instant is never matched", async () => {
+  await db.exec(
+    act({ user: EB, source: "strava", ext: "b1", sport: "Run",
+          at: "2026-09-02T07:00:00Z", elapsed: 3600, moving: 3600 }),
+  );
+  await db.exec(
+    act({ user: EB, source: "intervals_icu", ext: "b2", sport: "WeightTraining",
+          at: "2026-09-02T07:00:10Z", elapsed: 3600, moving: 3600 }),
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EB}'`,
+  );
+  assertEq(r.rows[0].n, 2, "both kept");
+});
+
+await check("replaying a sync writes nothing", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      act({ user: EA, source: "strava", ext: "s1", at: "2026-09-01T07:00:00Z",
+            elapsed: 3600, moving: 3500 }),
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "unique (user_id, source, external_id)");
+});
+
+await check("null ascent means unknown, and never reads as flat", async () => {
+  const r = await db.query(
+    `select ascent_m from activities where user_id = '${EA}' and external_id = 'i2'`,
+  );
+  assertEq(r.rows[0].ascent_m, null, "a treadmill has no vert, not zero vert");
+});
+
+await check("owner reads their own activities and nobody else's", async () => {
+  const mine = await asUser(EA, `select count(*)::int as n from activities`);
+  const theirs = await asUser(EB, `select count(*)::int as n from activities`);
+  assertEq(mine.rows[0].n, 4, "EA sees their four");
+  assertEq(theirs.rows[0].n, 2, "EB sees their two");
+});
+
+await check("a user cannot forge a row claiming to come from a sync", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      EA,
+      `insert into activities (user_id, source, external_id, sport, started_at, elapsed_s)
+       values ('${EA}', 'strava', 'forged', 'Run', now(), 60)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "insert policy allows manual and fit_upload only");
+  const ok = await asUser(
+    EA,
+    `insert into activities (user_id, source, external_id, sport, started_at, elapsed_s)
+     values ('${EA}', 'manual', 'm1', 'Hike', timestamptz '2026-09-03T08:00:00Z', 3600)`,
+  );
+  assertEq(ok.affectedRows ?? 0, 1, "but may log one by hand");
+});
+
+await check("measurements are the sync's; annotations are the owner's", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      EA,
+      `update activities set distance_m = 99999 where external_id = 'm1'`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "a measurement is not editable, even on your own row");
+  const ann = await asUser(
+    EA,
+    `update activities set perceived_rpe = 7, rpe_recorded_at = now(),
+                           name = 'felt easy' where external_id = 'm1'`,
+  );
+  assertEq(ann.affectedRows ?? 0, 1, "rpe, its timestamp and the name are");
+});
+
+await check("a discarded activity leaves every view but stays in Postgres", async () => {
+  await asUser(EA, `update activities set discarded_at = now() where external_id = 'm1'`);
+  const live = await db.query(
+    `select count(*)::int as n from v_live_activities where external_id = 'm1'`,
+  );
+  const raw = await db.query(
+    `select count(*)::int as n from activities where external_id = 'm1'`,
+  );
+  assertEq([live.rows[0].n, raw.rows[0].n], [0, 1], "hidden, not gone");
+});
+
+await check("nobody deletes an activity", async () => {
+  const del = await asUser(EA, `delete from activities where external_id = 'm1'`);
+  assertEq(del.affectedRows ?? 0, 0, "no delete policy");
+});
+
+await check("sync credentials are unreadable by any client", async () => {
+  await db.exec(`
+    insert into integration_credentials (user_id, provider, secret)
+    values ('${EA}', 'intervals_icu', '{"api_key":"secret"}'::jsonb);
+  `);
+  const rls = await db.query(
+    `select relrowsecurity from pg_class where relname = 'integration_credentials'`,
+  );
+  assertEq(rls.rows[0].relrowsecurity, true, "row security enabled");
+  const pol = await db.query(
+    `select count(*)::int as n from pg_policies where tablename = 'integration_credentials'`,
+  );
+  assertEq(pol.rows[0].n, 0, "no policies at all -- service role only");
+  const seen = await asUser(EA, `select count(*)::int as n from integration_credentials`);
+  assertEq(seen.rows[0].n, 0, "not even your own token");
+});
+
+await check("deleting a user takes their activities and credentials", async () => {
+  await db.exec(`delete from auth.users where id = '${EA}'`);
+  const a = await db.query(`select count(*)::int as n from activities where user_id = '${EA}'`);
+  const c = await db.query(
+    `select count(*)::int as n from integration_credentials where user_id = '${EA}'`,
+  );
+  assertEq([a.rows[0].n, c.rows[0].n], [0, 0], "cascaded");
+});
+
+// --- E1 subjective capture (20260907040000) ----------------------------------
+console.log("\nsubjective capture (partial is normal):");
+await db.exec("reset role;");
+
+const SA = "00000000-0000-4000-8000-0000000000f1";
+const SB = "00000000-0000-4000-8000-0000000000f2";
+await db.exec(`
+  insert into auth.users (id, email) values
+    ('${SA}', 'sa@example.test'), ('${SB}', 'sb@example.test')
+  on conflict do nothing;
+`);
+const uuid = (n) => `00000000-1111-4000-8000-${String(n).padStart(12, "0")}`;
+
+// THE REQUIREMENT: leave part of it blank and everything still works.
+await check("a panel with one item answered is a real row", async () => {
+  const r = await asUser(
+    SA,
+    `insert into daily_readiness (id, user_id, local_date, sleep_hours)
+     values ('${uuid(1)}', '${SA}', date '2026-09-01', 7.5)`,
+  );
+  assertEq(r.affectedRows ?? 0, 1, "no item is required");
+});
+
+await check("a panel with NOTHING answered is also legal, and visibly empty", async () => {
+  await asUser(
+    SA,
+    `insert into daily_readiness (id, user_id, local_date)
+     values ('${uuid(2)}', '${SA}', date '2026-09-02')`,
+  );
+  const r = await db.query(
+    `select answered_items from v_readiness_trend
+      where user_id = '${SA}' and local_date = date '2026-09-02'`,
+  );
+  // Opening the sheet and skipping it is not the same as never opening it, and
+  // only one of those is a gap in the series.
+  assertEq(r.rows[0].answered_items, 0, "an empty answer is an answer");
+});
+
+await check("a rolling mean carries the count of real answers behind it", async () => {
+  await asUser(
+    SA,
+    `insert into daily_readiness (id, user_id, local_date, sleep_hours, fatigue)
+     values ('${uuid(3)}', '${SA}', date '2026-09-03', 6.5, 3)`,
+  );
+  const r = await db.query(
+    `select sleep_hours_7d::float as sleep, sleep_hours_7d_n::int as sleep_n,
+            fatigue_7d::float as fat, fatigue_7d_n::int as fat_n,
+            days_of_history
+       from v_readiness_trend
+      where user_id = '${SA}' and local_date = date '2026-09-03'`,
+  );
+  assertEq(r.rows[0].sleep_n, 2, "two sleep answers across three days");
+  assertEq(r.rows[0].sleep, 7, "(7.5 + 6.5) / 2, not / 3");
+  // The distinction the counts exist for: one item answered once, another
+  // twice, over the same three rows.
+  assertEq(r.rows[0].fat_n, 1, "one fatigue answer");
+  assertEq(r.rows[0].days_of_history, 3, "three rows, which is a different number");
+});
+
+await check("one panel per local date", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into daily_readiness (id, user_id, local_date, mood)
+       values ('${uuid(4)}', '${SA}', date '2026-09-01', 4)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "unique (user_id, local_date)");
+});
+
+await check("the panel is correctable within the day, unlike a set", async () => {
+  const upd = await asUser(
+    SA,
+    `update daily_readiness set mood = 4 where id = '${uuid(1)}'`,
+  );
+  assertEq(upd.affectedRows ?? 0, 1, "a self-report may be corrected");
+});
+
+await check("custom fields are the athlete's, and never gate anything", async () => {
+  await asUser(
+    SA,
+    `insert into readiness_fields (id, user_id, key, label, kind)
+     values ('${uuid(5)}', '${SA}', 'knee_niggle', 'Left knee', 'scale_1_5')`,
+  );
+  await asUser(
+    SA,
+    `update daily_readiness set custom = '{"knee_niggle": 2}'::jsonb
+      where id = '${uuid(1)}'`,
+  );
+  const r = await db.query(
+    `select custom->>'knee_niggle' as v from v_readiness_trend
+      where user_id = '${SA}' and local_date = date '2026-09-01'`,
+  );
+  assertEq(r.rows[0].v, "2", "recorded and readable");
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into readiness_fields (id, user_id, key, label, kind)
+       values ('${uuid(6)}', '${SA}', 'Bad Key!', 'x', 'number')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "a key must survive being a JSON key and a chart label");
+});
+
+await check("checkins are unlimited per day and never touch the daily trend", async () => {
+  for (let i = 0; i < 3; i++) {
+    await asUser(
+      SA,
+      `insert into checkins (id, user_id, kind, energy, note)
+       values ('${uuid(10 + i)}', '${SA}', 'spontaneous', ${i + 1}, 'tap ${i}')`,
+    );
+  }
+  const c = await asUser(SA, `select count(*)::int as n from checkins`);
+  assertEq(c.rows[0].n, 3, "three taps");
+  const d = await db.query(
+    `select days_of_history from v_readiness_trend
+      where user_id = '${SA}' and local_date = date '2026-09-03'`,
+  );
+  // If these fed the baseline it would depend on how often somebody happened
+  // to tap, which is not a fact about their training.
+  assertEq(d.rows[0].days_of_history, 3, "still three days, not six");
+});
+
+// --- OSTRC ------------------------------------------------------------------
+await check("OSTRC v2 scores 0-8-17-25 on all four and tops out at 100", async () => {
+  await asUser(
+    SA,
+    `insert into symptom_episodes (id, user_id, body_region, side, opened_on)
+     values ('${uuid(20)}', '${SA}', 'achilles', 'left', date '2026-08-10')`,
+  );
+  await asUser(
+    SA,
+    `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+     values ('${uuid(21)}', '${SA}', '${uuid(20)}', 'ostrc_o2', date '2026-08-16', 3,3,3,3)`,
+  );
+  const r = await db.query(
+    `select severity, is_health_problem, is_substantial from v_ostrc_severity
+      where id = '${uuid(21)}'`,
+  );
+  assertEq(r.rows[0].severity, 100, "the worst answer to all four is 100");
+  assertEq([r.rows[0].is_health_problem, r.rows[0].is_substantial], [true, true], "and substantial");
+});
+
+await check("a v2 row cannot carry an option its own instrument lacks", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+       values ('${uuid(22)}', '${SA}', '${uuid(20)}', 'ostrc_o2', date '2026-08-23', 0,4,0,0)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "v2 collapsed Q2/Q3 to four options; 4 is a v1 answer");
+});
+
+await check("v1 keeps its own five-option scale for Q2 and Q3", async () => {
+  await asUser(
+    SB,
+    `insert into symptom_episodes (id, user_id, body_region, opened_on)
+     values ('${uuid(30)}', '${SB}', 'shin', date '2026-08-01')`,
+  );
+  await asUser(
+    SB,
+    `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+     values ('${uuid(31)}', '${SB}', '${uuid(30)}', 'ostrc_o1', date '2026-08-09', 0,4,4,0)`,
+  );
+  const r = await db.query(`select severity from v_ostrc_severity where id = '${uuid(31)}'`);
+  // Scoring is per version, which is why `instrument` is a column and why
+  // severity is derived rather than stored.
+  assertEq(r.rows[0].severity, 50, "0 + 25 + 25 + 0 on the v1 scale");
+});
+
+await check("substantial is the published case definition, not a severity cutoff", async () => {
+  await asUser(
+    SB,
+    `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+     values ('${uuid(32)}', '${SB}', '${uuid(30)}', 'ostrc_o2', date '2026-08-16', 1,2,0,1)`,
+  );
+  const r = await db.query(
+    `select severity, is_substantial from v_ostrc_severity where id = '${uuid(32)}'`,
+  );
+  assert(r.rows[0].severity < 50, "a middling score");
+  assertEq(r.rows[0].is_substantial, true, "but Q2 >= moderate makes it substantial");
+});
+
+await check("persistence is counted in consecutive weeks, which is the signal", async () => {
+  for (const [n, d] of [[40, "2026-08-23"], [41, "2026-08-30"], [42, "2026-09-06"]]) {
+    await asUser(
+      SA,
+      `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+       values ('${uuid(n)}', '${SA}', '${uuid(20)}', 'ostrc_o2', date '${d}', 1,1,1,1)`,
+    );
+  }
+  const r = await db.query(
+    `select consecutive_weeks, persistent, is_open from v_symptom_episode_state
+      where episode_id = '${uuid(20)}'`,
+  );
+  assertEq(r.rows[0].consecutive_weeks, 4, "16 Aug through 6 Sep, unbroken");
+  assertEq(r.rows[0].persistent, true, "three weeks in one region warrants a clinician");
+  assertEq(r.rows[0].is_open, true, "and it is still open");
+});
+
+await check("a missed week breaks the run rather than being counted through", async () => {
+  await asUser(
+    SB,
+    `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+     values ('${uuid(33)}', '${SB}', '${uuid(30)}', 'ostrc_o2', date '2026-08-30', 1,1,1,1)`,
+  );
+  const r = await db.query(
+    `select consecutive_weeks, persistent from v_symptom_episode_state
+      where episode_id = '${uuid(30)}'`,
+  );
+  // 9 Aug, 16 Aug, then a gap, then 30 Aug: the current run is one week.
+  assertEq(r.rows[0].consecutive_weeks, 1, "the gap ends the run");
+  assertEq(r.rows[0].persistent, false, "and persistence is not claimed");
+});
+
+// --- pain and red flags -----------------------------------------------------
+await check("the next-morning pain check is its own row with its own timestamp", async () => {
+  await asUser(
+    SA,
+    `insert into pain_checks (id, user_id, episode_id, phase, nrs_0_10, captured_at)
+     values ('${uuid(50)}', '${SA}', '${uuid(20)}', 'post', 3, timestamptz '2026-09-06T09:00:00Z'),
+            ('${uuid(51)}', '${SA}', '${uuid(20)}', 'next_morning', 5, timestamptz '2026-09-07T07:00:00Z')`,
+  );
+  const r = await db.query(
+    `select phase, nrs_0_10 from pain_checks where episode_id = '${uuid(20)}' order by captured_at`,
+  );
+  // A 24-hour delayed signal cannot be a column on the run.
+  assertEq(r.rows.map((x) => x.phase), ["post", "next_morning"], "two rows, a day apart");
+  assertEq(r.rows[1].nrs_0_10, 5, "worse the next morning, which is the criterion");
+});
+
+await check("a red flag row must actually flag something", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into red_flags (id, user_id, episode_id) values ('${uuid(60)}', '${SA}', '${uuid(20)}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "an all-false row would read as a cleared flag");
+  const ok = await asUser(
+    SA,
+    `insert into red_flags (id, user_id, episode_id, focal_bone_tenderness)
+     values ('${uuid(61)}', '${SA}', '${uuid(20)}', true)`,
+  );
+  assertEq(ok.affectedRows ?? 0, 1, "any single one is a report");
+});
+
+// --- adherence denominator --------------------------------------------------
+await check("prompts give a computable adherence rate", async () => {
+  await asUser(
+    SA,
+    `insert into report_prompts (id, user_id, kind, scheduled_for, channel, responded_at)
+     values ('${uuid(70)}', '${SA}', 'daily_readiness', now() - interval '2 days', 'push', now() - interval '2 days'),
+            ('${uuid(71)}', '${SA}', 'daily_readiness', now() - interval '1 day', 'push', null)`,
+  );
+  const r = await db.query(
+    `select count(*)::int as sent, count(responded_at)::int as answered
+       from report_prompts where user_id = '${SA}'`,
+  );
+  // Without the denominator there is no way to tell 91% adherence from a
+  // drop-off, and adherence is the load-bearing assumption of the injury half.
+  assertEq([r.rows[0].sent, r.rows[0].answered], [2, 1], "one of two answered");
+});
+
+// --- cycle: opt-in, screening only ------------------------------------------
+await check("nobody who has not opted in appears in the cycle screen at all", async () => {
+  const r = await db.query(`select count(*)::int as n from v_cycle_screen`);
+  assertEq(r.rows[0].n, 0, "no rows, no inference");
+});
+
+await check("a long absence refers, and only for someone it would be unexpected for", async () => {
+  await asUser(SB, `insert into cycle_context (user_id, status) values ('${SB}', 'natural')`);
+  await asUser(
+    SB,
+    `insert into cycle_events (id, user_id, kind, local_date)
+     values ('${uuid(80)}', '${SB}', 'period_start', current_date - 200)`,
+  );
+  const r = await db.query(
+    `select refer_for_amenorrhoea, days_since_period from v_cycle_screen where user_id = '${SB}'`,
+  );
+  assertEq(r.rows[0].refer_for_amenorrhoea, true, "200 days is a referral, not a diagnosis");
+});
+
+await check("contraception is never flagged for an absent period", async () => {
+  await asUser(
+    SB,
+    `update cycle_context set status = 'hormonal_contraception' where user_id = '${SB}'`,
+  );
+  const r = await db.query(
+    `select refer_for_amenorrhoea from v_cycle_screen where user_id = '${SB}'`,
+  );
+  // Clinically opposite to the case above, and identical without the status.
+  assertEq(r.rows[0].refer_for_amenorrhoea, false, "no bleed by design is not a signal");
+});
+
+await check("a naturally long cycle is not flagged for being long", async () => {
+  await db.exec(
+    `update cycle_context set status = 'natural', typical_length_days = 60 where user_id = '${SB}'`,
+  );
+  await db.exec(
+    `update cycle_events set local_date = current_date - 100 where id = '${uuid(80)}'`,
+  );
+  const r = await db.query(
+    `select refer_for_amenorrhoea from v_cycle_screen where user_id = '${SB}'`,
+  );
+  assertEq(r.rows[0].refer_for_amenorrhoea, false, "100 days against a 60-day norm is not 2x");
+});
+
+await check("cycle data is deletable, unlike the training record", async () => {
+  const ev = await asUser(SB, `delete from cycle_events where id = '${uuid(80)}'`);
+  const ctx = await asUser(SB, `delete from cycle_context where user_id = '${SB}'`);
+  assertEq([ev.affectedRows ?? 0, ctx.affectedRows ?? 0], [1, 1], "health data can be withdrawn");
+});
+
+await check("nobody reads anyone else's subjective data", async () => {
+  const a = await asUser(SB, `select count(*)::int as n from daily_readiness`);
+  const b = await asUser(SB, `select count(*)::int as n from symptom_reports where user_id = '${SA}'`);
+  const c = await asUser(SB, `select count(*)::int as n from pain_checks`);
+  assertEq([a.rows[0].n, b.rows[0].n, c.rows[0].n], [0, 0, 0], "scoped to the owner");
+});
+
+await check("deleting a user takes every subjective row with them", async () => {
+  await db.exec(`delete from auth.users where id = '${SA}'`);
+  const n = await db.query(`
+    select (select count(*) from daily_readiness where user_id = '${SA}')
+         + (select count(*) from checkins where user_id = '${SA}')
+         + (select count(*) from symptom_reports where user_id = '${SA}')
+         + (select count(*) from symptom_episodes where user_id = '${SA}')
+         + (select count(*) from pain_checks where user_id = '${SA}')
+         + (select count(*) from red_flags where user_id = '${SA}')
+         + (select count(*) from report_prompts where user_id = '${SA}')
+         + (select count(*) from readiness_fields where user_id = '${SA}') as n`);
+  assertEq(Number(n.rows[0].n), 0, "cascaded");
+});
+
+// --- the alert sweep scheduler (20260907060000) ------------------------------
+// This migration is a no-op HERE and a real install on Supabase, which is the
+// whole point of the pg_available_extensions guard. What can be checked in
+// PGlite is that the guard held (no extension was created, nothing threw) and
+// that the function it leaves behind is not callable by a client.
+console.log("\nalert sweep scheduler (guarded for PGlite):");
+await db.exec("reset role;");
+
+await check("the guard holds: no pg_cron or pg_net here, and no error", async () => {
+  const r = await db.query(
+    `select count(*)::int as n from pg_extension where extname in ('pg_cron','pg_net')`,
+  );
+  assertEq(r.rows[0].n, 0, "absent, and the migration chain still applied");
+});
+
+await check("run_alert_sweep exists even where it cannot run", async () => {
+  // Created outside the guard on purpose: the function is the same everywhere
+  // and only its scheduling is conditional, so a drifting definition is not
+  // possible between the validation path and production.
+  const r = await db.query(
+    `select prosecdef from pg_proc where proname = 'run_alert_sweep'`,
+  );
+  assertEq(r.rows.length, 1, "one definition");
+  assertEq(r.rows[0].prosecdef, true, "security definer: it reads the vault");
+});
+
+await check("no client role can make Postgres call out", async () => {
+  const r = await db.query(
+    `select has_function_privilege('authenticated', 'run_alert_sweep()', 'execute') as auth,
+            has_function_privilege('anon', 'run_alert_sweep()', 'execute') as anon`,
+  );
+  assertEq([r.rows[0].auth, r.rows[0].anon], [false, false], "revoked from both");
 });
 
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);

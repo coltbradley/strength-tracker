@@ -17,7 +17,10 @@ programs. Claude parses, analyzes, and proposes. The app captures.
 - `docs/`: plan, architecture, decisions, setup, deploy. `docs/decisions.md`
   is the log of every deviation from the original spec and why.
   `docs/deploy.md` is the per-release runbook — follow it instead of
-  rediscovering the deploy steps.
+  rediscovering the deploy steps. `docs/endurance-research.md` is the evidence
+  base for the endurance layer, including the list of metrics this system
+  refuses to compute and why; `docs/endurance-plan.md` is its phased build plan,
+  whose every gate re-checks that the strength app still works untouched.
 
 ## Hard rules
 
@@ -434,6 +437,45 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   `source` says which path a row came from and `source_turn_id` which message,
   so the app can show a fact nobody mentioned in chat and offer to delete it;
   `source` carries that one fact and nothing may branch on it for ownership.
+- `activities` (20260907030000) are endurance actuals and a THIRD
+  write-ownership class. `sets` are written by the PWA and nothing else; planned
+  tables by the PWA and the MCP server; an activity by NEITHER, because it
+  arrives from a sync against a third party the user does not control. The rule
+  that falls out and that every endurance phase re-checks: the endurance half
+  may never become a dependency of the strength half. Strength data is the only
+  copy of itself and is written by a phone in a basement; endurance data can be
+  re-fetched. No delete policy (soft delete is `discarded_at`, the idiom of
+  `sessions`/`programs`/`planned_workouts`), and every endurance-derived read
+  goes through `v_live_activities` -- never `activities` -- for the same reason
+  set-derived views read `v_live_sets`.
+  `ascent_m` and `descent_m` are SEPARATE and nullable, and that is the point of
+  the table: no platform surveyed stores elevation LOSS, descent is what
+  produces ~40% knee-extensor strength loss at the finish of a mountain ultra,
+  and it is what the eccentric block is dosed against. NULL means unknown, never
+  flat: a treadmill has no vert rather than zero vert, and zero on a track
+  session is a real measurement. Strava's activity list carries gain only, so a
+  Strava-only deployment has null descent and cannot dose that block; the sync
+  reports `inserted_with_descent` so this is found at E0 rather than at E5.
+  Two sources may be connected at once, and one Garmin upload reaching both is
+  TWO rows for one effort. A `before insert` trigger marks the later arrival
+  `duplicate_of` the earlier and `v_live_activities` drops it; both rows stay,
+  because each holds its own source's detail. The matcher is deliberately
+  conservative (different source, same sport case-insensitively, within two
+  minutes, durations within 60 s or 5%) because the failure modes are not
+  symmetrical: a missed duplicate double-counts a week and is visible, a wrong
+  match hides a real training day and is not. The rule lives in SQL, not in the
+  sync, so a third provider cannot forget it.
+  Measurements belong to the sync and annotations to the owner. Postgres has no
+  per-column update policy, so a trigger pins it: a user may set
+  `perceived_rpe`, `rpe_recorded_at`, `name`, `planned_workout_id` and
+  `discarded_at`, and nothing else. `perceived_rpe` without `rpe_recorded_at` is
+  an RPE that cannot be trusted -- session-RPE's validity depends on being
+  collected about 30 minutes post, so the timestamp is part of the measurement.
+  `integration_credentials` is service-role only (RLS on, NO policies, the
+  `push_config` pattern), and a missing row means that provider is simply not
+  connected: both, either or neither is supported and the app works in all four
+  cases.
+
 - `training_plans` / `plan_phases` (20260905060000) are the STRATEGY above
   programs: an objective over months in dated, ordered phases, each with a
   focus and a progression rule. Not goals (measured against sets), not memory
@@ -453,10 +495,93 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   current phase, questioning a request that contradicts it. Strategy is set at
   a desk with time to think; tactics are set between sets.
 
+- Who gets the in-app coach is TWO gates and both must pass.
+  `COACH_ALLOWED_USERS` is the door: an env var, checked before any database
+  read, unset means everyone, and it exists so an open sign-up cannot mint
+  accounts that spend the deployment owner's Anthropic key. `coach_access`
+  (20260907020000) is the switch: one row per person, NO ROW MEANS ON so it
+  changed nothing when it landed, with a `reason` written for the person to
+  read. It is not a column on `user_config` because that table has an owner
+  UPDATE policy and a switch its subject can flip is not an administrative
+  control; it has a select policy for the owner and NO insert/update/delete
+  policies, the `push_config` pattern. `coach_enabled(uuid)` is SECURITY
+  INVOKER on purpose, so asking about somebody else reads nothing through RLS
+  and returns the default rather than their real answer. The PWA reads it only
+  to hide the chat entrance and treats every uncertain answer as ON, because
+  the edge function is the boundary; a read that FAILS there is a 503, never a
+  403, since "we could not find out" is not "no". The MCP server is untouched
+  by this: a switched-off person still reads and writes their own log from
+  Claude Desktop.
+
+- Subjective capture (20260907040000) is THREE CADENCES IN THREE TABLES, and
+  they are deliberately not one table with a `kind` column: they measure
+  different things on different clocks and merging them gives a pleasant UI over
+  uninterpretable data. `daily_readiness` is ONE ANCHORED ROW PER LOCAL DATE and
+  is the row that trends; `checkins` is unlimited per day and is never averaged
+  into that trend, or the baseline would depend on how often somebody happened
+  to tap; `symptom_reports` is weekly and threaded onto a `symptom_episodes` row,
+  because the only question worth asking about an achilles is whether it is
+  better or worse than three weeks ago and unlinked rows cannot answer it.
+  EVERY ITEM IS OPTIONAL and a half-filled row is a real row. That forces the
+  views: `avg()` skips nulls, so every rolling mean carries its own COUNT
+  (`fatigue_7d_n`, not `days_of_history`) and `answered_items` separates a panel
+  somebody opened and skipped from a day they never opened. There is NO
+  composite readiness score anywhere, ever: subjective and objective recovery
+  measures do not correlate, so a composite merges signals that move
+  independently and hides which one moved.
+  The panel asks THREE things (sleep, fatigue, soreness) and saves as it is
+  answered, with no Save button: the lowest-stakes version of a question is one
+  you cannot get wrong by walking away from it, and a panel that takes a minute
+  gets answered for a fortnight. The other items still exist and are one tap
+  away. A daily prompt goes quiet after four hours rather than nagging until
+  bedtime, and "not today" is RECORDED (`report_prompts`, which is also the
+  adherence denominator) so the asking actually stops. Losing the athlete costs
+  every future answer; losing one day costs one day.
+  OSTRC severity is derived in a view and scored PER `instrument` version, so a
+  scoring correction is a CREATE OR REPLACE and never a backfill over data
+  nobody can re-collect. Escalation is on PERSISTENCE, not intensity: for one
+  athlete the smallest detectable change (~35) exceeds the minimal important
+  change (18.5), so a week-to-week delta is mostly noise and three consecutive
+  weeks in one region is the signal. Red flags are separate BOOLEANS and any
+  single one refers, because a score invites a threshold the clinical literature
+  does not provide. The next-morning pain check is its own row with its own
+  timestamp; it is a 24-hour delayed signal and cannot be a column on the run.
+  `cycle_context` / `cycle_events` are OPT-IN and nothing anywhere infers a
+  cycle from anything else. Phase is never computed and may not gate a rule (its
+  performance effects are small and contested); absent menstruation screens and
+  REFERS, because that is a primary IOC REDs indicator and the red-flag path was
+  otherwise referring on a criterion nobody could record. `status` exists so
+  screening can tell "no period because continuous contraception" from "no
+  period, and that is new", which are clinically opposite and identical without
+  it. Both tables are DELETABLE, unlike the training record.
+  `readiness_fields` lets somebody add their own items, and the line is drawn at
+  what a value may DO rather than whether it may exist: a custom item is
+  context and a chart, and may NEVER gate a rule, because an unvalidated item
+  cannot carry a decision. Same discipline as the research doc's tags.
+
+- A migration that needs an extension PGlite does not have is GUARDED, not
+  forked. `scripts/validate-db.mjs` replays the whole chain in PGlite, so a bare
+  `create extension pg_cron` fails the gate. `20260907060000` asks
+  `pg_available_extensions` first, which is a catalog view PGlite does have, so
+  one body of SQL is a no-op there and a real install on Supabase and the two
+  cannot drift. Prompt delivery is `pg_cron` every five minutes calling
+  `run_alert_sweep()`, which uses `pg_net` to POST `push-alerts/sweep` with
+  credentials read from VAULT at run time -- never a migration literal, because
+  this repository is public. Missing Vault rows make it do nothing and say so,
+  rather than firing unauthenticated requests forever. `rest_alerts.kind`
+  separates a rest (delivered by `POST /schedule`, which holds a worker open and
+  refuses anything longer than it can survive) from a prompt (`POST /arm` writes
+  the row, the sweep delivers it); the one-live-alert rule and the service
+  worker's notification `tag` are both PER KIND, or a check-in prompt cancels a
+  rest timer and replaces its notification. The sweep is idempotent and drops
+  anything more than six hours stale. If the cron is removed nothing breaks:
+  `pwa/src/lib/prompts.ts` decides WHEN to ask and is pure, so the app still
+  asks in-app on foreground; only asking while the app is CLOSED is lost.
+
 ## The coach (supabase/functions/coach)
 
-- An edge function calling the Anthropic API with `claude-opus-5` at effort
-  `low`, giving it
+- An edge function calling the Anthropic API with `claude-sonnet-5` at effort
+  `medium`, giving it
   the EXISTING MCP server as its tool surface via the MCP connector. One
   authorization boundary, not two. The API key is a Supabase secret and never
   reaches the browser; the caller authenticates with their Supabase session.

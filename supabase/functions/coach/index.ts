@@ -47,25 +47,34 @@ import { systemPrompt } from "./prompt.ts";
 import { captureError } from "./sentry.ts";
 import { extractMemory } from "./memory-extract.ts";
 
-// Opus, at LOW effort, and the two halves of that are separate decisions.
+// Sonnet 5, at MEDIUM effort. This reverses the move to Opus, which its own
+// comment said was one line to undo, and it moves effort UP one step at the
+// same time. The two halves are still separate decisions.
 //
-// The model: the thing this function does that nothing else in the app does is
-// WRITE to someone's training plan. The expensive failure is not a mediocre
-// sentence, it is a wrong write — and a real user's plan has already been
-// corrupted once. Side-effect error rate is the metric that improves with
-// tier, and at observed usage the difference is about a dollar a month per
-// person. It is insurance, not a fix: an eval run with a Sonnet-class model
-// handled every judgment case where the prompt was clear, so the model was
-// never the bottleneck. Reversing this is one line if the API eval
-// (scripts/coach-eval) says Sonnet matches it.
+// The model: Opus was bought as insurance against a wrong WRITE, not against a
+// mediocre sentence, because a real user's plan had been corrupted once. What
+// that reasoning left out is that the corruption was structural rather than a
+// judgment failure: `upsert_program` could not edit a confirmed program, so a
+// model asking to add a day could only mint a second one. That hole is closed
+// by `update_planned_workout` and the confirm gates, and the eval run this
+// comment already cited found a Sonnet-class model handled every judgment case
+// where the prompt was clear. Paying Opus rates to insure a bug that no longer
+// exists is the wrong trade.
 //
-// The effort: unchanged, and deliberately. `low` was chosen for someone
-// standing at a rack between sets and that reasoning still holds — turns
-// already take 9 to 18 seconds. A stronger model at low effort buys judgment
-// without buying latency, and the worst turn on record was 37 seconds of six
-// sequential exercise lookups, which is a tool-loop problem rather than a
-// thinking-depth one.
-const MODEL = "claude-opus-5";
+// The effort: `low` was chosen for someone standing at a rack between sets, and
+// that constraint is real, but it was chosen to offset Opus latency. On the
+// cheaper model the latency budget buys something better spent on thinking:
+// `medium` is the step where the tool-selection judgment this function actually
+// needs shows up, and the worst turn on record (37 seconds) was six sequential
+// exercise lookups, which is a tool-loop problem rather than a thinking-depth
+// one. If turns get slower than about 20 seconds, drop back to `low` before
+// reaching for a bigger model.
+//
+// Note for whoever changes this next: `v_coach_cost` prices by model now
+// (20260907010000). Adding a model means adding its rates there, or the ledger
+// silently reports the wrong number, which is exactly what happened while this
+// constant said Opus and the view still charged Sonnet rates.
+const MODEL = "claude-sonnet-5";
 // Counts thinking, tool calls AND the answer against max_tokens. At 8k with
 // adaptive thinking on, a multi-tool turn truncates mid-sentence.
 const MAX_TOKENS = 16000;
@@ -261,6 +270,34 @@ async function revokeToken(
       }),
     );
   }
+}
+
+/**
+ * Whether the in-app coach is switched on for this person (coach_access,
+ * 20260907020000). NO ROW MEANS ON: the table landed on a running deployment
+ * and must not have turned the coach off for everyone the moment it existed.
+ *
+ * Returns the reason to show when it is off, or null when it is on. A read that
+ * FAILS is neither — it throws, and the caller answers 503, because "we could
+ * not find out" is not "you are not allowed" and must not be reported as one.
+ * The turn would fail anyway: a turn whose usage cannot be recorded must not
+ * run, and this read and that write are the same database.
+ */
+async function coachSwitchedOff(
+  db: ReturnType<typeof serviceClient>,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await db
+    .from("coach_access")
+    .select("enabled, reason")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`coach access: ${error.message}`);
+  if (!data || data.enabled) return null;
+  return (
+    data.reason ??
+    "The coach is switched off for this account. Your log and your MCP token are unaffected."
+  );
 }
 
 async function overLimit(
@@ -687,6 +724,13 @@ Deno.serve(async (req) => {
   const db = serviceClient();
 
   try {
+    // The per-person switch, before the quota. Someone switched off should be
+    // told that, not told they are out of messages, and their refusal must not
+    // land in coach_usage: a refusal row exists to keep a rolling quota honest
+    // for someone who HAS one, and a switched-off account does not.
+    const off = await coachSwitchedOff(db, userId);
+    if (off) return json({ error: off }, 403);
+
     const refusal = await overLimit(db, userId);
     if (refusal) {
       await db.from("coach_usage").insert({
@@ -784,7 +828,7 @@ Deno.serve(async (req) => {
           // needed too — display defaults to "omitted" on Sonnet 5, so the
           // stream would emit empty thinking blocks and the UI would sit
           // silent for seconds with nothing to show.
-          output_config: { effort: "low" },
+          output_config: { effort: "medium" },
           thinking: { type: "adaptive", display: "summarized" },
           // The MCP tool definitions are ~17k tokens and identical every turn.
           // Caching order is tools -> system -> messages, so one breakpoint at

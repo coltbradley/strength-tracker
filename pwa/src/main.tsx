@@ -11,6 +11,31 @@ installGlobalHandlers();
 void initSentry();
 outbox.start(); // flush on app start + 'online' events
 
+// Clear the app icon badge whenever the app is actually looked at.
+//
+// The badge is set by the service worker when a push arrives (sw.ts). Nothing
+// else can clear it: the worker only runs on a push, so an unread count would
+// otherwise sit on the home screen icon forever after the person opened the app
+// and dealt with the thing.
+//
+// Registered on BOTH load and every return to the foreground, because an
+// installed PWA is resumed rather than reloaded -- the same reason
+// useLocalToday watches visibilitychange rather than reading the clock once.
+// Feature-detected and swallowed: a badge is decoration, and on a browser
+// without the API (older iOS, some desktops) its absence must cost nothing.
+function clearBadge(): void {
+  try {
+    const n = navigator as Navigator & { clearAppBadge?: () => Promise<void> };
+    void n.clearAppBadge?.().catch(() => {});
+  } catch {
+    // Decoration.
+  }
+}
+clearBadge();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") clearBadge();
+});
+
 // Ask the browser not to evict us.
 //
 // The outbox holds sets that exist NOWHERE else until they sync, and WebKit's

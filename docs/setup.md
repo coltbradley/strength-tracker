@@ -177,9 +177,19 @@ npm run dev             # local test
 npm run build           # deploy dist/ to any static host
 ```
 
-Hosting: Cloudflare Pages or Vercel free tier, or Supabase hosting if
-enabled on the project. Then open it on the phone, sign in with the magic
-link, and add to home screen.
+Hosting: **GitHub Pages**, published by `.github/workflows/deploy.yml` on every
+push to main. That is the actual deployment, not a suggestion -- see
+[deploy.md](deploy.md), which gates the Supabase migration job in FRONT of the
+Pages publish so the client can never ship ahead of its schema.
+
+(An earlier draft of this line offered Cloudflare Pages or Vercel as
+alternatives. Any static host still serves `dist/`, but two things are built
+around Pages specifically: the app is served from a SUBPATH, which `PAGES_BASE`
+threads through the router and the service worker scope, and the
+migrations-before-publish ordering lives in that workflow. Moving hosts means
+redoing both, not changing a deploy target.)
+
+Then open it on the phone, sign in with the magic link, and add to home screen.
 
 ## Adding another user
 
@@ -205,11 +215,16 @@ sets stay queued for whoever logged them and are never replayed as anyone else.
 **3. Give them an MCP token** so Claude (or another client) can read their log:
 
 ```bash
-node scripts/issue-mcp-token.mjs --user <their-uuid> --label "Sam · Claude Desktop"
+node scripts/issue-mcp-token.mjs --user <their-uuid> --label "Sam · Claude Desktop" \
+  --project-ref <your-project-ref>
 ```
 
 It prints the token once, the SQL to activate it, and a ready-made client
 config. Paste the `insert into mcp_tokens ...` into the Supabase SQL editor.
+Pass `--project-ref` (or export `SUPABASE_PROJECT_REF`) so the printed config
+carries the real URL: without it the output says `<project-ref>` and whoever you
+hand it to has to be told what to replace, which is the step people get stuck
+on. What they paste into `claude_desktop_config.json` should work unedited.
 The token is stored only as a SHA-256 digest, so this is the one moment it is
 readable — losing it costs a revoke and a re-issue, nothing more.
 
@@ -247,6 +262,95 @@ server setting there would be a third write-ownership class — see CLAUDE.md).
 That last row is the one to know: two people sharing one phone share its plate
 inventory and per-exercise preferences. Two phones, no overlap.
 
+## Connecting an endurance source (optional)
+
+The endurance layer takes activities from intervals.icu, from Strava, from both,
+or from neither. Neither is a supported state: the views are simply empty and
+nothing else in the app changes.
+
+**intervals.icu is the one to connect first.** Free, an instant API key from
+Settings -> Developer Settings, and it already carries whatever watch you own
+(Garmin, Polar, Suunto, Coros, Oura, Whoop). It also carries elevation LOSS,
+which Strava's activity list does not, and the endurance layer is built around
+descent.
+
+```sql
+insert into integration_credentials (user_id, provider, secret, external_id)
+values ('<uuid>', 'intervals_icu',
+        '{"api_key":"<key>"}'::jsonb, '<athlete id, like i123456>');
+```
+
+**Strava is supported and is not the default.** Read
+[endurance-research.md](endurance-research.md) first: the 2026 Standard tier
+caps at about ten users, requires the developer to hold a paid Strava
+subscription, allows roughly 100 reads per 15 minutes, and bars use of the data
+in AI models. None of that stops a personal deployment; all of it is your call.
+
+```sql
+insert into integration_credentials (user_id, provider, secret)
+values ('<uuid>', 'strava', '{"access_token":"<token>"}'::jsonb);
+```
+
+Then pull:
+
+```bash
+# everything (defaults to 400 days)
+curl -X POST "$FUNCTIONS_URL/endurance-sync/backfill" \
+  -H "Authorization: Bearer <a supabase session jwt>" -d '{}'
+
+# just what is new, re-reading a 48h window because upstream activities get
+# edited after upload
+curl -X POST "$FUNCTIONS_URL/endurance-sync/poll" \
+  -H "Authorization: Bearer <a supabase session jwt>"
+```
+
+The response reports each provider separately: `not_connected`, `disabled`,
+`ok`, or `failed` with the reason. One provider failing never stops the other,
+and nothing connected is a 200 rather than an error.
+
+**Check `inserted_with_descent` on the first backfill.** It is reported for a
+reason: if a full backfill lands zero descent measurements, the eccentric and
+descent rules later in the plan have nothing to gate on, and it is much better
+to find that out now than in E5. A Strava-only connection will always report
+zero here, because Strava's activity list carries gain only.
+
+Connecting both is fine and does not double-count. A before-insert trigger
+marks the second copy of the same effort as `duplicate_of` the first, and
+`v_live_activities` drops it. Both rows are kept, because each still holds its
+own source's detail.
+
+To disconnect: `update integration_credentials set enabled = false where ...`,
+or delete the row. Activities already synced stay.
+
+## Sign-in email (AgentMail SMTP)
+
+Sign-in codes go out over AgentMail rather than a personal Gmail. A Gmail app
+password is a credential to that entire account, the sender is a human being's
+address, and Google's send limits are shaped for a person rather than an app.
+
+`supabase/config.toml` already points at it; the credentials come from
+`.env.local` (gitignored) and are applied with `scripts/push-auth-config.sh`:
+
+```
+SMTP_USER=<inbox>@agentmail.to
+SMTP_PASS=<an AgentMail API key, Dashboard -> API Keys>
+```
+
+Three things that are easy to get wrong:
+
+**Use a dedicated inbox.** AgentMail requires the From address to match the
+inbox it authenticates as, so `SMTP_USER` *is* the sender. Do not reuse an
+existing research or listening inbox: its deliverability reputation is the wrong
+one for auth mail, and a friend receiving a login code from an unfamiliar alias
+reads it as phishing. Make one for this app.
+
+**The password is an API key, not a mailbox password.** Dashboard -> API Keys.
+
+**Port 587 needs STARTTLS before AUTH**; authenticating first is rejected with a
+538. If sign-in mail starts failing that way, switch `port` to 465 (implicit
+TLS) in `config.toml`. Both are supported; 587 is set because it is what the
+previous Gmail config used.
+
 ## Who can sign up, and who gets the coach
 
 Two settings, and they only make sense together. Sign-up is open by default,
@@ -269,6 +373,36 @@ is not automatically a coach account:
 supabase secrets set COACH_ALLOWED_USERS="<uuid>,<uuid>"
 supabase functions deploy coach
 ```
+
+**Switch the coach off for one person**, without touching anyone else:
+
+```sql
+insert into coach_access (user_id, enabled, reason)
+values ('<their-uuid>', false, 'paused while we sort out the API bill')
+  on conflict (user_id) do update
+    set enabled = excluded.enabled,
+        reason  = excluded.reason,
+        updated_at = now();
+```
+
+Back on: `update coach_access set enabled = true, reason = null where user_id = '<uuid>'`.
+
+NO ROW MEANS ON, so this table changed nothing for anyone when it landed. The
+`reason` is shown to the person, so write it for them. The app reads their own
+row and hides the chat button rather than offering one that answers 403; the
+edge function enforces it either way, and a read that FAILS is answered 503
+rather than treated as a refusal.
+
+This is deliberately not a column on `user_config`: that table lets a user
+update their own row, and a switch its subject can flip is not an
+administrative control. It is also separate from `COACH_ALLOWED_USERS`, and
+both must pass. The env var is the DOOR (checked before any database read, so
+an open sign-up cannot mint accounts that spend your Anthropic key); this is
+the SWITCH (per person, reversible, and visible to the app).
+
+The MCP server is unaffected. Somebody switched off here still reads and writes
+their own log from Claude Desktop with their bearer token — this controls who
+spends the deployment's Anthropic key, not who owns their data.
 
 Unset — the default — means everyone who can sign in can use the coach, so an
 existing deployment behaves exactly as it did before this variable existed.

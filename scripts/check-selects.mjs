@@ -43,9 +43,21 @@ const FILES = [
   ...readdirSync(join(ROOT, "supabase/functions/mcp-server/lib"))
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
     .map((f) => join("supabase/functions/mcp-server/lib", f)),
+  // The endurance function selects from `activities` and the credential store;
+  // it is a reader like any other and a misnamed column there fails a sync
+  // rather than a screen, which is harder to notice, not easier.
+  ...readdirSync(join(ROOT, "supabase/functions/endurance-sync"))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+    .map((f) => join("supabase/functions/endurance-sync", f)),
   "pwa/src/lib/data.ts",
   "pwa/src/lib/coach.ts",
   "pwa/src/lib/review.ts",
+  // Subjective capture and the coach switch read too. This list is hand-kept,
+  // which means it silently stops covering anything nobody remembers to add —
+  // the endurance layer merged with none of its readers named here.
+  "pwa/src/lib/checkins.ts",
+  "pwa/src/lib/coachAccess.ts",
+  "pwa/src/lib/sessionHistory.ts",
 ];
 
 /**

@@ -5,6 +5,9 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type {
   BodyweightInsert,
+  CheckinInsert,
+  DailyReadinessUpsert,
+  PainCheckInsert,
   SessionInsert,
   SessionPatch,
   SetInsert,
@@ -47,7 +50,37 @@ export type OutboxOp =
       kind: "update";
       table: "sessions";
       id: string;
+      // SessionRatePatch is the one-column patch the rate-this-session prompt
+      // sends; narrowing this back to SessionPatch would make that write
+      // untypeable, and widening the END patch instead would let a prompt on
+      // Today blank a note typed on the End screen.
       patch: SessionPatch | SessionRatePatch;
+    }
+  // Subjective capture rides the SAME queue as sets, which is safe in the one
+  // direction that matters: the flusher dead-letters a permanently failing item
+  // and keeps going ("keep flushing past dead items"), so a broken check-in
+  // cannot hold up somebody's sets. The dependency points endurance -> shared
+  // infrastructure, never the reverse.
+  //
+  // daily_readiness MERGES like set_notes, because a morning panel is
+  // correctable within the day and the id is stable per (user, local_date).
+  | { kind: "insert"; table: "daily_readiness"; payload: DailyReadinessUpsert }
+  | { kind: "insert"; table: "checkins"; payload: CheckinInsert }
+  | { kind: "insert"; table: "pain_checks"; payload: PainCheckInsert }
+  // A recorded skip. Same queue, same idempotent replay: "not today" is a fact
+  // worth keeping, because report_prompts is the denominator that says whether
+  // prompting is working at all.
+  | {
+      kind: "insert";
+      table: "report_prompts";
+      payload: {
+        id: string;
+        user_id: string;
+        kind: string;
+        scheduled_for: string;
+        channel: string;
+        skipped: boolean;
+      };
     };
 
 export interface OutboxItem {

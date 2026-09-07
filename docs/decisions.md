@@ -2412,3 +2412,399 @@ check `list_migrations` against `supabase/migrations/` and realign the version
 before the session ends. A push job that would otherwise deploy the schema is
 also why `deploy.yml` staying skipped (no deploy settings) is load-bearing —
 see deploy.md.
+
+## The endurance layer, and the metrics it refuses to compute
+
+The log grew a strategy tier in 20260905060000 (`training_plans` /
+`plan_phases`) and the obvious next question was whether that tier could carry a
+modality it had never seen. A user who has stopped working with a coach wants to
+train for a 50K and keep lifting, and wants the system to plan both. Six
+research lanes went out before any schema was drawn, which turned out to be the
+right order, because the most useful thing they returned was a list of things
+NOT to build. That list is in
+[endurance-research.md](endurance-research.md); the sequence is in
+[endurance-plan.md](endurance-plan.md). What follows is why the shape is what it
+is.
+
+**The seam is the DAY, not the prescription.** A run does not fit in
+`prescriptions` and forcing it there is the bug class this repository already
+has a chapter on. `load_kg` is total system load, `v_e1rm` reads working sets at
+1-8 reps, and `v_adherence` compares prescribed reps to achieved ones; a row
+that said "90 minutes easy" would be silently wrong in all three. So
+`planned_efforts` hangs off `planned_workouts` beside `prescriptions`, one day
+holds a lift and a run, and every existing view keeps the meaning it had. The
+shape of an effort is not invented: TrainingPeaks structured JSON, Zwift .zwo,
+Garmin's FIT `workout_step` and the intervals.icu text DSL all reduce to
+`workout -> step -> repeat-block(steps)` and none nests deeper than one repeat.
+Matching it costs nothing now and buys a `.fit` export to a watch later.
+
+**Endurance actuals are a third write-ownership class, and that is the part that
+needed a decision rather than a migration.** `sets` are written by the PWA and
+nothing else. Planned tables are written by the PWA and the MCP server. An
+`activities` row is written by neither: it arrives from a sync against a third
+party the user does not control and this deployment cannot fix. The rule that
+falls out, and that every phase gate re-checks, is that the endurance half may
+never become a dependency of the strength half. Strength data is the only copy,
+written by a phone in a basement, and it has to flush with the endurance
+integration unreachable. Two reliability classes, one direction of dependency.
+
+**The integration is intervals.icu, not the Strava API, and that reverses where
+the scoping started.** Strava's 2026 Standard tier caps at about ten users,
+requires the DEVELOPER to hold a paid subscription, allows roughly 100 reads per
+15 minutes, bars use of the data in AI models, restricts display to the owning
+athlete, and belongs to the company that bought Runna and now sells the
+competing product. intervals.icu gives a free instant API key, activities,
+streams, FIT in and out, and a wellness endpoint carrying resting HR, HRV and
+sleep, auto-synced from Garmin, Polar, Suunto, Coros, Oura, Whoop and others,
+with terms that explicitly grant commercial use against one condition (Garmin
+attribution). Garmin direct is closed to new developers as of 2026 and Fitbit's
+API turns down in September, so routing through intervals.icu is also the only
+practical way to reach a Garmin watch at all. What it costs: a one-person free
+service with no SLA sits in the path. The fallback is FIT parsing, which carries
+raw R-R intervals and running dynamics no API returns.
+
+Strava's MCP stays, for ad-hoc reading in Claude Desktop, because probing it
+against the real account found more than expected:
+`get_activity_performance` returns per-lap `avg_grade`, so climbing and
+descending performance separate without touching streams; repeated segment
+efforts carry `avg_hr` and `avg_watts`, which makes a weekly Twin Peaks run a
+free repeated-measures fitness test; and `has_device_watts` is true, so running
+power is available and grade-independent pace stops being a problem to model.
+The same probe settled the other direction: `get_strength_workout_details`
+returns `exercise_name: "Unknown"` and a step count, so Strava holds nothing
+usable about lifting and there is no reconciliation problem to design around.
+
+**Three metrics are refused outright, and the refusals are the load-bearing
+part.** ACWR is mathematically coupled (acute load is inside chronic load),
+meta-analyses disagree on the sign, and its effect in ultrarunners specifically
+was non-significant at p = 0.3. TSB, CTL and ATL carry the identical coupling
+defect, since the 7-day window is a subset of the 42-day one, with constants
+that are asserted rather than derived and no independent validation; the
+Banister model beneath them is descriptive, with ill-conditioned parameters that
+shift with the fitting window. And a single composite readiness score merges
+signals the evidence says do not correlate: subjective and objective recovery
+measures generally did not move together across 56 studies. Every one of these
+is something the market ships and something a plausible implementation reaches
+for first. A `v_readiness` view returning one number would have looked like the
+most finished part of the system and been the least defensible.
+
+What replaces them is smaller and honest. Session-RPE, which has about 36
+validity studies and is one unit across running and lifting, which makes it the
+cross-modality currency. A daily subjective panel with each item its own column,
+because a composite hides which one moved. Submaximal HR and RPE at a fixed
+benchmark effort, the one objective marker with overreaching evidence behind it,
+and the reason `benchmark_efforts` exists. The timing of the RPE is stored, not
+assumed, because validity depends on it being collected around 30 minutes post.
+
+**Two state variables, not one fitness number.** This is the finding that
+changed the design. Aerobic capacity falls 4 to 8% over three weeks off and
+comes back within days to two weeks, because the early loss is plasma volume.
+Tissue tolerance decays and rebuilds far slower: bone stress injuries appear 3
+to 4 weeks after a load shift and tendon lags muscle by 6 to 12 weeks. After a
+gap the engine is ready first and the structures are ready last. A single
+fitness score reflects the fast variable and therefore says "ramp", which is
+exactly the wrong instruction. The first user's own log has a 26-day zero-running
+gap after a 75 km/wk peak, so this is not hypothetical, and Phase E2's gate is
+that the two states move on visibly different timescales across that gap. If
+they move together the model is wrong and the phase is not done.
+
+**Injury is self-reported, threaded, and never predicted.** There is no
+prospective evidence that cadence, ground contact time asymmetry or vertical
+oscillation detect emerging injury before the athlete says something; ML models
+run at about AUC 0.52; and at a base rate near 7.7 injuries per 1000 hours any
+daily passive alarm is almost entirely false positives. So passive signals may
+annotate a report the athlete made and may never raise one, and Phase E6's gate
+fabricates a large cadence drop and asserts silence. The questions themselves
+are copied rather than invented: OSTRC-O2, four items, seven-day recall, weekly,
+with published case definitions that the triage branches on. The individual
+smallest detectable change (35) exceeds the minimal important change (18.5),
+which means one person's week-to-week delta is mostly noise, so the rule that
+catches things is persistence rather than intensity: the same region three weeks
+running. Bone-stress red flags are separate booleans and any single one refers,
+because a score invites a threshold and there is not one.
+
+A symptom is an episode, not a daily slider. The only question worth asking
+about an Achilles is whether it is better or worse than three weeks ago, and
+unlinked rows cannot answer it. That is also why check-ins split three ways
+rather than one: an anchored daily reading that trends, a weekly instrument
+whose seven-day recall IS the measurement and which must not be prompted more
+often, and an unlimited episodic log that is read as context and never averaged
+into either. Merging them produces a pleasant UI and uninterpretable data.
+
+**The plan-writing tool is built fifth.** The instinct is to build `draft_block`
+first, and it is wrong: a generator with no state estimate writes confident
+twelve-week plans out of nothing. Capture (E0, E1), then state (E2), then the
+facts that cannot be derived (E3), then days on the calendar (E4), then the
+generator (E5), then adaptation (E6). E1 in particular starts as early as
+possible regardless of anything else, because subjective data only accrues
+forward and a week without it cannot be recovered.
+
+**Two things the survey found nobody does, which is where the value is.** No
+platform models elevation LOSS or terrain technicality: Runna's terrain field is
+a four-value enum describing where the user lives, Uphill Athlete counts gain
+only, Vert.run's Mountain Index is gain-only density. Yet descent is what
+destroys the athlete, producing about 40% knee-extensor strength loss at the
+finish of a mountain ultra, and the repeated bout effect that protects against
+it is cheap (one exposure gives most of the protection, lasting 2 to 3 weeks),
+which makes it a scheduling decision nobody exposes. And no platform absorbs a
+gap that already happened: the consistent complaint across Runna and Garmin
+Coach is no retroactive logging and no backdating an adjustment. `disruptions`
+being backdate-able and `replan` re-deriving forward is therefore not a
+nice-to-have; it is the thing the incumbents are worst at and the thing this
+user's history says he needs twice a year.
+
+**What the engine is not allowed to claim.** Strength training's
+injury-prevention effect did not survive the pass: Lauersen's RR 0.34 sits
+against more recent meta-analyses at RR 0.97 (CI 0.57 to 1.63) and RR 0.94 with
+I2 = 81%. Two research lanes disagreed and the disagreement is recorded rather
+than resolved in favour of the convenient answer. Practically it changes
+nothing about scheduling, because strength earns its place on running economy
+(pooled g = -0.32 for heavy work) and descent durability. It changes what the
+product says. Likewise no predicted finish time, and no overtraining diagnosis,
+since the ECSS/ACSM consensus is that diagnosis is by exclusion.
+
+One thing is blocked rather than decided. The 6-hour separation between lifting
+and running, which is the defensible number and equivalent to 24 hours for
+strength outcomes, cannot be expressed against a date-keyed `planned_workouts`.
+The planner can only say "not the same day", which is too blunt and, for this
+user, wrong: his log shows weight training at 08:07 and a run at 09:10 as
+routine. Planned days need a time of day before E5 can enforce the rule that
+matters most to the one constraint he actually stated, which is that strength
+does not get cut.
+
+
+## Endurance actuals: a third writer, and the row that arrived twice
+
+E0 of the endurance layer (20260907030000). The design is
+[endurance-plan.md](endurance-plan.md), the evidence
+[endurance-research.md](endurance-research.md), the build
+[the implementation spec](superpowers/plans/2026-09-06-endurance-implementation-spec.md).
+What follows is the part that had to be decided rather than looked up.
+
+**A run is not a session, and that cost something to keep true.** `sessions` is
+written only by the PWA, and that rule is what makes `sets` being append-only
+mean anything. A run arrives from a sync against a third party. Putting one in
+`sessions` would have been cheap -- sRPE and `planned_workout_id` are already
+columns there, and "did I train today" would stay one query -- and it would have
+put a foreign writer inside the table the strength half depends on. So
+`activities` is its own table and "did I train" becomes a union, paid once. The
+rule this makes explicit, and that every later phase re-checks: the endurance
+half may never become a dependency of the strength half. Strength data is the
+only copy of itself and is written by a phone in a basement; endurance data can
+always be re-fetched.
+
+**Two sources are the normal case, not an edge case.** The point of allowing
+intervals.icu AND Strava at once is that they carry different things: Strava has
+segment efforts (a weekly Twin Peaks run is a free repeated-measures fitness
+test) and intervals.icu has descent, streams and wellness. But one Garmin upload
+reaches both, so one effort becomes two rows and a week's volume doubles.
+
+Marked rather than deleted, for the reason `set_voids` exists: the duplicate is
+still the only copy of its own source's detail. `duplicate_of` is a separate
+column from `discarded_at` because they are different facts -- "the user says
+this was not training" and "we already have this from somewhere else" -- and
+collapsing them would lose the ability to say which.
+
+The trigger is in SQL rather than in the sync. Two reasons: a third provider
+added later cannot forget a rule it never has to call, and a rule in Postgres is
+testable in PGlite without a running edge function, which is the whole reason
+this repository validates the way it does.
+
+**The thresholds are asymmetric on purpose, and that is the actual decision.**
+A missed duplicate double-counts a week: visible, irritating, fixable by hand. A
+wrong match hides a real training day from every view that reads
+`v_live_activities`: silent, and discovered months later wondering why a week
+looks light. So the matcher would rather keep two rows than lose one --
+different source, same sport spelled the same way, within two minutes, durations
+within 60 s or 5% -- and three checks pin the conservative direction: a genuine
+split "Part 1 / Part 2" pair, a shorter second run 25 minutes later, and a
+different sport at the same instant all survive. Two rows from ONE source are
+never matched against each other at all; that is the source's business and is
+probably a real pair.
+
+**Descent is a column because nothing else has one.** Runna's terrain field is a
+four-value enum describing where the athlete LIVES; Uphill Athlete counts gain
+at +10 hrTSS per 1,000 ft; Vert.run's Mountain Index is gain-only density. Not
+one of the platforms surveyed stores elevation loss. Yet descent is what
+produces roughly 40% knee-extensor strength loss at the finish of a mountain
+ultra, and the repeated bout effect that protects against it is cheap and
+schedulable. So `descent_m` is its own nullable column and the eccentric block
+is dosed against it.
+
+Which exposes a real limitation rather than hiding one: Strava's activity list
+carries GAIN only. Descent is left null rather than inferred from gain, because
+a fabricated number in the one column this layer is built around is worse than
+an absent one. A Strava-only deployment cannot dose that block. The sync reports
+`inserted_with_descent` for exactly this reason -- a backfill that lands zero
+should be discovered at E0, not at E5 when the descent rules quietly have
+nothing to gate on.
+
+**NULL is unknown; zero is zero.** A treadmill has no vert rather than zero
+vert, and zero ascent on a track session is a measurement. `normalize.ts` keeps
+these apart deliberately, because folding 0 into null is how a flat week becomes
+an unknown one. The same file drops an impossible heart rate instead of clamping
+it: 300 bpm is a broken strap, and recording it as 250 turns a sensor fault into
+a training fact.
+
+**Measurements are the sync's, annotations are the owner's.** Postgres has no
+per-column update policy, so wanting this in a comment would have been wanting
+it. A `before update` trigger names the five columns a user may change
+(`perceived_rpe`, `rpe_recorded_at`, `name`, `planned_workout_id`,
+`discarded_at`) and refuses the rest, and the insert policy allows only `manual`
+and `fit_upload` so nobody forges a row claiming to have come from a sync. The
+RPE and its timestamp travel together because session-RPE's validity depends on
+being collected about 30 minutes after the session: an RPE with no timestamp is
+an RPE that cannot be trusted, which makes the timestamp part of the
+measurement rather than metadata about it.
+
+**Polling, not webhooks.** A webhook needs a public unauthenticated endpoint and
+a shared secret to defend, and nothing in this app blocks on a run appearing
+within seconds. The poll re-reads a 48-hour window rather than syncing strictly
+after the newest row held, because upstream activities are edited after upload
+-- renamed, re-uploaded, sport corrected -- and a strict cursor would never see
+any of it. The unique key makes the re-read free.
+
+**Nothing connected is a 200.** Both, either or neither is supported, and a
+client polling on foreground must not learn to treat "no source" as a failure.
+One provider failing never stops the other, and the failure is recorded on the
+credentials row so a broken connection is visible without reading logs.
+
+The integration itself is intervals.icu first and Strava second, and that
+ordering is the research pass talking: Strava's 2026 Standard tier caps at about
+ten users, requires the DEVELOPER to hold a paid subscription, allows roughly
+100 reads per 15 minutes, bars use of the data in AI models, and belongs to the
+company that acquired Runna. intervals.icu is a free instant key with terms that
+explicitly permit commercial use, and it is also the only practical route to a
+Garmin watch now that Garmin's own developer program is closed to new
+applicants. Strava's MCP surface stays as the ad-hoc reading path in Claude
+Desktop, where the segment and lap data lives and costs nothing.
+
+Found while running the gate, and unrelated: the `v_weekly_volume counts working
+sets` check read `rows[0]`, and its fixture seeds sets at `now() - 41..55
+minutes`. For about an hour after every ISO Monday boundary those straddle two
+buckets and the count is partial. It failed at 00:47 UTC on a Monday and looked
+exactly like the new migration having broken something. Summed across weeks now;
+which bucket they land in is what the timezone checks are for.
+
+
+## The athlete answers, and skipping is a first-class answer
+
+E1 of the endurance layer (20260907040000, plus the client half). The evidence
+is in [endurance-research.md](endurance-research.md); this is what had to be
+decided rather than looked up.
+
+**Why this ships before the planner it feeds.** Saw, Main and Gastin (BJSM 2016,
+56 studies) found subjective wellbeing tracked acute and chronic load with
+SUPERIOR sensitivity and consistency to objective measures, and that the two
+categories generally did not correlate. So the cheapest data to collect is the
+best signal. It is also the only data here that cannot be backfilled: a week
+without it is gone, where a Strava activity can be re-fetched forever. That
+combination is why the least impressive phase went first.
+
+**Three cadences, three tables, deliberately not one.** An anchored daily panel,
+an unlimited episodic checkin, and a weekly instrument threaded onto an episode.
+They were nearly one table with a `kind` column, which would have been tidier
+and wrong: the daily row is a fixed-time measurement whose value comes from
+being comparable, and the checkins are events. Merged, the baseline would depend
+on how often somebody happened to tap -- which is not a fact about their
+training. The weekly one is threaded onto an EPISODE because the only question
+worth asking about an achilles is whether it is better or worse than three weeks
+ago, and unlinked rows cannot answer it.
+
+**Every item optional, which the views then had to be told about.** This started
+as a product decision (a panel somebody must complete is a panel somebody stops
+opening) and turned into a schema problem: `avg()` skips nulls, so a seven-day
+mean over two answers and one over seven are the same number. Every rolling mean
+carries its own count now, and `answered_items` separates a panel opened and
+skipped from a day never opened. A caller that wants to say something about
+fatigue checks `fatigue_7d_n`, not `days_of_history`, because those diverge the
+moment anyone leaves a field blank.
+
+**No composite score, anywhere.** The one number everybody wants is the one the
+evidence forbids: subjective and objective recovery measures do not correlate,
+so a composite merges signals that move independently and hides which one moved.
+Any summary is a view, computed at read time, and must name which item drove it.
+
+**Three questions, not eight, and no Save button.** The first version had eight
+items, a Save button and a reminder that nagged until bedtime, and all three
+were wrong for something meant to happen every morning for months. The evidence
+validates the CLASS of subjective measures, not any particular panel, so the
+length was a choice: sleep explains most bad days, fatigue is the readiness
+item, soreness points at injury, and stress and mood move closely enough with
+fatigue that a third correlated tap buys little. The panel writes as it is
+answered, so closing it by the X, by ESC, or by the OS killing the app keeps
+what was given -- the lowest-stakes version of a question is one you cannot get
+wrong by walking away from it. An untouched panel writes nothing rather than an
+empty row.
+
+**The nag was the mistake, and it was defended in a comment.** The daily prompt
+originally stayed due all day, with the reasoning that a missed morning is the
+gap the panel exists to close. That is right about the value of the answer and
+wrong about the cost of asking. A reminder still going at 10pm about 7:30am is
+what makes somebody turn the whole thing off, and losing the athlete costs every
+future answer where losing a day costs a day. It goes quiet after four hours,
+and "not today" is RECORDED so the asking actually stops -- a skip is an answer
+to "shall I ask you this now" and is a different fact from an unanswered panel,
+which is silence. The skip lands in `report_prompts`, which is also the
+denominator: the published 82-96% adherence figures come from supervised cohorts
+with a researcher attached, and one unsupervised athlete with a push
+notification is a different situation. This is how that is discovered in four
+weeks rather than at month six.
+
+**Copy the instrument; do not invent questions.** OSTRC is the standard overuse
+surveillance instrument, and validated instruments hold up psychometrically
+where the short custom wellness sliders most apps ship do not. Severity is
+derived in a view and scored PER version, so a scoring correction is a CREATE OR
+REPLACE rather than a backfill over ordinals nobody can re-collect -- which
+matters here more than usual, because the v2 item text could not be verified
+against Clarsen 2020 from any session that has worked on this (PMC, BMJ, SAGE
+and MDPI are all unreachable). What WAS corroborated: four options per question,
+a 0-100 score, and the case definitions, which are what triage branches on.
+
+**Escalate on persistence, not intensity.** In runners the OSTRC severity score
+has a smallest detectable change of about 35 for an INDIVIDUAL against a minimal
+important change of 18.5. SDC exceeding MIC means one person's week-to-week
+delta is mostly measurement noise, so nothing escalates on it. Three consecutive
+weeks in one region does, regardless of severity. Red flags are separate
+booleans and any single one refers, because a score invites a threshold and the
+clinical literature does not provide one.
+
+**The next-morning check is its own row.** It is the criterion doing the real
+work in both published pain-monitoring models, and it is a 24-HOUR DELAYED
+signal, so it cannot be collected at the end of the session or stored as a
+column on it. It also cannot be asked of everybody every morning: gated on there
+being an open episode, because asking somebody with nothing wrong is how a
+prompt becomes noise and then becomes ignored, and the adherence that burns is
+the load-bearing assumption of this whole half.
+
+**Menstrual cycle, on the stronger of the two arguments.** Phase effects on
+performance are genuinely contested -- small, highly individual -- so phase is
+never computed and may not gate anything. Absent or irregular menstruation is a
+primary indicator in the 2023 IOC REDs consensus, and the red-flag path was
+already set up to refer on it with nowhere to record it: the criterion existed
+and was unmeetable. `cycle_context.status` exists so screening can tell "no
+period because continuous contraception" from "no period, and that is new",
+which are clinically opposite and completely identical without it. Opt-in, with
+no inference from anything else, screening only (CAT2 is physician-led), and
+DELETABLE -- the same reasoning that makes `coach_memory` deletable, with more
+force.
+
+**Custom fields draw the line at what a value may DO.** Not whether it may
+exist: somebody tracking a knee or a commute has a real reason to. A custom item
+may be recorded, charted and read by the coach as context, and may never gate a
+rule, because an unvalidated item cannot carry a decision. The same discipline
+the research doc applies to its own findings, where only STRONG and MODERATE
+evidence may block.
+
+**Writes ride the existing outbox.** Checked before coupling: the flusher has
+`break attempt; // keep flushing past dead items`, so a permanently failing
+check-in dead-letters and somebody's sets keep flushing. The dependency points
+endurance to shared infrastructure, never the reverse. `daily_readiness` merges
+on replay like `set_notes` and unlike everything else, because it is a
+correctable self-report rather than an append-only training record, and its id
+is stable per (user, local_date) so a correction lands on the row it corrects.
+
+A smaller thing found by the tests: the sheet's action button said "Close" on an
+untouched panel, which is the same accessible name as the sheet's own dismiss
+control. Two buttons with one name is a screen reader saying the same word twice
+and meaning different things. It says "Done" unconditionally.

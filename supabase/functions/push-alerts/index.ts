@@ -268,23 +268,249 @@ async function unsubscribe(req: Request, db: Db, userId: string): Promise<Respon
     .eq("endpoint", endpoint)
     .is("revoked_at", null);
   if (error) throw new Error(`unsubscribe: ${error.message}`);
-  // Off means off: an alert already scheduled must not arrive after the
-  // person turned the feature off.
+  // Off means off, for every kind: an alert already scheduled must not arrive
+  // after the person turned the feature off.
   await cancelOpenAlerts(db, userId);
   log("push_unsubscribed", { user_id: userId });
   return json({ ok: true });
 }
 
-async function cancelOpenAlerts(db: Db, userId: string, except?: string): Promise<void> {
+/**
+ * Cancel this user's open alerts.
+ *
+ * `kind` omitted means EVERY kind, and the two callers want different things:
+ * turning push off must silence everything, while arming one alert must
+ * supersede only others of its own kind. One person can only be resting once,
+ * which is where the supersede rule came from -- but a morning check-in prompt
+ * armed for 07:00 must not cancel a rest timer armed for 06:58, and before
+ * `kind` existed it silently would have.
+ */
+async function cancelOpenAlerts(
+  db: Db,
+  userId: string,
+  kind?: string,
+  except?: string,
+): Promise<void> {
   let q = db
     .from("rest_alerts")
     .update({ cancelled_at: new Date().toISOString() })
     .eq("user_id", userId)
     .is("sent_at", null)
     .is("cancelled_at", null);
+  if (kind) q = q.eq("kind", kind);
   if (except) q = q.neq("id", except);
   const { error } = await q;
   if (error) throw new Error(`cancel open alerts: ${error.message}`);
+}
+
+// ---- long-dated alerts: arm now, deliver from a sweep ----------------------
+//
+// `schedule` below holds THIS worker open until the alert fires, which is right
+// for a rest (two to five minutes) and structurally impossible for a prompt due
+// at 07:30 tomorrow: the wall-clock cap refuses it, honestly, rather than
+// promising something the platform will kill.
+//
+// So arming and delivering are split. `arm` writes the row and returns; `sweep`
+// sends whatever is due. Nothing here knows or cares what calls the sweep --
+// pg_cron through pg_net, a Supabase scheduled function, a GitHub Action, or a
+// person with curl. That is the seam: the scheduler is a deployment decision
+// and this file should not have an opinion about it.
+
+const PROMPT_COPY: Record<string, { title: string; body: string }> = {
+  daily_readiness: { title: "Morning check-in", body: "How are you today?" },
+  ostrc_weekly: { title: "Weekly check", body: "Anything bothering you?" },
+  next_morning_pain: {
+    title: "How does it feel this morning?",
+    body: "The morning after is the one that counts.",
+  },
+};
+
+/** Kinds that may be armed. 'rest' is deliberately absent: it goes through
+ *  `schedule`, which can hold a short wait and get the latency a rest needs. */
+const ARMABLE = new Set(Object.keys(PROMPT_COPY));
+
+async function arm(req: Request, db: Db, userId: string): Promise<Response> {
+  const body = await readBody(req);
+  if (!body) return json({ error: "Bad request body." }, 400);
+
+  const kind = typeof body.kind === "string" ? body.kind : "";
+  if (!ARMABLE.has(kind)) {
+    return json(
+      { error: `kind must be one of: ${[...ARMABLE].join(", ")}.` },
+      400,
+    );
+  }
+  const fireAt = typeof body.fire_at === "string" ? Date.parse(body.fire_at) : NaN;
+  if (!Number.isFinite(fireAt)) {
+    return json({ error: "fire_at must be an ISO timestamp." }, 400);
+  }
+  // A prompt more than a week out is a scheduling bug somewhere, not a plan.
+  if (fireAt > Date.now() + 8 * 86_400_000) {
+    return json({ error: "fire_at is too far ahead." }, 422);
+  }
+  const label =
+    typeof body.label === "string" && body.label.trim().length > 0
+      ? body.label.trim()
+      : PROMPT_COPY[kind].body;
+  if (label.length > LABEL_MAX || hasForbiddenChar(label)) {
+    return json({ error: `label must be one printable line of at most ${LABEL_MAX} characters.` }, 400);
+  }
+
+  const { data: inserted, error: insErr } = await db
+    .from("rest_alerts")
+    .insert({ user_id: userId, kind, fire_at: new Date(fireAt).toISOString(), label })
+    .select("id")
+    .single();
+  if (insErr || !inserted) throw new Error(`arm: ${insErr?.message ?? "no row"}`);
+  const alertId = inserted.id as string;
+
+  // One live alert PER KIND: re-arming today's check-in replaces today's
+  // check-in and leaves a rest timer and the weekly alone.
+  await cancelOpenAlerts(db, userId, kind, alertId);
+
+  log("alert_armed", { user_id: userId, alert_id: alertId, kind, fire_at: new Date(fireAt).toISOString() });
+  // 202: accepted and stored. Whether it is DELIVERED depends on a sweep
+  // running, which this endpoint cannot promise and does not pretend to.
+  return json({ ok: true, alert_id: alertId, kind }, 202);
+}
+
+/**
+ * Send one already-due alert. Shared by the sweep; `deliver` keeps its own
+ * copy of this shape because it also owns the sleep and the cancel-race
+ * re-read that only a held-open worker needs.
+ */
+async function sendAlertNow(
+  db: Db,
+  a: { id: string; user_id: string; kind: string; label: string; fire_at: string },
+): Promise<"sent" | "no_subscription" | "failed"> {
+  const base = { user_id: a.user_id, alert_id: a.id, kind: a.kind };
+  const { data: subs, error: subErr } = await db
+    .from("push_subscriptions")
+    .select("id, endpoint, p256dh, auth")
+    .eq("user_id", a.user_id)
+    .is("revoked_at", null);
+  if (subErr) throw new Error(`subscriptions: ${subErr.message}`);
+  if (!subs || subs.length === 0) {
+    await stamp(db, a.id, { error: "no active subscription at send time" });
+    log("alert_failed", { ...base, reason: "no subscription" });
+    return "no_subscription";
+  }
+
+  const copy = PROMPT_COPY[a.kind] ?? { title: "Reminder", body: a.label };
+  const vapid = await loadVapid(db);
+  const payload = new TextEncoder().encode(
+    JSON.stringify({
+      kind: a.kind,
+      title: copy.title,
+      body: a.label || copy.body,
+      alert_id: a.id,
+      fire_at: a.fire_at,
+      badge: 1,
+    }),
+  );
+
+  const results = await Promise.all(
+    (subs as { id: string; endpoint: string; p256dh: string; auth: string }[]).map(
+      async (sub) => {
+        try {
+          const push = await buildPushRequest({
+            endpoint: sub.endpoint,
+            subscription: { p256dh: sub.p256dh, auth: sub.auth },
+            payload,
+            vapid,
+            subject: VAPID_SUBJECT,
+            ttlSeconds: TTL_SECONDS,
+            // Topic per KIND, so a phone that was offline for a day wakes to
+            // one of each rather than a week of check-in reminders.
+            topic: a.kind.slice(0, 32),
+            // A prompt is not urgent the way a rest is; low urgency lets the
+            // push service batch it and costs the phone less battery.
+            urgency: "normal",
+          });
+          const res = await fetch(push.endpoint, {
+            method: "POST",
+            headers: push.headers,
+            body: push.body,
+            signal: AbortSignal.timeout(8000),
+          });
+          if (res.status === 404 || res.status === 410) {
+            await db
+              .from("push_subscriptions")
+              .update({ revoked_at: new Date().toISOString() })
+              .eq("id", sub.id);
+          }
+          return res.ok;
+        } catch {
+          return false;
+        }
+      },
+    ),
+  );
+  const ok = results.some(Boolean);
+  await stamp(db, a.id, ok ? {} : { error: "every endpoint failed" });
+  log("alert_swept", { ...base, ok });
+  return ok ? "sent" : "failed";
+}
+
+/**
+ * Send everything due. Idempotent: `stamp` sets sent_at, and the query only
+ * takes rows where it is null, so running the sweep twice sends nothing twice.
+ *
+ * Authenticated by a shared secret rather than a user session, because the
+ * caller is a machine. Compared by digest so the check does not leak length
+ * through timing, the same shape the MCP server's bearer check uses.
+ */
+async function sweep(req: Request, db: Db): Promise<Response> {
+  const secret = Deno.env.get("SWEEP_SECRET") ?? "";
+  if (secret.length === 0) {
+    // Refusing is the honest answer: an unset secret must not mean an open
+    // endpoint that anyone can use to drain somebody's alerts.
+    return json({ error: "Sweep is not configured." }, 503);
+  }
+  const offered = req.headers.get("x-sweep-secret") ?? "";
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret)),
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(offered)),
+  ]);
+  const av = new Uint8Array(a);
+  const bv = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < av.length; i++) diff |= av[i] ^ bv[i];
+  if (diff !== 0) return json({ error: "no" }, 401);
+
+  // A grace window, not "everything ever": an alert whose moment passed hours
+  // ago is stale, and asking about this morning at 3pm is worse than not
+  // asking. Stale rows are stamped so they stop being considered.
+  const now = Date.now();
+  const graceMs = 6 * 3_600_000;
+  const { data: due, error } = await db
+    .from("rest_alerts")
+    .select("id, user_id, kind, label, fire_at")
+    .is("sent_at", null)
+    .is("cancelled_at", null)
+    .neq("kind", "rest")
+    .lte("fire_at", new Date(now).toISOString())
+    .order("fire_at", { ascending: true })
+    .limit(200);
+  if (error) throw new Error(`sweep: ${error.message}`);
+
+  let sent = 0;
+  let stale = 0;
+  let failed = 0;
+  for (const row of (due ?? []) as {
+    id: string; user_id: string; kind: string; label: string; fire_at: string;
+  }[]) {
+    if (now - Date.parse(row.fire_at) > graceMs) {
+      await stamp(db, row.id, { error: "stale; not sent" });
+      stale += 1;
+      continue;
+    }
+    const outcome = await sendAlertNow(db, row);
+    if (outcome === "sent") sent += 1;
+    else failed += 1;
+  }
+  log("sweep_done", { considered: due?.length ?? 0, sent, stale, failed });
+  return json({ ok: true, considered: due?.length ?? 0, sent, stale, failed });
 }
 
 async function schedule(req: Request, db: Db, userId: string): Promise<Response> {
@@ -344,9 +570,10 @@ async function schedule(req: Request, db: Db, userId: string): Promise<Response>
     .single();
   if (insErr || !inserted) throw new Error(`schedule: ${insErr?.message ?? "no row"}`);
   const alertId = inserted.id as string;
-  // One live alert per person. The app cancels its own on the next LOG, but a
-  // reload or a second device cannot, and two buzzes for one rest is a bug.
-  await cancelOpenAlerts(db, userId, alertId);
+  // One live REST alert per person. The app cancels its own on the next LOG,
+  // but a reload or a second device cannot, and two buzzes for one rest is a
+  // bug. Scoped to 'rest' so a queued check-in prompt survives it.
+  await cancelOpenAlerts(db, userId, "rest", alertId);
 
   const work = deliver(db, { alertId, userId, fireAt, label, requestedAt: now });
   if (typeof EdgeRuntime !== "undefined") {
@@ -435,10 +662,13 @@ async function deliver(
     const vapid = await loadVapid(db);
     const payload = new TextEncoder().encode(
       JSON.stringify({
+        kind: "rest",
         title: "Rest over",
         body: a.label,
         alert_id: a.alertId,
         fire_at: new Date(a.fireAt).toISOString(),
+        // One thing is waiting: the set they are about to do.
+        badge: 1,
       }),
     );
 
@@ -526,6 +756,19 @@ Deno.serve(async (req) => {
   const path = new URL(req.url).pathname.replace(/\/+$/, "");
   const route = path.slice(path.lastIndexOf("/") + 1);
 
+  // The sweep is answered BEFORE the session check, because its caller is a
+  // machine with a shared secret and no Supabase session to offer. It is the
+  // only route on this function that is not acting for a signed-in person, and
+  // it authenticates itself (see sweep()).
+  if (req.method === "POST" && route === "sweep") {
+    try {
+      return await sweep(req, serviceClient());
+    } catch (e) {
+      logError("sweep_failed", { error: message(e) });
+      return json({ error: "Sweep failed." }, 500);
+    }
+  }
+
   const userId = await resolveUser(req);
   if (!userId) return json({ error: "Sign in to use rest alerts." }, 401);
 
@@ -546,6 +789,8 @@ Deno.serve(async (req) => {
         return await subscribe(req, db, userId);
       case "POST unsubscribe":
         return await unsubscribe(req, db, userId);
+      case "POST arm":
+        return await arm(req, db, userId);
       case "POST schedule":
         return await schedule(req, db, userId);
       case "POST cancel":

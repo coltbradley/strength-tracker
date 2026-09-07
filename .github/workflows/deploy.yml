@@ -106,8 +106,20 @@ jobs:
       - if: steps.gate.outputs.on == 'true'
         run: supabase functions deploy coach
       # Same shape as the coach: the caller has a session, so verify_jwt stays on.
+      #
+      # push-alerts has ONE route that is not acting for a signed-in person --
+      # /sweep, called by pg_cron with a shared secret -- and it authenticates
+      # itself before the session check rather than turning verify_jwt off for
+      # the whole function. Deploying this with --no-verify-jwt would open
+      # subscribe, schedule and cancel to anyone with the URL.
       - if: steps.gate.outputs.on == 'true'
         run: supabase functions deploy push-alerts
+      # Endurance sync. Session-authenticated like the coach; the per-user
+      # provider credentials live in integration_credentials (service role
+      # only), not in this function's environment, so there is no secret to set
+      # here and nothing breaks when a user has no source connected.
+      - if: steps.gate.outputs.on == 'true'
+        run: supabase functions deploy endurance-sync
 
   pages:
     name: publish PWA

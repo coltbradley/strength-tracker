@@ -82,6 +82,20 @@ export function describeOp(
       return "Set note";
     case "bodyweight_log":
       return "Weigh-in";
+    // The subjective-capture rows. Named for what the lifter did, not for the
+    // table: this sheet is read by someone worried a write has not landed, and
+    // "daily_readiness" is not an answer to that worry.
+    case "daily_readiness":
+      return "Morning check-in";
+    case "checkins":
+      return "Check-in";
+    case "pain_checks":
+      return "Pain check";
+    case "report_prompts":
+      // The row records that we ASKED, and `skipped` says how it went. A skip
+      // is the interesting one — it is the fact that stops the app asking
+      // again — so it gets its own words rather than being folded in.
+      return op.payload.skipped ? "Check-in skipped" : "Check-in prompt";
     case "sets": {
       const name = exerciseNames[op.payload.exercise_id];
       return name === undefined ? "Set logged" : `Set · ${name}`;

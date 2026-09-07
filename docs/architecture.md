@@ -22,6 +22,7 @@ Phone (PWA, offline-first) ──► Supabase Postgres (Auth + RLS + views)
 | --------------- | -------------------------------------------------------------------------------- | --------------------------------------------------- |
 | Postgres + Auth | Supabase project                                                                 | RLS, `user_id = auth.uid()`                         |
 | MCP server      | Supabase Edge Function `mcp-server`, streamable HTTP, deployed `--no-verify-jwt` | Per-user bearer token (`mcp_tokens`, SHA-256)       |
+| endurance-sync  | Supabase Edge Function, polls intervals.icu / Strava                              | Supabase session; per-user creds in `integration_credentials` |
 | PWA             | React + Vite, any static host                                                    | Supabase Auth (email magic link), session persisted |
 
 ## Data model in one paragraph
@@ -52,6 +53,36 @@ join (a pair of 30 kg dumbbells is 60); `load_entry` on `sets` and
 total, with NULL meaning "not asserted" rather than "total". Settings are
 device-local and have no table. User-flow detail lives in
 [flows.md](flows.md).
+
+## The endurance half
+
+`activities` holds endurance actuals synced from intervals.icu and/or Strava,
+alongside the strength tables rather than inside them. It is a third
+write-ownership class: `sets` are the PWA's, planned tables are the PWA's and
+the MCP server's, and an activity is written by a sync against a third party.
+The dependency points one way only -- the strength app logs sets with the
+endurance integration unreachable, and every phase of the endurance build
+re-checks that.
+
+Both providers, either, or neither may be connected. Because one device upload
+can reach both, a `before insert` trigger marks the later of two matching rows
+`duplicate_of` the earlier, and `v_live_activities` (the sibling of
+`v_live_sets`) drops it. Ascent and descent are separate nullable columns;
+descent is the column the whole layer is built around and the one nothing on
+the market stores.
+
+Beside it sits the subjective layer: an anchored daily panel
+(`daily_readiness`), unlimited episodic `checkins`, weekly OSTRC responses
+threaded onto `symptom_episodes`, `pain_checks` (the next-morning one is its own
+row, because it is a 24-hour delayed signal), boolean `red_flags`, opt-in cycle
+tracking, and `report_prompts` as the adherence denominator. Every item is
+optional, so every rolling mean in `v_readiness_trend` carries its own count and
+there is no composite score anywhere.
+
+`v_weekly_endurance` buckets by `app_tz(user_id)` like every other calendar
+view. Full reasoning in [endurance-plan.md](endurance-plan.md); the evidence,
+including the metrics this system refuses to compute, in
+[endurance-research.md](endurance-research.md).
 
 ## Derived metrics
 
