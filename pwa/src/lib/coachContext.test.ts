@@ -30,7 +30,20 @@ vi.mock("./supabase", () => {
     ): unknown => resolve({ data: rows[table] ?? [], error: null });
     return b;
   };
-  return { supabase: { from: (table: string) => builder(table) } };
+  // The module reaches `./data` for the plan line now, and that pulls in
+  // currentUser, which reads the session during module evaluation. A `from`
+  // alone leaves `auth` undefined and the whole suite fails to load.
+  return {
+    supabase: {
+      from: (table: string) => builder(table),
+      auth: {
+        getSession: async () => ({ data: { session: null }, error: null }),
+        onAuthStateChange: () => ({
+          data: { subscription: { unsubscribe: () => {} } },
+        }),
+      },
+    },
+  };
 });
 
 import { buildCoachContext, formatWeek, weekDayState } from "./coachContext";

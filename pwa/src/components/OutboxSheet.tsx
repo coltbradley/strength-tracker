@@ -67,7 +67,11 @@ export function describeOp(
   exerciseNames: Record<string, string>,
 ): string {
   if (op.kind === "update") {
-    return "discarded_at" in op.patch ? "Session discarded" : "Session ended";
+    if ("discarded_at" in op.patch) return "Session discarded";
+    // A rating given from Today carries session_rpe and nothing else. A finish
+    // carries ended_at and MAY carry a rating alongside it, and what that write
+    // did was end the session — so ended_at decides, not the rating.
+    return "ended_at" in op.patch ? "Session ended" : "Session rated";
   }
   switch (op.table) {
     case "sessions":
@@ -76,6 +80,8 @@ export function describeOp(
       return "Set removed";
     case "set_notes":
       return "Set note";
+    case "bodyweight_log":
+      return "Weigh-in";
     case "sets": {
       const name = exerciseNames[op.payload.exercise_id];
       return name === undefined ? "Set logged" : `Set · ${name}`;

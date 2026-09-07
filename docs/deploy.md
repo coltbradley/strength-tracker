@@ -45,6 +45,30 @@ dashboard SQL editor. Both files are single idempotent statements and each
 only updates rows it owns (`source = 'free-exercise-db'` / `'curated'`), so
 re-running is always safe and never touches custom or edited exercises.
 
+With no CLI and no way to paste 800 KB (the 2026-09-05 wrap-up ran from a
+remote session with only the Supabase MCP), the generated seed's `images` and
+`instructions` were applied SERVER-SIDE instead: enable the `http` extension,
+have Postgres fetch `dist/exercises.json` itself, update from the JSON, and
+drop the extension in the same transaction. Nothing about the schema survives
+it. It refreshes only those two columns; the full seed still goes through the
+commands above.
+
+```sql
+begin;
+create extension if not exists http with schema extensions;
+select extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '60000');
+with src as (select (content::jsonb) as doc from extensions.http_get(
+  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json')),
+rows as (select e->>'id' as id,
+  coalesce(array(select jsonb_array_elements_text(e->'images')), '{}'::text[]) as images,
+  coalesce(array(select jsonb_array_elements_text(e->'instructions')), '{}'::text[]) as instructions
+  from src, jsonb_array_elements(src.doc) e)
+update exercises x set images = r.images, instructions = r.instructions
+  from rows r where x.id = r.id and x.source = 'free-exercise-db';
+drop extension http;
+commit;
+```
+
 ## MCP server changed (supabase/functions/mcp-server/)
 
 ```bash
@@ -54,24 +78,110 @@ supabase functions deploy mcp-server --no-verify-jwt
 `--no-verify-jwt` is required every deploy: the function does its own bearer
 auth and the gateway must not demand a Supabase JWT.
 
-## Coach function changed (supabase/functions/coach/)
+### Without the CLI: the Supabase MCP and a pinned bundle
+
+The 2026-09-05 round went out from a remote session with no CLI and no deploy
+settings, through the Supabase MCP's `deploy_edge_function`. That tool takes
+file contents inline. `coach` (4 files) and `push-alerts` (3 files) went
+through as source; `mcp-server` (28 files, 162 KB) did not fit, and a 100 KB
+minified bundle is too long to retype by hand without error. So the DEPLOYED
+`mcp-server` is currently a two-line shim: an `index.ts` that imports the bundle
+by immutable commit sha from the orphan branch `deploy/mcp-server-bundle`
+(`42a3c20`, bundle sha256 `29120c41…`), plus the real `deno.json`. The platform
+bundler snapshots that file at deploy time; the running function never fetches
+it. Deno resolves the bundle's bare specifiers (`zod`, the SDK, supabase-js)
+through the import map like any local module.
+
+To rebuild the bundle and check the sha before pointing a shim at it:
+
+```bash
+cd supabase/functions/mcp-server
+deno bundle index.ts -o /tmp/index.js --platform deno --minify \
+  --external=zod --external="@supabase/supabase-js" \
+  --external="@sentry/deno" --external="@modelcontextprotocol/sdk/*"
+sha256sum /tmp/index.js
+```
+
+Two things this path taught, both permanent:
+
+- The next `supabase functions deploy mcp-server --no-verify-jwt` (by hand or
+  from `deploy.yml`) replaces the shim with the source tree, and nothing else
+  has to change. The dashboard shows a shim until then; `get_edge_function`
+  cannot byte-diff it against the repo, so verify a shim deploy by the bundle
+  sha and the `/health` endpoint instead.
+- The tool carries source as a JSON string, and a backslash-u escape inside a
+  regex literal arrived as the raw control character, which is an unterminated
+  regex and a failed bundle. `push-alerts` now spells its label guard as code
+  points for that reason. Avoid `\u` escapes in anything that has to go through
+  this door; a regex with `\s` or `\d` is fine.
+
+## Coach changed (supabase/functions/coach/)
 
 ```bash
 supabase functions deploy coach
 ```
 
-No `--no-verify-jwt` here, unlike mcp-server: the coach authenticates the
-caller with their Supabase session and WANTS the gateway to demand a JWT.
+No `--no-verify-jwt` here, and that asymmetry is the point: the coach
+authenticates the caller with their Supabase session, so the gateway SHOULD
+demand a JWT. Only `mcp-server` opts out, because it does its own bearer check
+for a client that has no session.
 
-Secrets it reads, all optional except the first:
-`ANTHROPIC_API_KEY`, `COACH_ALLOWED_USERS` (unset means everyone),
-`COACH_LOG_CONTENT` (`off` stops storing conversation text),
-`COACH_MEMORY_EXTRACT` (`off` stops the post-turn memory pass), `SENTRY_DSN`.
+Deploy it after `mcp-server` whenever a round changed both. The coach reaches
+the MCP server over the network like any other client, so a coach that knows
+about a tool the deployed server does not have gets a tool-not-found mid-turn.
+The other order is merely a tool nobody calls yet.
 
-The memory pass reads `coach_usage.kind`, so `20260906050000` has to be pushed
-first — see the ordering snag below. It is the one migration the coach's own
-quota check depends on: without the column, `overLimit` fails and every turn
-answers 503.
+A change to the SYSTEM PROMPT (`prompt.ts`) is a deploy too. It is bundled
+into the function, not read from anywhere at runtime, so editing it and
+pushing to main changes nothing a lifter talks to.
+
+Secrets it reads, all optional except the first: `ANTHROPIC_API_KEY`,
+`COACH_ALLOWED_USERS` (unset means everyone), `COACH_LOG_CONTENT` (`off` stops
+storing conversation text), `COACH_MEMORY_EXTRACT` (`off` stops the post-turn
+memory pass), `SENTRY_DSN`.
+
+The post-turn memory pass reads `coach_usage.kind`, so `20260906050000` has to
+be pushed FIRST. It is the one migration the coach's own quota check depends
+on: without the column `overLimit` fails and every turn answers 503.
+
+If the round changed `COACH_ALLOWED_USERS`, `COACH_LOG_CONTENT`,
+`COACH_MEMORY_EXTRACT`, `SENTRY_DSN` or the API key, set the secret first and
+then deploy — secrets are read at
+boot, so a running function keeps the old value until it is replaced. Setting
+the allowlist has no append: it is the whole list every time
+([setup.md](setup.md#who-can-sign-up-and-who-gets-the-coach)).
+
+## Rest alerts changed (supabase/functions/push-alerts/)
+
+```bash
+supabase functions deploy push-alerts
+```
+
+`verify_jwt` stays ON, exactly like the coach: the caller is the PWA with a
+Supabase session. Push the migration (`20260905050000_push_alerts.sql`) FIRST;
+the function reads three tables that did not exist before it.
+
+There is no secret to set. The VAPID key pair is generated by the function on
+first use and stored in `push_config` (RLS on, no policies, service role
+only). Never delete or regenerate that row while subscriptions exist: every
+phone's subscription is bound to the public half, and a new pair means every
+device has to turn the row off and on again in Settings.
+
+Two optional secrets. `PUSH_WALL_CLOCK_SECONDS` is the platform's wall-clock
+limit for one edge worker — 150 on the Free plan, which is the default when
+unset, 400 on paid plans. The function refuses (422) any alert it could not
+hold until the deadline, so a paid project left at the default refuses every
+rest over about two minutes for no reason: set it to 400 there. The limit is
+per WORKER and workers are reused, so the usable window is shorter still on a
+worker that has just slept through a rest; `rest_alert_refused` log lines carry
+`left_s` and `worker_age_s` so you can see that happening. `PUSH_VAPID_SUBJECT`
+is the contact URI RFC 8292 puts in every push token; it defaults to the app's
+own Pages URL and only needs setting for a different deployment.
+
+Smoke test: Settings → "Alert me when the app is closed" → ON, then log a set
+with a 60 s rest and lock the phone. The function logs `rest_alert_scheduled`
+and, a minute later, `rest_alert_sent` — or `rest_alert_skipped` if another
+set was logged first, which is the cancel path working.
 
 ## PWA changed (pwa/)
 
@@ -82,6 +192,40 @@ and otherwise defers to the next time the app is hidden — a mid-set reload
 would take the staged reps and any half-typed note. Expect a lifter to get
 the new build at their next visit, not within seconds of the push. Device
 data survives updates (IndexedDB is untouched).
+
+## Automating the Supabase half
+
+`deploy.yml` can push migrations and deploy both edge functions itself, in
+front of the Pages publish, so the client can never ship ahead of its schema.
+It does so only when three repository settings exist; until then it prints a
+notice and skips, and everything above stays by hand.
+
+| Setting                 | Kind     | Where it comes from                                                                                                                          |
+| ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | secret   | Supabase dashboard → Account → Access Tokens. Scope it to this one project if the dashboard offers it.                                       |
+| `SUPABASE_DB_PASSWORD`  | secret   | The database password from project creation (Settings → Database). `db push` needs it; the access token alone does not reach Postgres.       |
+| `SUPABASE_PROJECT_REF`  | variable | The project ref. Not secret, so a variable, but it stays out of the repo like every other ref.                                              |
+
+Add them under Settings → Secrets and variables → Actions. The next push that
+touches `supabase/` runs `supabase db push`, then `functions deploy mcp-server
+--no-verify-jwt`, then `functions deploy coach`, and only after all three does
+the Pages job start. A push touching only `pwa/` skips the Supabase job and
+publishes straight away; a push touching only `supabase/` deploys the schema
+and functions and does NOT republish the client, so nobody's phone offers an
+update for a build that did not change.
+
+What this trades away: a migration goes to production with no human between
+the merge and the database. That is acceptable here for three specific
+reasons, none of which is "it will probably be fine". CI has already run the
+whole migration chain in PGlite before anything reaches main; migrations are
+append-only by rule, so there is no destructive statement to fire; and
+`db push` applies only what the remote has not seen, so a re-run changes
+nothing. What is bought is that the failure mode this project has hit twice
+(client first, schema later) stops being possible.
+
+The exercise seeds stay by hand on purpose. They rewrite hundreds of rows in a
+shared table, and "the seed changed" is a decision to re-seed, not a side
+effect of merging.
 
 ## Adding or removing a person
 
@@ -110,14 +254,17 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
 
 ## Known snags (learned the hard way)
 
-- A commit is not a deploy, and the two halves go out separately. The PWA
-  ships from a Pages build on push; a migration needs `supabase db push` and
-  an edge function needs `supabase functions deploy`, both by hand. Shipping
-  PWA code that writes a column whose migration has not been pushed yet fails
-  every write until someone runs it — that has happened once already, with
-  `prescriptions.set_type`. Push the migration FIRST, then the code that
+- A commit is not a deploy, and the two halves go out separately UNLESS the
+  three settings in "Automating the Supabase half" exist. Without them the PWA
+  ships from a Pages build on push while a migration needs `supabase db push`
+  and each edge function needs its own `supabase functions deploy` —
+  `mcp-server` and `coach` are two deploys, not one. Shipping PWA code that
+  reads or writes a column whose migration has not been pushed yet fails every
+  such read or write until someone runs it — that has happened once already,
+  with `prescriptions.set_type`. Push the migration FIRST, then the code that
   depends on it: the schema tolerates a column nothing writes, the app does
-  not tolerate writing a column that is not there.
+  not tolerate a column that is not there. With the settings in place the
+  workflow enforces that order for you, which is the whole reason it exists.
 
 - `alter database ... set` for custom GUCs is superuser-only on managed
   Postgres, so timezones live in tables instead:

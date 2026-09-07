@@ -84,6 +84,21 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   after user approval); logged sessions/sets always survive it.
 - Programs written by Claude land unconfirmed (`confirmed_at IS NULL`) and
   require a separate `confirm_program` call after user approval in chat.
+- A PostgREST BULK insert fills a row's missing key with NULL, not with the
+  column default: the array is inserted with the union of every row's keys.
+  So a row builder must emit every defaulted column on EVERY row
+  (`prescriptionRows` writes `set_type` and `tracking` explicitly), or one row
+  that says 'warmup' turns eight rows that said nothing into eight NULLs in a
+  NOT NULL column. That was three 500s on a real "Lower + Activation" day.
+  Omitting a key to "let the default apply" is only true for a single row.
+- `exercises.images` and `exercises.instructions` (20260905040000) are the
+  seed's demo photos and how-to steps. `images` holds PATHS under the upstream
+  repo, never URLs, and a CHECK pins that shape: the library is shared, so an
+  image URL a person could type into a shared row would be a tracking pixel in
+  every other account's session screen. The host is one constant in
+  `pwa/src/lib/exerciseMedia.ts`. Photos are cross-origin and deliberately not
+  cached by the service worker; the steps ride on the row and are cached like
+  every other read.
 - `update_planned_workout` edits ONE day of an existing program in place, and
   it is the correct tool for ANY change to a program that already exists:
   filling in an empty day, swapping an exercise, adding a superset, changing
@@ -103,6 +118,25 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   the trigger that guards the same thing in Postgres. Editing a day of a
   CONFIRMED program takes `confirm_change=true` after approval in chat and is
   live the moment it lands; there is no confirm step after it.
+- A `load_pct_tm` prescription with NO current training max is WRITTEN, not
+  refused (since 2026-09-05; `resolveTrainingMaxes` returns
+  `{tms, unresolved_pct, note}` and every plan-writing tool reports
+  `unresolved_pct`). The refusal was right for a %TM program someone trains
+  tomorrow and wrong for a FIRST session, which is the calibration the TM would
+  come from: a real coach wrote "60-75% of 1RM", the tool said no, and the model
+  put the percentage in `prescriptions.notes` as prose with the load empty, so
+  the 130 lb x 5 the session then produced had nothing to become.
+  `v_resolved_prescriptions` yields a null load for these and both Today and
+  the session screen already say "no TM set" beside the percentage. The
+  post-session review proposes the TM; nothing invents one. `prescriptions.notes`
+  is the coach's cue and only that — never parse commentary, a name, a date or
+  an unresolved percentage. The third plan-writing door is
+  `repeat_planned_workout`: same program, `day_index` max+1, last time's
+  working loads by the ramp-preserving rule the app's saved-workout apply uses,
+  entries in the order actually performed with ramps and sections kept whole,
+  instruction-like set notes RETURNED as `notes_to_consider` and never copied.
+  `find_similar_days` (Jaccard >= 0.6 over exercise ids) is called before
+  `upsert_program` so the same screenshot does not become a second program.
 - Derived metrics (e1RM, volume, adherence, rest) live in SQL views only,
   never stored. Views are `security_invoker` so RLS applies, and every
   set-derived view reads `v_live_sets` (voids and discards excluded) — never
@@ -232,6 +266,16 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   so it is deliberately loose about it — any unexpected shape, any unreadable
   store, any missing refresh token returns null and puts the app back on the
   old behaviour.
+- A cached read tells "the server never answered" apart from "the server said
+  no". `fetchWithCache` serves the device cache in BOTH cases, because a stale
+  plan beats a blank screen in a gym, but only the first is offline. postgrest-js
+  marks a fetch that got no response with an EMPTY error code; anything carrying
+  a SQLSTATE or PGRST code is an answer, and an answer of no is REPORTED (once
+  per message per 30 s, so seven views over one broken column are one toast)
+  and shown as "couldn’t refresh", never as "offline". `throwIf` throws
+  `QueryError` with the code intact for exactly this reason: collapsing it to
+  `Error(message)` is how a missing view column would have read as a basement
+  on every device with a cache, while Report-a-problem said RECENT ERRORS: none.
 - The device cache belongs to one user, tracked by a localStorage marker, and
   is cleared when that changes. Cache keys are NOT namespaced by user on
   purpose: one marker has one place to be wrong, forty key builders do not.
@@ -390,6 +434,24 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   `source` says which path a row came from and `source_turn_id` which message,
   so the app can show a fact nobody mentioned in chat and offer to delete it;
   `source` carries that one fact and nothing may branch on it for ownership.
+- `training_plans` / `plan_phases` (20260905060000) are the STRATEGY above
+  programs: an objective over months in dated, ordered phases, each with a
+  focus and a progression rule. Not goals (measured against sets), not memory
+  (facts about the body); a decision about time. One live plan per user is a
+  partial unique index on `superseded_at is null`; a revision is a NEW row and
+  the old one is superseded, never deleted — neither table has a delete
+  policy. Lands unconfirmed like programs. Phases may not share a day, enforced
+  by an AFTER ROW trigger rather than the exclusion constraint it stands in for,
+  because PGlite (the validation path) has no `btree_gist`. `programs.phase_id`
+  files a program under a phase, and `upsert_program` with a `phase_id` ADDS
+  days to that phase's live program instead of minting one per screenshot (a
+  confirmed one takes `confirm_change=true`, like editing a day). Written from
+  Claude Desktop only: `set_training_plan` and `confirm_training_plan` are OFF
+  for the in-app coach at the connector. The coach READS the plan every turn
+  through the context block's PLAN line (objective, current phase's focus,
+  progression and id, next phase) and must fit each day it writes to the
+  current phase, questioning a request that contradicts it. Strategy is set at
+  a desk with time to think; tactics are set between sets.
 
 ## The coach (supabase/functions/coach)
 

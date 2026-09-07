@@ -29,3 +29,6 @@ scripts/.cache/
 # os / editor
 .DS_Store
 *.log
+
+# Claude Code subagent worktrees (tool-managed working copies, never source)
+.claude/worktrees/

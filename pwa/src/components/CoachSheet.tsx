@@ -81,7 +81,17 @@ function saveThread(msgs: Msg[]): void {
   }
 }
 
-export function CoachSheet({ onClose }: { onClose: () => void }) {
+interface CoachSheetProps {
+  onClose: () => void;
+  /** A first turn to send the moment the sheet opens — the review after a
+   *  finished session arrives this way (lib/review.ts). It is appended to the
+   *  existing thread rather than starting a new one: the coach's earlier
+   *  answers about this training are context a review benefits from, and
+   *  MAX_TURNS bounds what the API is billed for either way. */
+  prefill?: string;
+}
+
+export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
   const [msgs, setMsgs] = useState<Msg[]>(loadThread);
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<CoachAttachment[]>([]);
@@ -190,14 +200,15 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
     setFiles((prev) => [...prev, ...next]);
   };
 
-  const send = () => {
-    const text = draft.trim();
-    if ((!text && files.length === 0) || busy) return;
+  /** Send `text` with `attachments` as the lifter's turn. The compose box
+   *  calls this with the draft; a prefilled opening calls it directly. */
+  const sendTurn = (text: string, attachments: CoachAttachment[]) => {
+    if ((!text && attachments.length === 0) || busy) return;
 
     const mine: Msg = {
       role: "user",
       text: text || "(see attached)",
-      ...(files.length ? { attachments: files } : {}),
+      ...(attachments.length ? { attachments } : {}),
     };
     // The placeholder assistant turn goes in immediately so the thread never
     // looks like it swallowed the question.
@@ -258,6 +269,29 @@ export function CoachSheet({ onClose }: { onClose: () => void }) {
       turnId,
     );
   };
+
+  const send = () => sendTurn(draft.trim(), files);
+
+  // The prefilled opening, once. A ref rather than an effect dependency on
+  // `prefill`: the dock passes the same string for as long as the sheet is
+  // open, and re-sending it on every render would be a review per keystroke.
+  // Skipped when a turn is already in flight (the recovery effect above may
+  // be fetching an interrupted answer) — the text is left in the box instead,
+  // so nothing asked for is lost.
+  const prefillSent = useRef(false);
+  useEffect(() => {
+    if (prefillSent.current || !prefill) return;
+    prefillSent.current = true;
+    const last = msgs[msgs.length - 1];
+    if (busy || last?.streaming) {
+      setDraft(prefill);
+      return;
+    }
+    sendTurn(prefill, []);
+    // Once, on open. sendTurn closes over the thread at that moment, which is
+    // exactly the thread the review should be appended to.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Stop mid-answer. The tokens are spent either way, so whatever arrived
    *  is kept rather than thrown away — and the server finishes and records the

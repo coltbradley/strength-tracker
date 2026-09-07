@@ -62,6 +62,12 @@ import {
 } from "../lib/export";
 import { outbox } from "../lib/sync";
 import { supabase } from "../lib/supabase";
+import {
+  pushState,
+  subscribeToRestAlerts,
+  unsubscribeFromRestAlerts,
+  type PushState,
+} from "../lib/push";
 import { reportError, toast } from "../lib/errors";
 import { APP_VERSION, BUILD_SHA, BUILD_TIME } from "../lib/build";
 
@@ -129,6 +135,22 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   const [notifState, setNotifState] = useState(
     notifSupported ? Notification.permission : "unsupported",
   );
+  // Closed-app alerts: read from the browser's push manager each time the
+  // sheet opens, never remembered — null until it has answered.
+  const [pushSt, setPushSt] = useState<PushState | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    pushState()
+      .then((s) => {
+        if (!cancelled) setPushSt(s);
+      })
+      .catch((e: unknown) => reportError(e, "rest alert state"));
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // Names for the per-exercise override list, and the one chance this app gets
   // to garbage-collect overrides whose exercise is gone. Never prune off an
@@ -304,10 +326,11 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                     </span>
                   </button>
                   <div className="microcopy">
-                    A system notification when rest runs out. Some browsers
-                    grant the permission and then deliver nothing — an iPhone
-                    home-screen app is the usual case — so keep the rest sound
-                    on as the cue you can rely on.
+                    A system notification when rest runs out, while the app is
+                    open. Some browsers grant the permission and then deliver
+                    nothing — an iPhone home-screen app is the usual case — so
+                    keep the rest sound on as the cue you can rely on. The row
+                    below is what reaches a locked phone.
                   </div>
                 </>
               ) : (
@@ -324,6 +347,9 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   </div>
                 </>
               ))}
+            {group === "timing" && (
+              <ClosedAppAlerts state={pushSt} onChange={setPushSt} />
+            )}
           </section>
         );
       })}
@@ -475,6 +501,79 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
       {queueOpen && <OutboxSheet onClose={() => setQueueOpen(false)} />}
       {pad && <NumberPad req={pad} />}
     </Sheet>
+  );
+}
+
+// ---- closed-app rest alerts (6f) ---------------------------------------------
+
+/**
+ * "Alert me when the app is closed": a Web Push sent by the server at the
+ * deadline (lib/push.ts). Four honest states, and the row never reports ON for
+ * something that cannot arrive: the state is read from the browser's push
+ * manager, not remembered.
+ */
+function ClosedAppAlerts({
+  state,
+  onChange,
+}: {
+  state: PushState | null;
+  onChange: (s: PushState) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const actionable = state === "on" || state === "off";
+
+  const toggle = () => {
+    if (busy || !actionable) return;
+    setBusy(true);
+    (state === "on" ? unsubscribeFromRestAlerts() : subscribeToRestAlerts())
+      .then((s) => {
+        onChange(s);
+        if (s === "on") toast("Closed-app rest alerts on for this phone");
+        else if (state === "on") toast("Closed-app rest alerts off");
+      })
+      .catch((e: unknown) => reportError(e, "rest alerts"))
+      .finally(() => setBusy(false));
+  };
+
+  const value =
+    state === null
+      ? "…"
+      : busy
+        ? "WORKING…"
+        : state === "unsupported"
+          ? "NOT AVAILABLE"
+          : state === "denied"
+            ? "BLOCKED"
+            : state === "on"
+              ? "ON"
+              : "OFF";
+
+  const copy =
+    state === "unsupported"
+      ? "Needs the app installed to the Home Screen. In Safari: Share → Add to Home Screen, then open it from there and come back to this row."
+      : state === "denied"
+        ? "Notifications are blocked for this app. Allow them in iOS Settings → Notifications (or the browser's site settings), then come back."
+        : state === "on"
+          ? "On for this phone. When rest runs out with the app closed or the screen locked, the server sends a notification; logging the next set first cancels it. Some rests are too long for the server to hold, and the app says so once."
+          : "A notification when rest runs out even with the phone locked or the app closed — sent by the server at the deadline, cancelled by your next set. Tap to allow notifications and turn it on.";
+
+  return (
+    <>
+      <button
+        type="button"
+        className="sheet-row sheet-row-btn"
+        onClick={toggle}
+        disabled={!actionable || busy}
+      >
+        <span>Alert me when the app is closed</span>
+        <span
+          className={`sheet-row-value ${state === "unsupported" ? "muted" : ""}`}
+        >
+          {value}
+        </span>
+      </button>
+      <div className="microcopy">{copy}</div>
+    </>
   );
 }
 

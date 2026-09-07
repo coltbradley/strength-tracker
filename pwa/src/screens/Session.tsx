@@ -47,6 +47,7 @@ import { SetRow } from "../components/SetRow";
 import { RpeChips } from "../components/RpeChips";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
+import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
 import { prefersReducedMotion, useKeyboardInset } from "../components/Sheet";
@@ -105,6 +106,7 @@ import {
 import { setExerciseLoadEntry } from "../lib/settings";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { unlockRestCue } from "../lib/restCue";
+import { cancelRestAlert, scheduleRestAlert } from "../lib/push";
 import {
   enteredKg,
   loadEntryForSet,
@@ -221,6 +223,56 @@ export function Session() {
   // survives DONE so the next log can still record elapsed rest
   const restRef = useRef<{ startedAt: number } | null>(null);
 
+  // The SERVER-side "rest over" push for the strip in progress (lib/push.ts),
+  // for when the app is closed or the phone is locked at the deadline.
+  //
+  // Component state, deliberately not mirrored to the cache: the alert id
+  // exists only to CANCEL, and a reload loses it. The server then fires
+  // regardless — the person gets a buzz for a rest they may already have
+  // ended by relogging after a reload, and that is accepted: a reload
+  // mid-rest is rare, one extra buzz is cheap, and a mirrored id that
+  // survived would be one more thing to keep consistent with a strip that
+  // itself is rehydrated from cache. The rehydrate path below therefore arms
+  // nothing.
+  //
+  // `seq` settles the race between a schedule still in flight and a cancel
+  // that arrives before it: the id comes back after the next LOG has already
+  // disarmed, so the resolver checks it is still the current rest and
+  // cancels what it just scheduled if not. The controller aborts a request
+  // that has not left yet.
+  const restAlertRef = useRef<{
+    seq: number;
+    id: string | null;
+    controller: AbortController | null;
+  }>({ seq: 0, id: null, controller: null });
+
+  const disarmRestAlert = () => {
+    const ref = restAlertRef.current;
+    ref.seq += 1;
+    ref.controller?.abort();
+    ref.controller = null;
+    const id = ref.id;
+    ref.id = null;
+    if (id !== null) void cancelRestAlert(id);
+  };
+
+  const armRestAlert = (fireAt: number, label: string) => {
+    disarmRestAlert();
+    // A target already reached (−30 on a rest that is nearly over) has
+    // nothing left to announce.
+    if (fireAt <= Date.now() + 1000) return;
+    const ref = restAlertRef.current;
+    const seq = ref.seq;
+    const controller = new AbortController();
+    ref.controller = controller;
+    // Never awaited: the LOG tap must not wait on a network call.
+    void scheduleRestAlert(fireAt, label, controller.signal).then((id) => {
+      if (id === null) return;
+      if (restAlertRef.current.seq === seq) restAlertRef.current.id = id;
+      else void cancelRestAlert(id);
+    });
+  };
+
   // corrections: voided set ids (append-only voiding) and skipped entry keys
   const [voids, setVoids] = useState<Set<string>>(new Set());
   const [skips, setSkips] = useState<Set<string>>(new Set());
@@ -248,6 +300,10 @@ export function Session() {
   // editor sits deep in the scroller with its Save/Cancel row underneath
   const kbInset = useKeyboardInset();
   const [sheet, setSheet] = useState<"search" | "swap" | "plates" | null>(null);
+  /** the movement whose how-to sheet is open (photos + steps from the seed) */
+  const [demoFor, setDemoFor] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   const [pad, setPad] = useState<PadSpec | null>(null);
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
@@ -357,7 +413,9 @@ export function Session() {
         }
         if (cancelled) return;
         // rehydrate the rest clock (lost otherwise on Home round-trips and
-        // page evictions); a clock past the recordable window is dropped
+        // page evictions); a clock past the recordable window is dropped.
+        // No closed-app alert is armed here: the one scheduled before the
+        // reload is still the server's to fire (see restAlertRef).
         if (
           restCached &&
           (Date.now() - restCached.startedAt) / 1000 <= MAX_REST_SECONDS
@@ -936,6 +994,12 @@ export function Session() {
     const showStrip = autoStartRest && roundOpen === null;
     if (showStrip)
       setRest({ startedAt: now, targetSeconds: restSeconds, forLabel });
+    // The next LOG cancels the previous rest's closed-app alert whatever
+    // happens to the strip, and arms one for this rest only when a strip is
+    // shown: no strip means mid-superset or auto-start off, and neither wants
+    // a buzz.
+    disarmRestAlert();
+    if (showStrip) armRestAlert(now + restSeconds * 1000, forLabel);
     // Mirror the clock HERE, whether or not a strip appeared. With auto-start
     // off nothing about `rest` changes, so nothing else would ever write the
     // new startedAt — and no strip also means there is none to restore, which
@@ -1123,6 +1187,7 @@ export function Session() {
     if (startedClock && restRef.current) {
       restRef.current = null;
       setRest(null);
+      disarmRestAlert();
       // Drop the mirror directly, for the same reason logSet writes it
       // directly: a stale startedAt here would be rehydrated as this void's
       // rest and recorded on the next set.
@@ -1349,6 +1414,7 @@ export function Session() {
         if (rest) {
           setRest({ ...rest, targetSeconds: nowEl + want });
           mirrorRest(nowEl + want, rest.forLabel);
+          armRestAlert(rest.startedAt + (nowEl + want) * 1000, rest.forLabel);
         }
         setPad(null);
       },
@@ -1520,7 +1586,7 @@ export function Session() {
   };
 
   const req = padRequest();
-  const sheetOpen = sheet !== null || pad !== null;
+  const sheetOpen = sheet !== null || pad !== null || demoFor !== null;
 
   return (
     <div className="session-shell">
@@ -1621,18 +1687,36 @@ export function Session() {
                       </span>
                     )}
                     {isOpen ? (
-                      <button
-                        type="button"
-                        className="wk-header-open"
-                        aria-expanded={isOpen}
-                        aria-label={`collapse ${entry.name}`}
-                        onClick={() => toggleOpen(entry.key)}
-                      >
-                        {entry.name}{" "}
-                        <span className="chev" aria-hidden="true">
-                          ▾
-                        </span>
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="wk-header-open"
+                          aria-expanded={isOpen}
+                          aria-label={`collapse ${entry.name}`}
+                          onClick={() => toggleOpen(entry.key)}
+                        >
+                          {entry.name}{" "}
+                          <span className="chev" aria-hidden="true">
+                            ▾
+                          </span>
+                        </button>
+                        {/* How to do it. A sibling, not a child: the header
+                            is itself a button and buttons do not nest. Shown
+                            on the OPEN entry only — that is the one being
+                            done — and offered for every movement, because
+                            whether the seed has a demo is only known once
+                            the sheet asks. */}
+                        <button
+                          type="button"
+                          className="wk-demo"
+                          aria-label={`how to do ${entry.name}`}
+                          onClick={() =>
+                            setDemoFor({ id: entry.exercise_id, name: entry.name })
+                          }
+                        >
+                          HOW TO
+                        </button>
+                      </>
                     ) : (
                       <button
                         type="button"
@@ -2144,13 +2228,17 @@ export function Session() {
             const targetSeconds = Math.max(0, rest.targetSeconds + d);
             setRest({ ...rest, targetSeconds });
             mirrorRest(targetSeconds, rest.forLabel);
+            // the closed-app alert follows the target
+            armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
           }}
           onEdit={() => openPad("rest")}
           /* dismissing hides the strip only: the clock keeps measuring, so
-             the mirror keeps its startedAt with a null target */
+             the mirror keeps its startedAt with a null target — and a strip
+             nobody wants to see is a buzz nobody wants either */
           onDone={() => {
             setRest(null);
             mirrorRest(null, null);
+            disarmRestAlert();
           }}
         />
       )}
@@ -2167,7 +2255,11 @@ export function Session() {
         <button
           type="button"
           className="btn btn-outline-ink"
-          onClick={() => navigate("/end")}
+          onClick={() => {
+            // ending the session ends the rest; nothing to announce
+            disarmRestAlert();
+            navigate("/end");
+          }}
         >
           Finish
         </button>
@@ -2233,6 +2325,14 @@ export function Session() {
           busy={false}
           onCancel={() => setDeclaring(null)}
           onSave={(groups) => void saveDeclared(declaring, groups)}
+        />
+      )}
+
+      {demoFor && (
+        <ExerciseDemoSheet
+          exerciseId={demoFor.id}
+          exerciseName={demoFor.name}
+          onClose={() => setDemoFor(null)}
         />
       )}
 

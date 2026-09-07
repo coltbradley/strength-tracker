@@ -53,20 +53,120 @@ import type {
 const SET_COLUMNS =
   "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,rpe";
 
-async function fetchWithCache<T>(
-  key: string,
-  fetcher: () => Promise<T>,
-): Promise<{ data: T; fromCache: boolean }> {
-  try {
-    const data = await fetcher();
-    await cacheSet(key, data);
-    return { data, fromCache: false };
-  } catch (e) {
-    const cached = await cacheGet<T>(key);
-    if (cached !== undefined) return { data: cached, fromCache: true };
-    throw e;
+/** Why a read came back from the device cache rather than the server. */
+export type StaleReason = "offline" | "error";
+
+/** Every cached read returns this. `fromCache` stays for the callers that only
+ *  need the boolean; `stale` says WHY, which is the part a banner has to get
+ *  right — "offline" and "the server refused" call for different words and
+ *  different reactions, and until this existed they were the same boolean. */
+export interface CacheRead<T> {
+  data: T;
+  fromCache: boolean;
+  stale: StaleReason | null;
+}
+
+/**
+ * A PostgREST error with its code intact.
+ *
+ * `throwIf` used to throw `new Error(error.message)`, which threw away the one
+ * field that says whether the SERVER answered. postgrest-js reports a fetch that
+ * never got a response (offline, DNS, a timeout, an abort) as an error with an
+ * EMPTY code and status 0; anything Postgres or PostgREST actually said carries
+ * a SQLSTATE or a PGRSTxxx code. Collapsing both into a message made "column
+ * does not exist" indistinguishable from "no signal in the basement", and the
+ * cache fallback below then treated a broken schema as a bad day for wifi:
+ * silently, on every device with a cache, with a banner that said "offline" to
+ * a person who was not. The Report-a-problem sheet read "RECENT ERRORS: none"
+ * through all of it, because nothing was ever reported.
+ */
+export class QueryError extends Error {
+  readonly code: string | null;
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.name = "QueryError";
+    this.code = code;
   }
 }
+
+/** "offline" means the server never answered. Everything else — a PostgREST
+ *  error WITH a code, or a throw from our own code — is an answer, and an
+ *  answer of "no" is a bug or an outage, never a reason to say offline. */
+export function staleReason(e: unknown): StaleReason {
+  return e instanceof QueryError && e.code === null ? "offline" : "error";
+}
+
+/** The worst of several reads' staleness, for a screen that shows one banner
+ *  over many fetches: an error outranks offline, which outranks fresh. */
+export function worstStale(
+  ...reasons: Array<StaleReason | null>
+): StaleReason | null {
+  if (reasons.includes("error")) return "error";
+  if (reasons.includes("offline")) return "offline";
+  return null;
+}
+
+interface CacheDeps {
+  cacheGet: <T>(key: string) => Promise<T | undefined>;
+  cacheSet: (key: string, value: unknown) => Promise<void>;
+  report: (e: unknown, context: string) => void;
+  now?: () => number;
+}
+
+/** How long one failing read stays quiet after it has been reported once.
+ *  History fires seven reads at once; a view that 500s should say so ONCE, not
+ *  three toasts deep. Keyed by message rather than cache key, so seven
+ *  identical failures are one report and two different ones are two. */
+export const REPORT_WINDOW_MS = 30_000;
+
+/**
+ * Online-first with cache fallback. Exported as a factory so the fallback
+ * rules can be tested without IndexedDB or a network.
+ *
+ * The rule: the cache is served whenever it exists, because a stale plan beats
+ * a blank screen in a gym. What changed is that serving it is no longer SILENT
+ * when the cause was not the network. Reporting happens if and only if a real
+ * error is being hidden behind cached data — when there is no cache the error
+ * propagates and the caller, which already reports, owns it. One report per
+ * message per window, so a screen with seven reads over one broken view does
+ * not stack seven toasts.
+ */
+export function makeFetchWithCache(deps: CacheDeps) {
+  const now = deps.now ?? (() => Date.now());
+  // Message → when it was last reported. This is error TEXT, never a user id
+  // or anything derived from one, so module-lifetime state is fine here (the
+  // rule in CLAUDE.md is about identity, and this is not that).
+  const reported = new Map<string, number>();
+  return async function fetchWithCache<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+  ): Promise<CacheRead<T>> {
+    try {
+      const data = await fetcher();
+      await deps.cacheSet(key, data);
+      return { data, fromCache: false, stale: null };
+    } catch (e) {
+      const cached = await deps.cacheGet<T>(key);
+      if (cached === undefined) throw e;
+      const stale = staleReason(e);
+      if (stale === "error") {
+        const message = e instanceof Error ? e.message : String(e);
+        const last = reported.get(message);
+        if (last === undefined || now() - last > REPORT_WINDOW_MS) {
+          reported.set(message, now());
+          deps.report(e, "couldn’t refresh, showing cached data");
+        }
+      }
+      return { data: cached, fromCache: true, stale };
+    }
+  };
+}
+
+const fetchWithCache = makeFetchWithCache({
+  cacheGet,
+  cacheSet,
+  report: reportError,
+});
 
 // ---- cache invalidation verbs ----------------------------------------------
 // Screens call these; they never name a prefix. The families are declared
@@ -117,8 +217,16 @@ export class PlanEditRefused extends Error {
   }
 }
 
-function throwIf(error: { message: string } | null): void {
-  if (error) throw new Error(error.message);
+function throwIf(
+  error: { message: string; code?: string | null } | null,
+): void {
+  if (error)
+    throw new QueryError(
+      error.message,
+      typeof error.code === "string" && error.code.length > 0
+        ? error.code
+        : null,
+    );
 }
 
 // ---- programs / planned workouts ------------------------------------------
@@ -142,10 +250,7 @@ export function weekOrder(a: PlannedWorkoutRow, b: PlannedWorkoutRow): number {
   return a.day_index - b.day_index;
 }
 
-export async function getPlannedWorkouts(): Promise<{
-  data: WorkoutList;
-  fromCache: boolean;
-}> {
+export async function getPlannedWorkouts(): Promise<CacheRead<WorkoutList>> {
   return fetchWithCache(cacheKeys.plannedWorkouts, async () => {
     const { data: programs, error: pErr } = await supabase
       .from("programs")
@@ -176,6 +281,69 @@ export async function getPlannedWorkouts(): Promise<{
       programs: progs,
       workouts: (workouts ?? []) as PlannedWorkoutRow[],
     };
+  });
+}
+
+// ---- training plan (the strategy above programs) --------------------------
+// Read-only here. The plan is written from Claude Desktop through the MCP
+// server (set_training_plan / confirm_training_plan); this device shows it to
+// the in-app coach through the context block and, later, to the person.
+
+export interface TrainingPlanRow {
+  id: string;
+  objective: string;
+  starts_on: string;
+  ends_on: string;
+  confirmed_at: string | null;
+}
+
+export interface PlanPhaseRow {
+  id: string;
+  position: number;
+  name: string;
+  starts_on: string;
+  ends_on: string;
+  focus: string | null;
+  progression: string | null;
+  sessions_per_week: number | null;
+}
+
+export interface TrainingPlanRead {
+  plan: TrainingPlanRow;
+  phases: PlanPhaseRow[];
+}
+
+/**
+ * The live training plan with its phases, or null when none is set.
+ *
+ * "Live" is `superseded_at is null`, of which there is at most one per user by
+ * a partial unique index. The row comes back whether or not it is confirmed
+ * and the caller reads `confirmed_at`: an unconfirmed plan is not a plan to
+ * build against, but it is also not "none", and the coach should say which.
+ * Cached like every other read so the context block still carries the plan
+ * in a basement; `null` caches too, so "no plan" is remembered offline.
+ */
+export async function getTrainingPlan(): Promise<
+  CacheRead<TrainingPlanRead | null>
+> {
+  return fetchWithCache(cacheKeys.trainingPlan, async () => {
+    const { data: plans, error: pErr } = await supabase
+      .from("training_plans")
+      .select("id,objective,starts_on,ends_on,confirmed_at")
+      .is("superseded_at", null)
+      .limit(1);
+    throwIf(pErr);
+    const plan = ((plans ?? []) as TrainingPlanRow[])[0];
+    if (plan === undefined) return null;
+    const { data: phases, error: phErr } = await supabase
+      .from("plan_phases")
+      .select(
+        "id,position,name,starts_on,ends_on,focus,progression,sessions_per_week",
+      )
+      .eq("plan_id", plan.id)
+      .order("position");
+    throwIf(phErr);
+    return { plan, phases: (phases ?? []) as PlanPhaseRow[] };
   });
 }
 
@@ -803,7 +971,7 @@ export async function createPlannedWorkout(
 export async function getDoneWorkoutIds(
   programId: string,
   workoutIds: string[],
-): Promise<{ data: string[]; fromCache: boolean }> {
+): Promise<CacheRead<string[]>> {
   return fetchWithCache(cacheKeys.doneWorkouts(programId), async () => {
     if (workoutIds.length === 0) return [];
     const { data, error } = await supabase
@@ -828,7 +996,7 @@ export async function getDoneWorkoutIds(
 
 export async function getResolvedPrescriptions(
   plannedWorkoutId: string,
-): Promise<{ data: ResolvedPrescriptionRow[]; fromCache: boolean }> {
+): Promise<CacheRead<ResolvedPrescriptionRow[]>> {
   return fetchWithCache(cacheKeys.prescriptions(plannedWorkoutId), async () => {
     const { data, error } = await supabase
       .from("v_resolved_prescriptions")
@@ -887,10 +1055,7 @@ export function groupTrainingMaxes(
 }
 
 /** Every training max the user has ever set, newest first. */
-export async function getTrainingMaxes(): Promise<{
-  data: TrainingMaxRow[];
-  fromCache: boolean;
-}> {
+export async function getTrainingMaxes(): Promise<CacheRead<TrainingMaxRow[]>> {
   return fetchWithCache(cacheKeys.trainingMaxes, async () => {
     const { data, error } = await supabase
       .from("training_maxes")
@@ -970,10 +1135,7 @@ async function invalidateTmCaches(): Promise<void> {
 
 // ---- exercises -------------------------------------------------------------
 
-export async function getExercises(): Promise<{
-  data: ExerciseRow[];
-  fromCache: boolean;
-}> {
+export async function getExercises(): Promise<CacheRead<ExerciseRow[]>> {
   return fetchWithCache(cacheKeys.exercises, async () => {
     const { data, error } = await supabase
       .from("exercises")
@@ -982,6 +1144,45 @@ export async function getExercises(): Promise<{
       .limit(2000);
     throwIf(error);
     return (data ?? []) as ExerciseRow[];
+  });
+}
+
+// ---- exercise demo ---------------------------------------------------------
+
+/** What the seed knows about HOW to do a movement: photos (as paths, see
+ *  lib/exerciseMedia.ts) and numbered steps. Empty arrays for custom rows. */
+export interface ExerciseDemo {
+  name: string;
+  images: string[];
+  instructions: string[];
+}
+
+/** Read lazily, one exercise at a time, and cached per exercise: the steps
+ *  for 873 movements are far too much to ride along in the exercise list
+ *  every plan editor mount loads, and a person opens this for the one or two
+ *  movements they do not know. Null means the exercise is not visible to this
+ *  account, which for a shared library means it does not exist. */
+export async function getExerciseDemo(
+  exerciseId: string,
+): Promise<CacheRead<ExerciseDemo | null>> {
+  return fetchWithCache(cacheKeys.exerciseDemo(exerciseId), async () => {
+    const { data, error } = await supabase
+      .from("exercises")
+      .select("name,images,instructions")
+      .eq("id", exerciseId)
+      .maybeSingle();
+    throwIf(error);
+    if (!data) return null;
+    const row = data as {
+      name: string;
+      images: string[] | null;
+      instructions: string[] | null;
+    };
+    return {
+      name: row.name,
+      images: row.images ?? [],
+      instructions: row.instructions ?? [],
+    };
   });
 }
 
@@ -1157,10 +1358,7 @@ export function orderLoggedExercises(
  * single-column scan whose cursor skips duplicates, plus one tiny read for
  * the default selection — issued in parallel, so it costs no extra latency.
  */
-export async function getLoggedExerciseIds(): Promise<{
-  data: string[];
-  fromCache: boolean;
-}> {
+export async function getLoggedExerciseIds(): Promise<CacheRead<string[]>> {
   return fetchWithCache(cacheKeys.loggedExercises, async () => {
     const [ids, mostRecent] = await Promise.all([
       scanLoggedExercises(async (cursor) => {
@@ -1192,10 +1390,7 @@ export async function getLoggedExerciseIds(): Promise<{
  * Most recent working set per exercise across past sessions (fallback: most
  * recent set of any type). Used to prefill when there is no prescription.
  */
-export async function getLastActuals(excludeSessionId?: string): Promise<{
-  data: LastActuals;
-  fromCache: boolean;
-}> {
+export async function getLastActuals(excludeSessionId?: string): Promise<CacheRead<LastActuals>> {
   return fetchWithCache(cacheKeys.lastActuals(excludeSessionId), () =>
     scanLastActuals(async (cursor) => {
       let q = supabase
@@ -1428,7 +1623,7 @@ export interface SessionMetaRow {
 export async function getSessionMeta(
   exerciseId: string,
   ids: string[],
-): Promise<{ data: Record<string, SessionMetaRow>; fromCache: boolean }> {
+): Promise<CacheRead<Record<string, SessionMetaRow>>> {
   return fetchWithCache(cacheKeys.sessionMeta(exerciseId), async () => {
     if (ids.length === 0) return {};
     const { data, error } = await supabase
@@ -1473,7 +1668,7 @@ export async function getSetNotesByIds(
 export async function getSetNotesForExercise(
   exerciseId: string,
   ids: string[],
-): Promise<{ data: Record<string, string>; fromCache: boolean }> {
+): Promise<CacheRead<Record<string, string>>> {
   return fetchWithCache(cacheKeys.setNotes(exerciseId), () =>
     getSetNotesByIds(ids),
   );
@@ -1564,7 +1759,7 @@ export function mergeSets(
 
 export async function getE1rmSeries(
   exerciseId: string,
-): Promise<{ data: SessionBestE1rmRow[]; fromCache: boolean }> {
+): Promise<CacheRead<SessionBestE1rmRow[]>> {
   return fetchWithCache(cacheKeys.e1rm(exerciseId), async () => {
     const { data, error } = await supabase
       .from("v_session_best_e1rm")
@@ -1578,7 +1773,7 @@ export async function getE1rmSeries(
 
 export async function getWeeklyVolume(
   exerciseId: string,
-): Promise<{ data: WeeklyVolumeRow[]; fromCache: boolean }> {
+): Promise<CacheRead<WeeklyVolumeRow[]>> {
   return fetchWithCache(cacheKeys.volume(exerciseId), async () => {
     const { data, error } = await supabase
       .from("v_weekly_volume")
@@ -1592,7 +1787,7 @@ export async function getWeeklyVolume(
 
 export async function getGoalProgress(
   exerciseId: string,
-): Promise<{ data: GoalProgressRow | null; fromCache: boolean }> {
+): Promise<CacheRead<GoalProgressRow | null>> {
   return fetchWithCache(cacheKeys.goal(exerciseId), async () => {
     const { data, error } = await supabase
       .from("v_goal_progress")
@@ -1623,7 +1818,7 @@ export interface AdherenceBundle {
 export async function getAdherence(
   exerciseId: string,
   sessionIds: string[],
-): Promise<{ data: AdherenceBundle; fromCache: boolean }> {
+): Promise<CacheRead<AdherenceBundle>> {
   return fetchWithCache(cacheKeys.adherence(exerciseId), async () => {
     if (sessionIds.length === 0) return { rows: [], plannedSets: {} };
     const { data, error } = await supabase
@@ -1727,7 +1922,7 @@ export function summariseAdherence(
 
 export async function getRecentSets(
   exerciseId: string,
-): Promise<{ data: SetInsert[]; fromCache: boolean }> {
+): Promise<CacheRead<SetInsert[]>> {
   return fetchWithCache(cacheKeys.recentSets(exerciseId), async () => {
     const { data, error } = await supabase
       .from("v_live_sets")

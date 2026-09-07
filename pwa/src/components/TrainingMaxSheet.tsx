@@ -34,6 +34,7 @@ import {
   getUnresolvedTmExercises,
   groupTrainingMaxes,
   setTrainingMax,
+  type StaleReason,
 } from "../lib/data";
 import { reportError, toast } from "../lib/errors";
 import { formatPlannedDate, todayLocalIso } from "../lib/format";
@@ -54,7 +55,7 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
     { exercise_id: string; exercise_name: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
-  const [fromCache, setFromCache] = useState(false);
+  const [stale, setStale] = useState<StaleReason | null>(null);
   const [effective, setEffective] = useState(todayLocalIso());
   const [pad, setPad] = useState<PadRequest | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -70,7 +71,7 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
       .then((r) => {
         if (cancelled) return;
         setRows(r.data);
-        setFromCache(r.fromCache);
+        setStale(r.stale);
       })
       .catch((e: unknown) => reportError(e, "load training maxes"))
       .finally(() => {
@@ -177,8 +178,13 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
         reads the same numbers.
       </div>
 
-      {fromCache && (
+      {stale === "offline" && (
         <div className="cache-note">offline — showing cached values</div>
+      )}
+      {stale === "error" && (
+        <div className="cache-note cache-note-error">
+          couldn’t refresh — showing cached values
+        </div>
       )}
 
       <section className="settings-group">

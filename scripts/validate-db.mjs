@@ -51,6 +51,12 @@ await db.exec(`
     as $$ select nullif(current_setting('app.user_id', true), '')::uuid $$;
   create role authenticated login;
   create role anon login;
+  -- Supabase grants EXECUTE on every new public function to anon and
+  -- authenticated through default privileges, i.e. at CREATE time. Modelled the
+  -- same way, and BEFORE the migrations run, so that a migration which revokes
+  -- execute on one function (20260905030000) is not silently re-granted by the
+  -- harness afterwards. A blanket grant after the migrations was exactly that.
+  alter default privileges in schema public grant execute on functions to anon, authenticated;
 `);
 
 // --- migrations (unmodified) ----------------------------------------------
@@ -65,7 +71,6 @@ await db.exec(`
   grant usage on schema public, auth to authenticated;
   grant select, insert, update, delete on all tables in schema public to authenticated;
   grant execute on all functions in schema auth to authenticated;
-  grant execute on all functions in schema public to authenticated;
 `);
 
 // --- seed ------------------------------------------------------------------
@@ -1441,6 +1446,392 @@ await check("cost is priced per model, and an unknown model is not guessed", asy
     `select cost_usd from v_coach_spend_daily where user_id = '${OWNER}'`,
   );
   assertEq(Number(day.rows[0].cost_usd), 0.0111, "sum skips the unpriced row");
+});
+
+// --- function grants (20260905030000) -------------------------------------
+console.log("\nfunction grants (the linter baseline in docs/security.md):");
+await db.exec("reset role;");
+
+await check("purge_expired_mcp_tokens is not callable by anon or authenticated", async () => {
+  const r = await db.query(`
+    select has_function_privilege('anon', 'public.purge_expired_mcp_tokens()', 'execute') as anon,
+           has_function_privilege('authenticated', 'public.purge_expired_mcp_tokens()', 'execute') as authed`);
+  assertEq(r.rows[0], { anon: false, authed: false }, "execute on purge_expired_mcp_tokens");
+});
+
+await check("but an ordinary public function still is (the revoke is targeted)", async () => {
+  const r = await db.query(
+    `select has_function_privilege('authenticated', 'public.app_tz()', 'execute') as authed`,
+  );
+  assertEq(r.rows[0].authed, true, "execute on app_tz");
+});
+
+await check("every public function pins search_path", async () => {
+  const r = await db.query(`
+    select p.proname
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%')
+    order by 1`);
+  assertEq(r.rows.map((x) => x.proname), [], "functions without search_path");
+});
+
+// --- B · training plans ---------------------------------------------------
+// The plan above the program (20260905060000). Three rules the schema has to
+// hold on its own, whichever path writes: phases of one plan never share a
+// day, one live plan per user, and another user's plan does not exist.
+console.log("\ntraining plans (one live plan, non-overlapping phases, private):");
+await db.exec("reset role;");
+// The exercise-notes checks above delete OTHER to prove the cascade; the
+// cross-user checks here need a second person again.
+await db.exec(`insert into auth.users (id, email) values ('${OTHER}', 'other@example.test') on conflict do nothing`);
+
+const PLAN_A = "66666666-0000-4000-8000-000000000001";
+const PLAN_B = "66666666-0000-4000-8000-000000000002";
+const PHASE = (n) => `77777777-0000-4000-8000-00000000000${n}`;
+
+await check("a plan with dated, adjacent phases writes in one statement", async () => {
+  await db.exec(`
+    insert into training_plans (id, user_id, objective, starts_on, ends_on)
+      values ('${PLAN_A}', '${OWNER}', 'Squat 200 kg by spring', '2026-09-01', '2026-12-20');
+    insert into plan_phases (id, user_id, plan_id, position, name, starts_on, ends_on, focus, progression)
+      values
+      ('${PHASE(1)}', '${OWNER}', '${PLAN_A}', 0, 'Accumulation',     '2026-09-01', '2026-10-12', 'hypertrophy on the squat pattern', 'add 2.5 kg when every set hits the top of the range'),
+      ('${PHASE(2)}', '${OWNER}', '${PLAN_A}', 1, 'Intensification', '2026-10-13', '2026-11-23', 'heavier triples', 'add 2.5 kg per week'),
+      ('${PHASE(3)}', '${OWNER}', '${PLAN_A}', 2, 'Peak',            '2026-11-24', '2026-12-20', 'singles', 'by feel');
+  `);
+  const r = await db.query(`select count(*)::int as n from plan_phases where plan_id = '${PLAN_A}'`);
+  assertEq(r.rows[0].n, 3, "three phases");
+});
+
+await check("two overlapping phases in ONE bulk insert are refused (the trigger is AFTER ROW)", async () => {
+  // set_training_plan writes every phase of a plan in one statement. A BEFORE
+  // ROW trigger cannot see the earlier rows of the statement it is part of;
+  // an AFTER ROW trigger fires once all of them are in.
+  await db.exec(`insert into training_plans (id, user_id, objective, starts_on, ends_on)
+                   values ('${PLAN_B}', '${OTHER}', 'other plan', '2026-09-01', '2026-12-31')`);
+  let code = null;
+  try {
+    await db.exec(`
+      insert into plan_phases (user_id, plan_id, position, name, starts_on, ends_on) values
+        ('${OTHER}', '${PLAN_B}', 0, 'One', '2026-09-01', '2026-09-30'),
+        ('${OTHER}', '${PLAN_B}', 1, 'Two', '2026-09-30', '2026-10-31');
+    `);
+  } catch (e) {
+    code = e.code ?? e.message;
+  }
+  assertEq(code, "23P01", "exclusion_violation, the SQLSTATE an exclusion constraint raises");
+  const r = await db.query(`select count(*)::int as n from plan_phases where plan_id = '${PLAN_B}'`);
+  assertEq(r.rows[0].n, 0, "the whole statement rolled back");
+});
+
+await check("a phase that shares one day with a neighbour is refused; the next day is fine", async () => {
+  // Bounds are inclusive on both ends ('[]'): a phase ending on the 12th and
+  // one starting on the 12th overlap. Separate statement this time.
+  let rejected = false;
+  try {
+    await db.exec(`insert into plan_phases (user_id, plan_id, position, name, starts_on, ends_on)
+                     values ('${OWNER}', '${PLAN_A}', 3, 'Overlap', '2026-12-20', '2026-12-31')`);
+  } catch (e) {
+    rejected = e.code === "23P01";
+  }
+  if (!rejected) throw new Error("accepted a phase sharing a day with Peak");
+  // An UPDATE that creates an overlap is refused too.
+  rejected = false;
+  try {
+    await db.exec(`update plan_phases set ends_on = '2026-10-13' where id = '${PHASE(1)}'`);
+  } catch (e) {
+    rejected = e.code === "23P01";
+  }
+  if (!rejected) throw new Error("accepted an update that made Accumulation overlap Intensification");
+  await db.exec(`insert into plan_phases (user_id, plan_id, position, name, starts_on, ends_on)
+                   values ('${OWNER}', '${PLAN_A}', 3, 'Deload', '2026-12-21', '2026-12-27')`);
+  const r = await db.query(`select count(*)::int as n from plan_phases where plan_id = '${PLAN_A}'`);
+  assertEq(r.rows[0].n, 4, "the day after is not an overlap");
+});
+
+await check("a second live plan for the same user is refused; superseding the first admits it", async () => {
+  let rejected = false;
+  try {
+    await db.exec(`insert into training_plans (user_id, objective, starts_on, ends_on)
+                     values ('${OWNER}', 'a second live plan', '2027-01-01', '2027-03-31')`);
+  } catch (e) {
+    rejected = e.code === "23505";
+  }
+  if (!rejected) throw new Error("two live plans for one user");
+  await db.exec(`update training_plans set superseded_at = now() where id = '${PLAN_A}'`);
+  await db.exec(`insert into training_plans (id, user_id, objective, starts_on, ends_on)
+                   values ('66666666-0000-4000-8000-000000000003', '${OWNER}', 'the revision', '2027-01-01', '2027-03-31')`);
+  const r = await db.query(
+    `select count(*)::int as n from training_plans where user_id = '${OWNER}' and superseded_at is null`,
+  );
+  assertEq(r.rows[0].n, 1, "exactly one live plan");
+  const hist = await db.query(`select count(*)::int as n from training_plans where user_id = '${OWNER}'`);
+  assertEq(hist.rows[0].n, 2, "the superseded plan is still in Postgres");
+});
+
+await check("another user's plan and phases do not exist through RLS", async () => {
+  const plans = await asUser(OTHER, `select count(*)::int as n from training_plans`);
+  assertEq(plans.rows[0].n, 1, "OTHER sees only their own plan");
+  const phases = await asUser(OTHER, `select count(*)::int as n from plan_phases`);
+  assertEq(phases.rows[0].n, 0, "OTHER sees none of OWNER's phases");
+  let rejected = false;
+  try {
+    await asUser(
+      OTHER,
+      `insert into plan_phases (user_id, plan_id, position, name, starts_on, ends_on)
+         values ('${OWNER}', '${PLAN_A}', 9, 'Injected', '2028-01-01', '2028-01-31')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("wrote a phase onto another user's plan");
+  // RLS refuses an UPDATE by matching zero rows, not by raising.
+  const touched = await asUser(
+    OTHER,
+    `update plan_phases set name = 'renamed' where id = '${PHASE(1)}' returning id`,
+  );
+  assertEq(touched.rows.length, 0, "renamed another user's phase");
+});
+
+await check("neither plan table has a delete policy, on purpose", async () => {
+  const r = await db.query(
+    `select tablename, count(*)::int as n from pg_policies
+      where tablename in ('training_plans', 'plan_phases') and cmd = 'DELETE'
+      group by tablename`,
+  );
+  assertEq(r.rows, [], "a plan is superseded, never deleted; a phase has no life outside its plan");
+});
+
+await check("a program files under a phase, and survives the phase", async () => {
+  await db.exec(`insert into programs (id, user_id, name, confirmed_at, phase_id)
+                   values ('11111111-0000-4000-8000-000000000077', '${OWNER}', 'Accumulation block', now(), '${PHASE(1)}')`);
+  const r = await db.query(
+    `select ph.name from programs p join plan_phases ph on ph.id = p.phase_id
+      where p.id = '11111111-0000-4000-8000-000000000077'`,
+  );
+  assertEq(r.rows[0].name, "Accumulation", "joins to the phase by name");
+  let rejected = false;
+  try {
+    await db.exec(`insert into programs (user_id, name, phase_id)
+                     values ('${OWNER}', 'dangling', '77777777-0000-4000-8000-0000000000ff')`);
+  } catch (e) {
+    rejected = e.code === "23503";
+  }
+  if (!rejected) throw new Error("a program pointed at a phase that does not exist");
+  // No client can reach this delete (no policy), but a hand-run one in psql
+  // must not take the training with it.
+  const deload = await db.query(`select id from plan_phases where name = 'Deload'`);
+  await db.exec(`update programs set phase_id = '${deload.rows[0].id}' where id = '11111111-0000-4000-8000-000000000077'`);
+  await db.exec(`delete from plan_phases where id = '${deload.rows[0].id}'`);
+  const after = await db.query(`select phase_id from programs where id = '11111111-0000-4000-8000-000000000077'`);
+  assertEq(after.rows[0].phase_id, null, "on delete set null: the program is still there, unfiled");
+});
+
+
+// --- A · push alerts ---------------------------------------------------------
+// The three tables behind "alert me when the app is closed" (20260905050000).
+// A subscription is a device's address and must be private to its owner; the
+// VAPID key pair must be unreadable by ANY client; an alert is written only by
+// the function and readable by the person it belongs to.
+console.log("\npush alerts (rest alert while the app is closed):");
+await db.exec("reset role;");
+
+// OTHER was deleted above, so this section stands up its own second person.
+const PUSH_A = "00000000-0000-4000-8000-00000000000a";
+const PUSH_B = "00000000-0000-4000-8000-00000000000b";
+await db.exec(`
+  insert into auth.users (id, email) values
+    ('${PUSH_A}', 'push-a@example.test'), ('${PUSH_B}', 'push-b@example.test')
+  on conflict do nothing;
+`);
+// 65-byte uncompressed P-256 point and 16-byte auth secret, base64url: the
+// shapes a real browser hands back from PushSubscription.getKey().
+const P256DH = "B" + "A".repeat(86);
+const AUTH16 = "A".repeat(22);
+
+await check("push_subscriptions: owner can subscribe, and sees only their own", async () => {
+  await asUser(
+    PUSH_A,
+    `insert into push_subscriptions (endpoint, p256dh, auth, user_agent)
+     values ('https://push.example.test/a', '${P256DH}', '${AUTH16}', 'ua')`,
+  );
+  await db.exec(
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/b', '${P256DH}', '${AUTH16}')`,
+  );
+  const a = await asUser(PUSH_A, `select endpoint from push_subscriptions order by endpoint`);
+  assertEq(a.rows.map((r) => r.endpoint), ["https://push.example.test/a"], "A sees only A");
+  const b = await asUser(PUSH_B, `select count(*)::int as n from push_subscriptions`);
+  assertEq(b.rows[0].n, 1, "B sees only B");
+});
+
+await check("push_subscriptions: auth.uid() stamps the owner; naming someone else is refused", async () => {
+  const r = await db.query(
+    `select user_id from push_subscriptions where endpoint = 'https://push.example.test/a'`,
+  );
+  assertEq(r.rows[0].user_id, PUSH_A, "owner stamped by default");
+  let rejected = false;
+  try {
+    await asUser(
+      PUSH_A,
+      `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+       values ('${PUSH_B}', 'https://push.example.test/forged', '${P256DH}', '${AUTH16}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("subscribed a device on someone else's behalf");
+});
+
+await check("push_subscriptions: owner can revoke their own, never another's, and nobody deletes", async () => {
+  const mine = await asUser(
+    PUSH_A,
+    `update push_subscriptions set revoked_at = now()
+     where endpoint = 'https://push.example.test/a' returning id`,
+  );
+  assertEq(mine.rows.length, 1, "own row revoked");
+  const theirs = await asUser(
+    PUSH_A,
+    `update push_subscriptions set revoked_at = now()
+     where endpoint = 'https://push.example.test/b' returning id`,
+  );
+  assertEq(theirs.rows.length, 0, "another user's row untouched");
+  const del = await asUser(PUSH_A, `delete from push_subscriptions returning id`);
+  assertEq(del.rows.length, 0, "no delete policy");
+  const pol = await db.query(
+    `select count(*)::int as n from pg_policies where tablename = 'push_subscriptions' and cmd = 'DELETE'`,
+  );
+  assertEq(pol.rows[0].n, 0, "and none exists");
+});
+
+await check("push_subscriptions: endpoint is unique and the key shapes are pinned", async () => {
+  for (const bad of [
+    // duplicate endpoint
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/b', '${P256DH}', '${AUTH16}')`,
+    // http endpoint
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'http://push.example.test/plain', '${P256DH}', '${AUTH16}')`,
+    // wrong key lengths
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/short', 'abc', '${AUTH16}')`,
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/short2', '${P256DH}', 'abc')`,
+    // standard base64 padding is not base64url
+    `insert into push_subscriptions (user_id, endpoint, p256dh, auth)
+     values ('${PUSH_B}', 'https://push.example.test/padded', '${P256DH}', '${"A".repeat(21)}=')`,
+  ]) {
+    let rejected = false;
+    try {
+      await db.exec(bad);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error(`accepted: ${bad}`);
+  }
+});
+
+await check("push_config: RLS on, no policies, unreadable and unwritable as authenticated", async () => {
+  // the service role (here: superuser) writes the key pair
+  await db.exec(
+    `insert into push_config (id, vapid_public_key, vapid_private_jwk)
+     values (1, 'B${"A".repeat(86)}', '{"kty":"EC","crv":"P-256"}')`,
+  );
+  const rls = await db.query(
+    `select relrowsecurity from pg_class where relname = 'push_config'`,
+  );
+  assertEq(rls.rows[0].relrowsecurity, true, "row security enabled");
+  const pol = await db.query(
+    `select count(*)::int as n from pg_policies where tablename = 'push_config'`,
+  );
+  assertEq(pol.rows[0].n, 0, "no policies at all — see docs/security.md");
+  const seen = await asUser(PUSH_A, `select count(*)::int as n from push_config`);
+  assertEq(seen.rows[0].n, 0, "an authenticated user reads nothing");
+  let rejected = false;
+  try {
+    await asUser(
+      PUSH_A,
+      `insert into push_config (id, vapid_public_key, vapid_private_jwk)
+       values (2, 'x', '{}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("an authenticated user wrote push_config");
+});
+
+await check("push_config: a single row, and only row 1", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into push_config (id, vapid_public_key, vapid_private_jwk) values (2, 'x', '{}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("a second key pair was accepted");
+});
+
+await check("rest_alerts: the function writes, the owner reads, nobody else does either", async () => {
+  await db.exec(
+    `insert into rest_alerts (user_id, fire_at, label)
+     values ('${PUSH_A}', now() + interval '90 seconds', 'Barbell Row set 3')`,
+  );
+  const mine = await asUser(PUSH_A, `select label from rest_alerts`);
+  assertEq(mine.rows.map((r) => r.label), ["Barbell Row set 3"], "owner reads own");
+  const theirs = await asUser(PUSH_B, `select count(*)::int as n from rest_alerts`);
+  assertEq(theirs.rows[0].n, 0, "another user sees nothing");
+  for (const sql of [
+    `insert into rest_alerts (user_id, fire_at, label) values ('${PUSH_A}', now(), 'mine')`,
+    `update rest_alerts set cancelled_at = now() returning id`,
+    `delete from rest_alerts returning id`,
+  ]) {
+    let wrote = false;
+    try {
+      const r = await asUser(PUSH_A, sql);
+      wrote = (r.rows?.length ?? 0) > 0;
+    } catch {
+      // refused outright — also fine
+    }
+    if (wrote) throw new Error(`a client wrote rest_alerts: ${sql}`);
+  }
+});
+
+await check("rest_alerts: the label is one printable line, and the open-alert index exists", async () => {
+  for (const bad of ["", "x".repeat(121), "two\nlines", "tab\there"]) {
+    let rejected = false;
+    try {
+      await db.query(
+        `insert into rest_alerts (user_id, fire_at, label) values ('${PUSH_A}', now(), $1)`,
+        [bad],
+      );
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error(`accepted label ${JSON.stringify(bad)}`);
+  }
+  const idx = await db.query(
+    `select indexdef from pg_indexes where indexname = 'idx_rest_alerts_open'`,
+  );
+  assert(idx.rows.length === 1, "idx_rest_alerts_open exists");
+  assert(
+    /WHERE .*sent_at IS NULL.*cancelled_at IS NULL/i.test(idx.rows[0].indexdef),
+    `partial on open alerts: ${idx.rows[0].indexdef}`,
+  );
+});
+
+await check("deleting a user takes their subscriptions and alerts with them", async () => {
+  await db.exec(`delete from auth.users where id = '${PUSH_A}'`);
+  const subs = await db.query(
+    `select count(*)::int as n from push_subscriptions where user_id = '${PUSH_A}'`,
+  );
+  const alerts = await db.query(
+    `select count(*)::int as n from rest_alerts where user_id = '${PUSH_A}'`,
+  );
+  assertEq([subs.rows[0].n, alerts.rows[0].n], [0, 0], "cascaded");
+  const cfg = await db.query(`select count(*)::int as n from push_config`);
+  assertEq(cfg.rows[0].n, 1, "the deployment key pair is nobody's and survives");
 });
 
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);

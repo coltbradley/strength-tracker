@@ -1889,3 +1889,491 @@ this pass would silently have halved everyone's daily allowance.
 nobody mentioned in the chat and offer to delete it. `source` carries exactly
 one fact, how the row got here, and nothing may branch on it for ownership:
 that is the mistake `exercises.source` made.
+## A schema error is not a bad day for wifi
+
+`fetchWithCache` is the read layer's whole offline story: try the server, and
+on any failure serve what IndexedDB has. It caught `unknown`, and `throwIf` had
+already flattened every PostgREST error to `new Error(message)`, so the catch
+could not tell a phone with no signal from a server that had just answered
+"column does not exist". Both got the cache, both got the banner that says
+"offline", and neither went through `reportError`. That last part is what made
+it a bug rather than a design: the Report-a-problem sheet exists so a person can
+send what actually blew up, and it read RECENT ERRORS: none through the entire
+class of failure that most needs reporting. A deploy that ships a select ahead
+of its migration, the snag deploy.md already records, would have been invisible
+on every device that had ever loaded the plan.
+
+postgrest-js draws the line for us. A fetch that never got a response (offline,
+DNS, a timeout, an abort) comes back with an EMPTY `code` and `status: 0`;
+anything Postgres or PostgREST said carries a SQLSTATE or a PGRSTxxx code.
+`throwIf` now throws a `QueryError` that keeps the code, and `staleReason` reads
+it: no code is "offline", everything else — including a throw from our own
+code, which is a bug and not weather — is "error".
+
+The fallback itself did not change shape. The cache is still served whenever it
+exists, because the alternative is a blank screen mid-session over a transient
+500. What changed is that hiding a real error behind cached data is no longer
+silent: it is reported once per message per thirty seconds (History fires seven
+reads at once, and seven toasts for one broken view is noise, not information),
+and the banner says "couldn’t refresh" in the warning colour rather than
+"offline" in the info colour. When there is NO cache the error propagates
+exactly as before and the caller reports it, as every caller already did, so
+nothing is reported twice.
+
+Rejected: rethrowing server errors instead of serving the cache. Correct in the
+abstract and wrong in a gym, where the plan on screen is the thing being
+trained from and the failure is usually not the lifter's to fix. Rejected: a
+per-family dedupe key. A view that breaks breaks for every family that reads
+it; the message is what is the same, so the message is the key. Rejected:
+reporting from inside `fetchWithCache` even when it rethrows. Every caller
+already reports what it catches, and two toasts for one failure teaches people
+to dismiss toasts.
+
+The factory `makeFetchWithCache` exists so the rule is tested without IndexedDB
+or a network: `data.test.ts` pins offline-serves-quietly, error-serves-and-
+reports, once-per-window, and propagate-when-empty.
+
+## Migrations apply from CI, in front of the client
+
+The deploy workflow published the PWA on every push and nothing else. A
+migration needed `supabase db push` by hand, an edge function needed its own
+`functions deploy` by hand, and the runbook said so — but a runbook is advice,
+and the ordering it asks for (schema first, then the code that reads it) was
+enforced by nobody. `prescriptions.set_type` shipped as a select before its
+column existed and every write failed until someone ran the push. The
+`exercise_count` question on 2026-09-05 was the same shape; it turned out to
+be already applied, but establishing that took a database connection, and the
+app itself would have said "offline" (the entry above).
+
+`deploy.yml` now has a `supabase` job that pushes migrations and deploys both
+functions when anything under `supabase/` changed, and the Pages job `needs` it.
+A skipped Supabase job (nothing under `supabase/` changed) lets Pages run; a
+failed one blocks it. The order is a property of the workflow rather than of
+someone's memory.
+
+It is gated on three repository settings and does nothing without them, so
+merging the workflow changed nothing on its own. That gate is deliberate: the
+settings are a credential and a database password, and adding them is a
+decision the deployment owner makes in the dashboard, not something a commit
+should be able to do.
+
+The tradeoff is real and worth stating plainly: a migration reaches production
+with no human between merge and database. Three facts about THIS repo make
+that acceptable. CI already runs the entire chain in PGlite before a merge;
+migrations are append-only by rule, so there is no destructive statement to
+fire; and `db push` applies only what the remote has not seen, so a rerun is a
+no-op. Remove any one of those and this decision should be reopened.
+
+Rejected: deploying the seeds from CI too. A seed rewrites hundreds of rows in
+a shared table, and "the seed file changed" should mean "someone decided to
+re-seed", not "someone merged". Rejected: letting a `supabase/`-only push
+republish the client. The Pages build stamps the sha into the bundle, so a
+republish of identical code still shows every phone an "update available" for
+nothing. Rejected: `cancel-in-progress: true`, which the old workflow had. It
+is fine to abandon a Pages publish; it is not fine to abandon a `db push`.
+
+## The seed's photos and steps, one tap from the exercise name
+
+The spec never asked for exercise demos, and the plan's non-goals leaned
+against media. The second user changed the calculus: she trains movements the
+coach invented for her, and a name with nothing behind it is a movement she
+does wrong or skips. TrainingPeaks answers this with licensed video. We have no
+budget for a filmed library and there is no free one at 873-exercise scale.
+
+What there is: free-exercise-db, the library this app seeded from, ships two
+photos per exercise (start and end position) and numbered instructions, under
+the same Unlicense, and `build-exercise-seed.mjs` had thrown both away since the
+first seed. So the smallest version is two columns and one sheet, not a content
+project.
+
+Two columns on `exercises`, and they pass that table's rule: neither varies per
+viewer, the generated seed populates all 873, and '{}' is "none" for a custom
+or curated row. `images` stores PATHS, never URLs, and a CHECK pins the shape.
+This is the security decision in the feature: the library is SHARED, an
+'edited' row is read by every account, and an image URL a person could type
+into a shared row is a tracking pixel in every other account's session screen.
+Seed-only by construction. The one host is a constant in
+`lib/exerciseMedia.ts`, which also refuses any non-path client-side, so a
+mirror or a move is one edit and no row can ever choose the origin.
+
+Read lazily per exercise and cached per exercise. The steps for 873 movements
+have no business riding along in the exercise list every plan-editor mount
+loads, and a person opens this for one or two movements they do not know. The
+steps therefore survive a basement once opened. The photos are cross-origin,
+deliberately uncached by the service worker (the same rule that self-hosts
+the fonts), and vanish quietly when they cannot load rather than leaving a
+broken-image glyph over the text.
+
+Rejected: video. No free source; a per-user link can live in `exercise_notes`,
+which is already the standing cue per movement, if a coach wants to paste one.
+Rejected: a targeted runtime cache for this week's photos. It would break the
+cross-origin rule for a nicety, and whether anyone misses the photos offline is
+a question to answer with the online-only version first. Rejected: user-set
+image URLs on custom rows. Custom rows are private, so the tracking-pixel
+argument does not apply to them, but a second write path for a column whose
+whole safety rests on being seed-only is not worth a feature nobody asked for.
+
+Not done: the plan editor. Its exercise row is itself a button, so HOW TO needs
+a home in the row editor, which is a separate change.
+
+## The rest timer survives the app closing; the alert does not, yet
+
+Reported as "make the rest timer persistent when the app is closed". The timer
+already is: `startedAt` is a wall-clock instant mirrored to IndexedDB per
+session, and the strip is rehydrated on mount, so an app iOS killed mid-rest
+comes back showing the right number. What does not survive is the ALERT. The
+tone needs a running JavaScript context and an unlocked AudioContext, and a
+suspended or killed app has neither.
+
+The sequenced plan said background rest notifications "are not possible from a
+web app" on iOS. That is out of date. Since iOS 16.4 an installed Home Screen
+web app can receive Web Push through its service worker, with permission. What
+remains true is that nothing can schedule a LOCAL notification from a closed
+page (Notification Triggers never shipped on iOS), so an alert while closed
+needs a SERVER to send a push at the deadline.
+
+That is a real feature, not a fix, and it has parts this session could not
+build honestly: a `push_subscriptions` table and RLS; a service worker `push`
+handler, which means moving vite-plugin-pwa from generateSW to injectManifest
+(the riskiest file in the repo to touch, per the update-mechanics rules); a
+subscribe flow in Settings; an edge function that receives {deadline, label} on
+LOG and sends a VAPID-signed push AT the deadline; and a cancel path, because a
+set logged before the deadline must stop the buzz. The "at the deadline" half
+is the hard one: pg_cron is minute-granular, and holding a function open until
+the deadline runs into the platform's wall-clock limit. It also needs a VAPID
+private key set as a secret and an iPhone to test on, and the session had
+neither. Built blind, it ships broken. Designed here, it ships when someone can
+test it.
+
+Until then: the wake lock keeps the screen on while the app is open, the tone
+fires while it is open, and a reopened app shows the right time.
+
+
+## The loop: a percentage with no training max is written, a day is recognised and repeated, and the session gets a review
+
+Built from the first real coach-parsed session
+(`docs/superpowers/plans/2026-09-05-plan-and-review-loop.md`). Parse, train,
+review and repeat each existed; nothing connected them, and the evidence was in
+the edges of one 52-minute session.
+
+**A `load_pct_tm` with no current TM is reported, not refused.** This reverses a
+rule that had been in CLAUDE.md since the first tools: "%TM programs must be
+resolvable". The strictness was right for a program someone trains tomorrow and
+wrong for a FIRST session, which is the calibration the TM would come from. A
+coach wrote "60-75% of 1 rep max" for a lifter with no TMs, `upsert_program`
+said no, and the model did the only thing left: the percentage went into
+`prescriptions.notes` as prose and the load stayed empty. The session then
+produced exactly the number a TM needs (130 lb x 5) and nothing could turn it
+into one. Now `resolveTrainingMaxes` returns what it could resolve plus an
+`unresolved_pct` list, every plan-writing tool carries that list in its result
+with one shared sentence ("no training max yet; the first session sets it —
+propose one with set_training_max afterwards"), and the future-dated-TM
+explanation survives. Nothing changes in the database: `v_resolved_prescriptions`
+already yielded a null load for these rows, and Today and the session screen
+already rendered "70% TM" with a "no TM set" badge, so the honest display
+existed before the tool allowed the row to exist. Rejected: allowing it only on
+unconfirmed writes, as the design doc first suggested. `update_planned_workout`
+on a confirmed program is the normal way a coach adds a day, and refusing there
+would have recreated the prose escape hatch on the path people actually use.
+Rejected: inventing a TM from history to make the row resolve. A number nobody
+set is a number nobody can correct.
+
+**Prescription notes are the coach's cue, and the rule is now written down.**
+The day-level rule (coach's own words, parse caveats in chat) existed for
+`planned_workouts.notes` and never for `prescriptions.notes`, so "Coach's app
+left the reps column blank; 10/side set by Colt 2026-09-05" rendered next to an
+exercise mid-set. The schema description and the prompt now say the same thing
+for both: a cue, brief, never commentary, never a name, a date, or a percentage
+that belongs in `load_pct_tm`.
+
+**`find_similar_days` before `upsert_program`.** One program per screenshot was
+the trajectory: sixteen one-day programs by November and a `list_programs`
+nobody can read. The tool scores this user's planned days by Jaccard over
+exercise ids (threshold 0.6: a nine-exercise day still matches with two swapped
+out; a day that merely shares squats and rows does not), newest first, and
+returns what was LOGGED against each the last time it was trained — every live
+set with its note and, where the set had a prescription, `v_adherence`'s
+prescribed load and rep outcome — plus the order the exercises were actually
+performed in (by first `performed_at`). Similarity is over exercise IDENTITY
+only, on purpose: sets, loads, sections and order are exactly what the repeat
+will change, so they must not count against recognising the day.
+
+**`repeat_planned_workout` clones a day forward with three adjustments, each one
+made and named in the result.** Same program, `day_index` max+1 (counting
+templates and discarded days, because the unique constraint does), new date.
+Loads logged last time replace the planned loads by the SAME rule the app's
+saved-workout apply uses (`pwa/src/lib/templateLoads.ts`): the unit is the
+ramp, the top set lands exactly on what was lifted and the rest keep their
+shape; %TM rows, no-load rows and exercises never logged are left alone. The
+rule is ported into `lib/loop.ts` rather than imported: Deno cannot bundle a
+file from `pwa/` into an edge function, and the Deno test uses the PWA test's
+own fixture (60/85/112.5 against 110 gives 58.5/83/110) so the two cannot
+drift silently. Entries follow the order actually performed, with structure
+kept whole: a ramp moves as one entry, a named section moves as one block and
+is reordered inside itself, an unsectioned entry moves freely (CLAUDE.md: each
+one IS its own block), and anything not performed keeps the slot it had. Set
+notes that read as instructions come back as `notes_to_consider` and are not
+copied — a note to next time belongs to the person writing next time, not on
+the phone mid-set. "Reads as instruction" is a loose heuristic
+(`readsAsInstruction`: forward-looking words, load or band direction words, a
+trailing question mark); the remaining notes are returned too under
+`other_set_notes_last_time`, so a miss costs nothing but a glance. `plan_note`
+is deliberately not copied: it is the user's own note about THAT day. A
+template is refused (no last time; applied from the app), an empty day is
+refused (a draft has nothing to repeat), and a confirmed program takes
+`confirm_change` exactly as `update_planned_workout` does. Rejected: taking
+"last time's loads" from the most recent set of each exercise anywhere in
+history rather than from the last session against this day. It is what the app
+does for templates, but a repeat is a statement about THIS day, and "what you
+did last time you did this" is the sentence the coach will say.
+
+**The review turn.** Today's DONE card offers "Review with the coach" for 24
+hours after the session ended (`lib/review.ts`; server-filtered on `ended_at`,
+re-filtered in a pure function so clock skew cannot offer a three-day-old
+session). It opens the ONE coach sheet — FabDock's, through a window event in
+`lib/coachOpen.ts` — with a first turn already sent: "Review my session from
+FRI 5 SEP with me. Session id: …". The turn names the session; the system
+prompt says what a review IS (compare logged to prescribed, propose the TM a
+percentage prescription implies, turn set notes into `exercise_notes` cues or
+next-time loads, note what the plan's phase would say) and that nothing is
+written without a yes. The turn is appended to the existing thread rather than
+starting a new one: the coach's earlier answers are context a review benefits
+from, and the thread cap bounds the bill either way. Rejected: a second sheet
+mounted by Today. Two sheets is two threads and two places to fix one bug.
+Rejected: gating the review button on `canStart`. Reviewing is not starting,
+and an open session on another device is no reason to hide yesterday's review.
+
+Not done here: `phase` in the `find_similar_days` result, which needs the plan
+layer's `programs.phase_id`; one select once that migration lands.
+
+## A plan above the program
+
+The hierarchy stopped at `programs`, so every strategic fact — where this
+person is going over months, in what phases, with what emphasis and what
+progression rule — lived in a chat that is gone, or in `coach_memory`, which is
+for standing facts about the PERSON and is capped at 300 characters for a
+reason. The visible symptom was one program per coach screenshot: two months of
+parsing would have been sixteen one-day programs and a `list_programs` result
+nobody could read. Designed in
+[2026-09-05-plan-and-review-loop.md](superpowers/plans/2026-09-05-plan-and-review-loop.md);
+this entry records what was built and where it departs from that design.
+
+Two tables (`20260905060000`). `training_plans` is the strategy: an objective,
+dates, `confirmed_at` like programs, and `superseded_at` as its soft-delete. One
+live plan per user is a partial unique index, so a revision is a NEW row and the
+old one is superseded, never deleted — the history of the strategy is
+append-only like everything else here, and neither table has a delete policy.
+`plan_phases` are ordered, dated, and may not share a day. `programs.phase_id`
+files a program under a phase; that join is what stops one-program-per-parse.
+`upsert_program` takes a `phase_id`, and when a live program is already filed
+under that phase the write ADDS days to it (day_index continuing past the last)
+instead of creating another. `get_program` and `list_programs` show the phase.
+
+The authority split is the decision that matters. The plan is written from
+Claude Desktop (`set_training_plan`, `confirm_training_plan`), at a desk, with
+time to think. The in-app coach READS it on every turn — the context block
+carries one paragraph naming the objective, the current phase's focus,
+progression and id, and the next phase — and cannot write it: both write tools
+are disabled at the connector layer, exactly as `delete_program` is, so an
+injected instruction cannot reach them either. Strategy is set at a desk;
+tactics are set between sets. A coach that can rewrite the strategy mid-workout
+because the lifter is tired is the wrong coach. The prompt rule follows from the
+paragraph: a day written or edited must fit the current phase, and a request
+that contradicts it is questioned, not silently obeyed and not silently refused.
+
+Rejected: a markdown document per user. Cheaper, and it would work for one
+person, but nothing could then know WHICH phase today is in, which is the one
+fact the context block needs, and the coach would parse dates out of prose on
+every turn. Rejected: phases in `coach_memory` — wrong table, wrong size, wrong
+lifetime. Rejected: letting the in-app coach write the plan; see above.
+
+Departures from the design, and decisions it left open:
+
+- **Non-overlap is a trigger, not an exclusion constraint.** The design said
+  `exclude using gist (plan_id with =, daterange(...) with &&)`, which needs
+  `btree_gist`. PGlite, this repository's validation path for the whole
+  migration chain, does not ship it as a loadable extension: `create extension
+  btree_gist` fails in a bare `new PGlite()`, and works only when the harness
+  is constructed with the contrib module — a change to `validate-db.mjs`,
+  `check-selects.mjs` and CI, not to a migration. An AFTER ROW trigger states
+  the same rule (after-row, so two overlapping phases in ONE bulk insert are
+  caught, which is how the tool writes them) and raises the same SQLSTATE
+  (23P01). What it gives up is the lock an exclusion constraint takes against
+  a concurrent writer of the same plan; phases are written in one statement by
+  the tool that creates their plan, and the plan is unique per user, so there
+  is no second writer. If that changes, a migration adds the constraint and
+  drops the trigger. `validate-db.mjs` pins the overlap in one statement, the
+  overlap across statements, an update that creates one, and the shared-day
+  case (bounds are inclusive).
+- **Adding days to a CONFIRMED program needs `confirm_change=true`.** The
+  design described the append and said nothing about a gate. But days added to
+  a confirmed program are live on the calendar the moment they land, and the
+  rule that what Claude writes lands unconfirmed exists so the person approves
+  before anything reaches their phone. `update_planned_workout` already
+  answers this for one day with `confirm_change`; the same flag on
+  `upsert_program`, consulted only on that path, keeps the two doors behaving
+  the same. Adding to an UNCONFIRMED program needs nothing: `confirm_program`
+  confirms the whole program, new days included.
+- **`set_training_plan` supersedes the old plan immediately, and says so.**
+  The one-live-plan index means the new row cannot exist until the old one is
+  superseded, so between `set_` and `confirm_` the app shows no plan. The
+  alternative — indexing on confirmed AND live so a draft coexists with the
+  confirmed plan, with `confirm_` doing the swap — is the program model and
+  is arguably nicer, but it is a second state machine for a write that happens
+  a few times a year and is confirmed in the same conversation. The tool
+  result names the window and asks for the confirm in the same conversation;
+  the compensating path on a failed write puts the old plan back, and both
+  halves of that are logged, never swallowed. This is the second hard delete
+  an LLM-reachable path performs, after `upsert_program`'s rollback, and for
+  the same reason: a fragment nobody ever saw.
+- **Plan dates are optional and derived.** `starts_on`/`ends_on` on the plan
+  default to the first phase's start and the last phase's end, and when given
+  must contain every phase; a plan may run past its last phase when later
+  phases are not decided yet. A gap between phases is allowed — a rest week is
+  a legitimate thing to plan. Phases must be listed in chronological order and
+  position follows the array, the same rule prescriptions use.
+- **`get_training_plan` returns an unconfirmed plan, flagged.** There is at
+  most one live plan, so the ambiguity `get_program` guards against ("newest"
+  versus "the one being discussed") does not arise; hiding a draft would only
+  make the tool say "none" about a plan the user just wrote. The context
+  paragraph likewise says "drafted but not confirmed", never "none".
+- **The eval case is described, not added.** The design pins one case: a
+  request for a top-single day inside an accumulation phase should be
+  questioned. Adding it to `scripts/coach-eval/cases.mjs` needs a fixture
+  state with a plan and phases in `fixture.mjs`, and a context block carrying
+  the paragraph, which is a shared harness change rather than a case. The
+  case: state `late` plus a confirmed plan whose current phase is
+  "Accumulation" with focus "hypertrophy, 8-12 reps"; user says "write me a
+  heavy single day for Thursday"; checks `tools_forbidden: ["upsert_program",
+  "update_planned_workout"]` and `answer_any: [/accumulation/i]`; rubric
+  "names the phase and asks whether to depart from it rather than writing the
+  day or refusing".
+
+Not built: a screen. The PWA reads the plan for the coach's context block and
+nothing else yet; RLS already lets it show and edit the plan when a screen is
+worth having.
+
+## Rest alert while the app is closed: a function that waits, and a cap it admits to
+
+Built 2026-09-05 as 6f, to the design in the entry above: `push_subscriptions`,
+`push_config` and `rest_alerts` (`20260905050000`), the `push-alerts` edge
+function, a hand-written service worker, `lib/push.ts`, a Settings row and the
+session wiring. Six things were decided in the building.
+
+**The wall-clock number, and what happens above it.** Supabase kills an edge
+function WORKER at 150 s on the Free plan and 400 s on paid plans (the Edge
+Functions "Limits" page and the "wall clock time limit reached" troubleshooting
+page; the kill is a 546). The limit is on the worker, not the request, and
+workers are reused — the worker that slept through one rest is the one the next
+LOG lands on. So `schedule` measures its own worker's age and REFUSES, with a
+422 and `max_lead_seconds`, any `fire_at` that will not fit in the wall clock
+left minus 10 s. The client treats the 422 as an answer, not an error: it shows
+the server's sentence once per page load and otherwise stays quiet, because the
+tone still fires while the app is open. The limit is `PUSH_WALL_CLOCK_SECONDS`
+and defaults to 150 — assuming the paid number on a Free project would accept
+alerts that never fire, which is the one thing this feature must not do — so a
+paid deployment has to set 400 or a three-minute rest is refused for no reason.
+Rejected: chaining workers by having the function call itself near the limit
+(whether the platform routes that call to a fresh worker or the retiring one is
+neither visible nor controllable from inside), and pg_cron at second
+granularity (a new extension and a polling job for a two-user app, to buy back
+something a paid plan already gives).
+
+**The VAPID key pair is generated, not set.** On first use the function
+generates an ECDSA P-256 pair with WebCrypto and writes it to `push_config`
+(RLS on, no policies, the `mcp_tokens` pattern). Two workers racing both try to
+insert row 1; one loses on the primary key and both re-read the winner, so the
+pair every subscription is bound to is always the one in the table. It is
+cached at module scope, which the identity rule forbids for anything
+user-derived; a deployment-wide key is not that, and nothing about it can reach
+the wrong person. Rejected: a secret pasted by hand — one more setup step a
+public repo cannot document with a value, for a key that is only ever used from
+one place.
+
+**The worker is source now, and it does NOT `clientsClaim()`.** vite-plugin-pwa
+moved from `generateSW` to `injectManifest` so `src/sw.ts` can hold a `push`
+handler. The first rule for that file was to reproduce the generated worker
+exactly, and reading the generated `dist/sw.js` showed it had no `clientsClaim`
+and no unconditional `skipWaiting` — only the SKIP_WAITING message handler,
+`precacheAndRoute`, `cleanupOutdatedCaches` and the `index.html`
+`NavigationRoute`. The plan listed `clientsClaim` from memory; the built file
+wins, and adding it would change first-install semantics nobody asked to
+change. Precache count 11 before, 11 after, under both the root and the Pages
+subpath base. The worker has its own `tsconfig.sw.json` (WebWorker lib, no
+DOM) because the two libs cannot share a program, and `workbox-core`,
+`workbox-precaching` and `workbox-routing` are pinned devDependencies rather
+than borrowed transitively from `workbox-build`.
+
+**Encryption is WebCrypto, pinned by the RFC's own vector.** RFC 8291
+(aes128gcm) and RFC 8292 (VAPID) are about 300 lines of `crypto.subtle` —
+ECDH, HKDF, AES-GCM, ECDSA — so `lib/webpush.ts` has no dependency and is pure:
+no env, no database, no logger, which is also how an endpoint or a key can never
+appear in a log line. The Deno test asserts RFC 8291 Appendix A at every
+intermediate (ecdh_secret, IKM, CEK, nonce) and the final 144-byte message. The
+RFC itself was unreachable from the session that wrote the test (rfc-editor and
+datatracker are blocked from that sandbox, and no reachable package ships the
+vector), so the values were written from memory; the implementation, written
+from the two RFCs' algorithms rather than from the vector, then matched them
+byte for byte at every step, which AES-GCM does not permit by coincidence. `web-push` on npm was rejected for reaching into Node's `crypto`,
+which Deno only partly emulates.
+
+**The alert id lives in component state and a reload loses it.** The id exists
+only to cancel. Mirroring it into the session cache would be one more thing to
+keep consistent with a strip that is itself rehydrated, for the case of a reload
+mid-rest — rare, and the cost is one buzz for a rest already ended. Accepted,
+and said in a comment where the rehydrate path arms nothing. The race that IS
+handled: a schedule still in flight when the next LOG disarms. A sequence
+number decides whether the id that comes back is still the current rest's, and
+cancels it on the server if not.
+
+**The subscription belongs to the phone; the row follows the current user.**
+`endpoint` is unique, `subscribe` upserts on it, and a second person signing in
+on the same phone moves the row to them — one phone, one set of alerts, for
+whoever is logging on it. A `schedule` that finds no row for the caller is a
+409, and the client answers it by re-filing the browser's subscription under
+the current user and trying once more. Settings never stores "on": it reads the
+browser's push manager each time the sheet opens, so the row cannot report ON
+for a subscription the browser has dropped. Four states, all true: not
+available (a Safari tab, where `PushManager` does not exist until the app is
+installed), blocked, off, on.
+
+**Not verified in the session that built it**: no iPhone, no push service and
+no edge runtime were reachable. What is pinned by tests is the cryptography,
+the RLS, the client's network behaviour and the built worker's shape; what the
+phone checklist has to prove is that Apple's push service accepts the VAPID
+token and that the platform honours `waitUntil` for a sleep of a full rest.
+
+
+## A build artifact on a branch, so the server could ship from a session with no CLI
+
+The rule has been that nothing built is committed: `dist/` is gitignored, the
+generated seed is gitignored, functions deploy from source. On 2026-09-05 the
+whole round (migrations, three functions, the PWA) had to go out from a remote
+session whose only door to production was the Supabase MCP, and its
+`deploy_edge_function` takes file contents inline. `coach` and `push-alerts`
+fit. `mcp-server` is 28 files and 162 KB and did not, and its 100 KB minified
+bundle is too long to retype by hand with any confidence that one byte is not
+wrong.
+
+So the bundle lives on an ORPHAN branch, `deploy/mcp-server-bundle`, one commit
+with the file and a README, and the deployed entrypoint is a shim that imports
+it by that commit's sha. What this preserves: `main` carries no artifact, the
+sha is immutable so the deployed code is exactly the file whose sha256 is in
+deploy.md, the platform bundler snapshots the import at deploy time so the
+running function has no dependency on GitHub, and the very next CLI or workflow
+deploy replaces the shim with source without anyone remembering to undo
+anything. What it costs: the dashboard shows two lines instead of the server,
+so verification is the recorded sha and `/health` rather than a byte-diff, and
+a branch exists whose only purpose is to be pointed at. It is deletable the day
+the three deploy settings exist and `deploy.yml` deploys from source.
+
+The alternative that was NOT taken, retyping the bundle through the tool, was
+rejected for the reason the rule against hand-edited generated files exists in
+the first place: a transcription error in minified code fails at runtime, on
+the phone, in someone's session, and is found by reading a 100 KB line.
+
+The round also found that the tool's JSON transport decodes a `\u` escape
+inside a regex literal into the raw character, which is an unterminated regex
+and a failed bundle. `push-alerts` spells its label guard as a code-point loop
+now, and deploy.md says to keep `\u` out of anything that has to go through
+that door.

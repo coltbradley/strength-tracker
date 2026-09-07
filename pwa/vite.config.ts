@@ -57,7 +57,17 @@ export default defineConfig({
           },
         ],
       },
-      workbox: {
+      // The worker is SOURCE (src/sw.ts), not generated. Until 6f it was
+      // generateSW from the `workbox` block that used to sit here; a push
+      // handler cannot be expressed in that block, so the worker moved to a
+      // file that reproduces the generated one exactly and adds two listeners.
+      // The precache manifest is still built here and injected into it. The
+      // navigation fallback and the absence of runtime caching are now
+      // statements in sw.ts rather than options — read the comment there.
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
+      injectManifest: {
         // woff2 covers the self-hosted Chivo faces in public/fonts, so a cold
         // offline launch still paints in the real typeface.
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
@@ -74,9 +84,6 @@ export default defineConfig({
         // text stays Chivo, because the browser resolves @font-face per
         // character range. Online, the glyph triggers a normal font fetch.
         globIgnores: ["**/*-latin-ext.woff2"],
-        navigateFallback: "index.html",
-        // Never let the SW intercept cross-origin (Supabase) requests.
-        runtimeCaching: [],
       },
     }),
   ],

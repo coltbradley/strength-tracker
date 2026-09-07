@@ -108,11 +108,13 @@ browser pass, because the dev server could not start in that session — Node
 failed to resolve its own cwd in the preview harness, before any project code
 ran. Worth a manual look next time someone has a working preview.
 
-**None of it is deployed.** It needs, in this order: `supabase db push` for the
-`exercise_count` view change, `supabase functions deploy mcp-server` and
-`supabase functions deploy coach` for the new tool and the prompt, then a push
-to main for the PWA. The migration goes first, or the app selects a column that
-does not exist yet — the snag deploy.md already records.
+**Deployed 2026-09-05.** Verified against production, not inferred from the
+runbook: all 24 migrations through `20260905020000` are in
+`schema_migrations`, `v_plan_workouts.exercise_count` exists, and both edge
+functions match the repo byte for byte (`coach` 4/4 files, `mcp-server`
+28/28). The order the previous version of this paragraph asked for was
+followed. `deploy.yml` now enforces that order itself once the three settings
+in deploy.md ("Automating the Supabase half") exist.
 
 Deploying 0a also makes 0d smaller: the duplicate program still needs a
 decision, but her half-stored dumbbell loads become correctable in the app's own
@@ -213,6 +215,19 @@ destructive one.
 | 4e  | Batch `resolve_exercises(names[])`, replacing six sequential lookups in a write turn.                                                                                                                                    | 0.5  |
 | 4f  | Prompt: ask what they are avoiding after one rejected alternative; quote loads per hand; edit a day rather than rewrite a program.                                                                                       | 0.5  |
 
+4a is applied (`e18a2a3`), minus the cache TTL change, which Wave 2's notes
+rejected. 4b has NOT been run: `scripts/coach-eval/run.mjs` needs
+`ANTHROPIC_API_KEY` in its environment and the remote Claude Code session that
+did the 2026-09-05 wrap-up had none, so it could not spend the $2. From a
+machine that has the key:
+
+```bash
+cd scripts/coach-eval && node run.mjs --configs sonnet-low,opus-low --trials 1 --out out/run2
+```
+
+Until it runs, Decision 1 rests on the argument in this document rather than
+on a measurement, and the monthly cap is paying Opus prices on faith.
+
 ## Wave 5: what the coach asks about (6 days)
 
 | #   | Work                                                                                                                                                                          | Days |
@@ -232,15 +247,46 @@ destructive one.
 | 6b | The outbox is visible on the phone: dead items, Retry, Export, honest sign-out copy. | 0.5 | not started |
 | 6c | MCP gaps: `program_id` and `list_programs`; `confirm_program` on a discarded program; `upsert_program` date and length validation; `resolve_feedback` error type; `search_exercises` quoting. | 1.0 | **done** (`659de92`) |
 | 6d | Indexes on `set_voids`/`set_notes` by user; a `since` predicate in `get_volume`. | 0.5 | not started |
+| 6e | Exercise demos: the seed's two photos and numbered steps behind a HOW TO tap on the session screen. Seed-only paths, CHECK-pinned; steps cached, photos online-only. | 0.75 | **done** (`277639c`) |
+| 6f | Rest alert while the app is CLOSED: Web Push to the installed PWA, sent by a server at the deadline, cancelled by the next log. VAPID pair generated into `push_config`, injectManifest service worker, `push-alerts` function. | 2.0 | **built and deployed** (`083f9aa`); phone test outstanding |
+
+Two MCP bugs fell out of the one feedback-table entry (filed by the coach,
+2026-09-05): `prescriptionRows` omitted defaulted columns and PostgREST's bulk
+insert turned that into NULLs on a mixed day (three 500s), and
+`update_planned_workout` could not move a day. Both fixed in `da552e4`.
+**Deployed 2026-09-05 (later the same day).** `mcp-server` v22 carries
+`da552e4` and everything after it (the loop tools, the plan tools) as a
+minified bundle imported by commit sha from `deploy/mcp-server-bundle` — the
+28 files did not fit through the Supabase MCP, the bundle did (deploy.md,
+"Without the CLI"). `coach` v11 and `push-alerts` v1 went out as source, and
+migrations `20260905030000` through `20260905060000` are in
+`schema_migrations`. The next CLI or workflow deploy of `mcp-server` replaces
+the shim with source and needs no other change.
+
+## After the first real session: the plan above the program
+
+Colt's first session against a coach-parsed day (2026-09-05) and the coach turns
+around it are read in
+[2026-09-05-plan-and-review-loop.md](2026-09-05-plan-and-review-loop.md). It
+designs the long-term plan (`training_plans` / `plan_phases`, written from
+Desktop, read by the in-app coach every turn, never written by it) and the
+parse → repeat → review loop, and lists the two decisions the session forces:
+bands as a load entry, and per-side reps. Built and deployed 2026-09-05 as
+three workstreams merged in `083f9aa` (build plan:
+[2026-09-05-build-plan.md](2026-09-05-build-plan.md)); the two decisions are
+still Colt's.
 
 ## Not doing, and why
 
 Social features, badges, streaks, month grids and swipe gestures stay rejected;
 the research is clear they are not why coached lifters stay. Video attached to a
 set is a real coach want and a separate project. Cross-device settings stay
-accepted as a limitation. Background rest notifications on iOS are not possible
-from a web app, which is why 3b buys a wake lock and a sound instead. A native
-app buys nothing here except the timer, and the offline story is the product.
+accepted as a limitation. Background rest alerts on iOS ARE possible from an
+installed web app since iOS 16.4, but only as Web Push sent by a server at the
+deadline; nothing can schedule a local notification from a closed page. That is
+6f, designed and not built. 3b's wake lock and tone remain the answer while the
+app is open. A native app buys nothing here except the timer, and the offline
+story is the product.
 Switching the coach off Anthropic would mean rebuilding the tool loop for a
 model tier whose side-effect error rate is worse, which is the wrong direction
 for something that writes to a plan; revisit above about 50 users.

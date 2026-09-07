@@ -32,13 +32,23 @@ import {
   getResolvedPrescriptions,
   getServerSessionSets,
   invalidateForSessionClose,
+  staleReason,
   syncOpenSessions,
   updatePlannedWorkout,
   weekOrder,
   type OpenSessionRow,
+  type StaleReason,
   type WorkoutList,
 } from "../lib/data";
 import { groupRamps } from "../lib/entries";
+import { openCoach } from "../lib/coachOpen";
+import {
+  getRecentlyEndedSessions,
+  reviewableByDay,
+  reviewPrompt,
+  type EndedSession,
+} from "../lib/review";
+import { useOnline } from "../hooks/useFabDrag";
 import { addDays, startOfWeek, weekDates } from "../lib/calendar";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
@@ -242,11 +252,13 @@ export function Today() {
   const navigate = useNavigate();
   const unit = useUnit();
   const [list, setList] = useState<WorkoutList | null>(null);
-  const [fromCache, setFromCache] = useState(false);
+  const [stale, setStale] = useState<StaleReason | null>(null);
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
   const [active, setActive] = useState<ActiveSession | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
-  const [loadError, setLoadError] = useState(false);
+  // null while loading or loaded; otherwise WHY the load failed, because
+  // "offline" and "the server refused" need different words below
+  const [loadError, setLoadError] = useState<StaleReason | null>(null);
   // The calendar day, LIVE. An installed PWA is resumed, not reloaded: iOS
   // brings this screen back on Tuesday morning with Monday's render still on
   // it, and a `today` captured once meant Monday's "Start session" was the
@@ -315,11 +327,11 @@ export function Today() {
     getPlannedWorkouts()
       .then((r) => {
         setList(r.data);
-        setFromCache(r.fromCache);
-        setLoadError(false);
+        setStale(r.stale);
+        setLoadError(null);
       })
       .catch((e: unknown) => {
-        setLoadError(true);
+        setLoadError(staleReason(e));
         reportError(e, "load workouts");
       });
   }, []);
@@ -424,6 +436,31 @@ export function Today() {
       .then((r) => setDoneIds(new Set(r.data)))
       .catch((e: unknown) => reportError(e, "load week state"));
   }, [program, workouts, doneTick]);
+
+  // Which DONE days get "Review with the coach": the ones whose session ended
+  // in the last 24 hours (lib/review.ts). Read only while online — the coach
+  // needs a connection, so an offline device has nothing to offer — and re-read
+  // whenever the DONE set can have changed. A failed read is reported, not
+  // swallowed, and leaves the card without the button rather than blank.
+  const online = useOnline();
+  const [reviewable, setReviewable] = useState<Map<string, EndedSession>>(
+    new Map(),
+  );
+  useEffect(() => {
+    if (!online || doneIds.size === 0) {
+      setReviewable(new Map());
+      return;
+    }
+    let cancelled = false;
+    getRecentlyEndedSessions()
+      .then((rows) => {
+        if (!cancelled) setReviewable(reviewableByDay(rows));
+      })
+      .catch((e: unknown) => reportError(e, "load reviewable sessions"));
+    return () => {
+      cancelled = true;
+    };
+  }, [online, doneIds]);
 
   const anyDates = workouts.some((w) => w.scheduled_date !== null);
   const weekStart = useWeekStartsOn();
@@ -907,6 +944,27 @@ export function Today() {
             Start again
           </button>
         )}
+        {/* The turn after the session. For a day, while the session that
+            finished it is less than 24 hours old: the coach compares what was
+            logged to what was planned, proposes a training max where a
+            percentage had none, and turns the set notes into cues or next
+            time's loads — and writes nothing without a yes. It opens the ONE
+            coach sheet (the dock's) with the first turn already sent; the
+            offline case is the dock's toast. Not gated on canStart: reviewing
+            is not starting, and an open session elsewhere is no reason to
+            hide yesterday's review. */}
+        {state === "DONE" && reviewable.has(w.id) && (
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => {
+              const s = reviewable.get(w.id);
+              if (s) openCoach({ prefill: reviewPrompt(s) });
+            }}
+          >
+            Review with the coach
+          </button>
+        )}
         {/* Train a day the calendar puts somewhere else, without moving it.
             Gated on `canStart` exactly as today's Start is: while
             reconciliation is still deciding whether a session is already open,
@@ -1105,12 +1163,22 @@ export function Today() {
           the subject; where a program came from lives with Claude/the coach */}
       {program && <div className="today-context">{program.name}</div>}
 
-      {fromCache && (
+      {stale === "offline" && (
         <div className="cache-note">offline — showing cached plan</div>
+      )}
+      {/* Not offline: the server answered and said no. The error has already
+          gone to recentErrors, Sentry and a toast; this line stops the screen
+          telling an online person they are offline. */}
+      {stale === "error" && (
+        <div className="cache-note cache-note-error">
+          couldn’t refresh — showing cached plan
+        </div>
       )}
       {loadError && !list && (
         <div className="warn-badge">
-          Couldn’t load workouts (offline, no cache)
+          {loadError === "offline"
+            ? "Couldn’t load workouts (offline, no cache)"
+            : "Couldn’t load workouts — the server returned an error (details under Report a problem)"}
         </div>
       )}
 
