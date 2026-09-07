@@ -189,3 +189,116 @@ And its answer to "distinctive, or well-executed convention?":
 5. **The human correction outperformed both models.** Twice — "not just colors",
    and "the number is the point". The technique that produced the most value was
    not on the article's list: someone who knows the actual job, interrupting.
+
+---
+
+# Round 2 of the exercise: what the first eight rounds got wrong
+
+## The correction that reset everything
+
+> "Not every exercise is a barbell exercise."
+
+Half of the demo session is not a barbell. Face Pull is a cable, the landmine
+press is one-handed, Hanging Leg Raise carries no load at all. The entire first
+arc optimised a plate calculator, which applies to three of six movements.
+
+Worse, and this is the process failure: **the critic was shown a barbell top set
+four rounds running.** A screenshot-only critic can only judge what you put in
+front of it. Choosing the same evaluation case every round biased the whole
+exercise toward a local maximum, and the critic never flagged it because it
+could not see what it was not shown.
+
+## The idea that came out of it
+
+The hero of the screen is **whatever is hard to get right for THIS movement**,
+and it changes shape with the equipment:
+
+| | hero | why |
+|---|---|---|
+| barbell | plate maths | the number is arithmetic you do chalked up |
+| dumbbell | **per hand** | the DB stores 60; the rack is labelled 30 |
+| cable | the pin position | a stack has no plate maths and its own steps |
+| bodyweight | reps, no load slot | a load field showing "—" is a lie with a box |
+| carry / hold | a clock | reps are meaningless; stored as reps 0 |
+| activation | a tick | a number here invents precision nobody has |
+
+Every mainstream competitor shows ONE field shape — weight × reps — for all six.
+This schema already knew better: `equipment`, `tracking` and `load_entry` are
+columns the UI was throwing away. The dumbbell case is not hypothetical: a real
+user's whole plan was once stored at half because a screen forgot which
+convention it was in.
+
+The critic later refined the key: map the hero to **(tracking mode × load source
+× what you commit)**, not to equipment name — equipment cannot absorb weighted
+dips, assisted pull-ups, or band-only load.
+
+## Scores, and where they stopped moving
+
+| round | subject | score |
+|---|---|---|
+| 5 | the barbell-only composition | 7.0 |
+| 6 | six morph states, first pass | 7.5 |
+| 7 | hero pinned, today's sets added | 8.2 |
+| 8 | reps committable in every state | 8.6 |
+| 9 | three rendering defects fixed | 8.7 |
+| 10 | grid split found and fixed | 8.6 |
+| 11 | grid verified uniform, measured | 8.8 |
+
+The verdict that mattered came at 8.6: **"distinctive yes, functionally superior
+no"** flipped to *"It records more than Hevy now, not less."* Distinctiveness
+scored 9.5. It never cleared 9 overall.
+
+## Two things the loop caught that a person would not
+
+- **The plate diagram was loaded backwards.** A bar loads heaviest-first against
+  the sleeve shoulder; this had the 25s outboard, twelve pixels above a caption
+  stating the correct order.
+- **A fix I claimed was never in the pixels.** I reported the activation rest row
+  as done; a string replace had silently failed. The critic measured and said so.
+  Every round after that, layout was verified programmatically rather than by
+  eye — and the final grid measured identical across all six states.
+
+## Re-reading the article, and the trap it predicted
+
+Asked to check the work against the source, the article names the exact failure:
+
+> "If you just paste AI-generated ideas back into AI, it's hard to get something
+> unique."
+
+Rounds 7 to 11 were precisely that: critic output into builder, back into critic.
+They converged on **correctness** — grid, contrast, alignment, AA — while the
+aesthetic never left the model's default. The critic had already said so:
+cream + near-black + one accent is "the single most common designed-by-a-model-
+with-taste palette right now."
+
+> "Prompt it to do one or two iterations first, and see if it's converging
+> before adding more."
+
+Eleven rounds. Flat at 8.6–8.8 for three. That was the signal to change the
+input, not to polish harder.
+
+Also skipped, and it matters: the three-step prompt process (ask for many ideas
+with minimal detail → pick → have the model write the building prompt), and seed
+strings, which were used ONCE on five throwaway themes. The architecture that
+actually worked was never seeded at all.
+
+**Technique 7, "Remove AI tells", is behind the paywall and could not be read.**
+The AI tells recorded in this log were found by the critic independently, not
+taken from the article.
+
+## The re-skin: CAST IRON
+
+Seed `xlDAsswGZZrONGYX35NJTYeByKaT` — caps-dense, doubled Z, a stamped numeric
+cluster. Read as cast iron and stamped steel. Same architecture, seeded identity:
+near-black rubber ground, the numeral stamped rather than printed, and safety
+yellow used the way gym equipment already uses it — rack pins and safety bars.
+
+The argument is not taste, it is the room: a gym is rubber, cast iron and
+painted steel, and dark survives bright overhead light better than paper does.
+
+Generated textures went 2 for 4. The knurl became noise at 8px and was cut. The
+first rubber tile had grout lines baked in — the prompt said "tile" and Flux drew
+tile edges — and negative phrasing did not remove them; only regenerating with
+a different noun did. Which raises the question of whether the model and the
+prompting were right at all, and that is now being researched properly rather
+than guessed.
