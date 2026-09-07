@@ -115,6 +115,41 @@ export function readinessRow(
   return row;
 }
 
+/**
+ * A recorded SKIP.
+ *
+ * "Not today" has to leave a trace or the button is decoration: duePrompts
+ * honours a skip and stops asking, and report_prompts is the denominator that
+ * says whether prompting is working at all. Written as an in_app prompt that
+ * was offered and declined, which is exactly what happened.
+ *
+ * Distinct from an unanswered panel. That is silence; this is an answer to the
+ * question "shall I ask you this now", and only one of them should stop the
+ * asking.
+ */
+export function skipRow(
+  id: string,
+  userId: string,
+  kind: "daily_readiness" | "ostrc_weekly" | "next_morning_pain",
+  now: string,
+): {
+  id: string;
+  user_id: string;
+  kind: string;
+  scheduled_for: string;
+  channel: string;
+  skipped: boolean;
+} {
+  return {
+    id,
+    user_id: userId,
+    kind,
+    scheduled_for: now,
+    channel: "in_app",
+    skipped: true,
+  };
+}
+
 export function checkinRow(
   id: string,
   userId: string,

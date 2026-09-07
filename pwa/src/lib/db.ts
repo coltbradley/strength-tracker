@@ -32,7 +32,22 @@ export type OutboxOp =
   // correctable within the day and the id is stable per (user, local_date).
   | { kind: "insert"; table: "daily_readiness"; payload: DailyReadinessUpsert }
   | { kind: "insert"; table: "checkins"; payload: CheckinInsert }
-  | { kind: "insert"; table: "pain_checks"; payload: PainCheckInsert };
+  | { kind: "insert"; table: "pain_checks"; payload: PainCheckInsert }
+  // A recorded skip. Same queue, same idempotent replay: "not today" is a fact
+  // worth keeping, because report_prompts is the denominator that says whether
+  // prompting is working at all.
+  | {
+      kind: "insert";
+      table: "report_prompts";
+      payload: {
+        id: string;
+        user_id: string;
+        kind: string;
+        scheduled_for: string;
+        channel: string;
+        skipped: boolean;
+      };
+    };
 
 export interface OutboxItem {
   op: OutboxOp;

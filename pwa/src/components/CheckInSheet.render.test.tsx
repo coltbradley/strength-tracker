@@ -39,61 +39,101 @@ beforeEach(() => {
   getReadinessFor.mockResolvedValue(null);
 });
 
-async function open(onClose = vi.fn()) {
-  render(
-    <CheckInSheet userId="u1" localDate="2026-09-07" onClose={onClose} />,
+async function open(props: Record<string, unknown> = {}) {
+  const onClose = vi.fn();
+  const view = render(
+    <CheckInSheet
+      userId="u1"
+      localDate="2026-09-07"
+      onClose={onClose}
+      {...props}
+    />,
   );
-  await waitFor(() => screen.getByText("Sleep"));
-  return { onClose };
+  await waitFor(() => screen.getByText("Fatigue"));
+  return { onClose, view };
 }
 
-const payload = () => enqueue.mock.calls[0][0].payload;
+const writes = (table: string) =>
+  enqueue.mock.calls.map((c) => c[0]).filter((op) => op.table === table);
 
 describe("CheckInSheet", () => {
-  it("offers to save even with nothing answered, and says so", async () => {
+  // Three taps, no keyboard, nothing to scroll. It was eight items; a panel
+  // that takes a minute gets answered for a fortnight, and this data is only
+  // worth anything if it accrues for months.
+  it("asks three things and no more", async () => {
     await open();
-    const save = screen.getByRole("button", {
-      name: /save \(nothing today\)/i,
-    }) as HTMLButtonElement;
-    expect(save.disabled).toBe(false);
+    expect(screen.getByText("Sleep")).toBeTruthy();
+    expect(screen.getByText("Fatigue")).toBeTruthy();
+    expect(screen.getByText("Soreness")).toBeTruthy();
+    expect(screen.queryByText("Stress")).toBeNull();
+    expect(screen.queryByText("Mood")).toBeNull();
+    expect(screen.queryByText("Resting HR")).toBeNull();
   });
 
-  it("writes no items at all for an untouched panel", async () => {
-    const { onClose } = await open();
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
-    await waitFor(() => expect(enqueue).toHaveBeenCalled());
-    const p = payload();
-    // The load-bearing assertion: an unanswered question must not arrive as 0.
-    expect("fatigue" in p).toBe(false);
-    expect("sleep_hours" in p).toBe(false);
-    expect(p).toMatchObject({ user_id: "u1", local_date: "2026-09-07" });
-    expect(onClose).toHaveBeenCalled();
+  // Nothing to press means nothing to fail to press.
+  it("offers no Save button at all", async () => {
+    await open();
+    expect(screen.queryByRole("button", { name: /^save/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /^done$/i })).toBeTruthy();
   });
 
-  it("records only the items that were answered", async () => {
-    await open();
+  it("writes nothing when it is opened and closed untouched", async () => {
+    const { view } = await open();
+    view.unmount();
+    expect(writes("daily_readiness")).toEqual([]);
+  });
+
+  // Closing IS saving. Walking away must not cost the answer.
+  it("keeps what was answered when the sheet just closes", async () => {
+    const { view } = await open();
     fireEvent.click(screen.getByRole("button", { name: "Fatigue 4 of 5" }));
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
-    await waitFor(() => expect(enqueue).toHaveBeenCalled());
-    const p = payload();
+    view.unmount();
+    await waitFor(() => expect(writes("daily_readiness").length).toBe(1));
+    const p = writes("daily_readiness")[0].payload;
     expect(p.fatigue).toBe(4);
-    expect("mood" in p).toBe(false);
+    // An unanswered question must not arrive as a zero: null is unknown and
+    // zero is a measurement.
+    expect("soreness" in p).toBe(false);
   });
 
-  // Without this there is no way back from a mis-tap except closing the sheet,
-  // and a question you cannot un-answer is one people answer carelessly.
   it("clears a value when the chosen one is tapped again", async () => {
-    await open();
+    const { view } = await open();
     const four = screen.getByRole("button", { name: "Fatigue 4 of 5" });
     fireEvent.click(four);
     expect(four.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(four);
     expect(four.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(screen.getByRole("button", { name: /save \(nothing today\)/i }));
-    await waitFor(() => expect(enqueue).toHaveBeenCalled());
-    // Cleared explicitly, which is different from never answered: the column
-    // is set to null so a correction removes an earlier answer.
-    expect(payload().fatigue).toBeNull();
+    view.unmount();
+    await waitFor(() => expect(writes("daily_readiness").length).toBe(1));
+    // Cleared explicitly, which is a different fact from never answered.
+    expect(writes("daily_readiness")[0].payload.fatigue).toBeNull();
+  });
+
+  // "Not today" has to leave a trace or the button is decoration: duePrompts
+  // honours a recorded skip and stops asking for the day.
+  it("records a skip and closes, without writing a panel", async () => {
+    const onSkipped = vi.fn();
+    const { onClose } = await open({ onSkipped });
+    fireEvent.click(screen.getByRole("button", { name: /not today/i }));
+    await waitFor(() => expect(writes("report_prompts").length).toBe(1));
+    const p = writes("report_prompts")[0].payload;
+    expect(p).toMatchObject({
+      kind: "daily_readiness",
+      channel: "in_app",
+      skipped: true,
+    });
+    expect(writes("daily_readiness")).toEqual([]);
+    expect(onSkipped).toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("keeps the rest one tap away rather than gone", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: /anything else/i }));
+    expect(screen.getByText("Stress")).toBeTruthy();
+    expect(screen.getByText("Mood")).toBeTruthy();
+    expect(screen.getByText("Sleep (hours)")).toBeTruthy();
+    expect(screen.getByText("Resting HR")).toBeTruthy();
   });
 
   it("reuses today's row id so a correction merges instead of colliding", async () => {
@@ -101,29 +141,20 @@ describe("CheckInSheet", () => {
       id: "existing-row",
       local_date: "2026-09-07",
       recorded_at: "2026-09-07T07:00:00.000Z",
-      mood: 3,
+      fatigue: 3,
     });
-    render(
-      <CheckInSheet userId="u1" localDate="2026-09-07" onClose={vi.fn()} />,
-    );
+    const { view } = await open();
     await waitFor(() =>
       expect(
         screen
-          .getByRole("button", { name: "Mood 3 of 5" })
+          .getByRole("button", { name: "Fatigue 3 of 5" })
           .getAttribute("aria-pressed"),
       ).toBe("true"),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Mood 5 of 5" }));
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
-    await waitFor(() => expect(enqueue).toHaveBeenCalled());
-    expect(payload().id).toBe("existing-row");
-    expect(payload().mood).toBe(5);
-  });
-
-  it("keeps the extra context behind a disclosure, not in the main panel", async () => {
-    await open();
-    expect(screen.queryByText("Resting HR")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /anything else/i }));
-    expect(screen.getByText("Resting HR")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Fatigue 5 of 5" }));
+    view.unmount();
+    await waitFor(() => expect(writes("daily_readiness").length).toBe(1));
+    expect(writes("daily_readiness")[0].payload.id).toBe("existing-row");
+    expect(writes("daily_readiness")[0].payload.fatigue).toBe(5);
   });
 });

@@ -50,7 +50,8 @@ export interface OutboxTransport {
       | "set_notes"
       | "daily_readiness"
       | "checkins"
-      | "pain_checks",
+      | "pain_checks"
+      | "report_prompts",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(

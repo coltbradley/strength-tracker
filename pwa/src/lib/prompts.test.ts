@@ -17,6 +17,7 @@ const MON_0600 = new Date(2026, 8, 7, 6, 0, 0);
 
 const state = (over: Partial<PromptState> = {}): PromptState => ({
   lastReadinessDate: null,
+  skippedReadinessDate: null,
   lastOstrcRecallEnd: null,
   lastTrainedDate: null,
   hasOpenEpisode: false,
@@ -50,11 +51,44 @@ describe("daily readiness", () => {
     expect(p?.fireAt.getHours()).toBe(7);
   });
 
-  // A missed morning is exactly the gap this is trying to close, so it stays
-  // due rather than rolling to tomorrow: the answer is still worth having.
-  it("stays due all day rather than rolling over", () => {
+  // Low stakes is the requirement, and it beats the completeness of the
+  // series. A reminder still nagging at 10pm about 7:30am is what makes
+  // somebody turn the whole thing off, and losing the athlete costs every
+  // future answer rather than one.
+  it("goes quiet once its window closes rather than nagging all day", () => {
     const late = new Date(2026, 8, 7, 22, 0, 0);
-    expect(find(duePrompts(late, DEFAULT_PROMPT_PREFS, state()), "daily_readiness")?.overdue).toBe(true);
+    const p = find(duePrompts(late, DEFAULT_PROMPT_PREFS, state()), "daily_readiness");
+    expect(p?.overdue).toBe(false);
+    expect(localDate(p!.fireAt)).toBe("2026-09-08");
+  });
+
+  it("is still askable inside the window", () => {
+    const midMorning = new Date(2026, 8, 7, 10, 0, 0);
+    expect(
+      find(duePrompts(midMorning, DEFAULT_PROMPT_PREFS, state()), "daily_readiness")?.overdue,
+    ).toBe(true);
+  });
+
+  // Skipping is an answer to "shall I ask you this now", and honouring it is
+  // what makes the button honest. Distinct from an unanswered panel, which is
+  // silence: only one of them says "not today".
+  it("stops asking for the day once explicitly skipped", () => {
+    const p = find(
+      duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state({ skippedReadinessDate: "2026-09-07" })),
+      "daily_readiness",
+    );
+    expect(p?.overdue).toBe(false);
+    expect(localDate(p!.fireAt)).toBe("2026-09-08");
+  });
+
+  it("asks again the next day after a skip", () => {
+    const tomorrow = new Date(2026, 8, 8, 9, 0, 0);
+    expect(
+      find(
+        duePrompts(tomorrow, DEFAULT_PROMPT_PREFS, state({ skippedReadinessDate: "2026-09-07" })),
+        "daily_readiness",
+      )?.overdue,
+    ).toBe(true);
   });
 
   it("moves to tomorrow once today's panel is answered", () => {
