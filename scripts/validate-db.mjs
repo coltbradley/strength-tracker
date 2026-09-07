@@ -2099,5 +2099,353 @@ await check("deleting a user takes their activities and credentials", async () =
   assertEq([a.rows[0].n, c.rows[0].n], [0, 0], "cascaded");
 });
 
+// --- E1 subjective capture (20260907040000) ----------------------------------
+console.log("\nsubjective capture (partial is normal):");
+await db.exec("reset role;");
+
+const SA = "00000000-0000-4000-8000-0000000000f1";
+const SB = "00000000-0000-4000-8000-0000000000f2";
+await db.exec(`
+  insert into auth.users (id, email) values
+    ('${SA}', 'sa@example.test'), ('${SB}', 'sb@example.test')
+  on conflict do nothing;
+`);
+const uuid = (n) => `00000000-1111-4000-8000-${String(n).padStart(12, "0")}`;
+
+// THE REQUIREMENT: leave part of it blank and everything still works.
+await check("a panel with one item answered is a real row", async () => {
+  const r = await asUser(
+    SA,
+    `insert into daily_readiness (id, user_id, local_date, sleep_hours)
+     values ('${uuid(1)}', '${SA}', date '2026-09-01', 7.5)`,
+  );
+  assertEq(r.affectedRows ?? 0, 1, "no item is required");
+});
+
+await check("a panel with NOTHING answered is also legal, and visibly empty", async () => {
+  await asUser(
+    SA,
+    `insert into daily_readiness (id, user_id, local_date)
+     values ('${uuid(2)}', '${SA}', date '2026-09-02')`,
+  );
+  const r = await db.query(
+    `select answered_items from v_readiness_trend
+      where user_id = '${SA}' and local_date = date '2026-09-02'`,
+  );
+  // Opening the sheet and skipping it is not the same as never opening it, and
+  // only one of those is a gap in the series.
+  assertEq(r.rows[0].answered_items, 0, "an empty answer is an answer");
+});
+
+await check("a rolling mean carries the count of real answers behind it", async () => {
+  await asUser(
+    SA,
+    `insert into daily_readiness (id, user_id, local_date, sleep_hours, fatigue)
+     values ('${uuid(3)}', '${SA}', date '2026-09-03', 6.5, 3)`,
+  );
+  const r = await db.query(
+    `select sleep_hours_7d::float as sleep, sleep_hours_7d_n::int as sleep_n,
+            fatigue_7d::float as fat, fatigue_7d_n::int as fat_n,
+            days_of_history
+       from v_readiness_trend
+      where user_id = '${SA}' and local_date = date '2026-09-03'`,
+  );
+  assertEq(r.rows[0].sleep_n, 2, "two sleep answers across three days");
+  assertEq(r.rows[0].sleep, 7, "(7.5 + 6.5) / 2, not / 3");
+  // The distinction the counts exist for: one item answered once, another
+  // twice, over the same three rows.
+  assertEq(r.rows[0].fat_n, 1, "one fatigue answer");
+  assertEq(r.rows[0].days_of_history, 3, "three rows, which is a different number");
+});
+
+await check("one panel per local date", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into daily_readiness (id, user_id, local_date, mood)
+       values ('${uuid(4)}', '${SA}', date '2026-09-01', 4)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "unique (user_id, local_date)");
+});
+
+await check("the panel is correctable within the day, unlike a set", async () => {
+  const upd = await asUser(
+    SA,
+    `update daily_readiness set mood = 4 where id = '${uuid(1)}'`,
+  );
+  assertEq(upd.affectedRows ?? 0, 1, "a self-report may be corrected");
+});
+
+await check("custom fields are the athlete's, and never gate anything", async () => {
+  await asUser(
+    SA,
+    `insert into readiness_fields (id, user_id, key, label, kind)
+     values ('${uuid(5)}', '${SA}', 'knee_niggle', 'Left knee', 'scale_1_5')`,
+  );
+  await asUser(
+    SA,
+    `update daily_readiness set custom = '{"knee_niggle": 2}'::jsonb
+      where id = '${uuid(1)}'`,
+  );
+  const r = await db.query(
+    `select custom->>'knee_niggle' as v from v_readiness_trend
+      where user_id = '${SA}' and local_date = date '2026-09-01'`,
+  );
+  assertEq(r.rows[0].v, "2", "recorded and readable");
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into readiness_fields (id, user_id, key, label, kind)
+       values ('${uuid(6)}', '${SA}', 'Bad Key!', 'x', 'number')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "a key must survive being a JSON key and a chart label");
+});
+
+await check("checkins are unlimited per day and never touch the daily trend", async () => {
+  for (let i = 0; i < 3; i++) {
+    await asUser(
+      SA,
+      `insert into checkins (id, user_id, kind, energy, note)
+       values ('${uuid(10 + i)}', '${SA}', 'spontaneous', ${i + 1}, 'tap ${i}')`,
+    );
+  }
+  const c = await asUser(SA, `select count(*)::int as n from checkins`);
+  assertEq(c.rows[0].n, 3, "three taps");
+  const d = await db.query(
+    `select days_of_history from v_readiness_trend
+      where user_id = '${SA}' and local_date = date '2026-09-03'`,
+  );
+  // If these fed the baseline it would depend on how often somebody happened
+  // to tap, which is not a fact about their training.
+  assertEq(d.rows[0].days_of_history, 3, "still three days, not six");
+});
+
+// --- OSTRC ------------------------------------------------------------------
+await check("OSTRC v2 scores 0-8-17-25 on all four and tops out at 100", async () => {
+  await asUser(
+    SA,
+    `insert into symptom_episodes (id, user_id, body_region, side, opened_on)
+     values ('${uuid(20)}', '${SA}', 'achilles', 'left', date '2026-08-10')`,
+  );
+  await asUser(
+    SA,
+    `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+     values ('${uuid(21)}', '${SA}', '${uuid(20)}', 'ostrc_o2', date '2026-08-16', 3,3,3,3)`,
+  );
+  const r = await db.query(
+    `select severity, is_health_problem, is_substantial from v_ostrc_severity
+      where id = '${uuid(21)}'`,
+  );
+  assertEq(r.rows[0].severity, 100, "the worst answer to all four is 100");
+  assertEq([r.rows[0].is_health_problem, r.rows[0].is_substantial], [true, true], "and substantial");
+});
+
+await check("a v2 row cannot carry an option its own instrument lacks", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+       values ('${uuid(22)}', '${SA}', '${uuid(20)}', 'ostrc_o2', date '2026-08-23', 0,4,0,0)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "v2 collapsed Q2/Q3 to four options; 4 is a v1 answer");
+});
+
+await check("v1 keeps its own five-option scale for Q2 and Q3", async () => {
+  await asUser(
+    SB,
+    `insert into symptom_episodes (id, user_id, body_region, opened_on)
+     values ('${uuid(30)}', '${SB}', 'shin', date '2026-08-01')`,
+  );
+  await asUser(
+    SB,
+    `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+     values ('${uuid(31)}', '${SB}', '${uuid(30)}', 'ostrc_o1', date '2026-08-09', 0,4,4,0)`,
+  );
+  const r = await db.query(`select severity from v_ostrc_severity where id = '${uuid(31)}'`);
+  // Scoring is per version, which is why `instrument` is a column and why
+  // severity is derived rather than stored.
+  assertEq(r.rows[0].severity, 50, "0 + 25 + 25 + 0 on the v1 scale");
+});
+
+await check("substantial is the published case definition, not a severity cutoff", async () => {
+  await asUser(
+    SB,
+    `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+     values ('${uuid(32)}', '${SB}', '${uuid(30)}', 'ostrc_o2', date '2026-08-16', 1,2,0,1)`,
+  );
+  const r = await db.query(
+    `select severity, is_substantial from v_ostrc_severity where id = '${uuid(32)}'`,
+  );
+  assert(r.rows[0].severity < 50, "a middling score");
+  assertEq(r.rows[0].is_substantial, true, "but Q2 >= moderate makes it substantial");
+});
+
+await check("persistence is counted in consecutive weeks, which is the signal", async () => {
+  for (const [n, d] of [[40, "2026-08-23"], [41, "2026-08-30"], [42, "2026-09-06"]]) {
+    await asUser(
+      SA,
+      `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+       values ('${uuid(n)}', '${SA}', '${uuid(20)}', 'ostrc_o2', date '${d}', 1,1,1,1)`,
+    );
+  }
+  const r = await db.query(
+    `select consecutive_weeks, persistent, is_open from v_symptom_episode_state
+      where episode_id = '${uuid(20)}'`,
+  );
+  assertEq(r.rows[0].consecutive_weeks, 4, "16 Aug through 6 Sep, unbroken");
+  assertEq(r.rows[0].persistent, true, "three weeks in one region warrants a clinician");
+  assertEq(r.rows[0].is_open, true, "and it is still open");
+});
+
+await check("a missed week breaks the run rather than being counted through", async () => {
+  await asUser(
+    SB,
+    `insert into symptom_reports (id, user_id, episode_id, instrument, recall_end, q1,q2,q3,q4)
+     values ('${uuid(33)}', '${SB}', '${uuid(30)}', 'ostrc_o2', date '2026-08-30', 1,1,1,1)`,
+  );
+  const r = await db.query(
+    `select consecutive_weeks, persistent from v_symptom_episode_state
+      where episode_id = '${uuid(30)}'`,
+  );
+  // 9 Aug, 16 Aug, then a gap, then 30 Aug: the current run is one week.
+  assertEq(r.rows[0].consecutive_weeks, 1, "the gap ends the run");
+  assertEq(r.rows[0].persistent, false, "and persistence is not claimed");
+});
+
+// --- pain and red flags -----------------------------------------------------
+await check("the next-morning pain check is its own row with its own timestamp", async () => {
+  await asUser(
+    SA,
+    `insert into pain_checks (id, user_id, episode_id, phase, nrs_0_10, captured_at)
+     values ('${uuid(50)}', '${SA}', '${uuid(20)}', 'post', 3, timestamptz '2026-09-06T09:00:00Z'),
+            ('${uuid(51)}', '${SA}', '${uuid(20)}', 'next_morning', 5, timestamptz '2026-09-07T07:00:00Z')`,
+  );
+  const r = await db.query(
+    `select phase, nrs_0_10 from pain_checks where episode_id = '${uuid(20)}' order by captured_at`,
+  );
+  // A 24-hour delayed signal cannot be a column on the run.
+  assertEq(r.rows.map((x) => x.phase), ["post", "next_morning"], "two rows, a day apart");
+  assertEq(r.rows[1].nrs_0_10, 5, "worse the next morning, which is the criterion");
+});
+
+await check("a red flag row must actually flag something", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into red_flags (id, user_id, episode_id) values ('${uuid(60)}', '${SA}', '${uuid(20)}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "an all-false row would read as a cleared flag");
+  const ok = await asUser(
+    SA,
+    `insert into red_flags (id, user_id, episode_id, focal_bone_tenderness)
+     values ('${uuid(61)}', '${SA}', '${uuid(20)}', true)`,
+  );
+  assertEq(ok.affectedRows ?? 0, 1, "any single one is a report");
+});
+
+// --- adherence denominator --------------------------------------------------
+await check("prompts give a computable adherence rate", async () => {
+  await asUser(
+    SA,
+    `insert into report_prompts (id, user_id, kind, scheduled_for, channel, responded_at)
+     values ('${uuid(70)}', '${SA}', 'daily_readiness', now() - interval '2 days', 'push', now() - interval '2 days'),
+            ('${uuid(71)}', '${SA}', 'daily_readiness', now() - interval '1 day', 'push', null)`,
+  );
+  const r = await db.query(
+    `select count(*)::int as sent, count(responded_at)::int as answered
+       from report_prompts where user_id = '${SA}'`,
+  );
+  // Without the denominator there is no way to tell 91% adherence from a
+  // drop-off, and adherence is the load-bearing assumption of the injury half.
+  assertEq([r.rows[0].sent, r.rows[0].answered], [2, 1], "one of two answered");
+});
+
+// --- cycle: opt-in, screening only ------------------------------------------
+await check("nobody who has not opted in appears in the cycle screen at all", async () => {
+  const r = await db.query(`select count(*)::int as n from v_cycle_screen`);
+  assertEq(r.rows[0].n, 0, "no rows, no inference");
+});
+
+await check("a long absence refers, and only for someone it would be unexpected for", async () => {
+  await asUser(SB, `insert into cycle_context (user_id, status) values ('${SB}', 'natural')`);
+  await asUser(
+    SB,
+    `insert into cycle_events (id, user_id, kind, local_date)
+     values ('${uuid(80)}', '${SB}', 'period_start', current_date - 200)`,
+  );
+  const r = await db.query(
+    `select refer_for_amenorrhoea, days_since_period from v_cycle_screen where user_id = '${SB}'`,
+  );
+  assertEq(r.rows[0].refer_for_amenorrhoea, true, "200 days is a referral, not a diagnosis");
+});
+
+await check("contraception is never flagged for an absent period", async () => {
+  await asUser(
+    SB,
+    `update cycle_context set status = 'hormonal_contraception' where user_id = '${SB}'`,
+  );
+  const r = await db.query(
+    `select refer_for_amenorrhoea from v_cycle_screen where user_id = '${SB}'`,
+  );
+  // Clinically opposite to the case above, and identical without the status.
+  assertEq(r.rows[0].refer_for_amenorrhoea, false, "no bleed by design is not a signal");
+});
+
+await check("a naturally long cycle is not flagged for being long", async () => {
+  await db.exec(
+    `update cycle_context set status = 'natural', typical_length_days = 60 where user_id = '${SB}'`,
+  );
+  await db.exec(
+    `update cycle_events set local_date = current_date - 100 where id = '${uuid(80)}'`,
+  );
+  const r = await db.query(
+    `select refer_for_amenorrhoea from v_cycle_screen where user_id = '${SB}'`,
+  );
+  assertEq(r.rows[0].refer_for_amenorrhoea, false, "100 days against a 60-day norm is not 2x");
+});
+
+await check("cycle data is deletable, unlike the training record", async () => {
+  const ev = await asUser(SB, `delete from cycle_events where id = '${uuid(80)}'`);
+  const ctx = await asUser(SB, `delete from cycle_context where user_id = '${SB}'`);
+  assertEq([ev.affectedRows ?? 0, ctx.affectedRows ?? 0], [1, 1], "health data can be withdrawn");
+});
+
+await check("nobody reads anyone else's subjective data", async () => {
+  const a = await asUser(SB, `select count(*)::int as n from daily_readiness`);
+  const b = await asUser(SB, `select count(*)::int as n from symptom_reports where user_id = '${SA}'`);
+  const c = await asUser(SB, `select count(*)::int as n from pain_checks`);
+  assertEq([a.rows[0].n, b.rows[0].n, c.rows[0].n], [0, 0, 0], "scoped to the owner");
+});
+
+await check("deleting a user takes every subjective row with them", async () => {
+  await db.exec(`delete from auth.users where id = '${SA}'`);
+  const n = await db.query(`
+    select (select count(*) from daily_readiness where user_id = '${SA}')
+         + (select count(*) from checkins where user_id = '${SA}')
+         + (select count(*) from symptom_reports where user_id = '${SA}')
+         + (select count(*) from symptom_episodes where user_id = '${SA}')
+         + (select count(*) from pain_checks where user_id = '${SA}')
+         + (select count(*) from red_flags where user_id = '${SA}')
+         + (select count(*) from report_prompts where user_id = '${SA}')
+         + (select count(*) from readiness_fields where user_id = '${SA}') as n`);
+  assertEq(Number(n.rows[0].n), 0, "cascaded");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
