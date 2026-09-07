@@ -433,6 +433,52 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   by this: a switched-off person still reads and writes their own log from
   Claude Desktop.
 
+- Subjective capture (20260907040000) is THREE CADENCES IN THREE TABLES, and
+  they are deliberately not one table with a `kind` column: they measure
+  different things on different clocks and merging them gives a pleasant UI over
+  uninterpretable data. `daily_readiness` is ONE ANCHORED ROW PER LOCAL DATE and
+  is the row that trends; `checkins` is unlimited per day and is never averaged
+  into that trend, or the baseline would depend on how often somebody happened
+  to tap; `symptom_reports` is weekly and threaded onto a `symptom_episodes` row,
+  because the only question worth asking about an achilles is whether it is
+  better or worse than three weeks ago and unlinked rows cannot answer it.
+  EVERY ITEM IS OPTIONAL and a half-filled row is a real row. That forces the
+  views: `avg()` skips nulls, so every rolling mean carries its own COUNT
+  (`fatigue_7d_n`, not `days_of_history`) and `answered_items` separates a panel
+  somebody opened and skipped from a day they never opened. There is NO
+  composite readiness score anywhere, ever: subjective and objective recovery
+  measures do not correlate, so a composite merges signals that move
+  independently and hides which one moved.
+  The panel asks THREE things (sleep, fatigue, soreness) and saves as it is
+  answered, with no Save button: the lowest-stakes version of a question is one
+  you cannot get wrong by walking away from it, and a panel that takes a minute
+  gets answered for a fortnight. The other items still exist and are one tap
+  away. A daily prompt goes quiet after four hours rather than nagging until
+  bedtime, and "not today" is RECORDED (`report_prompts`, which is also the
+  adherence denominator) so the asking actually stops. Losing the athlete costs
+  every future answer; losing one day costs one day.
+  OSTRC severity is derived in a view and scored PER `instrument` version, so a
+  scoring correction is a CREATE OR REPLACE and never a backfill over data
+  nobody can re-collect. Escalation is on PERSISTENCE, not intensity: for one
+  athlete the smallest detectable change (~35) exceeds the minimal important
+  change (18.5), so a week-to-week delta is mostly noise and three consecutive
+  weeks in one region is the signal. Red flags are separate BOOLEANS and any
+  single one refers, because a score invites a threshold the clinical literature
+  does not provide. The next-morning pain check is its own row with its own
+  timestamp; it is a 24-hour delayed signal and cannot be a column on the run.
+  `cycle_context` / `cycle_events` are OPT-IN and nothing anywhere infers a
+  cycle from anything else. Phase is never computed and may not gate a rule (its
+  performance effects are small and contested); absent menstruation screens and
+  REFERS, because that is a primary IOC REDs indicator and the red-flag path was
+  otherwise referring on a criterion nobody could record. `status` exists so
+  screening can tell "no period because continuous contraception" from "no
+  period, and that is new", which are clinically opposite and identical without
+  it. Both tables are DELETABLE, unlike the training record.
+  `readiness_fields` lets somebody add their own items, and the line is drawn at
+  what a value may DO rather than whether it may exist: a custom item is
+  context and a chart, and may NEVER gate a rule, because an unvalidated item
+  cannot carry a decision. Same discipline as the research doc's tags.
+
 - A migration that needs an extension PGlite does not have is GUARDED, not
   forked. `scripts/validate-db.mjs` replays the whole chain in PGlite, so a bare
   `create extension pg_cron` fails the gate. `20260907060000` asks

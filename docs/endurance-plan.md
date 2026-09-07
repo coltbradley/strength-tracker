@@ -79,7 +79,7 @@ Any UI. Any planning. Any derived score. Strava API OAuth.
 
 ---
 
-## Phase E1: the athlete answers
+## Phase E1: the athlete answers  [BUILT 2026-09-07]
 
 The subjective capture layer. This is the phase that accrues value while later
 phases are built, so it ships early and runs for the whole project.

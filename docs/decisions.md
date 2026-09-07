@@ -2539,3 +2539,126 @@ minutes`. For about an hour after every ISO Monday boundary those straddle two
 buckets and the count is partial. It failed at 00:47 UTC on a Monday and looked
 exactly like the new migration having broken something. Summed across weeks now;
 which bucket they land in is what the timezone checks are for.
+
+
+## The athlete answers, and skipping is a first-class answer
+
+E1 of the endurance layer (20260907040000, plus the client half). The evidence
+is in [endurance-research.md](endurance-research.md); this is what had to be
+decided rather than looked up.
+
+**Why this ships before the planner it feeds.** Saw, Main and Gastin (BJSM 2016,
+56 studies) found subjective wellbeing tracked acute and chronic load with
+SUPERIOR sensitivity and consistency to objective measures, and that the two
+categories generally did not correlate. So the cheapest data to collect is the
+best signal. It is also the only data here that cannot be backfilled: a week
+without it is gone, where a Strava activity can be re-fetched forever. That
+combination is why the least impressive phase went first.
+
+**Three cadences, three tables, deliberately not one.** An anchored daily panel,
+an unlimited episodic checkin, and a weekly instrument threaded onto an episode.
+They were nearly one table with a `kind` column, which would have been tidier
+and wrong: the daily row is a fixed-time measurement whose value comes from
+being comparable, and the checkins are events. Merged, the baseline would depend
+on how often somebody happened to tap -- which is not a fact about their
+training. The weekly one is threaded onto an EPISODE because the only question
+worth asking about an achilles is whether it is better or worse than three weeks
+ago, and unlinked rows cannot answer it.
+
+**Every item optional, which the views then had to be told about.** This started
+as a product decision (a panel somebody must complete is a panel somebody stops
+opening) and turned into a schema problem: `avg()` skips nulls, so a seven-day
+mean over two answers and one over seven are the same number. Every rolling mean
+carries its own count now, and `answered_items` separates a panel opened and
+skipped from a day never opened. A caller that wants to say something about
+fatigue checks `fatigue_7d_n`, not `days_of_history`, because those diverge the
+moment anyone leaves a field blank.
+
+**No composite score, anywhere.** The one number everybody wants is the one the
+evidence forbids: subjective and objective recovery measures do not correlate,
+so a composite merges signals that move independently and hides which one moved.
+Any summary is a view, computed at read time, and must name which item drove it.
+
+**Three questions, not eight, and no Save button.** The first version had eight
+items, a Save button and a reminder that nagged until bedtime, and all three
+were wrong for something meant to happen every morning for months. The evidence
+validates the CLASS of subjective measures, not any particular panel, so the
+length was a choice: sleep explains most bad days, fatigue is the readiness
+item, soreness points at injury, and stress and mood move closely enough with
+fatigue that a third correlated tap buys little. The panel writes as it is
+answered, so closing it by the X, by ESC, or by the OS killing the app keeps
+what was given -- the lowest-stakes version of a question is one you cannot get
+wrong by walking away from it. An untouched panel writes nothing rather than an
+empty row.
+
+**The nag was the mistake, and it was defended in a comment.** The daily prompt
+originally stayed due all day, with the reasoning that a missed morning is the
+gap the panel exists to close. That is right about the value of the answer and
+wrong about the cost of asking. A reminder still going at 10pm about 7:30am is
+what makes somebody turn the whole thing off, and losing the athlete costs every
+future answer where losing a day costs a day. It goes quiet after four hours,
+and "not today" is RECORDED so the asking actually stops -- a skip is an answer
+to "shall I ask you this now" and is a different fact from an unanswered panel,
+which is silence. The skip lands in `report_prompts`, which is also the
+denominator: the published 82-96% adherence figures come from supervised cohorts
+with a researcher attached, and one unsupervised athlete with a push
+notification is a different situation. This is how that is discovered in four
+weeks rather than at month six.
+
+**Copy the instrument; do not invent questions.** OSTRC is the standard overuse
+surveillance instrument, and validated instruments hold up psychometrically
+where the short custom wellness sliders most apps ship do not. Severity is
+derived in a view and scored PER version, so a scoring correction is a CREATE OR
+REPLACE rather than a backfill over ordinals nobody can re-collect -- which
+matters here more than usual, because the v2 item text could not be verified
+against Clarsen 2020 from any session that has worked on this (PMC, BMJ, SAGE
+and MDPI are all unreachable). What WAS corroborated: four options per question,
+a 0-100 score, and the case definitions, which are what triage branches on.
+
+**Escalate on persistence, not intensity.** In runners the OSTRC severity score
+has a smallest detectable change of about 35 for an INDIVIDUAL against a minimal
+important change of 18.5. SDC exceeding MIC means one person's week-to-week
+delta is mostly measurement noise, so nothing escalates on it. Three consecutive
+weeks in one region does, regardless of severity. Red flags are separate
+booleans and any single one refers, because a score invites a threshold and the
+clinical literature does not provide one.
+
+**The next-morning check is its own row.** It is the criterion doing the real
+work in both published pain-monitoring models, and it is a 24-HOUR DELAYED
+signal, so it cannot be collected at the end of the session or stored as a
+column on it. It also cannot be asked of everybody every morning: gated on there
+being an open episode, because asking somebody with nothing wrong is how a
+prompt becomes noise and then becomes ignored, and the adherence that burns is
+the load-bearing assumption of this whole half.
+
+**Menstrual cycle, on the stronger of the two arguments.** Phase effects on
+performance are genuinely contested -- small, highly individual -- so phase is
+never computed and may not gate anything. Absent or irregular menstruation is a
+primary indicator in the 2023 IOC REDs consensus, and the red-flag path was
+already set up to refer on it with nowhere to record it: the criterion existed
+and was unmeetable. `cycle_context.status` exists so screening can tell "no
+period because continuous contraception" from "no period, and that is new",
+which are clinically opposite and completely identical without it. Opt-in, with
+no inference from anything else, screening only (CAT2 is physician-led), and
+DELETABLE -- the same reasoning that makes `coach_memory` deletable, with more
+force.
+
+**Custom fields draw the line at what a value may DO.** Not whether it may
+exist: somebody tracking a knee or a commute has a real reason to. A custom item
+may be recorded, charted and read by the coach as context, and may never gate a
+rule, because an unvalidated item cannot carry a decision. The same discipline
+the research doc applies to its own findings, where only STRONG and MODERATE
+evidence may block.
+
+**Writes ride the existing outbox.** Checked before coupling: the flusher has
+`break attempt; // keep flushing past dead items`, so a permanently failing
+check-in dead-letters and somebody's sets keep flushing. The dependency points
+endurance to shared infrastructure, never the reverse. `daily_readiness` merges
+on replay like `set_notes` and unlike everything else, because it is a
+correctable self-report rather than an append-only training record, and its id
+is stable per (user, local_date) so a correction lands on the row it corrects.
+
+A smaller thing found by the tests: the sheet's action button said "Close" on an
+untouched panel, which is the same accessible name as the sheet's own dismiss
+control. Two buttons with one name is a screen reader saying the same word twice
+and meaning different things. It says "Done" unconditionally.

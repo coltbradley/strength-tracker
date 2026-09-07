@@ -170,10 +170,15 @@ tier that already exists.
 
 - Evidence base, including what this system refuses to compute and why:
   [endurance-research.md](endurance-research.md).
-- Phased build with gates: [endurance-plan.md](endurance-plan.md). E0 activities
-  land, E1 subjective capture, E2 state estimation, E3 target and constraints,
-  E4 endurance days on the calendar, E5 the block generator, E6 adaptation,
-  E7 deep session data.
+- Phased build with gates: [endurance-plan.md](endurance-plan.md).
+  - [x] **E0 activities land** (2026-09-07): `activities`, cross-source dedup,
+        `endurance-sync` against intervals.icu and/or Strava, both/either/neither.
+  - [x] **E1 subjective capture** (2026-09-07): the three-tap morning panel,
+        weekly OSTRC on episodes, pain checks, red flags, opt-in cycle
+        tracking, prompt scheduling on pg_cron, app badging.
+  - [ ] E2 state estimation · E3 target and constraints · E4 endurance days on
+        the calendar · E5 the block generator · E6 adaptation · E7 deep session
+        data · E8 the coach learns the layer · E9 evals and deploy.
 - Reasoning and the decisions taken: the endurance entry in
   [decisions.md](decisions.md).
 

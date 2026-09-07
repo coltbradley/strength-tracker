@@ -71,6 +71,14 @@ can reach both, a `before insert` trigger marks the later of two matching rows
 descent is the column the whole layer is built around and the one nothing on
 the market stores.
 
+Beside it sits the subjective layer: an anchored daily panel
+(`daily_readiness`), unlimited episodic `checkins`, weekly OSTRC responses
+threaded onto `symptom_episodes`, `pain_checks` (the next-morning one is its own
+row, because it is a 24-hour delayed signal), boolean `red_flags`, opt-in cycle
+tracking, and `report_prompts` as the adherence denominator. Every item is
+optional, so every rolling mean in `v_readiness_trend` carries its own count and
+there is no composite score anywhere.
+
 `v_weekly_endurance` buckets by `app_tz(user_id)` like every other calendar
 view. Full reasoning in [endurance-plan.md](endurance-plan.md); the evidence,
 including the metrics this system refuses to compute, in
