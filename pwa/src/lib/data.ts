@@ -1739,3 +1739,140 @@ export async function getRecentSets(
     return (data ?? []) as SetInsert[];
   });
 }
+
+// ---- bodyweight ------------------------------------------------------------
+// `sessions.bodyweight_kg` has existed since the first schema and was written
+// zero times in a month of real use, because the End screen is only reached by
+// tapping Finish. `bodyweight_log` gives the number a home that does not
+// depend on training, and `v_bodyweight` is where the two meet. Nothing here
+// reads either source alone: a caller that reads only the log is blind to
+// every figure taken before a workout, and one that reads only sessions is
+// blind to every rest day, and both answer "what did you weigh" wrongly
+// without ever looking wrong.
+
+export interface BodyweightPoint {
+  measured_at: string;
+  weight_kg: number;
+  /** which table it came from; the UI says "before training" off this */
+  source: "log" | "session";
+}
+
+/** Enough to answer "today" and "last time", with room for a trend later. */
+const BODYWEIGHT_WINDOW = 60;
+
+export async function getBodyweight(): Promise<{
+  data: BodyweightPoint[];
+  fromCache: boolean;
+}> {
+  return fetchWithCache(cacheKeys.bodyweight, async () => {
+    const { data, error } = await supabase
+      .from("v_bodyweight")
+      .select("measured_at,weight_kg,source")
+      .order("measured_at", { ascending: false })
+      .limit(BODYWEIGHT_WINDOW);
+    throwIf(error);
+    // numeric(5,2) arrives as a string from PostgREST often enough that the
+    // arithmetic downstream would silently concatenate instead of adding
+    return ((data ?? []) as BodyweightPoint[]).map((r) => ({
+      ...r,
+      weight_kg: Number(r.weight_kg),
+    }));
+  });
+}
+
+/**
+ * Put a figure into the cached series without a refetch.
+ *
+ * Write-through, not invalidate, and for the reason the finish path already
+ * patches the DONE state: dropping the cache is a no-op offline, because the
+ * refetch that would rebuild it is exactly what cannot run. A lifter who
+ * weighs in on a phone with no signal must see the row say so, today, not on
+ * whatever morning the network comes back.
+ */
+export async function cacheBodyweightPoint(
+  point: BodyweightPoint,
+): Promise<void> {
+  const cached = await cacheGet<BodyweightPoint[]>(cacheKeys.bodyweight);
+  if (cached === undefined) return; // nothing to patch; the next read fetches
+  await cacheSet(
+    cacheKeys.bodyweight,
+    [point, ...cached]
+      .sort((a, b) => b.measured_at.localeCompare(a.measured_at))
+      .slice(0, BODYWEIGHT_WINDOW),
+  );
+}
+
+/**
+ * Record a weigh-in. Queued like a set — client-generated UUID, so the replay
+ * after a partial flush is the same measurement rather than a second one.
+ * Returns the point it wrote so the caller can render it before the flush.
+ */
+export async function recordBodyweight(
+  weightKg: number,
+  measuredAt: string = new Date().toISOString(),
+): Promise<BodyweightPoint> {
+  const point: BodyweightPoint = {
+    measured_at: measuredAt,
+    weight_kg: weightKg,
+    source: "log",
+  };
+  await outbox.enqueue({
+    kind: "insert",
+    table: "bodyweight_log",
+    payload: { id: uuid(), measured_at: measuredAt, weight_kg: weightKg },
+  });
+  await cacheBodyweightPoint(point);
+  return point;
+}
+
+// ---- rating a session after the fact ---------------------------------------
+
+export interface UnratedSessionRow {
+  id: string;
+  ended_at: string;
+  planned_workout_id: string | null;
+}
+
+/** How long after a session the question is still worth asking. Past a day
+ *  the answer is a guess, and a guess in `session_rpe` is worse than a null:
+ *  every load-management read downstream treats it as measured. */
+export const RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The most recent FINISHED, undiscarded, unrated session inside the window.
+ *
+ * `ended_at IS NOT NULL` is the same load-bearing filter the DONE state uses:
+ * an OPEN session is not finished, its sRPE is a question about a workout
+ * still happening, and asking it on Today while the RESUME banner is up would
+ * offer to rate something the lifter is in the middle of.
+ */
+export async function getUnratedSession(
+  now: number = Date.now(),
+): Promise<UnratedSessionRow | null> {
+  const since = new Date(now - RATE_WINDOW_MS).toISOString();
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("id,ended_at,planned_workout_id")
+    .is("session_rpe", null)
+    .is("discarded_at", null)
+    .not("ended_at", "is", null)
+    .gte("ended_at", since)
+    .order("ended_at", { ascending: false })
+    .limit(1);
+  throwIf(error);
+  return ((data ?? []) as UnratedSessionRow[])[0] ?? null;
+}
+
+/** Rate a finished session. One column, through the existing sessions update
+ *  op, so it queues and replays like any other write. */
+export async function rateSession(
+  sessionId: string,
+  rpe: number,
+): Promise<void> {
+  await outbox.enqueue({
+    kind: "update",
+    table: "sessions",
+    id: sessionId,
+    patch: { session_rpe: rpe },
+  });
+}

@@ -31,6 +31,21 @@ export function fromDisplay(value: number, unit: Unit): number {
 }
 
 /**
+ * A bodyweight as `bodyweight_log.weight_kg` stores it: numeric(5,2).
+ *
+ * TWO decimals, not one, and that is the whole point of the function. `lb` is
+ * a display unit and `toDisplay` rounds it to 0.1 lb, which is 0.045 kg — so
+ * 180.0 lb is 81.6466 kg, and rounding THAT to one decimal (81.6) reads back
+ * as 179.9. Someone who weighs in lb would watch the number they typed change
+ * by itself. Two decimals bound the error at 0.005 kg = 0.011 lb, comfortably
+ * inside the 0.05 lb that would move the displayed figure, so what was typed
+ * is what comes back — in either unit, in either direction.
+ */
+export function toStoredKg(kg: number): number {
+  return Math.round(kg * 100) / 100;
+}
+
+/**
  * Stepper increment, in kg, for the active display unit. Settings-driven:
  * `loadStepCoarse` / `loadStepFine` (defaults 2.5 kg / 5 lb and 0.5 kg / 1 lb).
  */

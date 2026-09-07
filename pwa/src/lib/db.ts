@@ -4,6 +4,7 @@
 
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type {
+  BodyweightInsert,
   SessionInsert,
   SessionPatch,
   SetInsert,
@@ -11,6 +12,27 @@ import type {
   SetVoidInsert,
 } from "./types";
 
+/**
+ * Rating a session that is ALREADY finished, from Today.
+ *
+ * Deliberately not `SessionEndPatch`. That shape restates `ended_at`, `notes`
+ * and `bodyweight_kg`, and a prompt on Today knows none of them — sending it
+ * would blank a note someone typed on the End screen in the act of adding the
+ * one number they forgot. One column, and the only column this path may
+ * touch. It rides the EXISTING sessions update op rather than a second write
+ * path, so it queues, replays, holds for its owner and dead-letters exactly
+ * like a finish does.
+ */
+export interface SessionRatePatch {
+  session_rpe: number;
+}
+
+/**
+ * Every write the app can queue. Growing this union is NOT a version bump:
+ * an object store holds whatever shape is put in it, so a new op variant
+ * needs no upgrade path — the same reasoning as `last_code` below. The
+ * version only moves for a new STORE or index, and then strictly additively.
+ */
 export type OutboxOp =
   | { kind: "insert"; table: "sessions"; payload: SessionInsert }
   | { kind: "insert"; table: "sets"; payload: SetInsert }
@@ -18,7 +40,15 @@ export type OutboxOp =
   // set_notes is the one MERGING insert: replaying overwrites (a note edit
   // is last-write-wins), unlike the do-nothing semantics everywhere else
   | { kind: "insert"; table: "set_notes"; payload: SetNoteUpsert }
-  | { kind: "update"; table: "sessions"; id: string; patch: SessionPatch };
+  // A weigh-in. Client-generated id + do-nothing semantics, so a replay is
+  // the same measurement rather than a second one on the same morning.
+  | { kind: "insert"; table: "bodyweight_log"; payload: BodyweightInsert }
+  | {
+      kind: "update";
+      table: "sessions";
+      id: string;
+      patch: SessionPatch | SessionRatePatch;
+    };
 
 export interface OutboxItem {
   op: OutboxOp;
@@ -253,6 +283,7 @@ const P = {
   sessionMeta: "sessionMeta:",
   setNotes: "setNotes:",
   adherence: "adherence:",
+  bodyweight: "bodyweight",
 } as const;
 
 export const cacheKeys = {
@@ -298,6 +329,8 @@ export const cacheKeys = {
   adherence: (exerciseId: string) => `${P.adherence}${exerciseId}`,
   /** every training max ever set */
   trainingMaxes: P.trainingMaxes,
+  /** the recent bodyweight series, BOTH sources (v_bodyweight) */
+  bodyweight: P.bodyweight,
 };
 
 /**
@@ -321,8 +354,21 @@ export const cacheFamilies = {
     P.lastActuals,
     P.loggedExercises,
   ],
-  /** derived from whether a session is CLOSED: the week's DONE state */
-  sessionClosed: [P.doneWorkouts],
+  /**
+   * Derived from whether a session is CLOSED: the week's DONE state, and the
+   * bodyweight series.
+   *
+   * `v_bodyweight` unions the standalone log with the per-session figure, and
+   * the session half is a fact about the session's close — it is dated by
+   * `ended_at` and it LEAVES the view when the session is discarded. So a
+   * discard stales it and it belongs here. It is deliberately not in
+   * `sessionDerived`, which every logged set drops: a weigh-in has nothing to
+   * do with a set, and dropping this cache mid-workout would leave the row
+   * with nothing to show on a phone with no signal. The finish path patches
+   * it instead of dropping it, the same way it patches the DONE state and for
+   * the same reason.
+   */
+  sessionClosed: [P.doneWorkouts, P.bodyweight],
   /** carries a resolved training max, so any TM write invalidates it */
   planResolved: [P.prescriptions, P.sessionRx],
 } as const;

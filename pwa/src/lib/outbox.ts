@@ -55,7 +55,7 @@ export interface OutboxTransport {
    *  elsewhere); null on success. set_notes MERGES on conflict (note edits
    *  are last-write-wins); every other table ignores duplicates. */
   insert(
-    table: "sessions" | "sets" | "set_voids" | "set_notes",
+    table: "sessions" | "sets" | "set_voids" | "set_notes" | "bodyweight_log",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(
@@ -113,6 +113,16 @@ export interface Outbox {
    * history for the sole crime of having been finished offline.
    */
   pendingDiscardIds(): Promise<Set<string>>;
+  /**
+   * Session ids with a queued (unsynced) sRPE rating — the other strict
+   * subset of pendingSessionUpdateIds, and needed for the same reason
+   * `pendingVoidIds` is. Today asks "which finished session has no rating"
+   * of the SERVER, which has not heard about a rating given in a basement
+   * gym, so without this the prompt comes straight back on the next render
+   * and asks again for a number already given. Dead ones count too: it has
+   * been ANSWERED, and re-asking is the one thing that must not happen.
+   */
+  pendingRatedSessionIds(): Promise<Set<string>>;
   /** Wire up app-start + 'online' triggers. */
   start(): void;
 }
@@ -614,6 +624,30 @@ export function createOutbox({
           // an end patch and a discard patch share a table and an id; only the
           // shape tells them apart
           .filter((op) => "discarded_at" in op.patch)
+          .map((op) => op.id),
+      );
+    },
+
+    async pendingRatedSessionIds() {
+      const db = await getDb();
+      const rows = await readAll(db);
+      return new Set(
+        rows
+          .map((r) => r.item.op)
+          .filter(
+            (
+              op,
+            ): op is Extract<OutboxOp, { kind: "update"; table: "sessions" }> =>
+              op.kind === "update" && op.table === "sessions",
+          )
+          // A finish carries session_rpe too, and it counts: a session ended
+          // WITH a rating that has not flushed yet is a rated session, and
+          // asking again would be the same duplicate prompt. What is excluded
+          // is a finish that left it null, and a discard, which has no
+          // session_rpe key at all.
+          .filter(
+            (op) => "session_rpe" in op.patch && op.patch.session_rpe !== null,
+          )
           .map((op) => op.id),
       );
     },
