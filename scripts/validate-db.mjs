@@ -187,11 +187,19 @@ await check("v_e1rm: Epley on working sets 1-8 reps only", async () => {
 });
 
 await check("v_weekly_volume counts working sets", async () => {
+  // Summed across weeks rather than read off rows[0]. The fixture seeds these
+  // sets at `now() - 41..55 minutes`, so for about an hour after every ISO
+  // Monday boundary they straddle two buckets and rows[0] is a partial count.
+  // Caught at 00:47 UTC on a Monday. What this check is about is that three
+  // working sets are counted and the warmup and backoff are not; which bucket
+  // they land in is v_weekly_volume's own business and is asserted by the
+  // timezone checks instead.
   const r = await db.query(
-    `select working_sets::int as n from v_weekly_volume where user_id = $1 and exercise_id = 'Barbell_Squat'`,
+    `select coalesce(sum(working_sets), 0)::int as n
+       from v_weekly_volume where user_id = $1 and exercise_id = 'Barbell_Squat'`,
     [OWNER],
   );
-  assertEq(r.rows[0].n, 3, "working sets this week");
+  assertEq(r.rows[0].n, 3, "working sets, warmup and backoff excluded");
 });
 
 await check("v_adherence: hit / missed / exceeded vs prescription", async () => {
@@ -1870,6 +1878,225 @@ await check("deleting a user takes their switch with them", async () => {
     `select count(*)::int as n from coach_access where user_id = '${CA_A}'`,
   );
   assertEq(n.rows[0].n, 0, "cascaded");
+});
+
+// --- E0 activities: two sources, either, or neither (20260907030000) ---------
+console.log("\nendurance activities (both sources, either, or neither):");
+await db.exec("reset role;");
+
+const EA = "00000000-0000-4000-8000-0000000000e1";
+const EB = "00000000-0000-4000-8000-0000000000e2";
+await db.exec(`
+  insert into auth.users (id, email) values
+    ('${EA}', 'ea@example.test'), ('${EB}', 'eb@example.test')
+  on conflict do nothing;
+`);
+
+const act = (o) => `
+  insert into activities (user_id, source, external_id, sport, started_at,
+                          elapsed_s, moving_s, distance_m, ascent_m, descent_m)
+  values ('${o.user}', '${o.source}', '${o.ext}', '${o.sport ?? "Run"}',
+          timestamptz '${o.at}', ${o.elapsed}, ${o.moving},
+          ${o.dist ?? "null"}, ${o.up ?? "null"}, ${o.down ?? "null"})`;
+
+// NONE configured is a supported state and must not be an error anywhere.
+await check("with no source connected, the endurance views are simply empty", async () => {
+  const a = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EA}'`,
+  );
+  const w = await db.query(
+    `select count(*)::int as n from v_weekly_endurance where user_id = '${EA}'`,
+  );
+  assertEq([a.rows[0].n, w.rows[0].n], [0, 0], "empty, not broken");
+});
+
+await check("one source alone lands its activities", async () => {
+  await db.exec(
+    act({ user: EA, source: "strava", ext: "s1", at: "2026-09-01T07:00:00Z",
+          elapsed: 3600, moving: 3500, dist: 10000, up: 300, down: 290 }),
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EA}'`,
+  );
+  assertEq(r.rows[0].n, 1, "one run");
+});
+
+// The reason the dedup rule exists: one Garmin upload reaching both providers.
+await check("the same effort from a second source is marked, not counted twice", async () => {
+  await db.exec(
+    act({ user: EA, source: "intervals_icu", ext: "i1", at: "2026-09-01T07:00:40Z",
+          elapsed: 3600, moving: 3510, dist: 10010, up: 301, down: 291 }),
+  );
+  const raw = await db.query(
+    `select count(*)::int as n from activities where user_id = '${EA}'`,
+  );
+  const live = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EA}'`,
+  );
+  assertEq(raw.rows[0].n, 2, "both rows kept -- the duplicate is evidence");
+  assertEq(live.rows[0].n, 1, "counted once");
+  const dup = await db.query(
+    `select duplicate_of is not null as marked from activities
+      where user_id = '${EA}' and source = 'intervals_icu'`,
+  );
+  assertEq(dup.rows[0].marked, true, "the later arrival is the one marked");
+});
+
+await check("weekly endurance counts the effort once, descent kept separate", async () => {
+  const r = await db.query(
+    `select activities::int as n, ascent_m::float as up, descent_m::float as down
+       from v_weekly_endurance where user_id = '${EA}'`,
+  );
+  assertEq(r.rows[0].n, 1, "not doubled");
+  assertEq([r.rows[0].up, r.rows[0].down], [300, 290], "gain and loss are different numbers");
+});
+
+// The conservative direction: rather leave two rows than hide a real session.
+await check("a genuinely separate effort is not swallowed by the matcher", async () => {
+  await db.exec(
+    act({ user: EA, source: "intervals_icu", ext: "i2", at: "2026-09-01T07:25:00Z",
+          elapsed: 1200, moving: 1200, dist: 4000 }),
+  );
+  const live = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EA}'`,
+  );
+  assertEq(live.rows[0].n, 2, "a second, shorter run 25 minutes later still counts");
+});
+
+await check("two rows from ONE source at the same instant are both real", async () => {
+  // A split "Part 1 / Part 2" run is a real pair; dedup is cross-source only.
+  await db.exec(
+    act({ user: EA, source: "strava", ext: "s2", at: "2026-09-01T07:00:30Z",
+          elapsed: 3600, moving: 3500, dist: 10000 }),
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_live_activities
+      where user_id = '${EA}' and source = 'strava'`,
+  );
+  assertEq(r.rows[0].n, 2, "same source is never deduped against itself");
+});
+
+await check("a different sport at the same instant is never matched", async () => {
+  await db.exec(
+    act({ user: EB, source: "strava", ext: "b1", sport: "Run",
+          at: "2026-09-02T07:00:00Z", elapsed: 3600, moving: 3600 }),
+  );
+  await db.exec(
+    act({ user: EB, source: "intervals_icu", ext: "b2", sport: "WeightTraining",
+          at: "2026-09-02T07:00:10Z", elapsed: 3600, moving: 3600 }),
+  );
+  const r = await db.query(
+    `select count(*)::int as n from v_live_activities where user_id = '${EB}'`,
+  );
+  assertEq(r.rows[0].n, 2, "both kept");
+});
+
+await check("replaying a sync writes nothing", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      act({ user: EA, source: "strava", ext: "s1", at: "2026-09-01T07:00:00Z",
+            elapsed: 3600, moving: 3500 }),
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "unique (user_id, source, external_id)");
+});
+
+await check("null ascent means unknown, and never reads as flat", async () => {
+  const r = await db.query(
+    `select ascent_m from activities where user_id = '${EA}' and external_id = 'i2'`,
+  );
+  assertEq(r.rows[0].ascent_m, null, "a treadmill has no vert, not zero vert");
+});
+
+await check("owner reads their own activities and nobody else's", async () => {
+  const mine = await asUser(EA, `select count(*)::int as n from activities`);
+  const theirs = await asUser(EB, `select count(*)::int as n from activities`);
+  assertEq(mine.rows[0].n, 4, "EA sees their four");
+  assertEq(theirs.rows[0].n, 2, "EB sees their two");
+});
+
+await check("a user cannot forge a row claiming to come from a sync", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      EA,
+      `insert into activities (user_id, source, external_id, sport, started_at, elapsed_s)
+       values ('${EA}', 'strava', 'forged', 'Run', now(), 60)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "insert policy allows manual and fit_upload only");
+  const ok = await asUser(
+    EA,
+    `insert into activities (user_id, source, external_id, sport, started_at, elapsed_s)
+     values ('${EA}', 'manual', 'm1', 'Hike', timestamptz '2026-09-03T08:00:00Z', 3600)`,
+  );
+  assertEq(ok.affectedRows ?? 0, 1, "but may log one by hand");
+});
+
+await check("measurements are the sync's; annotations are the owner's", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      EA,
+      `update activities set distance_m = 99999 where external_id = 'm1'`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "a measurement is not editable, even on your own row");
+  const ann = await asUser(
+    EA,
+    `update activities set perceived_rpe = 7, rpe_recorded_at = now(),
+                           name = 'felt easy' where external_id = 'm1'`,
+  );
+  assertEq(ann.affectedRows ?? 0, 1, "rpe, its timestamp and the name are");
+});
+
+await check("a discarded activity leaves every view but stays in Postgres", async () => {
+  await asUser(EA, `update activities set discarded_at = now() where external_id = 'm1'`);
+  const live = await db.query(
+    `select count(*)::int as n from v_live_activities where external_id = 'm1'`,
+  );
+  const raw = await db.query(
+    `select count(*)::int as n from activities where external_id = 'm1'`,
+  );
+  assertEq([live.rows[0].n, raw.rows[0].n], [0, 1], "hidden, not gone");
+});
+
+await check("nobody deletes an activity", async () => {
+  const del = await asUser(EA, `delete from activities where external_id = 'm1'`);
+  assertEq(del.affectedRows ?? 0, 0, "no delete policy");
+});
+
+await check("sync credentials are unreadable by any client", async () => {
+  await db.exec(`
+    insert into integration_credentials (user_id, provider, secret)
+    values ('${EA}', 'intervals_icu', '{"api_key":"secret"}'::jsonb);
+  `);
+  const rls = await db.query(
+    `select relrowsecurity from pg_class where relname = 'integration_credentials'`,
+  );
+  assertEq(rls.rows[0].relrowsecurity, true, "row security enabled");
+  const pol = await db.query(
+    `select count(*)::int as n from pg_policies where tablename = 'integration_credentials'`,
+  );
+  assertEq(pol.rows[0].n, 0, "no policies at all -- service role only");
+  const seen = await asUser(EA, `select count(*)::int as n from integration_credentials`);
+  assertEq(seen.rows[0].n, 0, "not even your own token");
+});
+
+await check("deleting a user takes their activities and credentials", async () => {
+  await db.exec(`delete from auth.users where id = '${EA}'`);
+  const a = await db.query(`select count(*)::int as n from activities where user_id = '${EA}'`);
+  const c = await db.query(
+    `select count(*)::int as n from integration_credentials where user_id = '${EA}'`,
+  );
+  assertEq([a.rows[0].n, c.rows[0].n], [0, 0], "cascaded");
 });
 
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
