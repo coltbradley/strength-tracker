@@ -268,20 +268,36 @@ async function unsubscribe(req: Request, db: Db, userId: string): Promise<Respon
     .eq("endpoint", endpoint)
     .is("revoked_at", null);
   if (error) throw new Error(`unsubscribe: ${error.message}`);
-  // Off means off: an alert already scheduled must not arrive after the
-  // person turned the feature off.
+  // Off means off, for every kind: an alert already scheduled must not arrive
+  // after the person turned the feature off.
   await cancelOpenAlerts(db, userId);
   log("push_unsubscribed", { user_id: userId });
   return json({ ok: true });
 }
 
-async function cancelOpenAlerts(db: Db, userId: string, except?: string): Promise<void> {
+/**
+ * Cancel this user's open alerts.
+ *
+ * `kind` omitted means EVERY kind, and the two callers want different things:
+ * turning push off must silence everything, while arming one alert must
+ * supersede only others of its own kind. One person can only be resting once,
+ * which is where the supersede rule came from -- but a morning check-in prompt
+ * armed for 07:00 must not cancel a rest timer armed for 06:58, and before
+ * `kind` existed it silently would have.
+ */
+async function cancelOpenAlerts(
+  db: Db,
+  userId: string,
+  kind?: string,
+  except?: string,
+): Promise<void> {
   let q = db
     .from("rest_alerts")
     .update({ cancelled_at: new Date().toISOString() })
     .eq("user_id", userId)
     .is("sent_at", null)
     .is("cancelled_at", null);
+  if (kind) q = q.eq("kind", kind);
   if (except) q = q.neq("id", except);
   const { error } = await q;
   if (error) throw new Error(`cancel open alerts: ${error.message}`);
@@ -344,9 +360,10 @@ async function schedule(req: Request, db: Db, userId: string): Promise<Response>
     .single();
   if (insErr || !inserted) throw new Error(`schedule: ${insErr?.message ?? "no row"}`);
   const alertId = inserted.id as string;
-  // One live alert per person. The app cancels its own on the next LOG, but a
-  // reload or a second device cannot, and two buzzes for one rest is a bug.
-  await cancelOpenAlerts(db, userId, alertId);
+  // One live REST alert per person. The app cancels its own on the next LOG,
+  // but a reload or a second device cannot, and two buzzes for one rest is a
+  // bug. Scoped to 'rest' so a queued check-in prompt survives it.
+  await cancelOpenAlerts(db, userId, "rest", alertId);
 
   const work = deliver(db, { alertId, userId, fireAt, label, requestedAt: now });
   if (typeof EdgeRuntime !== "undefined") {
@@ -435,10 +452,13 @@ async function deliver(
     const vapid = await loadVapid(db);
     const payload = new TextEncoder().encode(
       JSON.stringify({
+        kind: "rest",
         title: "Rest over",
         body: a.label,
         alert_id: a.alertId,
         fire_at: new Date(a.fireAt).toISOString(),
+        // One thing is waiting: the set they are about to do.
+        badge: 1,
       }),
     );
 
