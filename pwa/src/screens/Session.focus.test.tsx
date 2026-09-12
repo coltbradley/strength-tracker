@@ -25,6 +25,7 @@ vi.mock("../lib/sync", () => ({
   outbox: {
     pendingSets: vi.fn(async () => []),
     enqueue: vi.fn(async () => undefined),
+    enqueueBatch: vi.fn(async () => undefined),
   },
 }));
 
@@ -170,6 +171,80 @@ describe("Session focus presentation", () => {
 
     expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
+  });
+
+  it("logs both members of a superset round through one ordered local batch", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1));
+    const ops = vi.mocked(outbox.enqueueBatch).mock.calls[0]?.[0] ?? [];
+    expect(ops).toHaveLength(2);
+    expect(ops).toMatchObject([
+      { kind: "insert", table: "sets", payload: { exercise_id: "bench-press", prescription_id: "bench", set_index: 0 } },
+      { kind: "insert", table: "sets", payload: { exercise_id: "barbell-row", prescription_id: "row", set_index: 0 } },
+    ]);
+    const [first, second] = ops.filter(
+      (op): op is Extract<typeof op, { kind: "insert"; table: "sets" }> =>
+        op.kind === "insert" && op.table === "sets",
+    );
+    expect(first?.payload.id).not.toBe(second?.payload.id);
+    expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
+  });
+
+  it("keeps both drafts visible when the local round batch fails", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    vi.mocked(outbox.enqueueBatch).mockRejectedValueOnce(new Error("disk full"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /could not be saved locally.*retry/i,
+    );
+    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain("9");
+    expect(screen.queryByText("LOGGED")).toBeNull();
+    consoleError.mockRestore();
+  });
+
+  it("logs an edited A1 alone without discarding A2's draft", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    const increaseReps = screen.getAllByRole("button", { name: "increase reps by 1" });
+    fireEvent.click(increaseReps[0]);
+    fireEvent.click(increaseReps[1]);
+    fireEvent.click(increaseReps[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { exercise_id: "bench-press", reps: 9 },
+    });
+    expect(vi.mocked(outbox.enqueueBatch)).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain("10");
   });
 
   it("removes focus next while correcting a completed entry", async () => {

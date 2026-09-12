@@ -31,11 +31,13 @@ export interface SetEditorProps {
   rpeShown: boolean;
   logLabel: string;
   logClassName?: string;
+  /** A paired round supplies one shared commit action outside both editors. */
+  showLog?: boolean;
   disabled: boolean;
   onDraftChange(next: Partial<SetDraft>): void;
   onLog(): void;
   onOpenPlates(): void;
-  onOpenPad(kind: "load" | "reps"): void;
+  onOpenPad?(kind: "load" | "reps"): void;
   onToggleLoadEntry(): void;
   onRevealRpe(): void;
 }
@@ -60,6 +62,7 @@ export function SetEditor({
   rpeShown,
   logLabel,
   logClassName = "btn btn-primary btn-log",
+  showLog = true,
   disabled,
   onDraftChange,
   onLog,
@@ -105,7 +108,9 @@ export function SetEditor({
               label="reps"
               inline
               display={String(draft.reps)}
-              onTapValue={() => onOpenPad("reps")}
+              onTapValue={
+                onOpenPad === undefined ? undefined : () => onOpenPad("reps")
+              }
               value={draft.reps}
               min={0}
               max={MAX_REPS}
@@ -171,7 +176,9 @@ export function SetEditor({
               accent
               display={String(toDisplay(draft.entryKg, unit))}
               subText={loadSub}
-              onTapValue={() => onOpenPad("load")}
+              onTapValue={
+                onOpenPad === undefined ? undefined : () => onOpenPad("load")
+              }
               snap
               value={draft.entryKg}
               min={0}
@@ -192,14 +199,16 @@ export function SetEditor({
         </>
       )}
 
-      <button
-        type="button"
-        className={logClassName}
-        disabled={disabled}
-        onClick={onLog}
-      >
-        {logLabel}
-      </button>
+      {showLog && (
+        <button
+          type="button"
+          className={logClassName}
+          disabled={disabled}
+          onClick={onLog}
+        >
+          {logLabel}
+        </button>
+      )}
     </div>
   );
 }

@@ -45,7 +45,8 @@ import { RestTimer, type ActiveRest } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
-import { SetEditor } from "../components/session/SetEditor";
+import { SetEditor, type SetDraft } from "../components/session/SetEditor";
+import { SupersetRoundEditor } from "../components/session/SupersetRoundEditor";
 import { FocusDeck } from "../components/session/FocusDeck";
 import { WorkoutOverview } from "../components/session/WorkoutOverview";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
@@ -104,7 +105,7 @@ import {
   usePlatesOnHand,
   useSetting,
 } from "../hooks/useSettings";
-import { setExerciseLoadEntry } from "../lib/settings";
+import { getExercisePref, setExerciseLoadEntry } from "../lib/settings";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { unlockRestCue } from "../lib/restCue";
 import {
@@ -151,6 +152,38 @@ const LOG_LOCK_MS = 400;
 const MAX_REPS = 100;
 const MAX_LOAD_KG = 999;
 const MAX_REST_SECONDS = 3600;
+
+type SupersetRoundDraft = {
+  keys: readonly [string, string];
+  roundIndex: number;
+  a1: SetDraft;
+  a2: SetDraft;
+};
+
+/** Only a consecutive ordinary two-member run can use the paired round UI. */
+function twoMemberSuperset(
+  entries: ExerciseEntry[],
+  key: string | null,
+): readonly [ExerciseEntry, ExerciseEntry] | null {
+  if (key === null) return null;
+  const index = entries.findIndex((entry) => entry.key === key);
+  const group = entries[index]?.brackets[0]?.superset_group ?? null;
+  if (index < 0 || group === null) return null;
+  let start = index;
+  let end = index;
+  while (start > 0 && entries[start - 1].brackets[0]?.superset_group === group)
+    start--;
+  while (
+    end < entries.length - 1 &&
+    entries[end + 1].brackets[0]?.superset_group === group
+  )
+    end++;
+  if (end - start !== 1) return null;
+  const pair = [entries[start], entries[end]] as const;
+  return pair.every((entry) => (entry.brackets[0]?.tracking ?? "reps") === "reps")
+    ? pair
+    : null;
+}
 
 export function Session() {
   const navigate = useNavigate();
@@ -230,6 +263,8 @@ export function Session() {
   const [rpe, setRpe] = useState<number | null>(null);
   const [rpeAsked, setRpeAsked] = useState<Set<string>>(new Set());
   const [logLocked, setLogLocked] = useState(false);
+  const [roundDrafts, setRoundDrafts] = useState<Record<string, SetDraft>>({});
+  const [roundError, setRoundError] = useState<string | null>(null);
 
   const [rest, setRest] = useState<ActiveRest | null>(null);
   // survives DONE so the next log can still record elapsed rest
@@ -628,6 +663,10 @@ export function Session() {
   const focusEligible = isFocusEligible(entries);
   const focusEntry =
     entries.find((entry) => entry.key === focusKey) ?? openEntry;
+  const focusSupersetPair = useMemo(
+    () => twoMemberSuperset(entries, focusEntry?.key ?? null),
+    [entries, focusEntry?.key],
+  );
 
   // default open: first incomplete entry, once, AFTER sets have merged —
   // otherwise a mid-workout reload opens exercise 1 instead of where the
@@ -950,7 +989,48 @@ export function Session() {
 
   // ---- actions -------------------------------------------------------------
 
-  const logSet = () => {
+  /** Build every ordinary set shape before it reaches the durable outbox. */
+  const buildSetInsert = (
+    entry: ExerciseEntry,
+    draft: SetDraft,
+    bracket: ResolvedPrescriptionRow | null,
+    entryMode: LoadEntry,
+    index: number,
+    actualRest: number | null,
+  ): SetInsert => {
+    const storedLoad = totalKg(draft.entryKg, entryMode);
+    const tick = isTick(entry);
+    return {
+      id: uuid(),
+      session_id: sessionId as string,
+      exercise_id: entry.exercise_id,
+      prescription_id: isLocalBracket(bracket?.id)
+        ? null
+        : (bracket?.id ?? null),
+      set_index: index,
+      set_type: draft.setType,
+      load_kg: tick ? 0 : Math.round(storedLoad * 100) / 100,
+      reps: tick ? 0 : draft.reps,
+      performed_at: new Date().toISOString(),
+      rest_seconds_actual: actualRest,
+      load_entry: loadEntryForSet(entryMode, storedLoad),
+      rpe: tick ? null : draft.rpe,
+    };
+  };
+
+  const setIndexFor = (exerciseId: string): number =>
+    setsRef.current
+      .filter((set) => set.exercise_id === exerciseId)
+      .reduce((max, set) => Math.max(max, set.set_index), -1) + 1;
+
+  const logSet = (
+    loggedDraft: SetDraft = {
+      entryKg,
+      reps,
+      setType: setType as BracketKind,
+      rpe,
+    },
+  ) => {
     // FIRST, and before every guard below: iOS only lets an AudioContext start
     // inside a user gesture, and this tap is the gesture that starts the rest
     // the cue will end. Running it ahead of the early returns keeps it tied to
@@ -974,48 +1054,20 @@ export function Session() {
       persistSkips(unskipped);
     }
 
-    const nextIndex =
-      setsRef.current
-        .filter((s) => s.exercise_id === openEntry.exercise_id)
-        .reduce((m, s) => Math.max(m, s.set_index), -1) + 1;
-    const set: SetInsert = {
-      id: uuid(),
-      session_id: sessionId,
-      // The movement ACTUALLY PERFORMED. On a substituted entry that is the
-      // exercise the lifter swapped in, not the one the plan named — which is
-      // the whole point: History, e1RM and volume must describe what was
-      // lifted. The prescription link below is unaffected by that and stays
-      // the planned bracket; the two halves are deliberately different
-      // questions ("what did you do" vs "which slot was it"), and collapsing
-      // them into one is the mistake this comment exists to prevent. See
-      // `ExerciseEntry.substitutedFor`.
-      exercise_id: openEntry.exercise_id,
-      // the set links to the BRACKET it fulfills, so adherence analytics see
-      // the coach's actual scheme (warmups link to the upcoming bracket).
-      // A LOCALLY declared bracket is not a prescription row — it exists only
-      // in this device's cache — and prescription_id is a foreign key, so it
-      // must go in as null or the insert fails and the offline queue retries
-      // it forever.
-      prescription_id: isLocalBracket(currentBracket?.id)
-        ? null
-        : (currentBracket?.id ?? null),
-      set_index: nextIndex,
-      set_type: setType,
-      // A tick is a real row in `sets`: 0 reps at 0 load, both already legal.
-      // The alternative is a second kind of completion record that no view, no
-      // chart and no MCP tool knows how to read — and volume and e1RM already
-      // ignore it, through the filters they have always had rather than a new
-      // coupling to the plan.
-      // ALWAYS the total system load; load_entry records how it was typed
-      load_kg: isTick(openEntry) ? 0 : Math.round(totalLoadKg * 100) / 100,
-      reps: isTick(openEntry) ? 0 : reps,
-      performed_at: new Date().toISOString(),
-      rest_seconds_actual: recordableRest(),
-      load_entry: loadEntryForSet(loadEntry, totalLoadKg),
-      // Null unless this set was rated. A tick has no numbers and no chip
-      // row, so it never carries one either.
-      rpe: isTick(openEntry) ? null : rpe,
-    };
+    const nextIndex = setIndexFor(openEntry.exercise_id);
+    const bracket = bracketFor(
+      openEntry,
+      countFor(openEntry, loggedDraft.setType),
+      loggedDraft.setType,
+    );
+    const set = buildSetInsert(
+      openEntry,
+      loggedDraft,
+      bracket,
+      loadEntry,
+      nextIndex,
+      recordableRest(),
+    );
     const next = applySets((prev) => [...prev, set]);
     cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
       reportError(e, "cache session sets"),
@@ -1073,6 +1125,85 @@ export function Session() {
     // about set 4, and a sticky value would quietly attach one lifter's one
     // honest answer to every row after it.
     setRpe(null);
+  };
+
+  const logRound = async (round: SupersetRoundDraft) => {
+    if (!sessionId || logLocked || !setsLoaded || setsFailed) return;
+    const first = entries.find((entry) => entry.key === round.keys[0]);
+    const second = entries.find((entry) => entry.key === round.keys[1]);
+    if (!first || !second) return;
+    const members = [first, second] as const;
+
+    setLogLocked(true);
+    setVoidArm(null);
+    const actualRest = recordableRest();
+    const nextByExercise = new Map<string, number>();
+    const nextIndex = (exerciseId: string) => {
+      const value = nextByExercise.get(exerciseId) ?? setIndexFor(exerciseId);
+      nextByExercise.set(exerciseId, value + 1);
+      return value;
+    };
+    const buildRoundSet = (entry: ExerciseEntry, draft: SetDraft) => {
+      const bracket = bracketFor(
+        entry,
+        countFor(entry, draft.setType),
+        draft.setType,
+      );
+      const entryMode = resolveLoadEntry({
+        override: getExercisePref(entry.exercise_id).loadEntry,
+        prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
+        equipment: equipMap[entry.exercise_id] ?? null,
+        name: entry.name,
+      });
+      return buildSetInsert(
+        entry,
+        draft,
+        bracket,
+        entryMode,
+        nextIndex(entry.exercise_id),
+        actualRest,
+      );
+    };
+    const inserts = [
+      buildRoundSet(first, round.a1),
+      buildRoundSet(second, round.a2),
+    ];
+
+    try {
+      // This transaction is the local commit point. No set reaches React or
+      // the cache until both queue rows exist together in IndexedDB.
+      await outbox.enqueueBatch(
+        inserts.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })),
+      );
+      const next = applySets((prior) => [...prior, ...inserts]);
+      cacheSet(cacheKeys.sessionSets(sessionId), next).catch((error: unknown) =>
+        reportError(error, "cache superset round"),
+      );
+      setRoundDrafts((prior) => {
+        const next = { ...prior };
+        delete next[round.keys[0]];
+        delete next[round.keys[1]];
+        return next;
+      });
+      setRoundError(null);
+
+      const doneAfter = (entry: ExerciseEntry): boolean =>
+        skips.has(entry.key) || entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
+      const now = Date.now();
+      restRef.current = { startedAt: now };
+      const forLabel = `${members[1].name} set ${inserts[1].set_index + 1}`;
+      const showStrip = autoStartRest && supersetPartnerOf(entries, members[0].key, doneAfter) === null;
+      if (showStrip)
+        setRest({ startedAt: now, targetSeconds: restSeconds, forLabel });
+      disarmRestAlert();
+      if (showStrip) armRestAlert(now + restSeconds * 1000, forLabel);
+      mirrorRest(showStrip ? restSeconds : null, showStrip ? forLabel : null);
+    } catch (error) {
+      reportError(error, "queue superset round");
+      setRoundError("This round could not be saved locally. Check storage and retry.");
+    } finally {
+      window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
+    }
   };
 
   const openSheet = (kind: "search" | "swap" | "plates") => {
@@ -1499,6 +1630,30 @@ export function Session() {
     const done = entryProgress(entry);
     const total = prescribed ? targetSets(entry) : null;
     const planMet = total !== null && done >= total;
+    const pairedRound =
+      !editing &&
+      presentation === "focus" &&
+      focusSupersetPair !== null &&
+      !focusSupersetPair.every(entryDone) &&
+      entry.key === focusSupersetPair[0].key;
+    const roundA1 = pairedRound ? roundDraftFor(focusSupersetPair[0]) : null;
+    const roundA2 = pairedRound ? roundDraftFor(focusSupersetPair[1]) : null;
+    const roundTagA1 = pairedRound
+      ? (supersetInfo.get(focusSupersetPair[0].key)?.tag ?? "A1")
+      : "A1";
+    const roundTagA2 = pairedRound
+      ? (supersetInfo.get(focusSupersetPair[1].key)?.tag ?? "A2")
+      : "A2";
+    const roundLetter = roundTagA1.replace(/\d+$/, "");
+    const roundIndex = pairedRound
+      ? Math.min(
+          entryProgress(focusSupersetPair[0]),
+          entryProgress(focusSupersetPair[1]),
+        ) + 1
+      : 0;
+    const roundTotal = pairedRound
+      ? Math.min(targetSets(focusSupersetPair[0]), targetSets(focusSupersetPair[1]))
+      : 0;
 
     return (
       <>
@@ -1591,6 +1746,40 @@ export function Session() {
                         </div>
                       )}
 
+                      {pairedRound && roundA1 && roundA2 ? (
+                        <SupersetRoundEditor
+                          label={`SUPERSET ${roundLetter} · ROUND ${roundIndex} OF ${roundTotal}`}
+                          a1={{
+                            tag: roundTagA1,
+                            editor: roundEditorFor(focusSupersetPair[0], roundA1),
+                          }}
+                          a2={{
+                            tag: roundTagA2,
+                            editor: roundEditorFor(focusSupersetPair[1], roundA2),
+                          }}
+                          disabled={logLocked || !setsLoaded || setsFailed}
+                          error={roundError}
+                          singleLogLabel={`Log ${roundTagA1} only`}
+                          onLogRound={(drafts) =>
+                            void logRound({
+                              keys: [focusSupersetPair[0].key, focusSupersetPair[1].key],
+                              roundIndex,
+                              a1: drafts.a1,
+                              a2: drafts.a2,
+                            })
+                          }
+                          onLogA1Only={() => {
+                            if (!openEntry || !sessionId || logLocked || !setsLoaded || setsFailed)
+                              return;
+                            logSet(roundA1);
+                            setRoundDrafts((prior) => {
+                              const next = { ...prior };
+                              delete next[focusSupersetPair[0].key];
+                              return next;
+                            });
+                          }}
+                        />
+                      ) : (
                       <SetEditor
                         entry={entry}
                         /* A legacy backoff is legal historical data but not a
@@ -1639,6 +1828,7 @@ export function Session() {
                           )
                         }
                       />
+                      )}
 
                       {setsFailed && (
                         <p className="microcopy">
@@ -1927,6 +2117,100 @@ export function Session() {
   const isTick = (entry: ExerciseEntry | null): boolean =>
     entry?.brackets[0]?.tracking === "done";
 
+  const defaultRoundDraft = (entry: ExerciseEntry): SetDraft => {
+    const kind = suggestedKind(entry);
+    const bracket = bracketFor(entry, countFor(entry, kind), kind);
+    const entryMode = resolveLoadEntry({
+      override: getExercisePref(entry.exercise_id).loadEntry,
+      prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
+      equipment: equipMap[entry.exercise_id] ?? null,
+      name: entry.name,
+    });
+    const last = setsForExercise(entry.exercise_id).at(-1);
+    const prefill = prefillSet({
+      prescription: bracket
+        ? {
+            resolved_load_kg: entry.substitutedFor
+              ? null
+              : bracket.resolved_load_kg,
+            plate_load_kg: entry.substitutedFor ? null : bracket.plate_load_kg,
+            reps_min: bracket.reps_min,
+            reps_max: bracket.reps_max,
+          }
+        : null,
+      lastThisSession: last
+        ? { load_kg: last.load_kg, reps: last.reps }
+        : null,
+      lastSession: lastActuals[entry.exercise_id] ?? null,
+    });
+    return {
+      entryKg: Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100,
+      reps: prefill.reps,
+      setType: kind,
+      rpe: null,
+    };
+  };
+
+  const roundDraftFor = (entry: ExerciseEntry): SetDraft =>
+    roundDrafts[entry.key] ??
+    (entry.key === openEntry?.key
+      ? { entryKg, reps, setType: setType as BracketKind, rpe }
+      : defaultRoundDraft(entry));
+
+  const roundEditorFor = (entry: ExerciseEntry, draft: SetDraft) => {
+    const bracket = bracketFor(entry, countFor(entry, draft.setType), draft.setType);
+    const equipment = equipMap[entry.exercise_id] ?? null;
+    const entryMode = resolveLoadEntry({
+      override: getExercisePref(entry.exercise_id).loadEntry,
+      prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
+      equipment,
+      name: entry.name,
+    });
+    const storedLoad = totalKg(draft.entryKg, entryMode);
+    const perSide = entryMode === "per_side";
+    return {
+      entry,
+      draft,
+      tracking: "reps" as const,
+      loadPresentation: {
+        perSide,
+        totalKg: storedLoad,
+        plateSplit: null,
+        barKg: 0,
+        hint: null,
+        canToggleEntry: offersLoadEntry({
+          override: getExercisePref(entry.exercise_id).loadEntry,
+          prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
+          equipment,
+          name: entry.name,
+        }),
+      },
+      unit,
+      maxEntryKg: perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG,
+      loadSteps: loadSteps(entry.exercise_id, unit),
+      rpeShown: rpeShown(entry.exercise_id),
+      logLabel: "unused",
+      disabled: logLocked || !setsLoaded || setsFailed,
+      onDraftChange: (next: Partial<SetDraft>) => {
+        setRoundDrafts((prior) => ({
+          ...prior,
+          [entry.key]: { ...roundDraftFor(entry), ...next },
+        }));
+        setRoundError(null);
+      },
+      onLog: () => undefined,
+      onOpenPlates: () => undefined,
+      onOpenPad: undefined,
+      onToggleLoadEntry: () =>
+        setExerciseLoadEntry(
+          entry.exercise_id,
+          entryMode === "per_side" ? "total" : "per_side",
+        ),
+      onRevealRpe: () =>
+        setRpeAsked((prior) => new Set([...prior, entry.exercise_id])),
+    };
+  };
+
   /** "LOG WARMUP 1 OF 2", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan.
    *  Warmups count against the warmups the coach wrote, working sets against
    *  the working sets — two runs, two targets, never added together. */
@@ -2001,7 +2285,10 @@ export function Session() {
                 setFocusKey(entry.key);
                 setOpenKey(entry.key);
               }}
-              canAdvance={!editing && !supersetInfo.has(focusEntry.key)}
+              canAdvance={
+                !editing &&
+                (focusSupersetPair === null || focusSupersetPair.every(entryDone))
+              }
               renderEditor={(entry) => renderEditor(entry, false)}
             />
           ) : (
