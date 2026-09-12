@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import http from "node:http";
 import { test } from "node:test";
 
 import { createRelayServer, validateRelayConfig } from "./strength-mcp-relay.mjs";
@@ -66,19 +67,50 @@ test("rejects non-MCP routes and unsupported methods", async () => {
     assert.equal((await fetch(`${relay.url}/wrong`, { method: "POST" })).status, 404);
     const response = await fetch(relay.url, { method: "GET" });
     assert.equal(response.status, 405);
-    assert.equal(response.headers.get("allow"), "POST, OPTIONS");
+    assert.equal(response.headers.get("allow"), "POST");
   } finally {
     await relay.stop();
   }
 });
 
-test("answers an MCP CORS preflight without reaching the upstream", async () => {
+test("refuses browser requests and non-loopback hosts without reaching the upstream", async () => {
   let called = false;
-  const relay = await startRelay({ fetchImpl: async () => (called = true) });
+  const relay = await startRelay({ fetchImpl: async () => { called = true; return new Response("{}"); } });
+  const { port } = new URL(relay.url);
+  const post = (headers) => new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, path: "/mcp", method: "POST", headers }, (res) => {
+      res.resume();
+      resolve(res);
+    });
+    req.on("error", reject);
+    req.end("{}");
+  });
   try {
-    const response = await fetch(relay.url, { method: "OPTIONS" });
-    assert.equal(response.status, 204);
-    assert.equal(response.headers.get("access-control-allow-methods"), "POST, OPTIONS");
+    const cases = [
+      { origin: "https://evil.example" },
+      { origin: "null" },
+      { host: `evil.example:${port}` },
+    ];
+    for (const headers of cases) {
+      const response = await post(headers);
+      assert.equal(response.statusCode, 403, JSON.stringify(headers));
+      assert.equal(response.headers["access-control-allow-origin"], undefined);
+    }
+    const preflight = await fetch(relay.url, { method: "OPTIONS" });
+    assert.equal(preflight.status, 405);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), null);
+    assert.equal(called, false);
+  } finally {
+    await relay.stop();
+  }
+});
+
+test("refuses an oversized body", async () => {
+  let called = false;
+  const relay = await startRelay({ fetchImpl: async () => { called = true; return new Response("{}"); } });
+  try {
+    const response = await fetch(relay.url, { method: "POST", body: "x".repeat(4 * 1024 * 1024 + 1) }).catch(() => null);
+    if (response) assert.equal(response.status, 413);
     assert.equal(called, false);
   } finally {
     await relay.stop();

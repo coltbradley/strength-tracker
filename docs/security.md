@@ -76,8 +76,10 @@ the generated seed are gitignored; `.env.example` documents shape only.
 - **Compromised PWA host / XSS**: the anon key + a phished session gets RLS
   scope only: read own data, append sets. No deletes, no history rewrites.
 - **Compromised local user account**: a process running as that macOS user can
-  call the loopback relay and use its Keychain-backed bearer. The relay never
-  accepts remote network traffic, and the bearer remains limited to one MCP
+  call the loopback relay and use its Keychain-backed bearer. A web page cannot:
+  the relay sends no CORS headers, refuses any request carrying an `Origin`,
+  and refuses a non-loopback `Host`, which closes both a cross-site `fetch` to
+  127.0.0.1 and DNS rebinding. The relay never accepts remote network traffic, and the bearer remains limited to one MCP
   identity; revoke its `mcp_tokens` row and delete its Keychain item to stop it.
 - **Denial of service**: out of scope; Supabase platform limits apply and
   the data is backed up by the platform.

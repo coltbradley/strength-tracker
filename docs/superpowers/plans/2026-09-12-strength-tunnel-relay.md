@@ -73,7 +73,7 @@ Expected: FAIL because `scripts/strength-mcp-relay.mjs` does not exist.
 
 - [ ] **Step 3: Implement the smallest relay**
 
-Implement `validateRelayConfig` to parse the configured URL, require `https:`, reject URL credentials and fragments, and normalize `/mcp`. Implement `createRelayServer` with `http.createServer`; return `204` with CORS headers for `OPTIONS /mcp`, reject every other route and method, and proxy the raw body using `fetch` with `redirect: "error"`. Copy only `content-type`, `cache-control`, and `mcp-session-id` from the response. Remove caller `authorization` and `x-api-key` before adding the configured bearer. Log only lifecycle metadata.
+Implement `validateRelayConfig` to parse the configured URL, require `https:`, reject URL credentials and fragments, and normalize `/mcp`. Implement `createRelayServer` with `http.createServer`; refuse any request with an `Origin` or a non-loopback `Host` (403), send no CORS headers, reject every other route and method, cap the body at 4 MB, and proxy the raw body using `fetch` with `redirect: "error"`. Copy only `content-type`, `cache-control`, and `mcp-session-id` from the response. Remove caller `authorization` and `x-api-key` before adding the configured bearer. Log only lifecycle metadata.
 
 - [ ] **Step 4: Run the relay test to verify it passes**
 

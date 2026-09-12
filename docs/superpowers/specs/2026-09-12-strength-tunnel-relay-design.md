@@ -16,7 +16,10 @@ OAuth, expand the MCP tool list, or alter any database authorization rule.
 ## Architecture
 
 `tunnel-client` connects to a relay bound to `127.0.0.1`. The relay accepts
-only `POST /mcp` and CORS preflight requests. It forwards the original
+only `POST /mcp` from a non-browser caller: no CORS headers, any request with
+an `Origin` is refused, and the `Host` must be a loopback name. (The first
+version answered CORS preflights with `*`, which let any web page on the Mac use
+the relay's bearer; see docs/security.md.) It forwards the original
 JSON-RPC body to the configured Strength Tracker MCP URL while discarding any
 incoming authorization header and adding one fixed `Authorization: Bearer`
 header.

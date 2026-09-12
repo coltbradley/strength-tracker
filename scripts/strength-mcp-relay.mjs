@@ -12,24 +12,47 @@ const REQUEST_HEADERS = [
   "mcp-session-id",
 ];
 const RESPONSE_HEADERS = ["cache-control", "content-type", "mcp-session-id"];
-const CORS_HEADERS = {
-  "access-control-allow-headers": "accept, authorization, content-type, mcp-protocol-version, mcp-session-id, x-api-key",
-  "access-control-allow-methods": "POST, OPTIONS",
-  "access-control-allow-origin": "*",
-};
+// The only legitimate caller is tunnel-client, a local process. A browser is
+// never one, and the relay attaches a real bearer to whatever it forwards, so
+// any page open on this Mac that could reach 127.0.0.1 would otherwise get the
+// owner's full MCP access. So: no CORS headers at all, anything carrying an
+// Origin (every browser sends one on a cross-origin POST) is refused, and the
+// Host must be a loopback name, which a DNS-rebound hostname is not.
+// Sec-Fetch-* is deliberately not checked: Node's own fetch sends it.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const UPSTREAM_HEADERS_TIMEOUT_MS = 30_000;
+
+class BodyTooLarge extends Error {}
 
 function requestBody(request) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    request.on("data", (chunk) => chunks.push(chunk));
+    let size = 0;
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        request.destroy();
+        reject(new BodyTooLarge());
+        return;
+      }
+      chunks.push(chunk);
+    });
     request.on("end", () => resolve(Buffer.concat(chunks)));
     request.on("error", reject);
   });
 }
 
+export function isBrowserOrForeignRequest(headers) {
+  if (headers.origin !== undefined) return true;
+  const host = headers.host;
+  if (typeof host !== "string") return true;
+  const hostname = host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
+  return !LOOPBACK_HOSTS.has(hostname.toLowerCase());
+}
+
 function textResponse(response, status, message, headers = {}) {
   response.writeHead(status, {
-    ...CORS_HEADERS,
     "content-type": "application/json; charset=utf-8",
     ...headers,
   });
@@ -71,7 +94,7 @@ function forwardHeaders(request) {
 }
 
 function responseHeaders(upstream) {
-  const headers = { ...CORS_HEADERS };
+  const headers = {};
   for (const name of RESPONSE_HEADERS) {
     const value = upstream.headers.get(name);
     if (value) headers[name] = value;
@@ -85,25 +108,37 @@ export function createRelayServer({ upstreamUrl, token, logger = () => {}, fetch
   return http.createServer(async (request, response) => {
     const startedAt = Date.now();
     const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-    if (path !== "/mcp") return textResponse(response, 404, "not found");
-    if (request.method === "OPTIONS") {
-      response.writeHead(204, CORS_HEADERS);
-      response.end();
-      return;
+    if (isBrowserOrForeignRequest(request.headers)) {
+      logger({ event: "relay_refused", reason: "browser_or_foreign_host", duration_ms: Date.now() - startedAt });
+      return textResponse(response, 403, "forbidden");
     }
+    if (path !== "/mcp") return textResponse(response, 404, "not found");
     if (request.method !== "POST") {
-      return textResponse(response, 405, "method not allowed", { allow: "POST, OPTIONS" });
+      return textResponse(response, 405, "method not allowed", { allow: "POST" });
     }
 
+    let body;
+    try {
+      body = await requestBody(request);
+    } catch (error) {
+      if (error instanceof BodyTooLarge) return textResponse(response, 413, "request too large", { connection: "close" });
+      return textResponse(response, 400, "bad request");
+    }
+
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), UPSTREAM_HEADERS_TIMEOUT_MS);
     try {
       const headers = forwardHeaders(request);
       headers.set("authorization", `Bearer ${token}`);
       const upstreamResponse = await fetchImpl(upstream.href, {
         method: "POST",
         headers,
-        body: await requestBody(request),
+        body,
         redirect: "error",
+        signal: abort.signal,
       });
+      // the timeout bounds the wait for headers only; an SSE body may stream
+      clearTimeout(timer);
       response.writeHead(upstreamResponse.status, responseHeaders(upstreamResponse));
       if (!upstreamResponse.body) {
         response.end();
@@ -112,6 +147,7 @@ export function createRelayServer({ upstreamUrl, token, logger = () => {}, fetch
       }
       logger({ event: "relay_request", method: "POST", status: upstreamResponse.status, duration_ms: Date.now() - startedAt });
     } catch {
+      clearTimeout(timer);
       logger({ event: "relay_request", method: "POST", status: 502, duration_ms: Date.now() - startedAt });
       if (!response.headersSent) textResponse(response, 502, "upstream unavailable");
       else response.destroy();
