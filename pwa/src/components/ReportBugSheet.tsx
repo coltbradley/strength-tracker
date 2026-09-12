@@ -99,23 +99,22 @@ export function ReportBugSheet({
 
   const rows = diagnostics();
 
-  const submit = () => {
+  const submit = async () => {
     setBusy(true);
-    const sent = sendBugReport({
+    const result = await sendBugReport({
       message: text.trim(),
       diagnostics: diagnostics(),
     });
     setBusy(false);
+    if (!result.ok) {
+      // Keep the sheet and its text intact so a failed network write can be
+      // retried instead of making someone type their report again.
+      toast(result.message, "error");
+      return;
+    }
     onClose();
     setText("");
-    // Never claim it was filed when no DSN is configured — that would be a
-    // silent drop dressed up as a thank-you.
-    toast(
-      sent
-        ? "Report sent. Thank you."
-        : "Report not sent: no error reporting configured on this build.",
-      sent ? "info" : "error",
-    );
+    toast("Report saved. Thank you.", "info");
   };
 
   return (

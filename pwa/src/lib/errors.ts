@@ -1,6 +1,7 @@
 // Single error funnel: console + optional Sentry (VITE_SENTRY_DSN) + in-app
 // toast. Never swallow; everything caught anywhere routes through reportError.
 import { buildStamp } from "./build";
+import { supabase } from "./supabase";
 
 
 type ToastKind = "error" | "info";
@@ -233,28 +234,71 @@ export interface BugReport {
   diagnostics: BugDiagnostic[];
 }
 
+export type BugReportResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+const BUG_REPORT_RETRY_MESSAGE =
+  "Report not saved. Check your connection and try again.";
+
 /**
- * Send a user-written bug report. Returns false when there is nowhere to send
- * it (no DSN configured), so the caller can say so rather than pretending.
+ * Persist a user-written bug report before giving success UI. Sentry is still
+ * useful for the replay and diagnostic context, but it is only a mirror: a
+ * remote inbox can filter, retain, or fail independently of the app's record.
  *
- * It goes as Sentry USER FEEDBACK (`type: 'feedback'`), not an exception: the
- * point is a person asking for help, and the feedback inbox is where a person
- * gets answered. The diagnostics ride along as event context.
+ * The feedback table derives user_id from the authenticated RLS session. The
+ * PWA deliberately never supplies it, so a client cannot file on another
+ * person's behalf.
  */
-export function sendBugReport(report: BugReport): boolean {
-  if (!sentry) return false;
-  sentry.withScope((scope) => {
-    scope.setContext(
-      "diagnostics",
-      Object.fromEntries(report.diagnostics.map((d) => [d.label, d.value])),
-    );
-    scope.setTag("source", "in-app-report");
-    sentry?.captureFeedback({
-      message: report.message,
-      source: "in-app-report",
+export async function sendBugReport(report: BugReport): Promise<BugReportResult> {
+  const message = report.message.trim();
+  const title = message.replace(/\s+/g, " ").slice(0, 200);
+  if (!title) {
+    return { ok: false, message: "Describe the problem before sending it." };
+  }
+
+  const context = report.diagnostics
+    .map((diagnostic) => `${diagnostic.label}: ${diagnostic.value}`)
+    .join("\n");
+
+  try {
+    const { error } = await supabase.from("feedback").insert({
+      kind: "bug",
+      title,
+      detail: message,
+      context,
+      source: "user",
     });
-  });
-  return true;
+
+    if (error) {
+      reportError(new Error(`bug report write: ${error.message}`));
+      return { ok: false, message: BUG_REPORT_RETRY_MESSAGE };
+    }
+  } catch (error) {
+    reportError(error, "write bug report");
+    return { ok: false, message: BUG_REPORT_RETRY_MESSAGE };
+  }
+
+  // This deliberately comes after the durable write. Sentry feedback is useful
+  // for replay and aggregation, but it must never turn a saved report into a
+  // failed one or a failed mirror into a false thank-you.
+  try {
+    sentry?.withScope((scope) => {
+      scope.setContext(
+        "diagnostics",
+        Object.fromEntries(report.diagnostics.map((d) => [d.label, d.value])),
+      );
+      scope.setTag("source", "in-app-report");
+      sentry?.captureFeedback({
+        message,
+        source: "in-app-report",
+      });
+    });
+  } catch (error) {
+    reportError(error, "mirror bug report to Sentry");
+  }
+
+  return { ok: true };
 }
 
 export function reportError(err: unknown, context?: string): void {

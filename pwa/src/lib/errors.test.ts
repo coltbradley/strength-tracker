@@ -3,10 +3,14 @@
 // 1. What the sheet shows is what gets sent. The sheet renders the array
 //    buildBugDiagnostics returns and hands the SAME array to sendBugReport,
 //    so pinning the rows here pins both halves at once.
-// 2. It arrives as Sentry USER FEEDBACK, with the diagnostics attached. A
-//    report that lands as an anonymous exception is a report nobody answers.
+// 2. It is saved durably before Sentry gets a best-effort mirror. A report
+//    that only enters a third-party inbox is not a report we can rely on.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { feedbackInsert } = vi.hoisted(() => ({
+  feedbackInsert: vi.fn(),
+}));
 
 const scope = {
   setContext: vi.fn(),
@@ -21,6 +25,12 @@ vi.mock("@sentry/react", () => ({
   withScope: (fn: (s: typeof scope) => void) => fn(scope),
   captureFeedback: vi.fn(),
   captureException: vi.fn(),
+}));
+
+vi.mock("./supabase", () => ({
+  supabase: {
+    from: vi.fn(() => ({ insert: feedbackInsert })),
+  },
 }));
 
 import * as Sentry from "@sentry/react";
@@ -143,22 +153,41 @@ describe("buildBugDiagnostics", () => {
 describe("sendBugReport", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    feedbackInsert.mockResolvedValue({ error: null });
   });
 
-  it("refuses to pretend when there is nowhere to send it", () => {
-    // no DSN has been configured yet, so nothing is wired up
-    expect(sendBugReport({ message: "hi", diagnostics: [] })).toBe(false);
+  it("saves the report even when Sentry is not configured", async () => {
+    const result = await sendBugReport({ message: "it broke", diagnostics: [] });
+
+    expect(result).toEqual({ ok: true });
+    expect(feedbackInsert).toHaveBeenCalledWith({
+      kind: "bug",
+      title: "it broke",
+      detail: "it broke",
+      context: "",
+      source: "user",
+    });
     expect(Sentry.captureFeedback).not.toHaveBeenCalled();
   });
 
-  it("arrives as user feedback with the diagnostics attached", async () => {
+  it("saves the shown diagnostics and mirrors a durable report to Sentry", async () => {
     vi.stubEnv("VITE_SENTRY_DSN", "https://key@o0.ingest.sentry.io/1");
     await initSentry();
 
     const diagnostics = buildBugDiagnostics(FACTS);
-    expect(
-      sendBugReport({ message: "it did something weird", diagnostics }),
-    ).toBe(true);
+    const result = await sendBugReport({
+      message: "it did something weird",
+      diagnostics,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(feedbackInsert).toHaveBeenCalledWith({
+      kind: "bug",
+      title: "it did something weird",
+      detail: "it did something weird",
+      context: diagnostics.map((d) => `${d.label}: ${d.value}`).join("\n"),
+      source: "user",
+    });
 
     expect(Sentry.captureFeedback).toHaveBeenCalledWith({
       message: "it did something weird",
@@ -175,5 +204,20 @@ describe("sendBugReport", () => {
     expect(context["Waiting to sync"]).toBe(
       "3 queued · 1 failed · error · last error: Failed to fetch",
     );
+  });
+
+  it("keeps the failure visible when the durable write is rejected", async () => {
+    feedbackInsert.mockResolvedValue({ error: { message: "permission denied" } });
+
+    const result = await sendBugReport({
+      message: "the plan would not save",
+      diagnostics: [],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: "Report not saved. Check your connection and try again.",
+    });
+    expect(Sentry.captureFeedback).not.toHaveBeenCalled();
   });
 });
