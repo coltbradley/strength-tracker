@@ -78,6 +78,7 @@ export interface OutboxTransport {
 
 export interface Outbox {
   enqueue(op: OutboxOp): Promise<void>;
+  enqueueBatch(ops: readonly OutboxOp[]): Promise<void>;
   flush(): Promise<void>;
   /**
    * Re-queue the dead items a retry could actually help, and flush. Items
@@ -358,6 +359,17 @@ export function createOutbox({
     };
   }
 
+  function makePendingItem(op: OutboxOp, owner: string | null): OutboxItem {
+    return {
+      op,
+      created_at: new Date().toISOString(),
+      retries: 0,
+      last_error: null,
+      status: "pending",
+      ...(owner === null ? {} : { user_id: owner }),
+    };
+  }
+
   async function refreshCounts(): Promise<void> {
     const db = await getDb();
     setStatus(counts(await readAll(db)));
@@ -506,16 +518,20 @@ export function createOutbox({
   return {
     async enqueue(op) {
       const db = await getDb();
+      await db.add("outbox", makePendingItem(op, whoAmI()));
+      await refreshCounts();
+      void flush();
+    },
+
+    async enqueueBatch(ops) {
+      if (ops.length === 0) return;
+      const db = await getDb();
       const owner = whoAmI();
-      const item: OutboxItem = {
-        op,
-        created_at: new Date().toISOString(),
-        retries: 0,
-        last_error: null,
-        status: "pending",
-        ...(owner === null ? {} : { user_id: owner }),
-      };
-      await db.add("outbox", item);
+      const tx = db.transaction("outbox", "readwrite");
+      for (const op of ops) {
+        await tx.store.add(makePendingItem(op, owner));
+      }
+      await tx.done;
       await refreshCounts();
       void flush();
     },

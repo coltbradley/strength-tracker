@@ -7,7 +7,7 @@ import {
   type OutboxTransport,
   type TransportError,
 } from "./outbox";
-import { getDb, resetDbForTests } from "./db";
+import { getDb, resetDbForTests, type Database, type OutboxOp } from "./db";
 import type { SessionInsert, SetInsert } from "./types";
 
 interface Call {
@@ -93,6 +93,10 @@ function makeSet(
 
 const setA = makeSet("22222222-2222-4222-8222-222222222222", 0);
 const setB = makeSet("33333333-3333-4333-8333-333333333333", 1);
+const roundOps: readonly OutboxOp[] = [
+  { kind: "insert", table: "sets", payload: setA },
+  { kind: "insert", table: "sets", payload: setB },
+];
 
 describe("outbox", () => {
   let online: boolean;
@@ -116,6 +120,69 @@ describe("outbox", () => {
     for (const op of ops) await outbox.enqueue(op);
     await outbox.flush();
   }
+
+  it("stores a set round as two ordered items before any replay", async () => {
+    const { transport } = makeTransport();
+    const outbox = build(transport);
+
+    await outbox.enqueueBatch(roundOps);
+
+    const db = await getDb();
+    expect(
+      (await db.getAll("outbox")).map(
+        (item) =>
+          (item.op as Extract<
+            OutboxOp,
+            { kind: "insert"; table: "sets" }
+          >).payload.id,
+      ),
+    ).toEqual([setA.id, setB.id]);
+  });
+
+  it("leaves no part of the batch when its IndexedDB transaction aborts", async () => {
+    const { transport } = makeTransport();
+    let adds = 0;
+    const done = Promise.reject(new Error("disk full"));
+    void done.catch(() => undefined);
+    const failingDb = {
+      transaction: () => ({
+        store: {
+          add: async () => {
+            adds++;
+            if (adds === 2) throw new Error("disk full");
+            return 1;
+          },
+        },
+        done,
+      }),
+    } as unknown as Database;
+    const failingOutbox = createOutbox({
+      getDb: () => Promise.resolve(failingDb),
+      transport,
+      isOnline: () => false,
+    });
+
+    await expect(failingOutbox.enqueueBatch(roundOps)).rejects.toThrow(
+      "disk full",
+    );
+
+    const db = await getDb();
+    expect(await db.count("outbox")).toBe(0);
+  });
+
+  it("replays both batch members in order and preserves normal idempotency", async () => {
+    const { calls, transport } = makeTransport();
+    const outbox = build(transport);
+
+    await outbox.enqueueBatch(roundOps);
+    online = true;
+    await outbox.flush();
+
+    expect(calls.map((call) => (call.payload as SetInsert).id)).toEqual([
+      setA.id,
+      setB.id,
+    ]);
+  });
 
   it("flushes queued writes in enqueue order", async () => {
     const { calls, transport } = makeTransport();
