@@ -186,9 +186,10 @@ describe("canDoWorkoutNow", () => {
     expect(canDoWorkoutNow("DRAFT")).toBe(false);
   });
 
-  it("leaves an undated day to be rescheduled instead", () => {
-    // "Ahead or behind" needs a schedule to be ahead of or behind.
-    expect(canDoWorkoutNow("NO DATE")).toBe(false);
+  it("offers a fully programmed undated day", () => {
+    // A coach can add an undated day beside dated ones. Its lack of a calendar
+    // slot must not turn a real workout into something the person cannot do.
+    expect(canDoWorkoutNow("NO DATE")).toBe(true);
   });
 });
 

@@ -287,6 +287,37 @@ export async function scheduleRestAlert(
   }
 }
 
+/** The result of an explicit, user-initiated push test from Settings. */
+export type RestAlertTestResult = "sent" | "unavailable" | "failed";
+
+/**
+ * Ask the server to send a visible test push to THIS browser subscription.
+ *
+ * This deliberately does not reuse `scheduleRestAlert`: a test must not
+ * cancel a real rest that happens to be running while the Settings sheet is
+ * open. The endpoint goes from the browser subscription, and the server
+ * verifies it belongs to the signed-in user before sending anything.
+ */
+export async function sendRestAlertTest(): Promise<RestAlertTestResult> {
+  if (!online()) return "unavailable";
+  const sub = await currentSubscription();
+  if (!sub) return "unavailable";
+
+  try {
+    const res = await call("test", {
+      method: "POST",
+      body: { endpoint: sub.endpoint },
+    });
+    if (!res) return "unavailable";
+    if (res.ok) return "sent";
+    reportSilently(new Error(await errorOf(res)), "rest alert test");
+    return "failed";
+  } catch (e) {
+    reportSilently(e, "rest alert test");
+    return "failed";
+  }
+}
+
 /** Stop an alert that was scheduled. Best-effort; never throws. */
 export async function cancelRestAlert(alertId: string): Promise<void> {
   if (!online()) return;

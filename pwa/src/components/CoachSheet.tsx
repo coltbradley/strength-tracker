@@ -28,6 +28,8 @@ import {
 } from "../lib/coach";
 import { reportError, toast } from "../lib/errors";
 import { COACH_THREAD_KEY } from "../lib/db";
+import { isWorkoutWritingTool, notifyPlanChanged } from "../lib/planChanges";
+import { useNavigate } from "react-router-dom";
 
 /** The thread key lives in lib/db.ts, beside the cache-clearing path that has
  *  to drop it. It used to be declared here and cleared nowhere: signing out
@@ -92,12 +94,15 @@ interface CoachSheetProps {
 }
 
 export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
+  const navigate = useNavigate();
   const [msgs, setMsgs] = useState<Msg[]>(loadThread);
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<CoachAttachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [spend, setSpend] = useState<CoachSpend | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const planWrite = useRef(false);
+  const [planReady, setPlanReady] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -221,6 +226,8 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
     setDraft("");
     setFiles([]);
     setBusy(true);
+    planWrite.current = false;
+    setPlanReady(false);
 
     const ctrl = new AbortController();
     abort.current = ctrl;
@@ -243,8 +250,10 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
             thinking: false,
           })),
         onThinking: () => patchLast((m) => ({ ...m, thinking: true })),
-        onTool: (name) =>
-          patchLast((m) => ({ ...m, tool: name, thinking: false })),
+        onTool: (name) => {
+          if (isWorkoutWritingTool(name)) planWrite.current = true;
+          patchLast((m) => ({ ...m, tool: name, thinking: false }));
+        },
         onDone: () => {
           patchLast((m) => ({
             ...m,
@@ -252,6 +261,10 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
             tool: null,
             thinking: false,
           }));
+          if (planWrite.current) {
+            notifyPlanChanged();
+            setPlanReady(true);
+          }
           setBusy(false);
         },
         onError: (message) => {
@@ -469,6 +482,19 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
           {spend.turnsToday} today · ${spend.costToday.toFixed(2)} today · $
           {spend.costMonth.toFixed(2)} this month
         </div>
+      )}
+
+      {planReady && (
+        <button
+          type="button"
+          className="btn btn-primary btn-block"
+          onClick={() => {
+            onClose();
+            navigate("/");
+          }}
+        >
+          Go to today’s workout
+        </button>
       )}
 
       <div className="coach-compose">

@@ -1146,10 +1146,10 @@ export function Plan() {
                       <button
                         type="button"
                         className="plate-hint rx-entry-toggle"
-                        aria-label={
-                          draft.load_entry === "per_side"
-                            ? "weight is per hand; switch to the total"
-                            : "weight is the total; switch to per hand"
+                          aria-label={
+                            draft.load_entry === "per_side"
+                            ? "one dumbbell in each hand; switch to one total weight"
+                            : "one total weight; switch to one dumbbell in each hand"
                         }
                         onClick={() =>
                           setDraft({
@@ -1162,9 +1162,20 @@ export function Plan() {
                         }
                       >
                         {draft.load_entry === "per_side"
-                          ? "PER HAND ×2"
-                          : "TOTAL"}
+                          ? "EACH HAND ×2"
+                          : "ONE TOTAL WEIGHT"}
                       </button>
+                    )}
+                  {draft.mode === "kg" &&
+                    offersLoadEntry({
+                      equipment: equipmentOf.get(r.exercise_id) ?? null,
+                      name: r.exercise_name,
+                    }) && (
+                      <div className="microcopy">
+                        {draft.load_entry === "per_side"
+                          ? "Enter the weight on each dumbbell. The plan counts both together."
+                          : "Enter one total weight. Use this for one dumbbell or single-side work."}
+                      </div>
                     )}
                   {draft.mode === "kg" && (
                     <Stepper
@@ -1172,10 +1183,11 @@ export function Plan() {
                       compact
                       onTapValue={() =>
                         setPad({
-                          label: `LOAD PER HAND IN ${unit.toUpperCase()}`.replace(
-                            "PER HAND ",
-                            draft.load_entry === "per_side" ? "PER HAND " : "",
-                          ),
+                          label: `LOAD ${
+                            draft.load_entry === "per_side"
+                              ? "ON EACH DUMBBELL"
+                              : "ONE TOTAL WEIGHT"
+                          } IN ${unit.toUpperCase()}`,
                           action: "SET",
                           initial: String(toDisplay(draft.load_kg, unit)),
                           allowDecimal: true,

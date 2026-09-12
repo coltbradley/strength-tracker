@@ -21,6 +21,7 @@ import {
   pushState,
   pushSupported,
   scheduleRestAlert,
+  sendRestAlertTest,
   subscribeToRestAlerts,
   unsubscribeFromRestAlerts,
   urlBase64ToUint8Array,
@@ -218,6 +219,28 @@ describe("scheduleRestAlert", () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
     expect(await scheduleRestAlert(Date.now() + 60_000, "Row set 2")).toBeNull();
     expect(reportError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sendRestAlertTest", () => {
+  it("asks the server to push a test only to this browser's subscription", async () => {
+    installBrowser();
+    sub = fakeSub();
+    server({ test: (body) => {
+      expect(body).toEqual({ endpoint: sub!.endpoint });
+      return jsonResponse({ ok: true }, 202);
+    } });
+
+    expect(await sendRestAlertTest()).toBe("sent");
+    expect(calls().map((c) => c.route)).toEqual(["test"]);
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("does not claim a test was sent without this browser being subscribed", async () => {
+    installBrowser();
+
+    expect(await sendRestAlertTest()).toBe("unavailable");
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 

@@ -612,6 +612,78 @@ async function cancel(req: Request, db: Db, userId: string): Promise<Response> {
   return json({ ok: true, cancelled });
 }
 
+/**
+ * Send a user-requested proof that the current browser can receive pushes.
+ *
+ * A test is sent only to the endpoint supplied by that browser, never every
+ * device registered to the account, and it never writes or supersedes a real
+ * rest alert. A 202 means the push gateway accepted the encrypted payload;
+ * whether a person sees it still depends on their OS notification settings.
+ */
+async function test(req: Request, db: Db, userId: string): Promise<Response> {
+  const body = await readBody(req);
+  const endpoint = typeof body?.endpoint === "string" ? body.endpoint : "";
+  if (!/^https:\/\//.test(endpoint) || endpoint.length > 2048) {
+    return json({ error: "Missing browser push subscription." }, 400);
+  }
+
+  const { data: sub, error } = await db
+    .from("push_subscriptions")
+    .select("id, endpoint, p256dh, auth")
+    .eq("user_id", userId)
+    .eq("endpoint", endpoint)
+    .is("revoked_at", null)
+    .maybeSingle();
+  if (error) throw new Error(`test subscription: ${error.message}`);
+  if (!sub) return json({ error: "This browser is not subscribed to rest alerts." }, 409);
+
+  const vapid = await loadVapid(db);
+  const payload = new TextEncoder().encode(
+    JSON.stringify({
+      kind: "rest",
+      title: "Rest alert test",
+      body: "Strength Log can alert this phone when the app is closed.",
+      badge: 1,
+    }),
+  );
+  const push = await buildPushRequest({
+    endpoint: sub.endpoint as string,
+    subscription: { p256dh: sub.p256dh as string, auth: sub.auth as string },
+    payload,
+    vapid,
+    subject: VAPID_SUBJECT,
+    ttlSeconds: TTL_SECONDS,
+    topic: "rest-test",
+    urgency: "high",
+  });
+
+  let res: Response;
+  try {
+    res = await fetch(push.endpoint, {
+      method: "POST",
+      headers: push.headers,
+      body: push.body,
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) {
+    logError("rest_alert_test_failed", { user_id: userId, error: message(e) });
+    return json({ error: "The push service did not answer." }, 502);
+  }
+  if (res.status === 404 || res.status === 410) {
+    const { error: revokeError } = await db
+      .from("push_subscriptions")
+      .update({ revoked_at: new Date().toISOString() })
+      .eq("id", sub.id as string);
+    if (revokeError) logError("push_revoke_failed", { user_id: userId, error: revokeError.message });
+  }
+  if (!res.ok) {
+    logError("rest_alert_test_failed", { user_id: userId, status: res.status });
+    return json({ error: "The push service rejected the test." }, 502);
+  }
+  log("rest_alert_test_sent", { user_id: userId, status: res.status });
+  return json({ ok: true }, 202);
+}
+
 // ---- the send -------------------------------------------------------------
 
 function sleep(ms: number): Promise<void> {
@@ -795,6 +867,8 @@ Deno.serve(async (req) => {
         return await schedule(req, db, userId);
       case "POST cancel":
         return await cancel(req, db, userId);
+      case "POST test":
+        return await test(req, db, userId);
       default:
         return json({ error: "No such route." }, 404);
     }

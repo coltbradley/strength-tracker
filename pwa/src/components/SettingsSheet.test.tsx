@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
     state: "idle" as const,
     lastError: null as string | null,
   },
+  testRestAlert: vi.fn(),
 }));
 
 vi.mock("../lib/sync", () => ({
@@ -38,6 +39,13 @@ vi.mock("../lib/sync", () => ({
 vi.mock("../lib/supabase", () => ({
   supabase: { auth: { signOut: () => Promise.resolve({ error: null }) } },
   supabaseConfigured: true,
+}));
+
+vi.mock("../lib/push", () => ({
+  pushState: () => Promise.resolve("on"),
+  subscribeToRestAlerts: () => Promise.resolve("on"),
+  unsubscribeFromRestAlerts: () => Promise.resolve("off"),
+  sendRestAlertTest: h.testRestAlert,
 }));
 
 // Real module, minus the two reads this sheet fires on open — neither has
@@ -110,5 +118,19 @@ describe("SettingsSheet sign-out", () => {
     const { baseElement } = arm({ pending: 2, dead: 0, held: 2 });
     const copy = baseElement.querySelector(".settings-warn")?.textContent ?? "";
     expect(copy).toContain("2 writes have not reached the server.");
+  });
+});
+
+describe("SettingsSheet closed-app rest alerts", () => {
+  it("offers an explicit test of the phone's system notification", async () => {
+    h.testRestAlert.mockResolvedValue("sent");
+    render(<SettingsSheet open onClose={() => undefined} />);
+
+    const button = await screen.findByRole("button", {
+      name: "Send a test rest alert",
+    });
+    fireEvent.click(button);
+
+    expect(h.testRestAlert).toHaveBeenCalledTimes(1);
   });
 });

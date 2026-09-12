@@ -64,6 +64,7 @@ import { outbox } from "../lib/sync";
 import { supabase } from "../lib/supabase";
 import {
   pushState,
+  sendRestAlertTest,
   subscribeToRestAlerts,
   unsubscribeFromRestAlerts,
   type PushState,
@@ -520,6 +521,7 @@ function ClosedAppAlerts({
   onChange: (s: PushState) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
   const actionable = state === "on" || state === "off";
 
   const toggle = () => {
@@ -533,6 +535,23 @@ function ClosedAppAlerts({
       })
       .catch((e: unknown) => reportError(e, "rest alerts"))
       .finally(() => setBusy(false));
+  };
+
+  const test = () => {
+    if (testing || state !== "on") return;
+    setTesting(true);
+    sendRestAlertTest()
+      .then((result) => {
+        if (result === "sent") {
+          toast("Test sent. Lock the phone or close the app to see the system notification.");
+        } else if (result === "unavailable") {
+          toast("No active rest-alert subscription on this phone.", "error");
+        } else {
+          toast("The test could not reach the push service. Try again with signal.", "error");
+        }
+      })
+      .catch((e: unknown) => reportError(e, "rest alert test"))
+      .finally(() => setTesting(false));
   };
 
   const value =
@@ -573,6 +592,17 @@ function ClosedAppAlerts({
         </span>
       </button>
       <div className="microcopy">{copy}</div>
+      {state === "on" && (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={test}
+          disabled={testing}
+          aria-busy={testing}
+        >
+          {testing ? "SENDING TEST…" : "Send a test rest alert"}
+        </button>
+      )}
     </>
   );
 }

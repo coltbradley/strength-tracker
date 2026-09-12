@@ -1367,9 +1367,9 @@ export function Session() {
     const U = unit.toUpperCase();
     if (pad.kind === "load") {
       return {
-        label: `${openEntry.name.toUpperCase()} · LOAD IN ${U}${
-          perSide ? " PER SIDE" : ""
-        }`,
+        label: `${openEntry.name.toUpperCase()} · ${
+          perSide ? "WEIGHT ON EACH DUMBBELL" : "ONE TOTAL WEIGHT"
+        } IN ${U}`,
         action: pad.fromPlates ? "BACK TO PLATES" : "SET LOAD",
         initial: String(toDisplay(entryKg, unit)),
         allowDecimal: true,
@@ -1943,12 +1943,12 @@ export function Session() {
                                   className="plate-hint"
                                   aria-label={
                                     perSide
-                                      ? "load is typed per side; switch to total load"
-                                      : "load is typed as the total; switch to per side"
+                                      ? "one dumbbell in each hand; switch to one total weight"
+                                      : "one total weight; switch to one dumbbell in each hand"
                                   }
                                   onClick={toggleLoadEntry}
                                 >
-                                  {perSide ? "PER SIDE ×2" : "TOTAL"}
+                                  {perSide ? "EACH HAND ×2" : "ONE TOTAL WEIGHT"}
                                 </button>
                               )}
                               {hint !== null && (
@@ -1987,6 +1987,13 @@ export function Session() {
                                 </button>
                               )}
                             </div>
+                            {showLoadEntry && (
+                              <div className="microcopy">
+                                {perSide
+                                  ? "Enter the weight on each dumbbell. The app counts both together."
+                                  : "Enter one total weight. Use this for one dumbbell or single-side work."}
+                              </div>
+                            )}
                             <Stepper
                               label="load"
                               accent

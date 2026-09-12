@@ -37,10 +37,17 @@ const save = (onSave: ReturnType<typeof vi.fn>): SetGroup[] => {
 };
 
 describe("per-hand weight in the plan editor", () => {
-  it("offers the control for a pair of dumbbells, defaulted to per hand", () => {
+  it("makes clear that the default is one dumbbell in each hand", () => {
     open();
-    expect(screen.getByRole("button", { name: /per hand/i })).toBeTruthy();
-    expect(screen.getByText(/PER HAND ×2/)).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: /one dumbbell in each hand; switch to one total weight/i,
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText(/EACH HAND ×2/)).toBeTruthy();
+    expect(
+      screen.getByText(/enter the weight on each dumbbell/i),
+    ).toBeTruthy();
   });
 
   it("does not offer it for a barbell, which is one system", () => {
@@ -51,7 +58,7 @@ describe("per-hand weight in the plan editor", () => {
 
   it("does not offer it for single-arm work, where one bell IS the system", () => {
     open({ exerciseName: "One-Arm Dumbbell Row", equipment: "dumbbell" });
-    expect(screen.queryByText(/PER HAND ×2/)).toBeNull();
+    expect(screen.queryByText(/EACH HAND ×2/)).toBeNull();
   });
 
   it("hands back the TOTAL, having doubled what was typed", () => {
@@ -64,8 +71,8 @@ describe("per-hand weight in the plan editor", () => {
 
   it("switching to TOTAL stops doubling, and says so", () => {
     const onSave = open();
-    fireEvent.click(screen.getByRole("button", { name: /per hand/i }));
-    expect(screen.getByText(/^TOTAL$/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /each hand/i }));
+    expect(screen.getByText(/^ONE TOTAL WEIGHT$/)).toBeTruthy();
     const groups = save(onSave);
     // The typed number is unchanged; only its meaning is.
     expect(groups[0]!.load_kg).toBe(20);

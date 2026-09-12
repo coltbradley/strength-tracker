@@ -400,15 +400,22 @@ export function SetSchemeSheet({
             className="plate-hint"
             aria-label={
               perSide
-                ? "weight is per hand; switch to the total"
-                : "weight is the total; switch to per hand"
+                ? "one dumbbell in each hand; switch to one total weight"
+                : "one total weight; switch to one dumbbell in each hand"
             }
             onClick={() => setLoadEntry(perSide ? "total" : "per_side")}
           >
-            {perSide ? "PER HAND ×2" : "TOTAL"}
+            {perSide ? "EACH HAND ×2" : "ONE TOTAL WEIGHT"}
           </button>
         )}
       </div>
+      {showLoadEntry && !byFeel && (
+        <div className="microcopy">
+          {perSide
+            ? "Enter the weight on each dumbbell. The app counts both together."
+            : "Enter one total weight. Use this for one dumbbell or single-side work."}
+        </div>
+      )}
       <div className="seg">
         <button
           type="button"

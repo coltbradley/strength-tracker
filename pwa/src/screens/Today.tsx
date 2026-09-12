@@ -45,6 +45,7 @@ import {
 } from "../lib/data";
 import { groupRamps } from "../lib/entries";
 import { openCoach } from "../lib/coachOpen";
+import { onPlanChanged } from "../lib/planChanges";
 import {
   getRecentlyEndedSessions,
   reviewableByDay,
@@ -191,17 +192,16 @@ export function workoutStates(
  *    exists to avoid; "add exercises in Edit" is the honest answer.
  *  - TODAY already has the primary "Start session". A second start control on
  *    the same card is two buttons that do the same thing.
- *  - NO DATE is deliberately excluded too. This action's whole claim is "the
- *    plan is fine, I am ahead or behind" — a day with no date is not ahead of
- *    or behind anything, and giving it a date IS the fix, so "Reschedule to
- *    today" stays its only offer.
+ *  - NO DATE is an executable day with no calendar slot. It cannot be
+ *    rescheduled meaningfully until the person chooses a date, but it can be
+ *    trained now without inventing one or losing its targets.
  *
  * It intentionally does not consult `anyDates`: a day is a day. In an undated
  * DAY 1..N program the same gap exists (day 3 before day 2) and the same
  * answer works, whereas rescheduling there is meaningless and is gated off.
  */
 export function canDoWorkoutNow(state: WorkoutState): boolean {
-  return state === "UPCOMING" || state === "MISSED";
+  return state === "UPCOMING" || state === "MISSED" || state === "NO DATE";
 }
 
 /**
@@ -342,6 +342,19 @@ export function Today({ userId }: { userId?: string | null } = {}) {
         reportError(e, "load workouts");
       });
   }, []);
+
+  // Coach plan writes do not pass through the PWA's data helpers, so those
+  // helpers cannot invalidate their own cache. Return this screen to today,
+  // clear any old targets, and fetch the plan that the agent just wrote.
+  useEffect(
+    () =>
+      onPlanChanged(() => {
+        setSelectedDate(today);
+        setRx({});
+        reload();
+      }),
+    [reload, today],
+  );
 
   /** Mirrors `active` for the reconciliation effect, which must be able to
    *  read it without taking it as a dependency: re-running the whole
@@ -1006,8 +1019,8 @@ export function Today({ userId }: { userId?: string | null } = {}) {
             Rescheduling asserts the PLAN was wrong and rewrites the date the
             coach wrote; doing it now asserts the plan is right and the lifter
             is off it. Only when BOTH are on offer: naming a control that is
-            not on the card (an undated program cannot reschedule, a NO DATE
-            day cannot be done ahead) is worse than saying nothing. */}
+            not on the card (an undated program cannot reschedule) is worse
+            than saying nothing. */}
         {canDoNow && canReschedule && (
           <div className="microcopy">
             Do it now if you’re ahead or behind — the day keeps its date and
