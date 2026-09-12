@@ -42,8 +42,10 @@ export function WorkoutOverview({
 
   useEffect(() => {
     if (expandedEntryKey === null) return;
-    itemRefs.current.get(expandedEntryKey)?.scrollIntoView({
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const item = itemRefs.current.get(expandedEntryKey);
+    if (!item || typeof item.scrollIntoView !== "function") return;
+    item.scrollIntoView({
+      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
         ? "auto"
         : "smooth",
       block: "start",

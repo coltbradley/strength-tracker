@@ -106,6 +106,7 @@ import { setExerciseLoadEntry } from "../lib/settings";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { unlockRestCue } from "../lib/restCue";
 import {
+  pinnedOverviewEntryKey,
   transitionPresentation,
   type SessionPresentation,
 } from "../lib/sessionFocus";
@@ -555,6 +556,15 @@ export function Session() {
     [sets, rx, knownRxIds],
   );
 
+  const editingEntryKey = useMemo(() => {
+    if (!editing) return null;
+    return (
+      entries.find((entry) =>
+        setsForEntry(entry).some((set) => set.id === editing.set.id),
+      )?.key ?? null
+    );
+  }, [editing, entries, setsForEntry]);
+
   /**
    * Whether the rating row is on screen for a movement: because somebody
    * asked for it, or because a set of this movement is already rated.
@@ -703,7 +713,12 @@ export function Session() {
   // ---- accordion -----------------------------------------------------------
 
   const toggleOpen = (key: string) => {
-    setOpenKey((prev) => (prev === key ? null : key));
+    setOpenKey((prev) =>
+      pinnedOverviewEntryKey(
+        prev === key ? null : key,
+        editingEntryKey,
+      ),
+    );
   };
 
   const enterFocus = () => {

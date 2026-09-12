@@ -4,6 +4,7 @@ import type { ResolvedPrescriptionRow } from "./types";
 import {
   focusEntryKey,
   isFocusEligible,
+  pinnedOverviewEntryKey,
   remainingProgress,
   transitionPresentation,
 } from "./sessionFocus";
@@ -48,6 +49,11 @@ describe("session focus derivations", () => {
       presentation: "focus",
       focusKey: "press",
     });
+  });
+
+  it("keeps Details on the corrected entry while a correction is active", () => {
+    expect(pinnedOverviewEntryKey("deadlift", "squat")).toBe("squat");
+    expect(pinnedOverviewEntryKey("deadlift", null)).toBe("deadlift");
   });
 
   it("does not offer focus mode for a timed prescription", () => {

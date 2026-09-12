@@ -5,6 +5,14 @@ import {
 
 export type SessionPresentation = "focus" | "overview";
 
+/** A correction's controls must stay with the entry whose set is being fixed. */
+export function pinnedOverviewEntryKey(
+  requestedKey: string | null,
+  correctedEntryKey: string | null,
+): string | null {
+  return correctedEntryKey ?? requestedKey;
+}
+
 /** Pick the active unfinished entry, or the first unfinished entry. */
 export function focusEntryKey(
   entries: readonly ExerciseEntry[],
