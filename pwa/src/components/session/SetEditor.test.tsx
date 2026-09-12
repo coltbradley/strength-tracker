@@ -2,8 +2,8 @@
 // The set editor is controlled by Session. These tests protect the two
 // distinct logging surfaces: numeric sets and tick-only work.
 
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SetEditor, type SetEditorProps } from "./SetEditor";
 import type { ExerciseEntry } from "../../lib/entries";
 
@@ -41,9 +41,6 @@ function props(overrides: Partial<SetEditorProps> = {}): SetEditorProps {
     onOpenPad: () => undefined,
     onToggleLoadEntry: () => undefined,
     onRevealRpe: () => undefined,
-    onSkip: () => undefined,
-    onAddSet: () => undefined,
-    onStartCorrection: () => undefined,
     ...overrides,
   };
 }
@@ -82,5 +79,56 @@ describe("SetEditor", () => {
     );
 
     expect(screen.queryByText(/pin/i)).toBeNull();
+  });
+
+  it("emits a draft change and logging intent to the parent", () => {
+    const onDraftChange = vi.fn();
+    const onLog = vi.fn();
+    render(<SetEditor {...props({ onDraftChange, onLog })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
+    expect(onDraftChange).toHaveBeenLastCalledWith({ reps: 9 });
+
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET 1 OF 3" }));
+    expect(onLog).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits the surrounding control intents without owning their state", () => {
+    const onOpenPlates = vi.fn();
+    const onOpenPad = vi.fn();
+    const onToggleLoadEntry = vi.fn();
+    const onRevealRpe = vi.fn();
+    const base = props();
+    render(
+      <SetEditor
+        {...props({
+          loadPresentation: { ...base.loadPresentation, hint: "20 kg" },
+          onOpenPlates,
+          onOpenPad,
+          onToggleLoadEntry,
+          onRevealRpe,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "reps value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "one dumbbell in each hand; switch to one total weight",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "20 kg ›" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "add an RPE rating to Dumbbell Bench Press",
+      }),
+    );
+
+    expect(onOpenPad).toHaveBeenNthCalledWith(1, "reps");
+    expect(onOpenPad).toHaveBeenNthCalledWith(2, "load");
+    expect(onToggleLoadEntry).toHaveBeenCalledTimes(1);
+    expect(onOpenPlates).toHaveBeenCalledTimes(1);
+    expect(onRevealRpe).toHaveBeenCalledTimes(1);
   });
 });

@@ -38,9 +38,6 @@ export interface SetEditorProps {
   onOpenPad(kind: "load" | "reps"): void;
   onToggleLoadEntry(): void;
   onRevealRpe(): void;
-  onSkip(): void;
-  onAddSet(): void;
-  onStartCorrection(setId: string): void;
 }
 
 const SET_TYPES: BracketKind[] = ["warmup", "working"];

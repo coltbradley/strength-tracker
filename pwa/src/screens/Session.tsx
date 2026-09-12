@@ -1918,12 +1918,6 @@ export function Session() {
                             (prev) => new Set([...prev, entry.exercise_id]),
                           )
                         }
-                        onSkip={() => toggleSkip(entry)}
-                        onAddSet={logSet}
-                        onStartCorrection={(setId) => {
-                          const set = entrySets.find((s) => s.id === setId);
-                          if (set) startCorrection(set);
-                        }}
                       />
 
                       {setsFailed && (
