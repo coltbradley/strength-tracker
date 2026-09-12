@@ -4,7 +4,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { SetEditor, type SetEditorProps } from "./SetEditor";
+import { useState } from "react";
+import { SetEditor, type SetDraft, type SetEditorProps } from "./SetEditor";
 import type { ExerciseEntry } from "../../lib/entries";
 
 afterEach(cleanup);
@@ -45,6 +46,30 @@ function props(overrides: Partial<SetEditorProps> = {}): SetEditorProps {
   };
 }
 
+function ControlledHarness() {
+  const [draft, setDraft] = useState<SetDraft>({
+    entryKg: 30,
+    reps: 8,
+    setType: "working",
+    rpe: null,
+  });
+  const [logs, setLogs] = useState(0);
+
+  return (
+    <>
+      <SetEditor
+        {...props({
+          draft,
+          onDraftChange: (next) =>
+            setDraft((previous) => ({ ...previous, ...next })),
+          onLog: () => setLogs((count) => count + 1),
+        })}
+      />
+      <output>Parent logs: {logs}</output>
+    </>
+  );
+}
+
 describe("SetEditor", () => {
   it("shows per-hand input and a separate stored total", () => {
     render(<SetEditor {...props()} />);
@@ -81,16 +106,17 @@ describe("SetEditor", () => {
     expect(screen.queryByText(/pin/i)).toBeNull();
   });
 
-  it("emits a draft change and logging intent to the parent", () => {
-    const onDraftChange = vi.fn();
-    const onLog = vi.fn();
-    render(<SetEditor {...props({ onDraftChange, onLog })} />);
+  it("renders the parent-applied draft and sends logging to the parent", () => {
+    render(<ControlledHarness />);
 
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
-    expect(onDraftChange).toHaveBeenLastCalledWith({ reps: 9 });
+    expect(
+      screen.getByRole("button", { name: "reps value — tap to type" })
+        .textContent,
+    ).toBe("9");
 
     fireEvent.click(screen.getByRole("button", { name: "LOG SET 1 OF 3" }));
-    expect(onLog).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Parent logs: 1")).toBeTruthy();
   });
 
   it("emits the surrounding control intents without owning their state", () => {
