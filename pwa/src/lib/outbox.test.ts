@@ -7,7 +7,13 @@ import {
   type OutboxTransport,
   type TransportError,
 } from "./outbox";
-import { getDb, resetDbForTests, type Database, type OutboxOp } from "./db";
+import {
+  getDb,
+  resetDbForTests,
+  type Database,
+  type OutboxItem,
+  type OutboxOp,
+} from "./db";
 import type { SessionInsert, SetInsert } from "./types";
 
 interface Call {
@@ -141,16 +147,35 @@ describe("outbox", () => {
 
   it("leaves no part of the batch when its IndexedDB transaction aborts", async () => {
     const { transport } = makeTransport();
-    let adds = 0;
-    const done = Promise.reject(new Error("disk full"));
+    const rows: OutboxItem[] = [];
+    let staged: OutboxItem[] = [];
+    let firstItemWasStaged = false;
+    const diskFull = new Error("disk full");
+    let rejectDone: (reason?: unknown) => void = () => undefined;
+    const done = new Promise<void>((_resolve, reject) => {
+      rejectDone = reject;
+    });
     void done.catch(() => undefined);
     const failingDb = {
+      // A non-transactional implementation would call this twice: the first
+      // write persists and the second failure leaves it behind.
+      add: async (_store: "outbox", item: OutboxItem) => {
+        if (rows.length === 1) throw diskFull;
+        rows.push(item);
+        return rows.length;
+      },
+      count: async (_store: "outbox") => rows.length,
       transaction: () => ({
         store: {
-          add: async () => {
-            adds++;
-            if (adds === 2) throw new Error("disk full");
-            return 1;
+          add: async (item: OutboxItem) => {
+            if (staged.length === 1) {
+              firstItemWasStaged = true;
+              staged = []; // abort rolls the first write back with the batch
+              rejectDone(diskFull);
+              throw diskFull;
+            }
+            staged.push(item);
+            return staged.length;
           },
         },
         done,
@@ -166,8 +191,8 @@ describe("outbox", () => {
       "disk full",
     );
 
-    const db = await getDb();
-    expect(await db.count("outbox")).toBe(0);
+    expect(firstItemWasStaged).toBe(true);
+    expect(await failingDb.count("outbox")).toBe(0);
   });
 
   it("replays both batch members in order and preserves normal idempotency", async () => {
