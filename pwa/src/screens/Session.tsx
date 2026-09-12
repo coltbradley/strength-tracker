@@ -266,6 +266,20 @@ export function Session() {
    * how the cable felt says nothing about the dumbbell standing in for it.
    */
   const [rpe, setRpe] = useState<number | null>(null);
+  const stagedDraftsRef = useRef<Record<string, SetDraft>>({});
+  const rememberStagedDraft = (
+    entry: ExerciseEntry,
+    next: Partial<SetDraft>,
+  ) => {
+    const key = `${entry.key}:${entry.exercise_id}`;
+    const prior = stagedDraftsRef.current[key] ?? {
+      entryKg,
+      reps,
+      setType: setType as BracketKind,
+      rpe,
+    };
+    stagedDraftsRef.current[key] = { ...prior, ...next };
+  };
   const [rpeAsked, setRpeAsked] = useState<Set<string>>(new Set());
   const [logLocked, setLogLocked] = useState(false);
   const [roundDrafts, setRoundDrafts] = useState<Record<string, SetDraft>>({});
@@ -926,6 +940,22 @@ export function Session() {
     // target. Half a wired feature is worse than none: the honest way to
     // finish the day was to log the warmup as working, at the warmup weight.
     const fresh = openedFor.current !== openEntry.key;
+    const draftKey = `${openEntry.key}:${openEntry.exercise_id}`;
+    const stagedDraft = fresh ? stagedDraftsRef.current[draftKey] : undefined;
+    if (stagedDraft) {
+      const savedBracket = bracketFor(
+        openEntry,
+        countFor(openEntry, stagedDraft.setType),
+        stagedDraft.setType,
+      );
+      openedFor.current = openEntry.key;
+      prefilledFor.current = `${openEntry.key}:${openEntry.exercise_id}:${savedBracket?.id ?? "free"}:${stagedDraft.setType}`;
+      setEntryKg(stagedDraft.entryKg);
+      setReps(stagedDraft.reps);
+      setSetType(stagedDraft.setType);
+      setRpe(stagedDraft.rpe);
+      return;
+    }
     const bracket = fresh ? openingBracket : currentBracket;
     const key = fresh
       ? `${openEntry.key}:${bracket?.id ?? "free"}:${openingKind}`
@@ -962,8 +992,17 @@ export function Session() {
       lastSession: lastActuals[openEntry.exercise_id] ?? null,
     });
     // every source above is a TOTAL; the steppers hold what gets typed
-    setEntryKg(Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100);
+    const prefilledLoad = Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
+    setEntryKg(prefilledLoad);
     setReps(p.reps);
+    if (stagedDraftsRef.current[draftKey]) {
+      stagedDraftsRef.current[draftKey] = {
+        entryKg: prefilledLoad,
+        reps: p.reps,
+        setType: stagedKind,
+        rpe,
+      };
+    }
     // Only on a fresh open. After that the toggle belongs to the lifter (and
     // to logSet, which advances it as the plan's warmups are used up):
     // writing it here on every bracket change would fight a deliberate tap.
@@ -1059,6 +1098,7 @@ export function Session() {
     // verify would number this set 0 on top of whatever is already logged.
     if (!entryToLog || !sessionId || logLocked || !setsLoaded || setsFailed)
       return;
+    delete stagedDraftsRef.current[`${entryToLog.key}:${entryToLog.exercise_id}`];
     setLogLocked(true);
     window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     setVoidArm(null);
@@ -1218,6 +1258,8 @@ export function Session() {
         delete next[round.keys[1]];
         return next;
       });
+      for (const entry of members)
+        delete stagedDraftsRef.current[`${entry.key}:${entry.exercise_id}`];
       setRoundError(null);
 
       const doneAfter = (entry: ExerciseEntry): boolean =>
@@ -1658,7 +1700,9 @@ export function Session() {
         allowDecimal: true,
         onCommit: (v) => {
           const kg = Math.min(maxEntryKg, Math.max(0, fromDisplay(v, unit)));
-          setEntryKg(Math.round(kg * 100) / 100);
+          const entryKg = Math.round(kg * 100) / 100;
+          rememberStagedDraft(openEntry, { entryKg });
+          setEntryKg(entryKg);
           setPad(null);
           if (pad.fromPlates) setSheet("plates");
         },
@@ -1675,7 +1719,9 @@ export function Session() {
         initial: String(reps),
         allowDecimal: false,
         onCommit: (v) => {
-          setReps(Math.min(MAX_REPS, Math.max(0, Math.round(v))));
+          const reps = Math.min(MAX_REPS, Math.max(0, Math.round(v)));
+          rememberStagedDraft(openEntry, { reps });
+          setReps(reps);
           setPad(null);
         },
         onCancel: () => setPad(null),
@@ -1931,12 +1977,13 @@ export function Session() {
                         logClassName={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
                         disabled={logLocked || !setsLoaded || setsFailed}
                         onDraftChange={(next) => {
+                          if (!editing) rememberStagedDraft(entry, next);
                           if (next.entryKg !== undefined) setEntryKg(next.entryKg);
                           if (next.reps !== undefined) setReps(next.reps);
                           if (next.setType !== undefined) setSetType(next.setType);
                           if (next.rpe !== undefined) setRpe(next.rpe);
                         }}
-                        onLog={editing ? saveCorrection : logSet}
+                        onLog={editing ? saveCorrection : () => logSet()}
                         onOpenPlates={() => openSheet("plates")}
                         onOpenPad={openPad}
                         onToggleLoadEntry={toggleLoadEntry}

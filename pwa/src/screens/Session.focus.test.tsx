@@ -110,6 +110,30 @@ describe("Session focus presentation", () => {
     ).toBe("9");
   });
 
+  it("preserves a staged draft after switching focus to another exercise", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+      prescription("squat", "back-squat", "Back Squat", "reps", null, 2),
+    ]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "increase reps by 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "increase load by 0.5 kg" }));
+    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back Squat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    expect(await screen.findByRole("heading", { name: "Back Squat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bench Press" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
+
+    expect(screen.getByRole("button", { name: "reps value — tap to type" }).textContent).toBe("9");
+    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("20.5");
+  });
+
   it("keeps a timed session in overview and explains why focus is unavailable", async () => {
     resetDbForTests();
     await seed("time");
@@ -130,6 +154,9 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET 1 OF 1" }));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
+    });
     expect(screen.queryByRole("button", { name: "Next · Back Squat" })).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Next exercise" }));
 
@@ -138,6 +165,20 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "LOG SET 1 OF 1" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
       payload: { exercise_id: "back-squat", prescription_id: "squat" },
+    });
+  });
+
+  it("logs the staged values from the overview set editor", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+    ]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET 1 OF 2" }));
+
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
     });
   });
 
@@ -209,19 +250,22 @@ describe("Session focus presentation", () => {
     ]);
     vi.mocked(outbox.enqueueBatch).mockRejectedValueOnce(new Error("disk full"));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    setSetting("focusDeckPreview", true);
-    render(<MemoryRouter><Session /></MemoryRouter>);
+    try {
+      setSetting("focusDeckPreview", true);
+      render(<MemoryRouter><Session /></MemoryRouter>);
 
-    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
-    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+      await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+      fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "Log round" }));
 
-    expect((await screen.findByRole("alert")).textContent).toMatch(
-      /could not be saved locally.*retry/i,
-    );
-    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain("9");
-    expect(screen.queryByText("LOGGED")).toBeNull();
-    consoleError.mockRestore();
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /could not be saved locally.*retry/i,
+      );
+      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain("9");
+      expect(screen.queryByText("LOGGED")).toBeNull();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("does not advance either member when the local round batch cannot be saved", async () => {
@@ -234,22 +278,25 @@ describe("Session focus presentation", () => {
       new Error("IndexedDB unavailable"),
     );
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    setSetting("focusDeckPreview", true);
-    render(<MemoryRouter><Session /></MemoryRouter>);
+    try {
+      setSetting("focusDeckPreview", true);
+      render(<MemoryRouter><Session /></MemoryRouter>);
 
-    expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[0]!);
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+      expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+      fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[0]!);
+      fireEvent.click(screen.getByRole("button", { name: "Log round" }));
 
-    expect((await screen.findByRole("alert")).textContent).toMatch(
-      /could not be saved locally.*retry/i,
-    );
-    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain("9");
-    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain("8");
-    expect(screen.getByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
-    expect(screen.getByText("SETS REMAINING 4")).toBeTruthy();
-    expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
-    consoleError.mockRestore();
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /could not be saved locally.*retry/i,
+      );
+      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain("9");
+      expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain("8");
+      expect(screen.getByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+      expect(screen.getByText("SETS REMAINING 4")).toBeTruthy();
+      expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("logs an edited A1 alone without discarding A2's draft", async () => {
