@@ -4,7 +4,7 @@ import "fake-indexeddb/auto";
 
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { cacheKeys, cacheSet, resetDbForTests } from "../lib/db";
 import { resetAllSettings, setSetting } from "../lib/settings";
@@ -90,6 +90,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   resetAllSettings();
 });
@@ -223,6 +224,34 @@ describe("Session focus presentation", () => {
     consoleError.mockRestore();
   });
 
+  it("does not advance either member when the local round batch cannot be saved", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    vi.mocked(outbox.enqueueBatch).mockRejectedValueOnce(
+      new Error("IndexedDB unavailable"),
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /could not be saved locally.*retry/i,
+    );
+    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain("9");
+    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain("8");
+    expect(screen.getByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+    expect(screen.getByText("SETS REMAINING 4")).toBeTruthy();
+    expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("logs an edited A1 alone without discarding A2's draft", async () => {
     resetDbForTests();
     await seed("reps", [
@@ -287,6 +316,26 @@ describe("Session focus presentation", () => {
 
     expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Log round" })).toBeTruthy();
+  });
+
+  it("keeps rest timing through focus and overview changes", async () => {
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    const logSet = await screen.findByRole("button", { name: /log set/i });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-12T12:00:00.000Z"));
+    await act(async () => {
+      fireEvent.click(logSet);
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("timer", { name: "rest timer" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    act(() => vi.advanceTimersByTime(30_000));
+
+    expect(screen.getByText("0:30")).toBeTruthy();
+    vi.useRealTimers();
   });
 
   it("routes a round member's number pad and plate sheet back to that draft", async () => {

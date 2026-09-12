@@ -2817,16 +2817,18 @@
 
   .wk-focus-mode {
     margin-bottom: var(--s-5);
+    min-height: var(--tap-min);
   }
 
-  /* Focus is a presentation of the existing controlled set editor, with no
-   * extra state or transition choreography to reconcile after a return to the
-   * overview. The compact labels leave the editor as the visual priority. */
+  /* ---- session focus deck ----
+   * Focus is a presentation of the existing controlled set editor, with no
+   * extra state to reconcile after a return to the overview. The compact
+   * labels leave the editor as the visual priority. */
   .focus-deck {
     display: flex;
     flex-direction: column;
     gap: var(--s-7);
-    padding: var(--s-2) 0 var(--s-8);
+    padding: var(--s-2) 0 calc(var(--s-8) + env(safe-area-inset-bottom));
   }
 
   .focus-deck-status {
@@ -2838,6 +2840,7 @@
   .focus-deck-overview {
     align-self: flex-start;
     padding: 0;
+    min-height: var(--tap-min);
     color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: var(--fs-label);
@@ -2902,6 +2905,30 @@
 
   .superset-round-error {
     color: var(--danger);
+  }
+
+  .focus-deck .btn,
+  .focus-deck .drawer-action,
+  .focus-deck .set-void {
+    min-height: var(--tap-min);
+  }
+
+  /* Keep the larger primary target on round logging and extra-set actions. */
+  .focus-deck .btn-log {
+    min-height: var(--tap-log);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .focus-deck,
+    .session-scroll {
+      scroll-behavior: auto;
+    }
+
+    .focus-deck,
+    .focus-deck * {
+      animation: none !important;
+      transition: none !important;
+    }
   }
 
   /* expanded entry */

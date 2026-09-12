@@ -126,6 +126,19 @@ Supabase sends the stock link email and the paste path is the working one.
 - **Switch exercise** — tap any closed row; it opens (previous closes) and
   scrolls into view, prefilled (prescription → this session → last session →
   configured fallback). Tapping the open header collapses it.
+- **Focus deck** — Settings → Display → FOCUS MODE PREVIEW is a device-local
+  switch, off by default. When enabled, eligible sessions open on one focused
+  entry or superset round; the full-workout overview remains available through
+  "View full workout". In overview, selecting an exercise name chooses the
+  next focus destination without opening its editor. "Focus mode" returns to
+  that selection, or to the entry that was focused before overview if nothing
+  was selected. Selection and expansion stay separate, and switching views
+  preserves staged values and the running rest clock. Selecting either member
+  of an unfinished superset returns to its canonical A1/A2 round.
+- **Focus-mode limitation** — duration-tracked workouts stay in overview and
+  explain that duration tracking is unavailable in focus mode. The focus deck
+  currently supports reps and tick-only exercises; it does not approximate a
+  timed set as a completion tick.
 - **Log a set** — inside the open item: a context line (TARGET, NOW x–y REPS
   on a ramp, REST, NO TM SET), a WARMUP | WORKING toggle (backoff is not
   offered; the enum value stays legal for history), REPS stepper above LOAD
@@ -155,6 +168,14 @@ Supabase sends the stock link email and the paste path is the working one.
   clock keeps running for rest stamping. Survives leaving the screen. Rest
   alerts opt in via Settings (notification permission). The strip hides
   while a sheet or the number pad is open.
+- **Log a superset round** — "Log round" queues both ordinary set inserts in
+  one IndexedDB transaction. The session marks neither member logged unless
+  that local batch is durable; a local failure leaves both drafts available
+  for retry. Offline rounds appear in Outbox and replay one operation at a
+  time in enqueue order when connectivity returns. That preserves order, but
+  the server does not commit the two rows as one transaction: if replay stops
+  after one row, the Outbox shows the remaining state and the unfinished
+  member can be completed on its own.
 - **Plates** — per-exercise bar choice in the plate sheet (NO BAR for
   plate-loaded machines like the leg press); persists per exercise.
 - **Read the day's notes** — plan note and coach note render at the top of
