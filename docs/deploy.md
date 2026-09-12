@@ -96,8 +96,10 @@ additive — nothing destroys data.
 ```bash
 node scripts/validate-db.mjs                      # migrations + views + RLS in PGlite
 node scripts/check-selects.mjs                    # every SELECTed column exists
-cd supabase/functions/mcp-server && deno check index.ts && cd -
+cd supabase/functions/mcp-server && deno check index.ts && deno test --allow-env --allow-net && cd -
 cd supabase/functions/coach && deno check index.ts && deno test && cd -
+cd supabase/functions/push-alerts && deno check index.ts && deno test lib/ && cd -
+cd supabase/functions/endurance-sync && deno check index.ts && deno test normalize.test.ts && cd -
 cd pwa && npm run build && npm test -- --run && cd -
 ```
 

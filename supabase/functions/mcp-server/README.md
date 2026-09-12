@@ -47,10 +47,12 @@ change it and redeploy. See docs/setup.md step 5.
 
 ```bash
 deno check index.ts   # typecheck the whole graph from the entrypoint
-deno test lib/        # date rules (lib/dates.test.ts)
+deno test --allow-env --allow-net  # full protocol, tool, and date suite
 ```
 
-Both run in CI. The SQL half of the date rules lives in
+Both run in CI. `protocol.test.ts` sets test-only environment variables and
+uses a closed local URL to exercise the unavailable-token-store path, hence the
+explicit permissions. The SQL half of the date rules lives in
 `scripts/validate-db.mjs`.
 
 ## Local serve
