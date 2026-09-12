@@ -33,5 +33,8 @@ scripts/.cache/
 # Claude Code subagent worktrees (tool-managed working copies, never source)
 .claude/worktrees/
 
+# Codex implementation worktrees (tool-managed working copies, never source)
+.worktrees/
+
 # playwright-mcp scratch (snapshots, console logs)
 .playwright-mcp/
