@@ -2829,6 +2829,12 @@
     padding: var(--s-2) 0 var(--s-8);
   }
 
+  .focus-deck-status {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+
   .focus-deck-overview {
     align-self: flex-start;
     padding: 0;

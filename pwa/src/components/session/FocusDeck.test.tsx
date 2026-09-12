@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { FocusDeck, type FocusDeckProps } from "./FocusDeck";
 import type { ExerciseEntry } from "../../lib/entries";
 import type { ResolvedPrescriptionRow } from "../../lib/types";
@@ -44,6 +44,7 @@ function props(overrides: Partial<FocusDeckProps> = {}): FocusDeckProps {
     entryDone: (candidate) => candidate.key === "squat",
     onViewFullWorkout: vi.fn(),
     onChooseNext: vi.fn(),
+    canAdvance: true,
     renderEditor: () => <button type="button">DONE 1 OF 3</button>,
     ...overrides,
   };
@@ -64,5 +65,54 @@ describe("FocusDeck", () => {
 
     expect(screen.getByRole("button", { name: "DONE 1 OF 3" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "View full workout" })).toBeTruthy();
+  });
+
+  it("subtracts logged progress from the remaining set count", () => {
+    render(
+      <FocusDeck
+        {...props({ entryProgress: (candidate) => candidate.key === "deadlift" ? 1 : 0 })}
+      />,
+    );
+
+    expect(screen.getByText("SETS REMAINING 3")).toBeTruthy();
+  });
+
+  it("keeps the live region to changing focus status, not controls", () => {
+    render(<FocusDeck {...props()} />);
+
+    const live = screen.getByText("Deadlift").closest("[aria-live]");
+    expect(live).not.toBeNull();
+    expect(live!.querySelector("button")).toBeNull();
+  });
+
+  it("uses its normal-exercise next action only when Session permits it", () => {
+    const onChooseNext = vi.fn();
+    render(
+      <FocusDeck
+        {...props({
+          entryDone: (candidate) => candidate.key !== "press",
+          onChooseNext,
+          canAdvance: false,
+        })}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
+  });
+
+  it("names the next normal exercise and emits it through one action", () => {
+    const onChooseNext = vi.fn();
+    render(
+      <FocusDeck
+        {...props({
+          entryDone: (candidate) => candidate.key !== "press",
+          onChooseNext,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Next exercise" }));
+
+    expect(onChooseNext).toHaveBeenCalledWith(entries[2]);
   });
 });

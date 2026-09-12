@@ -1494,7 +1494,7 @@ export function Session() {
             : a,
         ).id;
 
-  const renderEditor = (entry: ExerciseEntry) => {
+  const renderEditor = (entry: ExerciseEntry, showAdvance = true) => {
     const prescribed = entry.brackets.length > 0;
     const done = entryProgress(entry);
     const total = prescribed ? targetSets(entry) : null;
@@ -1663,7 +1663,7 @@ export function Session() {
                           round is over. It leads only once this exercise's
                           own plan is met — the same rule as before, so
                           exactly one of these two buttons is ever primary. */}
-                      {advanceTo && !editing && (
+                      {showAdvance && advanceTo && !editing && (
                         <button
                           type="button"
                           className={`btn ${planMet ? "btn-primary" : "btn-outline-ink"} btn-block`}
@@ -2001,7 +2001,8 @@ export function Session() {
                 setFocusKey(entry.key);
                 setOpenKey(entry.key);
               }}
-              renderEditor={renderEditor}
+              canAdvance={!editing && !supersetInfo.has(focusEntry.key)}
+              renderEditor={(entry) => renderEditor(entry, false)}
             />
           ) : (
             <>

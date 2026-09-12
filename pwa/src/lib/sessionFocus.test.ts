@@ -73,4 +73,15 @@ describe("session focus derivations", () => {
       exercisesRemaining: 2,
     });
   });
+
+  it("subtracts a partial entry's canonical progress from its remaining sets", () => {
+    expect(
+      remainingProgress(entries, isDone, (candidate) =>
+        candidate.key === "deadlift" ? 1 : 0,
+      ),
+    ).toEqual({
+      setsRemaining: 3,
+      exercisesRemaining: 2,
+    });
+  });
 });

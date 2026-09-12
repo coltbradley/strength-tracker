@@ -30,10 +30,15 @@ export function focusEntryKey(
 export function remainingProgress(
   entries: readonly ExerciseEntry[],
   isDone: (entry: ExerciseEntry) => boolean,
+  entryProgress: (entry: ExerciseEntry) => number = () => 0,
 ): { setsRemaining: number; exercisesRemaining: number } {
   const remaining = entries.filter((entry) => !isDone(entry));
   return {
-    setsRemaining: remaining.reduce((total, entry) => total + targetSets(entry), 0),
+    setsRemaining: remaining.reduce(
+      (total, entry) =>
+        total + Math.max(0, targetSets(entry) - entryProgress(entry)),
+      0,
+    ),
     exercisesRemaining: remaining.length,
   };
 }
