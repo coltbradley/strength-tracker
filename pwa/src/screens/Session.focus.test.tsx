@@ -4,7 +4,7 @@ import "fake-indexeddb/auto";
 
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { cacheKeys, cacheSet, resetDbForTests } from "../lib/db";
 import { resetAllSettings, setSetting } from "../lib/settings";
@@ -31,7 +31,7 @@ vi.mock("../lib/sync", () => ({
 
 import { Session } from "./Session";
 import { outbox } from "../lib/sync";
-import { getServerSessionSets } from "../lib/data";
+import { getExercises, getServerSessionSets } from "../lib/data";
 
 const active: ActiveSession = {
   id: "session-focus-1",
@@ -245,6 +245,85 @@ describe("Session focus presentation", () => {
     });
     expect(vi.mocked(outbox.enqueueBatch)).not.toHaveBeenCalled();
     expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain("10");
+  });
+
+  it("finishes the active partial round with A2 only instead of logging A1 twice", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+
+    expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Log A2 only" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+
+    expect(vi.mocked(outbox.enqueue).mock.calls.map((call) => call[0])).toMatchObject([
+      { payload: { exercise_id: "bench-press", prescription_id: "bench", set_index: 0 } },
+      { payload: { exercise_id: "barbell-row", prescription_id: "row", set_index: 0 } },
+    ]);
+    expect(vi.mocked(outbox.enqueueBatch)).not.toHaveBeenCalled();
+  });
+
+  it("returns to the canonical round editor when focus starts from A2", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "View full workout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Barbell Row" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+
+    expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Log round" })).toBeTruthy();
+  });
+
+  it("routes a round member's number pad and plate sheet back to that draft", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    vi.mocked(getExercises).mockResolvedValue({
+      data: [
+        { id: "bench-press", name: "Bench Press", equipment: "barbell" },
+        { id: "barbell-row", name: "Barbell Row", equipment: "barbell" },
+      ],
+      fromCache: false,
+      stale: null,
+    });
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    const a1 = screen.getByLabelText("A1 Bench Press");
+    const a2 = screen.getByLabelText("A2 Barbell Row");
+    fireEvent.click(within(a2).getByRole("button", { name: "reps value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "9" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
+
+    expect(a1.textContent).toContain("8");
+    expect(a2.textContent).toContain("9");
+    fireEvent.click(within(a2).getByRole("button", { name: /›/ }));
+    expect(await screen.findByText("BARBELL ROW · PLATES")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Type a target" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "5" }));
+    fireEvent.click(screen.getByRole("button", { name: "BACK TO PLATES" }));
+
+    expect(a1.textContent).toContain("20");
+    expect(a2.textContent).toContain("25");
   });
 
   it("removes focus next while correcting a completed entry", async () => {

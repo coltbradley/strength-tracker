@@ -105,7 +105,12 @@ import {
   usePlatesOnHand,
   useSetting,
 } from "../hooks/useSettings";
-import { getExercisePref, setExerciseLoadEntry } from "../lib/settings";
+import {
+  getExerciseBarKg,
+  getExercisePref,
+  getExerciseRestSeconds,
+  setExerciseLoadEntry,
+} from "../lib/settings";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { unlockRestCue } from "../lib/restCue";
 import {
@@ -265,6 +270,8 @@ export function Session() {
   const [logLocked, setLogLocked] = useState(false);
   const [roundDrafts, setRoundDrafts] = useState<Record<string, SetDraft>>({});
   const [roundError, setRoundError] = useState<string | null>(null);
+  /** Which paired editor owns the ephemeral pad or plate sheet, if either. */
+  const [roundInputKey, setRoundInputKey] = useState<string | null>(null);
 
   const [rest, setRest] = useState<ActiveRest | null>(null);
   // survives DONE so the next log can still record elapsed rest
@@ -661,12 +668,19 @@ export function Session() {
   );
   const doneEntries = entries.filter(entryDone).length;
   const focusEligible = isFocusEligible(entries);
-  const focusEntry =
+  const selectedFocusEntry =
     entries.find((entry) => entry.key === focusKey) ?? openEntry;
-  const focusSupersetPair = useMemo(
-    () => twoMemberSuperset(entries, focusEntry?.key ?? null),
-    [entries, focusEntry?.key],
+  const selectedFocusPair = useMemo(
+    () => twoMemberSuperset(entries, selectedFocusEntry?.key ?? null),
+    [entries, selectedFocusEntry?.key],
   );
+  const focusSupersetPair =
+    selectedFocusPair !== null && !selectedFocusPair.every(entryDone)
+      ? selectedFocusPair
+      : null;
+  // Selecting A2 in overview still opens the pair from its canonical first
+  // member. A round is one unit of work, not two independently focused cards.
+  const focusEntry = focusSupersetPair?.[0] ?? selectedFocusEntry;
 
   // default open: first incomplete entry, once, AFTER sets have merged —
   // otherwise a mid-workout reload opens exercise 1 instead of where the
@@ -1030,6 +1044,7 @@ export function Session() {
       setType: setType as BracketKind,
       rpe,
     },
+    entryToLog: ExerciseEntry | null = openEntry,
   ) => {
     // FIRST, and before every guard below: iOS only lets an AudioContext start
     // inside a user gesture, and this tap is the gesture that starts the rest
@@ -1042,29 +1057,37 @@ export function Session() {
 
     // setsFailed: see the state declaration — an empty `setsRef` we could not
     // verify would number this set 0 on top of whatever is already logged.
-    if (!openEntry || !sessionId || logLocked || !setsLoaded || setsFailed)
+    if (!entryToLog || !sessionId || logLocked || !setsLoaded || setsFailed)
       return;
     setLogLocked(true);
     window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     setVoidArm(null);
     // logging on a skipped exercise means it's happening after all
-    if (skips.has(openEntry.key)) {
+    if (skips.has(entryToLog.key)) {
       const unskipped = new Set(skips);
-      unskipped.delete(openEntry.key);
+      unskipped.delete(entryToLog.key);
       persistSkips(unskipped);
     }
 
-    const nextIndex = setIndexFor(openEntry.exercise_id);
+    const nextIndex = setIndexFor(entryToLog.exercise_id);
     const bracket = bracketFor(
-      openEntry,
-      countFor(openEntry, loggedDraft.setType),
+      entryToLog,
+      countFor(entryToLog, loggedDraft.setType),
       loggedDraft.setType,
     );
+    const targetLoadEntry = resolveLoadEntry({
+      override: getExercisePref(entryToLog.exercise_id).loadEntry,
+      prescribed: entryToLog.substitutedFor
+        ? null
+        : (bracket?.load_entry ?? null),
+      equipment: equipMap[entryToLog.exercise_id] ?? null,
+      name: entryToLog.name,
+    });
     const set = buildSetInsert(
-      openEntry,
+      entryToLog,
       loggedDraft,
       bracket,
-      loadEntry,
+      targetLoadEntry,
       nextIndex,
       recordableRest(),
     );
@@ -1082,44 +1105,51 @@ export function Session() {
     const doneAfter = (e: ExerciseEntry): boolean =>
       // logging on a skipped exercise un-skips it (above), so the open entry
       // is never treated as skipped here
-      (skips.has(e.key) && e.key !== openEntry.key) ||
+      (skips.has(e.key) && e.key !== entryToLog.key) ||
       entryMet(e, setsForEntryOf(e, next, rx, knownRxIds));
     // Mid-superset the rest strip is a countdown to nothing: the next thing
     // to do is the partner, not a wait. Only the STRIP is held — the clock
     // below always starts, because `rest_seconds_actual` is data and
     // append-only, so a rest not measured now can never be recorded later.
-    const roundOpen = supersetPartnerOf(entries, openEntry.key, doneAfter);
+    const roundOpen = supersetPartnerOf(entries, entryToLog.key, doneAfter);
 
     // The clock always starts MEASURING (rest_seconds_actual is data, and
     // append-only means it can never be added later); auto-start governs only
     // whether the strip appears.
     const now = Date.now();
     restRef.current = { startedAt: now };
-    const forLabel = `${openEntry.name} set ${nextIndex + 1}`;
+    const forLabel = `${entryToLog.name} set ${nextIndex + 1}`;
+    const targetRestSeconds = getExerciseRestSeconds(
+      entryToLog.exercise_id,
+      bracket?.rest_seconds ?? null,
+    );
     const showStrip = autoStartRest && roundOpen === null;
     if (showStrip)
-      setRest({ startedAt: now, targetSeconds: restSeconds, forLabel });
+      setRest({ startedAt: now, targetSeconds: targetRestSeconds, forLabel });
     // The next LOG cancels the previous rest's closed-app alert whatever
     // happens to the strip, and arms one for this rest only when a strip is
     // shown: no strip means mid-superset or auto-start off, and neither wants
     // a buzz.
     disarmRestAlert();
-    if (showStrip) armRestAlert(now + restSeconds * 1000, forLabel);
+    if (showStrip) armRestAlert(now + targetRestSeconds * 1000, forLabel);
     // Mirror the clock HERE, whether or not a strip appeared. With auto-start
     // off nothing about `rest` changes, so nothing else would ever write the
     // new startedAt — and no strip also means there is none to restore, which
     // is the null target.
-    mirrorRest(showStrip ? restSeconds : null, showStrip ? forLabel : null);
+    mirrorRest(showStrip ? targetRestSeconds : null, showStrip ? forLabel : null);
     // What the NEXT set should be, from the plan rather than from a reset:
     // this was an unconditional "working", so a coach's second prescribed
     // warmup arrived pre-set to working and got logged as one.
     const warmupsLogged = setsForEntryOf(
-      openEntry,
+      entryToLog,
       next,
       rx,
       knownRxIds,
     ).filter((s) => s.set_type === "warmup").length;
-    setSetType(warmupsLogged < warmupSets(openEntry) ? "warmup" : "working");
+    if (entryToLog.key === openEntry?.key)
+      setSetType(
+        warmupsLogged < warmupSets(entryToLog) ? "warmup" : "working",
+      );
     // The rating does NOT carry to the next set. Load and reps do, because
     // they are the plan repeating; how hard set 3 felt is not a prediction
     // about set 4, and a sticky value would quietly attach one lifter's one
@@ -1128,6 +1158,9 @@ export function Session() {
   };
 
   const logRound = async (round: SupersetRoundDraft) => {
+    // Kept synchronous with the tap: iOS will only permit this cue unlock in
+    // a user gesture, not after the durable local queue awaits.
+    unlockRestCue();
     if (!sessionId || logLocked || !setsLoaded || setsFailed) return;
     const first = entries.find((entry) => entry.key === round.keys[0]);
     const second = entries.find((entry) => entry.key === round.keys[1]);
@@ -1206,7 +1239,11 @@ export function Session() {
     }
   };
 
-  const openSheet = (kind: "search" | "swap" | "plates") => {
+  const openSheet = (
+    kind: "search" | "swap" | "plates",
+    memberKey: string | null = null,
+  ) => {
+    setRoundInputKey(memberKey);
     setSheet(kind);
     setPad(null);
     // Which door was opened is recorded HERE rather than at each call site, so
@@ -1216,7 +1253,12 @@ export function Session() {
     if (kind === "swap") setPicking("swap");
   };
 
-  const openPad = (kind: PadKind, fromPlates = false) => {
+  const openPad = (
+    kind: PadKind,
+    fromPlates = false,
+    memberKey: string | null = null,
+  ) => {
+    setRoundInputKey(memberKey);
     setPad({ kind, fromPlates });
     setSheet(null);
   };
@@ -1547,6 +1589,64 @@ export function Session() {
 
   const padRequest = (): PadRequest | null => {
     if (!pad || !openEntry) return null;
+    const roundEntry =
+      roundInputKey === null
+        ? null
+        : (entries.find((entry) => entry.key === roundInputKey) ?? null);
+    if (roundEntry && pad.kind !== "rest") {
+      const draft = roundDraftFor(roundEntry);
+      const bracket = bracketFor(
+        roundEntry,
+        countFor(roundEntry, draft.setType),
+        draft.setType,
+      );
+      const entryMode = resolveLoadEntry({
+        override: getExercisePref(roundEntry.exercise_id).loadEntry,
+        prescribed: roundEntry.substitutedFor
+          ? null
+          : (bracket?.load_entry ?? null),
+        equipment: equipMap[roundEntry.exercise_id] ?? null,
+        name: roundEntry.name,
+      });
+      const updateDraft = (next: Partial<SetDraft>) =>
+        setRoundDrafts((prior) => ({
+          ...prior,
+          [roundEntry.key]: { ...draft, ...next },
+        }));
+      if (pad.kind === "load") {
+        const perSideRound = entryMode === "per_side";
+        const max = perSideRound ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
+        return {
+          label: `${roundEntry.name.toUpperCase()} · ${
+            perSideRound ? "WEIGHT ON EACH DUMBBELL" : "ONE TOTAL WEIGHT"
+          } IN ${unit.toUpperCase()}`,
+          action: pad.fromPlates ? "BACK TO PLATES" : "SET LOAD",
+          initial: String(toDisplay(draft.entryKg, unit)),
+          allowDecimal: true,
+          onCommit: (value) => {
+            const kg = Math.min(max, Math.max(0, fromDisplay(value, unit)));
+            updateDraft({ entryKg: Math.round(kg * 100) / 100 });
+            setPad(null);
+            if (pad.fromPlates) setSheet("plates");
+          },
+          onCancel: () => {
+            setPad(null);
+            if (pad.fromPlates) setSheet("plates");
+          },
+        };
+      }
+      return {
+        label: `${roundEntry.name.toUpperCase()} · REPS`,
+        action: "SET REPS",
+        initial: String(draft.reps),
+        allowDecimal: false,
+        onCommit: (value) => {
+          updateDraft({ reps: Math.min(MAX_REPS, Math.max(0, Math.round(value))) });
+          setPad(null);
+        },
+        onCancel: () => setPad(null),
+      };
+    }
     const U = unit.toUpperCase();
     if (pad.kind === "load") {
       return {
@@ -1654,6 +1754,13 @@ export function Session() {
     const roundTotal = pairedRound
       ? Math.min(targetSets(focusSupersetPair[0]), targetSets(focusSupersetPair[1]))
       : 0;
+    const pendingRoundMember = pairedRound
+      ? entryProgress(focusSupersetPair[0]) === entryProgress(focusSupersetPair[1])
+        ? null
+        : entryProgress(focusSupersetPair[0]) < entryProgress(focusSupersetPair[1])
+          ? "a1"
+          : "a2"
+      : null;
 
     return (
       <>
@@ -1760,6 +1867,7 @@ export function Session() {
                           disabled={logLocked || !setsLoaded || setsFailed}
                           error={roundError}
                           singleLogLabel={`Log ${roundTagA1} only`}
+                          pendingMember={pendingRoundMember}
                           onLogRound={(drafts) =>
                             void logRound({
                               keys: [focusSupersetPair[0].key, focusSupersetPair[1].key],
@@ -1769,12 +1877,22 @@ export function Session() {
                             })
                           }
                           onLogA1Only={() => {
-                            if (!openEntry || !sessionId || logLocked || !setsLoaded || setsFailed)
+                            if (!sessionId || logLocked || !setsLoaded || setsFailed)
                               return;
-                            logSet(roundA1);
+                            logSet(roundA1, focusSupersetPair[0]);
                             setRoundDrafts((prior) => {
                               const next = { ...prior };
                               delete next[focusSupersetPair[0].key];
+                              return next;
+                            });
+                          }}
+                          onLogA2Only={() => {
+                            if (!sessionId || logLocked || !setsLoaded || setsFailed)
+                              return;
+                            logSet(roundA2, focusSupersetPair[1]);
+                            setRoundDrafts((prior) => {
+                              const next = { ...prior };
+                              delete next[focusSupersetPair[1].key];
                               return next;
                             });
                           }}
@@ -2168,6 +2286,23 @@ export function Session() {
     });
     const storedLoad = totalKg(draft.entryKg, entryMode);
     const perSide = entryMode === "per_side";
+    const barKg = getExerciseBarKg(entry.exercise_id, unit, equipment);
+    const plateSplit =
+      equipment === "barbell" || equipment === "machine"
+        ? split(storedLoad, barKg, inventory)
+        : null;
+    const hint = plateSplit
+      ? plateSplit.plates.length > 0
+        ? plateSplit.plates
+            .map(
+              (plate) =>
+                `${plate.count > 1 ? `${plate.count}×` : ""}${formatPlate(plate.plate, unit)}`,
+            )
+            .join("·")
+        : barKg > 0
+          ? "BAR ONLY"
+          : "EMPTY"
+      : null;
     return {
       entry,
       draft,
@@ -2175,9 +2310,9 @@ export function Session() {
       loadPresentation: {
         perSide,
         totalKg: storedLoad,
-        plateSplit: null,
-        barKg: 0,
-        hint: null,
+        plateSplit,
+        barKg,
+        hint,
         canToggleEntry: offersLoadEntry({
           override: getExercisePref(entry.exercise_id).loadEntry,
           prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
@@ -2199,8 +2334,8 @@ export function Session() {
         setRoundError(null);
       },
       onLog: () => undefined,
-      onOpenPlates: () => undefined,
-      onOpenPad: undefined,
+      onOpenPlates: () => openSheet("plates", entry.key),
+      onOpenPad: (kind: "load" | "reps") => openPad(kind, false, entry.key),
       onToggleLoadEntry: () =>
         setExerciseLoadEntry(
           entry.exercise_id,
@@ -2237,6 +2372,14 @@ export function Session() {
     return n > total ? "LOG EXTRA SET" : `LOG SET ${n} OF ${total}`;
   };
 
+  const roundInputEntry =
+    roundInputKey === null
+      ? null
+      : (entries.find((entry) => entry.key === roundInputKey) ?? null);
+  const roundInputEditor = roundInputEntry
+    ? roundEditorFor(roundInputEntry, roundDraftFor(roundInputEntry))
+    : null;
+  const plateEntry = roundInputEntry ?? openEntry;
   const req = padRequest();
   const sheetOpen = sheet !== null || pad !== null || demoFor !== null;
 
@@ -2487,15 +2630,18 @@ export function Session() {
         />
       )}
 
-      {sheet === "plates" && openEntry && (
+      {sheet === "plates" && plateEntry && (
         <PlateSheet
-          exerciseId={openEntry.exercise_id}
-          exerciseName={openEntry.name}
-          targetKg={totalLoadKg}
+          exerciseId={plateEntry.exercise_id}
+          exerciseName={plateEntry.name}
+          targetKg={roundInputEditor?.loadPresentation.totalKg ?? totalLoadKg}
           unit={unit}
-          equipment={equipment}
-          onTypeTarget={() => openPad("load", true)}
-          onClose={() => setSheet(null)}
+          equipment={equipMap[plateEntry.exercise_id] ?? null}
+          onTypeTarget={() => openPad("load", true, roundInputEntry?.key ?? null)}
+          onClose={() => {
+            setSheet(null);
+            setRoundInputKey(null);
+          }}
         />
       )}
 

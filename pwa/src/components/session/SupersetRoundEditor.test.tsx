@@ -57,7 +57,10 @@ function editorProps(entry: ExerciseEntry, draft: SetDraft): SetEditorProps {
 function Harness({
   onLogRound,
   onLogA1Only,
-}: Pick<SupersetRoundEditorProps, "onLogRound" | "onLogA1Only">) {
+  onLogA2Only = () => undefined,
+  pendingMember = null,
+}: Pick<SupersetRoundEditorProps, "onLogRound" | "onLogA1Only"> &
+  Partial<Pick<SupersetRoundEditorProps, "onLogA2Only" | "pendingMember">>) {
   const [a1, setA1] = useState<SetDraft>({
     entryKg: 40,
     reps: 8,
@@ -90,6 +93,8 @@ function Harness({
       }}
       onLogRound={onLogRound}
       onLogA1Only={onLogA1Only}
+      onLogA2Only={onLogA2Only}
+      pendingMember={pendingMember}
     />
   );
 }
@@ -118,5 +123,21 @@ describe("SupersetRoundEditor", () => {
 
     expect(onLogA1Only).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/A2.*remaining/i)).toBeTruthy();
+  });
+
+  it("offers only A2 when A1 has already been persisted", () => {
+    const onLogA2Only = vi.fn();
+    render(
+      <Harness
+        onLogRound={vi.fn()}
+        onLogA1Only={vi.fn()}
+        onLogA2Only={onLogA2Only}
+        pendingMember="a2"
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Log A2 only" }));
+    expect(onLogA2Only).toHaveBeenCalledTimes(1);
   });
 });
