@@ -205,6 +205,32 @@ export function canDoWorkoutNow(state: WorkoutState): boolean {
 }
 
 /**
+ * The one microcopy line explaining the do-now / reschedule buttons, or null
+ * when neither is actually on the card.
+ *
+ * NO DATE gets its own line rather than the generic one below. The generic
+ * line's whole claim is "the day keeps its date and still counts as done" —
+ * false for a day with no date to keep — and pairing "Do this workout now"
+ * with "reschedule it to today" told someone to reschedule in order to do the
+ * very thing the button right above it already does.
+ */
+export function doNowMicrocopy(
+  state: WorkoutState,
+  canDoNow: boolean,
+  canReschedule: boolean,
+): string | null {
+  if (state === "NO DATE") {
+    return canDoNow
+      ? "No date set. Do it now, or pick a day in Edit to put it on the calendar."
+      : null;
+  }
+  if (canDoNow && canReschedule) {
+    return "Do it now if you’re ahead or behind — the day keeps its date and still counts as done. Reschedule only if the date itself was wrong.";
+  }
+  return null;
+}
+
+/**
  * Whether the first-run card belongs on screen.
  *
  * Three conditions and each one is load-bearing, which is why this is a named
@@ -263,6 +289,12 @@ export function Today({ userId }: { userId?: string | null } = {}) {
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
   const [active, setActive] = useState<ActiveSession | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
+  // Bumped every time onPlanChanged clears rx below. A getResolvedPrescriptions
+  // call already in flight when that happens captures the generation it
+  // started on; if the generation has moved by the time it resolves, the plan
+  // changed again out from under it and its (now-stale) rows must not be
+  // written back in on top of a fresher load.
+  const rxGenerationRef = useRef(0);
   // null while loading or loaded; otherwise WHY the load failed, because
   // "offline" and "the server refused" need different words below
   const [loadError, setLoadError] = useState<StaleReason | null>(null);
@@ -278,8 +310,20 @@ export function Today({ userId }: { userId?: string | null } = {}) {
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [laterExpanded, setLaterExpanded] = useState<string | null>(null);
+  // Mirrors laterExpanded for onPlanChanged, like expandedRef below.
+  const laterExpandedRef = useRef<string | null>(null);
+  useEffect(() => {
+    laterExpandedRef.current = laterExpanded;
+  }, [laterExpanded]);
   // undated-program fallback keeps the old expandable ruled list
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Mirrors `expanded` for onPlanChanged below, which must read the row
+  // someone currently has open without taking it as a dependency (its own
+  // effect only needs to (re)subscribe once, on mount).
+  const expandedRef = useRef<string | null>(null);
+  useEffect(() => {
+    expandedRef.current = expanded;
+  }, [expanded]);
   // a same-day open session this device has no cache for
   const [orphan, setOrphan] = useState<OpenSessionRow | null>(null);
   const [orphanArm, setOrphanArm] = useArmed();
@@ -342,19 +386,6 @@ export function Today({ userId }: { userId?: string | null } = {}) {
         reportError(e, "load workouts");
       });
   }, []);
-
-  // Coach plan writes do not pass through the PWA's data helpers, so those
-  // helpers cannot invalidate their own cache. Return this screen to today,
-  // clear any old targets, and fetch the plan that the agent just wrote.
-  useEffect(
-    () =>
-      onPlanChanged(() => {
-        setSelectedDate(today);
-        setRx({});
-        reload();
-      }),
-    [reload, today],
-  );
 
   /** Mirrors `active` for the reconciliation effect, which must be able to
    *  read it without taking it as a dependency: re-running the whole
@@ -611,15 +642,35 @@ export function Today({ userId }: { userId?: string | null } = {}) {
     [workouts, weekDates, byDate],
   );
   const selectedWorkout = anyDates ? (byDate.get(selectedDate) ?? null) : null;
+  // Mirrors selectedWorkout's id for the same reason expandedRef mirrors
+  // expanded: onPlanChanged below needs the currently-visible dated day
+  // without resubscribing every time the selection changes.
+  const selectedWorkoutIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedWorkoutIdRef.current = selectedWorkout?.id ?? null;
+  }, [selectedWorkout]);
+
+  /** Unconditional fetch — no "already loaded" guard — for a caller that
+   *  already knows it wants fresh rows (onPlanChanged, below). Tags the
+   *  request with the current rx generation so a plan change that lands
+   *  mid-flight discards this result instead of writing stale rows back in
+   *  over a fresher load. */
+  const fetchRx = useCallback((workoutId: string) => {
+    const generation = rxGenerationRef.current;
+    getResolvedPrescriptions(workoutId)
+      .then((r) => {
+        if (rxGenerationRef.current !== generation) return;
+        setRx((prev) => ({ ...prev, [workoutId]: r.data }));
+      })
+      .catch((e: unknown) => reportError(e, "load prescriptions"));
+  }, []);
 
   const loadRx = useCallback(
     (workoutId: string) => {
       if (workoutId in rx) return;
-      getResolvedPrescriptions(workoutId)
-        .then((r) => setRx((prev) => ({ ...prev, [workoutId]: r.data })))
-        .catch((e: unknown) => reportError(e, "load prescriptions"));
+      fetchRx(workoutId);
     },
-    [rx],
+    [rx, fetchRx],
   );
 
   useEffect(() => {
@@ -636,6 +687,31 @@ export function Today({ userId }: { userId?: string | null } = {}) {
     setExpanded(todayId);
     loadRx(todayId);
   }, [anyDates, states, workouts, expanded, loadRx]);
+
+  // Coach plan writes do not pass through the PWA's data helpers, so those
+  // helpers cannot invalidate their own cache. Return this screen to today
+  // and drop every cached prescription — but a blanket clear with nothing
+  // reloaded is exactly the bug: a dated day's card falls out through
+  // selectedWorkout's own effect once `list` refreshes, but an undated
+  // DAY 1..N program has no selectedWorkout at all, and the row someone
+  // tapped open (`expanded`) is the only "currently visible" one. Its
+  // auto-expand effect above will not rerun either — autoExpanded.current is
+  // already set — so nothing else will ever ask for it again. Reload both
+  // directly, bumping the generation first so an in-flight fetchRx from
+  // before the change cannot write its stale rows back in afterwards.
+  useEffect(
+    () =>
+      onPlanChanged(() => {
+        rxGenerationRef.current += 1;
+        setSelectedDate(today);
+        setRx({});
+        reload();
+        if (selectedWorkoutIdRef.current) fetchRx(selectedWorkoutIdRef.current);
+        if (expandedRef.current) fetchRx(expandedRef.current);
+        if (laterExpandedRef.current) fetchRx(laterExpandedRef.current);
+      }),
+    [reload, today, fetchRx],
+  );
 
   const setSkipped = async (w: PlannedWorkoutRow, skipped: boolean) => {
     try {
@@ -938,6 +1014,7 @@ export function Today({ userId }: { userId?: string | null } = {}) {
         state === "NO DATE" ||
         (state === "UPCOMING" && anyDates));
     const canDoNow = canStart && canDoWorkoutNow(state);
+    const doNowLine = doNowMicrocopy(state, canDoNow, canReschedule);
     return (
       <>
         {canStart && state === "TODAY" && (
@@ -1020,18 +1097,11 @@ export function Today({ userId }: { userId?: string | null } = {}) {
             coach wrote; doing it now asserts the plan is right and the lifter
             is off it. Only when BOTH are on offer: naming a control that is
             not on the card (an undated program cannot reschedule) is worse
-            than saying nothing. */}
-        {canDoNow && canReschedule && (
-          <div className="microcopy">
-            Do it now if you’re ahead or behind — the day keeps its date and
-            still counts as done. Reschedule only if the date itself was wrong.
-          </div>
-        )}
-        {state === "NO DATE" && (
-          <div className="microcopy">
-            No date set — reschedule it to today, or pick a day in Edit.
-          </div>
-        )}
+            than saying nothing. NO DATE offers both controls too but gets its
+            own honest line from doNowMicrocopy — it has no date to keep, and
+            it is already doable from the button above, so this generic line
+            would be both false and redundant with the reschedule option. */}
+        {doNowLine && <div className="microcopy">{doNowLine}</div>}
         {state === "DRAFT" && (
           <div className="microcopy">
             Nothing in this day yet — add exercises in Edit.

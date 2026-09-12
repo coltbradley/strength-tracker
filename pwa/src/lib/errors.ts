@@ -3,7 +3,6 @@
 import { buildStamp } from "./build";
 import { supabase } from "./supabase";
 
-
 type ToastKind = "error" | "info";
 export interface Toast {
   id: number;
@@ -234,9 +233,7 @@ export interface BugReport {
   diagnostics: BugDiagnostic[];
 }
 
-export type BugReportResult =
-  | { ok: true }
-  | { ok: false; message: string };
+export type BugReportResult = { ok: true } | { ok: false; message: string };
 
 const BUG_REPORT_RETRY_MESSAGE =
   "Report not saved. Check your connection and try again.";
@@ -250,7 +247,9 @@ const BUG_REPORT_RETRY_MESSAGE =
  * PWA deliberately never supplies it, so a client cannot file on another
  * person's behalf.
  */
-export async function sendBugReport(report: BugReport): Promise<BugReportResult> {
+export async function sendBugReport(
+  report: BugReport,
+): Promise<BugReportResult> {
   const message = report.message.trim();
   const title = message.replace(/\s+/g, " ").slice(0, 200);
   if (!title) {
@@ -271,11 +270,16 @@ export async function sendBugReport(report: BugReport): Promise<BugReportResult>
     });
 
     if (error) {
-      reportError(new Error(`bug report write: ${error.message}`));
+      // Silent: the caller (ReportBugSheet) toasts BUG_REPORT_RETRY_MESSAGE
+      // itself. Console + Sentry + recentErrors still happen; only the
+      // second toast is skipped.
+      reportError(new Error(`bug report write: ${error.message}`), undefined, {
+        toast: false,
+      });
       return { ok: false, message: BUG_REPORT_RETRY_MESSAGE };
     }
   } catch (error) {
-    reportError(error, "write bug report");
+    reportError(error, "write bug report", { toast: false });
     return { ok: false, message: BUG_REPORT_RETRY_MESSAGE };
   }
 
@@ -301,7 +305,19 @@ export async function sendBugReport(report: BugReport): Promise<BugReportResult>
   return { ok: true };
 }
 
-export function reportError(err: unknown, context?: string): void {
+export interface ReportErrorOptions {
+  /** Set false when the caller already shows its own toast for this failure
+   *  (e.g. a friendlier, retry-worded one). Console logging, Sentry, and the
+   *  recent-errors buffer still happen either way — this only skips the
+   *  toast, never the report. Defaults to true. */
+  toast?: boolean;
+}
+
+export function reportError(
+  err: unknown,
+  context?: string,
+  opts?: ReportErrorOptions,
+): void {
   const prefix = context ? `[${context}]` : "[error]";
   console.error(prefix, err);
   try {
@@ -316,7 +332,9 @@ export function reportError(err: unknown, context?: string): void {
     message,
   });
   if (recentErrors.length > RECENT_CAP) recentErrors.shift();
-  toast(context ? `${context}: ${message}` : message, "error");
+  if (opts?.toast !== false) {
+    toast(context ? `${context}: ${message}` : message, "error");
+  }
 }
 
 export function installGlobalHandlers(): void {

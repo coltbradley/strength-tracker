@@ -37,8 +37,10 @@ import * as Sentry from "@sentry/react";
 import {
   buildBugDiagnostics,
   initSentry,
+  onToast,
   sendBugReport,
   type BugFacts,
+  type Toast,
 } from "./errors";
 
 const FACTS: BugFacts = {
@@ -157,7 +159,10 @@ describe("sendBugReport", () => {
   });
 
   it("saves the report even when Sentry is not configured", async () => {
-    const result = await sendBugReport({ message: "it broke", diagnostics: [] });
+    const result = await sendBugReport({
+      message: "it broke",
+      diagnostics: [],
+    });
 
     expect(result).toEqual({ ok: true });
     expect(feedbackInsert).toHaveBeenCalledWith({
@@ -207,7 +212,9 @@ describe("sendBugReport", () => {
   });
 
   it("keeps the failure visible when the durable write is rejected", async () => {
-    feedbackInsert.mockResolvedValue({ error: { message: "permission denied" } });
+    feedbackInsert.mockResolvedValue({
+      error: { message: "permission denied" },
+    });
 
     const result = await sendBugReport({
       message: "the plan would not save",
@@ -219,5 +226,37 @@ describe("sendBugReport", () => {
       message: "Report not saved. Check your connection and try again.",
     });
     expect(Sentry.captureFeedback).not.toHaveBeenCalled();
+  });
+
+  // ReportBugSheet toasts `result.message` on a failure. If sendBugReport's
+  // own error reporting also toasts, the sender sees two toasts for one
+  // failure. The failure still has to be reported (console + Sentry via
+  // reportError) — it just must not toast a second time on top of the
+  // caller's.
+  it("does not toast on failure — the caller shows the one toast", async () => {
+    feedbackInsert.mockResolvedValue({
+      error: { message: "permission denied" },
+    });
+    const seen: Toast[] = [];
+    const stop = onToast((t) => seen.push(t));
+
+    await sendBugReport({ message: "it broke again", diagnostics: [] });
+
+    stop();
+    expect(seen).toEqual([]);
+  });
+
+  it("does not toast when the write throws — same single-toast rule", async () => {
+    feedbackInsert.mockRejectedValue(new Error("network down"));
+    const seen: Toast[] = [];
+    const stop = onToast((t) => seen.push(t));
+
+    await sendBugReport({
+      message: "it broke a different way",
+      diagnostics: [],
+    });
+
+    stop();
+    expect(seen).toEqual([]);
   });
 });

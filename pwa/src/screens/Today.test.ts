@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canDoWorkoutNow,
+  doNowMicrocopy,
   showFirstRun,
   weekPageDate,
   weekPages,
@@ -190,6 +191,38 @@ describe("canDoWorkoutNow", () => {
     // A coach can add an undated day beside dated ones. Its lack of a calendar
     // slot must not turn a real workout into something the person cannot do.
     expect(canDoWorkoutNow("NO DATE")).toBe(true);
+  });
+});
+
+// canDoWorkoutNow("NO DATE") and canReschedule both went true together, so an
+// undated day used to hit the generic "ahead or behind — the day keeps its
+// date" line (it has none) AND, right under the new "Do this workout now"
+// button, "reschedule it to today" — telling someone to do the very thing the
+// button above already does. Every NO DATE line must stay honest about that.
+describe("doNowMicrocopy", () => {
+  it("never claims a NO DATE day keeps a date", () => {
+    const line = doNowMicrocopy("NO DATE", true, true);
+    expect(line).not.toBeNull();
+    expect(line).not.toMatch(/keeps its date/);
+  });
+
+  it("does not tell someone to reschedule in order to do a NO DATE day now", () => {
+    const line = doNowMicrocopy("NO DATE", true, true);
+    expect(line).not.toMatch(/reschedule/i);
+  });
+
+  it("says nothing for NO DATE when neither button is actually on screen", () => {
+    expect(doNowMicrocopy("NO DATE", false, false)).toBeNull();
+  });
+
+  it("keeps the existing ahead/behind line for MISSED and UPCOMING", () => {
+    expect(doNowMicrocopy("MISSED", true, true)).toMatch(/keeps its date/);
+    expect(doNowMicrocopy("UPCOMING", true, true)).toMatch(/keeps its date/);
+  });
+
+  it("says nothing when only one of the two controls is on screen", () => {
+    expect(doNowMicrocopy("MISSED", true, false)).toBeNull();
+    expect(doNowMicrocopy("MISSED", false, true)).toBeNull();
   });
 });
 
