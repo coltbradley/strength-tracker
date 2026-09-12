@@ -7,7 +7,13 @@ import {
   type OutboxTransport,
   type TransportError,
 } from "./outbox";
-import { getDb, resetDbForTests } from "./db";
+import {
+  getDb,
+  resetDbForTests,
+  type Database,
+  type OutboxItem,
+  type OutboxOp,
+} from "./db";
 import type { SessionInsert, SetInsert } from "./types";
 
 interface Call {
@@ -93,6 +99,10 @@ function makeSet(
 
 const setA = makeSet("22222222-2222-4222-8222-222222222222", 0);
 const setB = makeSet("33333333-3333-4333-8333-333333333333", 1);
+const roundOps: readonly OutboxOp[] = [
+  { kind: "insert", table: "sets", payload: setA },
+  { kind: "insert", table: "sets", payload: setB },
+];
 
 describe("outbox", () => {
   let online: boolean;
@@ -116,6 +126,96 @@ describe("outbox", () => {
     for (const op of ops) await outbox.enqueue(op);
     await outbox.flush();
   }
+
+  it("stores a set round as two ordered items before any replay", async () => {
+    const { transport } = makeTransport();
+    const outbox = build(transport);
+
+    await outbox.enqueueBatch(roundOps);
+
+    const db = await getDb();
+    expect(
+      (await db.getAll("outbox")).map(
+        (item) =>
+          (item.op as Extract<
+            OutboxOp,
+            { kind: "insert"; table: "sets" }
+          >).payload.id,
+      ),
+    ).toEqual([setA.id, setB.id]);
+  });
+
+  it("leaves no part of the batch when its IndexedDB transaction aborts", async () => {
+    const { transport } = makeTransport();
+    const rows: OutboxItem[] = [];
+    let firstItemReachedCommittedView = false;
+    const diskFull = new Error("disk full");
+    const failingDb = {
+      // A non-transactional implementation would call this twice: the first
+      // write persists and the second failure leaves it behind.
+      add: async (_store: "outbox", item: OutboxItem) => {
+        if (rows.length === 1) throw diskFull;
+        rows.push(item);
+        return rows.length;
+      },
+      count: async (_store: "outbox") => rows.length,
+      transaction: () => {
+        // IndexedDB writes are visible in the transaction's store, then an
+        // abort restores the committed store to its pre-transaction state.
+        const before = [...rows];
+        let writes = 0;
+        let rejectDone: (reason?: unknown) => void = () => undefined;
+        const done = new Promise<void>((_resolve, reject) => {
+          rejectDone = reject;
+        });
+        void done.catch(() => {
+          rows.splice(0, rows.length, ...before);
+        });
+        return {
+          store: {
+            add: async (item: OutboxItem) => {
+              if (writes === 1) {
+                firstItemReachedCommittedView = rows.length === 1;
+                rejectDone(diskFull);
+                throw diskFull;
+              }
+              rows.push(item);
+              writes++;
+              return rows.length;
+            },
+          },
+          done,
+        };
+      },
+    } as unknown as Database;
+    const failingOutbox = createOutbox({
+      getDb: () => Promise.resolve(failingDb),
+      transport,
+      isOnline: () => false,
+    });
+
+    await expect(failingOutbox.enqueueBatch(roundOps)).rejects.toThrow(
+      "disk full",
+    );
+
+    await Promise.resolve(); // wait for the transaction abort to restore rows
+    expect(firstItemReachedCommittedView).toBe(true);
+    expect(await failingDb.count("outbox")).toBe(0);
+  });
+
+  it("replays both batch members in order and preserves normal idempotency", async () => {
+    const { calls, transport } = makeTransport();
+    const outbox = build(transport);
+
+    await outbox.enqueueBatch(roundOps);
+    online = true;
+    await outbox.flush();
+
+    expect(calls.map((call) => (call.payload as SetInsert).id)).toEqual([
+      setA.id,
+      setB.id,
+    ]);
+  });
 
   it("flushes queued writes in enqueue order", async () => {
     const { calls, transport } = makeTransport();
