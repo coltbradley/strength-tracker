@@ -16,7 +16,7 @@
 - Accept only `POST /mcp` and `OPTIONS /mcp`.
 - Require HTTPS for the configured upstream URL and disable redirects.
 - Replace caller authorization headers with `Authorization: Bearer ${STRENGTH_MCP_TOKEN}`.
-- Never write the Strength Tracker bearer to a profile, plist, file, or log.
+- Never write the Strength Tracker bearer or OpenAI runtime key to a profile, plist, file, or log.
 - Keep the existing Supabase Edge Function and MCP tool surface unchanged.
 - Do not create an OpenAI tunnel, runtime API key, Keychain entry, or LaunchAgent without interactive confirmation.
 
@@ -104,16 +104,16 @@ git commit -m "Add loopback MCP tunnel relay"
 - Modify: `scripts/package.json`
 
 **Interfaces:**
-- Produces `readKeychainToken({ service, account, execFile, logger })`, returning a trimmed token without logging it.
+- Produces `readKeychainSecret({ service, account, execFile, logger })`, returning a trimmed secret without logging it.
 - Produces `supervise({ spawn, relayCommand, tunnelCommand, env, delay, logger })`, which starts relay before tunnel and restarts the pair after either child exits.
-- Consumes `STRENGTH_MCP_KEYCHAIN_SERVICE`, `STRENGTH_MCP_KEYCHAIN_ACCOUNT`, `STRENGTH_MCP_URL`, `STRENGTH_MCP_RELAY_PORT`, `TUNNEL_CLIENT_BIN`, and `TUNNEL_PROFILE`.
+- Consumes `STRENGTH_MCP_KEYCHAIN_SERVICE`, `STRENGTH_MCP_KEYCHAIN_ACCOUNT`, `OPENAI_TUNNEL_KEYCHAIN_SERVICE`, `OPENAI_TUNNEL_KEYCHAIN_ACCOUNT`, `STRENGTH_MCP_URL`, `STRENGTH_MCP_RELAY_PORT`, `TUNNEL_CLIENT_BIN`, and `TUNNEL_PROFILE`.
 
 - [ ] **Step 1: Write the failing supervisor test**
 
 ```js
 test("reads and trims the Keychain token without logging it", async () => {
   const logs = [];
-  const token = await readKeychainToken({
+  const token = await readKeychainSecret({
     service: "Strength Tracker MCP", account: "colt", logger: (line) => logs.push(line),
     execFile: async () => ({ stdout: "stl_secret\\n" }),
   });
@@ -136,7 +136,7 @@ Expected: FAIL because `scripts/strength-tunnel-supervisor.mjs` does not exist.
 
 - [ ] **Step 3: Implement the supervisor**
 
-Use `execFile("/usr/bin/security", ["find-generic-password", "-s", service, "-a", account, "-w"])` to fetch the Keychain item. Spawn the relay with an explicit small environment containing only the upstream URL, token, and port. Start `tunnel-client run --profile <name>` only after relay readiness succeeds. Forward SIGINT and SIGTERM to both children. On unexpected exit, stop both, wait 1, 2, 4, 8, then at most 30 seconds, and restart. Keep all lifecycle logs token-free.
+Use `execFile("/usr/bin/security", ["find-generic-password", "-s", service, "-a", account, "-w"])` to fetch each Keychain item. Spawn the relay with an explicit small environment containing only the upstream URL, Strength Tracker bearer, and port. Pass the OpenAI runtime key only as `CONTROL_PLANE_API_KEY` to `tunnel-client`. Start `tunnel-client run --profile <name>` only after relay readiness succeeds. Forward SIGINT and SIGTERM to both children. On unexpected exit, stop both, wait 1, 2, 4, 8, then at most 30 seconds, and restart. Keep all lifecycle logs secret-free.
 
 - [ ] **Step 4: Run the supervisor test to verify it passes**
 

@@ -21,11 +21,11 @@ JSON-RPC body to the configured Strength Tracker MCP URL while discarding any
 incoming authorization header and adding one fixed `Authorization: Bearer`
 header.
 
-The supervisor reads that bearer token from the logged-in macOS user's
-Keychain, starts the relay with a minimal child environment, then starts
-`tunnel-client` using a profile whose server URL is the loopback relay. The
-profile stores only the OpenAI control-plane key reference and tunnel ID. It
-never stores the Strength Tracker bearer token.
+The supervisor reads the Strength Tracker bearer and OpenAI tunnel runtime key
+from the logged-in macOS user's Keychain, starts the relay with a minimal child
+environment, then starts `tunnel-client` using a profile whose server URL is
+the loopback relay. The profile stores only the OpenAI control-plane key
+reference and tunnel ID. It never stores either secret.
 
 ```
 ChatGPT custom app
@@ -49,9 +49,9 @@ Supabase mcp-server -- resolves mcp_tokens user identity
   bodies, or response bodies.
 - The relay must replace, never forward, incoming `authorization` and
   `x-api-key` headers.
-- The Keychain item is the only persistent local storage for the Strength
-  Tracker bearer. The tunnel profile and LaunchAgent plist may contain no
-  bearer value.
+- Keychain items are the only persistent local storage for the Strength
+  Tracker bearer and the tunnel runtime key. The tunnel profile and LaunchAgent
+  plist may contain neither value.
 - The relay forwards the upstream status, content type, cache policy, and body
   so MCP JSON and SSE responses stay protocol-compatible.
 - Existing server-side ownership checks remain the authorization authority;
