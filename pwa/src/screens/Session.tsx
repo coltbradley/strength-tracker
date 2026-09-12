@@ -1853,21 +1853,37 @@ export function Session() {
       ? (supersetInfo.get(focusSupersetPair[1].key)?.tag ?? "A2")
       : "A2";
     const roundLetter = roundTagA1.replace(/\d+$/, "");
-    const roundIndex = pairedRound
-      ? Math.min(
-          entryProgress(focusSupersetPair[0]),
-          entryProgress(focusSupersetPair[1]),
-        ) + 1
-      : 0;
+    // A member with a numeric target it has already MET has nothing left to
+    // pair with a partner still short of its own — the round is over for it,
+    // even though its raw progress can still equal the partner's (both
+    // logged 3 when A1's target was 3 and A2's was 4). Without distinguishing
+    // "exhausted" from merely "equal progress", that equality read as one
+    // more full round, offering "Log round" to add an unprescribed 4th set to
+    // A1 alongside A2's legitimate one, and the label undercounted the day's
+    // real round total.
+    const roundProgressA = pairedRound ? entryProgress(focusSupersetPair[0]) : 0;
+    const roundProgressB = pairedRound ? entryProgress(focusSupersetPair[1]) : 0;
+    const roundTargetA = pairedRound ? targetSets(focusSupersetPair[0]) : 0;
+    const roundTargetB = pairedRound ? targetSets(focusSupersetPair[1]) : 0;
+    const roundExhaustedA = roundTargetA > 0 && roundProgressA >= roundTargetA;
+    const roundExhaustedB = roundTargetB > 0 && roundProgressB >= roundTargetB;
+    const roundTail = roundExhaustedA !== roundExhaustedB;
+    const roundIndex = pairedRound ? Math.min(roundProgressA, roundProgressB) + 1 : 0;
     const roundTotal = pairedRound
-      ? Math.min(targetSets(focusSupersetPair[0]), targetSets(focusSupersetPair[1]))
+      ? roundTail
+        ? Math.max(roundTargetA, roundTargetB)
+        : Math.min(roundTargetA, roundTargetB)
       : 0;
     const pendingRoundMember = pairedRound
-      ? entryProgress(focusSupersetPair[0]) === entryProgress(focusSupersetPair[1])
-        ? null
-        : entryProgress(focusSupersetPair[0]) < entryProgress(focusSupersetPair[1])
-          ? "a1"
-          : "a2"
+      ? roundTail
+        ? roundExhaustedA
+          ? "a2"
+          : "a1"
+        : roundProgressA === roundProgressB
+          ? null
+          : roundProgressA < roundProgressB
+            ? "a1"
+            : "a2"
       : null;
 
     return (

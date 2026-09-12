@@ -687,4 +687,36 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1));
     expect(await cacheGet<string[]>(cacheKeys.sessionSkips(active.id))).toEqual([]);
   });
+
+  it("labels the tail of an unequal superset correctly and offers only the remaining member", async () => {
+    resetDbForTests();
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 1),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("SUPERSET A · ROUND 1 OF 1");
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1));
+
+    // Bench (A1, target 1) is done; Row (A2, target 2) still owes a set. This
+    // is the last set of a two-round day, not "round 2 of 1", and only Row
+    // has anything left to log — Bench must not be offered another set.
+    expect(await screen.findByText("SUPERSET A · ROUND 2 OF 2")).toBeTruthy();
+    expect(screen.queryByText(/ROUND 2 OF 1/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Log A1 only" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Log A2 only" })).toBeTruthy();
+
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+    fireEvent.click(screen.getByRole("button", { name: "Log A2 only" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { exercise_id: "barbell-row", set_index: 1 },
+    });
+  });
 });
