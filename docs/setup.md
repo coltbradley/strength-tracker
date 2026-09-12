@@ -119,16 +119,51 @@ arg-escaping bug.)
 Restart Claude Desktop, then smoke test in chat: "search exercises for
 barbell squat" should hit `search_exercises`.
 
+### Claude Code
+
+Claude Code speaks streamable HTTP natively, so it needs no bridge. Add the
+server at user scope, so every project sees it, with its own token (label it
+`Colt · Claude Code` so it can be revoked on its own):
+
+```bash
+read -rs "STRENGTH_TOKEN?MCP token: "   # zsh; prompts without echoing or history
+claude mcp add --scope user --transport http strength-log \
+  https://<PROJECT_REF>.supabase.co/functions/v1/mcp-server \
+  --header "Authorization: Bearer $STRENGTH_TOKEN"
+unset STRENGTH_TOKEN
+```
+
+Check with `claude mcp list` (it should say `connected`). In a session, ask it to
+list your programs; that calls `list_programs`. The token is stored in
+`~/.claude.json`, which is why it is a separate token from Claude Desktop's.
+
+### Verifying a Claude setup
+
+Both Claude clients were checked on 2026-09-12: Claude Desktop's configured
+token answered `tools/list` with HTTP 200, and Claude Code's `strength-log`
+server returned real programs from `list_programs`. To re-check a token
+without printing it, use the curl below with the token read from its config.
+
 ### Other MCP clients
 
-The endpoint is a standard streamable-HTTP MCP server with static bearer auth,
-which is the combination every client supports. There is nothing Claude-specific
-about it.
+The endpoint is a standard streamable-HTTP MCP server with static bearer auth.
+Most developer clients accept that directly. The consumer chat apps are the
+exception, because their connector UIs are built around OAuth.
 
-- **claude.ai, MCP Inspector, or anything else with a URL + key field.** Point
+- **MCP Inspector, Cursor, or anything else with a URL + header field.** Point
   it at the endpoint above and send the token as
   `Authorization: Bearer <token>`. Clients whose UI only offers an API-key field
   can send `x-api-key: <token>` instead; both are accepted.
+- **claude.ai (web, mobile).** A custom connector can carry a fixed
+  `Authorization` or `x-api-key` header, but as of 2026-09 that option is in
+  beta and set by an organization admin
+  ([Anthropic docs](https://claude.com/docs/connectors/building/authentication)).
+  Where it is not available, use Claude Desktop or Claude Code above.
+- **ChatGPT.** Developer mode offers only OAuth or no authentication, with no
+  field for a fixed header
+  ([OpenAI docs](https://developers.openai.com/api/docs/guides/developer-mode)).
+  Pointing it straight at this endpoint therefore cannot work. Use the tunnel
+  below.
 - **Browser-based clients** work because the function answers CORS preflights
   and exposes the MCP transport headers. A connector that fails with an
   unexplained "cannot connect" is almost always a CORS problem, and
@@ -155,6 +190,30 @@ and the local relay adds the per-user Strength Tracker bearer before it reaches
 Supabase. The bearer and the OpenAI runtime key live only in macOS Keychain.
 Neither goes in the ChatGPT app, tunnel profile, or LaunchAgent.
 
+Why a tunnel for a server that is already public: ChatGPT cannot send the
+bearer (see above), and OpenAI's
+[Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+is the documented way to give ChatGPT a server it cannot authenticate to
+directly. Tunnel access is limited to the OpenAI organization and ChatGPT
+workspace the tunnel is associated with. `tunnel-client`
+([openai/tunnel-client](https://github.com/openai/tunnel-client)) documents no
+way to add a header, which is why the relay exists. The alternative is OAuth on
+the server, a real project (see "What this is not").
+
+Know the costs before choosing it:
+
+- **The Mac has to be awake and logged in.** Every ChatGPT surface reaches the
+  log only while this Mac is running the LaunchAgent. OpenAI documents creating
+  the app on web and does not say whether it then works on mobile.
+- **Plan eligibility is not stated.** Developer mode is on Plus, Pro, Business,
+  Enterprise and Edu (web). OpenAI does not say which of those can create
+  tunnels; the tunnel needs Platform permissions `Tunnels Read + Manage` to
+  create and `Tunnels Read + Use` to run. Check your account in step 1 before
+  doing the rest.
+- **The relay refuses browsers.** It sends no CORS headers and rejects any
+  request with an `Origin` or a non-loopback `Host`, so a web page on this Mac
+  cannot borrow the bearer. Only `tunnel-client` should talk to it.
+
 1. In the OpenAI Platform tunnel settings, create a tunnel associated with the
    ChatGPT workspace where you will use it. Create a runtime API key for that
    tunnel. Do not use an admin API key.
@@ -163,9 +222,13 @@ Neither goes in the ChatGPT app, tunnel profile, or LaunchAgent.
    Keychain:
 
    ```bash
-   security add-generic-password -U -s "Strength Tracker MCP" -a "strength-tracker" -w "<MCP token>"
-   security add-generic-password -U -s "OpenAI Tunnel Runtime" -a "strength-tracker" -w "<OpenAI runtime API key>"
+   security add-generic-password -U -s "Strength Tracker MCP" -a "strength-tracker" -w
+   security add-generic-password -U -s "OpenAI Tunnel Runtime" -a "strength-tracker" -w
    ```
+
+   Each prompts for the value. Leaving `-w` last with nothing after it is
+   deliberate: a value typed on the command line lands in shell history and is
+   visible to `ps` while the command runs.
 
 3. Copy `scripts/strength-tunnel-client.yaml.example` to
    `~/.config/tunnel-client/strength-tracker.yaml`. Replace only
@@ -187,10 +250,30 @@ Neither goes in the ChatGPT app, tunnel profile, or LaunchAgent.
    tunnel-client health --port 8787 --require-control-plane-poll
    ```
 
-6. In ChatGPT web, Settings → Apps → Create, choose **Tunnel**, select the
-   tunnel ID, scan the tools, then create the app. Test a read tool first, then
+6. In ChatGPT web, turn on developer mode (Settings → Security and login →
+   Developer mode; on Business/Enterprise/Edu a workspace admin must allow it
+   first). Then open ChatGPT Plugins, select **+** to create a developer-mode
+   app, choose **Tunnel** under **Connection**, select the tunnel or paste its
+   `tunnel_id`, scan the tools, then create the app. Menu names move; the
+   [developer mode guide](https://developers.openai.com/api/docs/guides/developer-mode)
+   is the current source. Test a read tool first, then
    a low-blast-radius write such as `set_goal`; ChatGPT may require confirmation
    before a write.
+7. Verify the pieces separately if the app cannot connect. The relay should
+   answer a local, header-free call and refuse a browser-shaped one:
+
+   ```bash
+   curl -sS http://127.0.0.1:8786/mcp -H "content-type: application/json" \
+     -H "accept: application/json, text/event-stream" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -c 200
+   curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8786/mcp \
+     -H "origin: https://example.com" -d '{}'          # expect 403
+   tail -n 20 ~/Library/Logs/StrengthTracker/*.log
+   ```
+
+   A good first call and a failing app means the tunnel half: re-run
+   `tunnel-client doctor` and `tunnel-client health`. A 401 from the first call
+   means the Keychain token is wrong or revoked.
 
 To undo the connection, remove the ChatGPT app, then run:
 

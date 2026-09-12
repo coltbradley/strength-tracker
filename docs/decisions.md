@@ -4,12 +4,16 @@ Deviations from the original spec, with reasons. Newest last.
 
 ## 2026-09-12 ChatGPT private access uses a supervised Secure MCP Tunnel
 
-ChatGPT cannot send a custom authorization header in every connector setup,
-but the Strength Tracker MCP server already has safe per-user static-bearer
-authorization. Rather than add OAuth's authorization endpoints, consent UI,
+ChatGPT developer mode offers OAuth or no authentication for a custom MCP
+server and has no field for a fixed header (checked against OpenAI's docs
+2026-09-12), but the Strength Tracker MCP server already has safe per-user
+static-bearer authorization. Rather than add OAuth's authorization endpoints, consent UI,
 PKCE, refresh tokens, and dynamic registration, the local macOS supervisor
 reads a dedicated bearer from Keychain and gives it only to a loopback relay.
-The relay accepts only `POST /mcp`, replaces any caller credential, and sends
+The relay accepts only `POST /mcp` from a non-browser caller (no CORS, any
+`Origin` or non-loopback `Host` refused; the first version answered preflights
+with `*`, which would have let any web page on the Mac use the bearer),
+replaces any caller credential, and sends
 the fixed bearer to the existing Supabase endpoint. `tunnel-client` connects
 that relay to an OpenAI Secure MCP Tunnel and is restarted alongside it.
 
