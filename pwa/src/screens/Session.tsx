@@ -46,6 +46,7 @@ import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
 import { SetEditor } from "../components/session/SetEditor";
+import { FocusDeck } from "../components/session/FocusDeck";
 import { WorkoutOverview } from "../components/session/WorkoutOverview";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
@@ -101,11 +102,14 @@ import {
   useExercisePref,
   useExerciseRestSeconds,
   usePlatesOnHand,
+  useSetting,
 } from "../hooks/useSettings";
 import { setExerciseLoadEntry } from "../lib/settings";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { unlockRestCue } from "../lib/restCue";
 import {
+  focusEntryKey,
+  isFocusEligible,
   pinnedOverviewEntryKey,
   transitionPresentation,
   type SessionPresentation,
@@ -152,6 +156,7 @@ export function Session() {
   const navigate = useNavigate();
   const unit = useUnit();
   const autoStartRest = useAutoStartRest();
+  const focusDeckEnabled = useSetting("focusDeckPreview");
   const inventory = usePlatesOnHand(unit);
 
   const [active, setActive] = useState<ActiveSession | null | undefined>(
@@ -197,8 +202,11 @@ export function Session() {
   const [equipMap, setEquipMap] = useState<Record<string, string | null>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(null);
-  const [presentation, setPresentation] = useState<SessionPresentation>("overview");
-  const [, setFocusKey] = useState<string | null>(null);
+  const [presentation, setPresentation] = useState<SessionPresentation>(() =>
+    focusDeckEnabled ? "focus" : "overview",
+  );
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const priorFocusKey = useRef<string | null>(null);
 
   // The number the USER types. On a per-side exercise it is one side; the
   // total that reaches `sets.load_kg` is derived at the edges (see
@@ -617,6 +625,9 @@ export function Session() {
     [skips, setsForEntry],
   );
   const doneEntries = entries.filter(entryDone).length;
+  const focusEligible = isFocusEligible(entries);
+  const focusEntry =
+    entries.find((entry) => entry.key === focusKey) ?? openEntry;
 
   // default open: first incomplete entry, once, AFTER sets have merged —
   // otherwise a mid-workout reload opens exercise 1 instead of where the
@@ -627,6 +638,23 @@ export function Session() {
     defaultOpened.current = true;
     setOpenKey(entries.find((e) => !entryDone(e))?.key ?? null);
   }, [setsLoaded, entries, entryDone]);
+
+  // Read the rollout flag only when this session starts. Changing a device
+  // preference while lifting does not create another session presentation or
+  // discard the draft that is already on screen.
+  const focusPresentationStarted = useRef(false);
+  useEffect(() => {
+    if (!setsLoaded || focusPresentationStarted.current) return;
+    focusPresentationStarted.current = true;
+    if (!focusDeckEnabled || !focusEligible) {
+      setPresentation("overview");
+      return;
+    }
+    const key = focusEntryKey(entries, entryDone, openKey);
+    setFocusKey(key);
+    setOpenKey(key);
+    setPresentation("focus");
+  }, [entries, entryDone, focusDeckEnabled, focusEligible, openKey, setsLoaded]);
 
   // superset grouping: consecutive entries sharing a non-null group get
   // A1/A2 tags and a bracket rail
@@ -721,15 +749,24 @@ export function Session() {
     );
   };
 
+  const showOverview = () => {
+    priorFocusKey.current = openKey;
+    setOpenKey(selectedEntryKey ?? priorFocusKey.current);
+    setPresentation("overview");
+  };
+
   const enterFocus = () => {
+    if (!focusDeckEnabled || !focusEligible) return;
     const next = transitionPresentation(
       presentation,
       "focus",
       selectedEntryKey,
       openKey,
     );
+    const key = next.focusKey ?? focusEntryKey(entries, entryDone, openKey);
+    setOpenKey(key);
+    setFocusKey(key);
     setPresentation(next.presentation);
-    setFocusKey(next.focusKey);
   };
 
   // ---- prefill on entry open / bracket advance -----------------------------
@@ -1953,13 +1990,35 @@ export function Session() {
             )}
           </div>
 
-          <WorkoutOverview
+          {presentation === "focus" && focusEligible && focusEntry ? (
+            <FocusDeck
+              entries={entries}
+              entry={focusEntry}
+              entryProgress={entryProgress}
+              entryDone={entryDone}
+              onViewFullWorkout={showOverview}
+              onChooseNext={(entry) => {
+                setFocusKey(entry.key);
+                setOpenKey(entry.key);
+              }}
+              renderEditor={renderEditor}
+            />
+          ) : (
+            <>
+              {!focusEligible && entries.length > 0 && (
+                <p className="microcopy focus-unavailable">
+                  Duration tracking is not available in focus mode. This workout
+                  stays in the full view.
+                </p>
+              )}
+              <WorkoutOverview
             entries={entries}
             selectedEntryKey={selectedEntryKey}
             expandedEntryKey={openKey}
             onSelectEntry={setSelectedEntryKey}
             onToggleEntry={toggleOpen}
             onEnterFocus={enterFocus}
+            focusModeAvailable={focusDeckEnabled && focusEligible}
             entryProgress={entryProgress}
             isSkipped={(entry) => skips.has(entry.key)}
             hasSections={hasSections}
@@ -2004,21 +2063,23 @@ export function Session() {
               );
             }}
             renderEditor={renderEditor}
-          />
+              />
 
-          {entries.length === 0 && (
-            <p className="microcopy">
-              Nothing planned for this session. Add an exercise to start logging
-              — load and reps prefill from your last time.
-            </p>
+              {entries.length === 0 && (
+                <p className="microcopy">
+                  Nothing planned for this session. Add an exercise to start logging
+                  — load and reps prefill from your last time.
+                </p>
+              )}
+              <button
+                type="button"
+                className="btn btn-outline-ink btn-block"
+                onClick={() => openSheet("search")}
+              >
+                Add exercise
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            className="btn btn-outline-ink btn-block"
-            onClick={() => openSheet("search")}
-          >
-            Add exercise
-          </button>
         </section>
       </div>
 

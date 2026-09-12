@@ -60,6 +60,13 @@ describe("session focus derivations", () => {
     expect(isFocusEligible([entry("plank", 3, "time")])).toBe(false);
   });
 
+  it("does not offer focus mode when a later bracket tracks duration", () => {
+    const squat = entry("squat", 2);
+    squat.brackets.push({ ...squat.brackets[0]!, id: "rx-squat-time", tracking: "time" });
+
+    expect(isFocusEligible([squat])).toBe(false);
+  });
+
   it("counts remaining sets and exercises from incomplete canonical entries", () => {
     expect(remainingProgress(entries, isDone)).toEqual({
       setsRemaining: 4,

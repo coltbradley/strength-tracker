@@ -8,6 +8,7 @@ export interface WorkoutOverviewProps {
   onSelectEntry(key: string): void;
   onToggleEntry(key: string): void;
   onEnterFocus(): void;
+  focusModeAvailable?: boolean;
   renderEditor(entry: ExerciseEntry): ReactNode;
   entryProgress?(entry: ExerciseEntry): number;
   isSkipped?(entry: ExerciseEntry): boolean;
@@ -29,6 +30,7 @@ export function WorkoutOverview({
   onSelectEntry,
   onToggleEntry,
   onEnterFocus,
+  focusModeAvailable = true,
   renderEditor,
   entryProgress = () => 0,
   isSkipped = () => false,
@@ -54,13 +56,15 @@ export function WorkoutOverview({
 
   return (
     <>
-      <button
-        type="button"
-        className="btn btn-outline-ink btn-block wk-focus-mode"
-        onClick={onEnterFocus}
-      >
-        Focus mode
-      </button>
+      {focusModeAvailable && (
+        <button
+          type="button"
+          className="btn btn-outline-ink btn-block wk-focus-mode"
+          onClick={onEnterFocus}
+        >
+          Focus mode
+        </button>
+      )}
 
       {entries.map((entry, entryIndex) => {
         const sectionOf = (candidate: ExerciseEntry | undefined) =>

@@ -40,7 +40,9 @@ export function remainingProgress(
 
 /** Timed prescriptions use a different logging surface, so can't use focus mode. */
 export function isFocusEligible(entries: readonly ExerciseEntry[]): boolean {
-  return entries.every((entry) => entry.brackets[0]?.tracking !== "time");
+  return entries.every((entry) =>
+    entry.brackets.every((bracket) => bracket.tracking !== "time"),
+  );
 }
 
 export function transitionPresentation(

@@ -438,6 +438,18 @@ const SETTINGS = {
     parse: (raw) => (typeof raw === "boolean" ? raw : null),
   }),
 
+  // A device-local rollout switch. This only chooses which existing session
+  // presentation opens first; it is deliberately not training data and never
+  // leaves this phone for Supabase.
+  focusDeckPreview: def<boolean>({
+    group: "display",
+    label: "FOCUS MODE PREVIEW",
+    help: "Use the focused set-entry view when a workout starts.",
+    control: { kind: "toggle" },
+    defaults: () => false,
+    parse: (raw) => (typeof raw === "boolean" ? raw : null),
+  }),
+
   weekStartsOn: def<number>({
     group: "display",
     label: "Week starts on",

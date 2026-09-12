@@ -12,8 +12,9 @@
 // something outstanding to say it about, and it never promises a deletion.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { SettingsSheet } from "./SettingsSheet";
+import { getSetting, resetAllSettings } from "../lib/settings";
 
 const h = vi.hoisted(() => ({
   status: {
@@ -56,7 +57,10 @@ vi.mock("../lib/data", async (orig) => ({
   getTrainingMaxes: () => Promise.resolve({ data: [], fromCache: false }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetAllSettings();
+});
 
 /** Render with a given queue state and arm the sign-out button.
  *  <Sheet> portals to document.body, so every query below reads
@@ -132,5 +136,20 @@ describe("SettingsSheet closed-app rest alerts", () => {
     fireEvent.click(button);
 
     expect(h.testRestAlert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SettingsSheet focus deck preview", () => {
+  it("renders the device-local focus preview toggle", () => {
+    render(<SettingsSheet open onClose={() => undefined} />);
+
+    const label = screen.getByText("FOCUS MODE PREVIEW");
+    const row = label.closest<HTMLElement>(".sheet-row");
+    expect(row).not.toBeNull();
+    expect(screen.getByText("Use the focused set-entry view when a workout starts.")).toBeTruthy();
+
+    fireEvent.click(within(row!).getByRole("button", { name: "ON" }));
+
+    expect(getSetting("focusDeckPreview")).toBe(true);
   });
 });
