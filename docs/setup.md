@@ -125,8 +125,8 @@ The endpoint is a standard streamable-HTTP MCP server with static bearer auth,
 which is the combination every client supports. There is nothing Claude-specific
 about it.
 
-- **claude.ai / ChatGPT custom connectors, MCP Inspector, anything else with a
-  URL + key field.** Point it at the endpoint above and send the token as
+- **claude.ai, MCP Inspector, or anything else with a URL + key field.** Point
+  it at the endpoint above and send the token as
   `Authorization: Bearer <token>`. Clients whose UI only offers an API-key field
   can send `x-api-key: <token>` instead; both are accepted.
 - **Browser-based clients** work because the function answers CORS preflights
@@ -146,6 +146,64 @@ curl -sS https://<PROJECT_REF>.supabase.co/functions/v1/mcp-server \
   -H "accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
+
+### ChatGPT through a Secure MCP Tunnel
+
+This uses the same private-tunnel shape as Premiere Transcriber: ChatGPT sends
+MCP requests to OpenAI's tunnel endpoint, `tunnel-client` runs on this Mac,
+and the local relay adds the per-user Strength Tracker bearer before it reaches
+Supabase. The bearer and the OpenAI runtime key live only in macOS Keychain.
+Neither goes in the ChatGPT app, tunnel profile, or LaunchAgent.
+
+1. In the OpenAI Platform tunnel settings, create a tunnel associated with the
+   ChatGPT workspace where you will use it. Create a runtime API key for that
+   tunnel. Do not use an admin API key.
+2. Mint a new MCP token with a label such as `Colt · ChatGPT tunnel`; run its
+   printed SQL in the Supabase dashboard. Copy the token once, then save it in
+   Keychain:
+
+   ```bash
+   security add-generic-password -U -s "Strength Tracker MCP" -a "strength-tracker" -w "<MCP token>"
+   security add-generic-password -U -s "OpenAI Tunnel Runtime" -a "strength-tracker" -w "<OpenAI runtime API key>"
+   ```
+
+3. Copy `scripts/strength-tunnel-client.yaml.example` to
+   `~/.config/tunnel-client/strength-tracker.yaml`. Replace only
+   `tunnel_REPLACE_ME` with the created tunnel ID. Keep
+   `api_key: "env:CONTROL_PLANE_API_KEY"` unchanged.
+4. Copy `scripts/com.strength-tracker.mcp-tunnel.plist.template` to
+   `~/Library/LaunchAgents/com.strength-tracker.mcp-tunnel.plist`. Replace the
+   five `__...__` placeholders with the absolute repository path, the output
+   of `command -v node`, the home directory, the existing shell PATH, the
+   deployed Supabase project reference, and the absolute `tunnel-client` path.
+   Create `~/Library/Logs/StrengthTracker` before loading it.
+5. Check the profile, then install and start the LaunchAgent:
+
+   ```bash
+   tunnel-client doctor --profile strength-tracker --explain
+   plutil -lint ~/Library/LaunchAgents/com.strength-tracker.mcp-tunnel.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.strength-tracker.mcp-tunnel.plist
+   launchctl kickstart -k gui/$(id -u)/com.strength-tracker.mcp-tunnel
+   tunnel-client health --port 8787 --require-control-plane-poll
+   ```
+
+6. In ChatGPT web, Settings → Apps → Create, choose **Tunnel**, select the
+   tunnel ID, scan the tools, then create the app. Test a read tool first, then
+   a low-blast-radius write such as `set_goal`; ChatGPT may require confirmation
+   before a write.
+
+To undo the connection, remove the ChatGPT app, then run:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.strength-tracker.mcp-tunnel.plist
+rm ~/Library/LaunchAgents/com.strength-tracker.mcp-tunnel.plist
+security delete-generic-password -s "Strength Tracker MCP" -a "strength-tracker"
+security delete-generic-password -s "OpenAI Tunnel Runtime" -a "strength-tracker"
+```
+
+Finally revoke the `Colt · ChatGPT tunnel` row in `mcp_tokens` using the SQL
+printed by `scripts/issue-mcp-token.mjs`. The public MCP endpoint stays online
+for other clients.
 
 **What this is not.** There is no OAuth here, so a client that insists on an
 OAuth flow (rather than accepting a static key) cannot do one-click "add

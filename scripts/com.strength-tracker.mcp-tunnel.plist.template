@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.strength-tracker.mcp-tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__</string>
+    <string>__STRENGTH_TRACKER_REPO__/scripts/strength-tunnel-supervisor.mjs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__USER_HOME__</string>
+    <key>PATH</key>
+    <string>__PATH__</string>
+    <key>STRENGTH_MCP_URL</key>
+    <string>https://__PROJECT_REF__.supabase.co/functions/v1/mcp-server</string>
+    <key>TUNNEL_CLIENT_BIN</key>
+    <string>__TUNNEL_CLIENT_BIN__</string>
+    <key>TUNNEL_PROFILE</key>
+    <string>strength-tracker</string>
+    <key>STRENGTH_MCP_KEYCHAIN_SERVICE</key>
+    <string>Strength Tracker MCP</string>
+    <key>STRENGTH_MCP_KEYCHAIN_ACCOUNT</key>
+    <string>strength-tracker</string>
+    <key>OPENAI_TUNNEL_KEYCHAIN_SERVICE</key>
+    <string>OpenAI Tunnel Runtime</string>
+    <key>OPENAI_TUNNEL_KEYCHAIN_ACCOUNT</key>
+    <string>strength-tracker</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__USER_HOME__/Library/Logs/StrengthTracker/mcp-tunnel.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__USER_HOME__/Library/Logs/StrengthTracker/mcp-tunnel.err.log</string>
+</dict>
+</plist>
