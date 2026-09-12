@@ -31,15 +31,21 @@
 
 **Interfaces:**
 - Produces `validateRelayConfig({ upstreamUrl, token })`, returning a normalized HTTPS URL or throwing.
-- Produces `createRelayServer({ upstreamUrl, token, logger })`, returning a Node HTTP server.
+- Produces `createRelayServer({ upstreamUrl, token, logger, fetchImpl })`, returning a Node HTTP server. `fetchImpl` defaults to global `fetch` and exists only to make HTTPS-only forwarding testable without weakening the production URL rule.
 - Consumes `STRENGTH_MCP_URL`, `STRENGTH_MCP_TOKEN`, and optional `STRENGTH_MCP_RELAY_PORT` when run as a script.
 
 - [ ] **Step 1: Write the failing relay test**
 
 ```js
 test("replaces caller credentials with the configured bearer", async () => {
-  const upstream = await startFakeUpstream();
-  const relay = await startRelay({ upstreamUrl: upstream.url, token: "stored-token" });
+  const upstream = { headers: null };
+  const relay = await startRelay({
+    upstreamUrl: "https://strength.example.test/mcp", token: "stored-token",
+    fetchImpl: async (_url, init) => {
+      upstream.headers = Object.fromEntries(init.headers);
+      return new Response('{"jsonrpc":"2.0","result":{}}', { headers: { "content-type": "application/json" } });
+    },
+  });
   const response = await fetch(relay.url, {
     method: "POST",
     headers: { authorization: "Bearer attacker", "x-api-key": "attacker" },
