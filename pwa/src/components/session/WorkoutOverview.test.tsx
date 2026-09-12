@@ -122,6 +122,43 @@ describe("WorkoutOverview", () => {
     ).toBeTruthy();
   });
 
+  it("toggles expansion on the row name when focus mode is unavailable, like main", () => {
+    const onToggleEntry = vi.fn();
+    const onSelectEntry = vi.fn();
+    render(
+      <WorkoutOverview
+        {...props({
+          focusModeAvailable: false,
+          onToggleEntry,
+          onSelectEntry,
+        })}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Focus mode" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /bench press/i }));
+
+    expect(onToggleEntry).toHaveBeenCalledWith("bench");
+    expect(onSelectEntry).not.toHaveBeenCalled();
+  });
+
+  it("collapses an open row by tapping its name again when focus mode is unavailable", () => {
+    const onToggleEntry = vi.fn();
+    render(
+      <WorkoutOverview
+        {...props({
+          focusModeAvailable: false,
+          expandedEntryKey: "bench",
+          onToggleEntry,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /bench press/i }));
+
+    expect(onToggleEntry).toHaveBeenCalledWith("bench");
+  });
+
   it("pins Details to a correction while still allowing later focus selection", () => {
     render(<CorrectionHarness />);
 

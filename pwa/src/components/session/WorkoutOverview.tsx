@@ -115,9 +115,18 @@ export function WorkoutOverview({
                 <button
                   type="button"
                   className="wk-main"
-                  aria-label={selectedName}
-                  aria-pressed={isSelected}
-                  onClick={() => onSelectEntry(entry.key)}
+                  // Selecting a future focus destination only means something
+                  // when Focus mode is on offer. Without it, tapping the name
+                  // used to just highlight a row with no visible next step —
+                  // main's behaviour (the whole row toggles open/closed) is
+                  // restored here so the tap keeps doing something.
+                  aria-label={focusModeAvailable ? selectedName : entry.name}
+                  aria-pressed={focusModeAvailable ? isSelected : undefined}
+                  onClick={() =>
+                    focusModeAvailable
+                      ? onSelectEntry(entry.key)
+                      : onToggleEntry(entry.key)
+                  }
                 >
                   <span
                     className={`wk-name ${skipped ? "wk-name-skipped" : ""}`}
