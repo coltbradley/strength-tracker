@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "description": "Dev utilities: exercise seed generation and PGlite database validation.",
+  "scripts": {
+    "test:tunnel-relay": "node --test strength-mcp-relay.test.mjs"
+  },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.0"
   }

@@ -1,0 +1,103 @@
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import { test } from "node:test";
+
+import { createRelayServer, validateRelayConfig } from "./strength-mcp-relay.mjs";
+
+async function startRelay(options = {}) {
+  const server = createRelayServer({
+    upstreamUrl: "https://strength.example.test/mcp",
+    token: "stored-token",
+    logger: () => {},
+    fetchImpl: async () => new Response('{"jsonrpc":"2.0","result":{}}'),
+    ...options,
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address();
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    async stop() {
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
+test("replaces caller credentials with the configured bearer", async () => {
+  let capturedUrl;
+  let capturedInit;
+  const relay = await startRelay({
+    fetchImpl: async (url, init) => {
+      capturedUrl = url;
+      capturedInit = init;
+      return new Response('{"jsonrpc":"2.0","result":{}}', {
+        status: 200,
+        headers: { "content-type": "application/json", "mcp-session-id": "upstream-session" },
+      });
+    },
+  });
+  try {
+    const response = await fetch(relay.url, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer caller-token",
+        "x-api-key": "caller-api-key",
+        "content-type": "application/json",
+      },
+      body: '{"jsonrpc":"2.0","method":"tools/list"}',
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(capturedUrl, "https://strength.example.test/mcp");
+    assert.equal(capturedInit.headers.get("authorization"), "Bearer stored-token");
+    assert.equal(capturedInit.headers.get("x-api-key"), null);
+    assert.equal(capturedInit.headers.get("content-type"), "application/json");
+    assert.equal(response.headers.get("mcp-session-id"), "upstream-session");
+    assert.equal(await response.text(), '{"jsonrpc":"2.0","result":{}}');
+  } finally {
+    await relay.stop();
+  }
+});
+
+test("rejects non-MCP routes and unsupported methods", async () => {
+  const relay = await startRelay();
+  try {
+    assert.equal((await fetch(`${relay.url}/wrong`, { method: "POST" })).status, 404);
+    const response = await fetch(relay.url, { method: "GET" });
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.get("allow"), "POST, OPTIONS");
+  } finally {
+    await relay.stop();
+  }
+});
+
+test("answers an MCP CORS preflight without reaching the upstream", async () => {
+  let called = false;
+  const relay = await startRelay({ fetchImpl: async () => (called = true) });
+  try {
+    const response = await fetch(relay.url, { method: "OPTIONS" });
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get("access-control-allow-methods"), "POST, OPTIONS");
+    assert.equal(called, false);
+  } finally {
+    await relay.stop();
+  }
+});
+
+test("fails closed for an HTTP upstream and an upstream redirect", async () => {
+  assert.throws(
+    () => validateRelayConfig({ upstreamUrl: "http://127.0.0.1/mcp", token: "stored-token" }),
+    /HTTPS/,
+  );
+  const relay = await startRelay({
+    fetchImpl: async () => {
+      throw new TypeError("unexpected redirect");
+    },
+  });
+  try {
+    assert.equal((await fetch(relay.url, { method: "POST", body: "{}" })).status, 502);
+  } finally {
+    await relay.stop();
+  }
+});
