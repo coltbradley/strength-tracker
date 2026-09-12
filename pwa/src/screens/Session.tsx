@@ -32,7 +32,6 @@
 //   other, because `sets` is append-only.
 
 import {
-  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -47,6 +46,7 @@ import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
 import { SetEditor } from "../components/session/SetEditor";
+import { WorkoutOverview } from "../components/session/WorkoutOverview";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
@@ -105,6 +105,10 @@ import {
 import { setExerciseLoadEntry } from "../lib/settings";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { unlockRestCue } from "../lib/restCue";
+import {
+  transitionPresentation,
+  type SessionPresentation,
+} from "../lib/sessionFocus";
 import { cancelRestAlert, scheduleRestAlert } from "../lib/push";
 import {
   enteredKg,
@@ -191,6 +195,9 @@ export function Session() {
   const [lastActuals, setLastActuals] = useState<LastActuals>({});
   const [equipMap, setEquipMap] = useState<Record<string, string | null>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(null);
+  const [presentation, setPresentation] = useState<SessionPresentation>("overview");
+  const [, setFocusKey] = useState<string | null>(null);
 
   // The number the USER types. On a per-side exercise it is one side; the
   // total that reaches `sets.load_kg` is derived at the edges (see
@@ -304,7 +311,6 @@ export function Session() {
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
 
-  const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // The bootstrap load can come up empty (first run, offline, cold cache);
   // opening a picker retries rather than showing a lying spinner. Both
@@ -697,19 +703,19 @@ export function Session() {
   // ---- accordion -----------------------------------------------------------
 
   const toggleOpen = (key: string) => {
-    // a half-made correction does not follow you to another exercise
-    if (editing) cancelCorrection();
     setOpenKey((prev) => (prev === key ? null : key));
   };
 
-  useEffect(() => {
-    if (!openKey) return;
-    // the CSS prefers-reduced-motion block cannot reach the scroll APIs
-    itemRefs.current.get(openKey)?.scrollIntoView({
-      behavior: prefersReducedMotion() ? "auto" : "smooth",
-      block: "start",
-    });
-  }, [openKey]);
+  const enterFocus = () => {
+    const next = transitionPresentation(
+      presentation,
+      "focus",
+      selectedEntryKey,
+      openKey,
+    );
+    setPresentation(next.presentation);
+    setFocusKey(next.focusKey);
+  };
 
   // ---- prefill on entry open / bracket advance -----------------------------
 
@@ -1436,352 +1442,14 @@ export function Session() {
             : a,
         ).id;
 
-  // plate maths is always about the whole loaded implement
-  const plateSplit = plateable
-    ? split(totalLoadKg, exerciseBarKg, inventory)
-    : null;
-  const hint = plateSplit
-    ? (() => {
-        const r = plateSplit;
-        return r.plates.length > 0
-          ? r.plates
-              .map(
-                (p) =>
-                  `${p.count > 1 ? `${p.count}×` : ""}${formatPlate(p.plate, unit)}`,
-              )
-              .join("·")
-          : exerciseBarKg > 0
-            ? "BAR ONLY"
-            : "EMPTY";
-      })()
-    : null;
+  const renderEditor = (entry: ExerciseEntry) => {
+    const prescribed = entry.brackets.length > 0;
+    const done = entryProgress(entry);
+    const total = prescribed ? targetSets(entry) : null;
+    const planMet = total !== null && done >= total;
 
-  /**
-   * "Last time · 60 kg × 8, 8, 6" — the previous SESSION's working sets for
-   * this movement, in the convention the screen is currently using.
-   *
-   * The run, not one set. A single "60 kg × 8" is the top of a shape and
-   * says nothing about whether the last set of it was a grind: what a lifter
-   * standing at the rack is deciding is whether to repeat the day or add
-   * weight, and the reps that fell away are the whole of that answer. When
-   * the load moved across the run each set is quoted with its own, because
-   * "60, 65, 70 × 8, 8, 6" would be a puzzle rather than a reminder.
-   *
-   * Reference text: it never competes with the target or the log button.
-   */
-  const lastTime = (exerciseId: string): string | null => {
-    const a = lastActuals[exerciseId];
-    if (!a) return null;
-    const shown = (kg: number) =>
-      `${toDisplay(enteredKg(kg, loadEntry), unit)} ${unit}${perSide ? "/side" : ""}`;
-    // a value cached before runs existed carries only the top set
-    const run = a.run && a.run.length > 0 ? a.run : [a];
-    const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);
-    const body = sameLoad
-      ? `${shown(run[0].load_kg)} × ${run.map((s) => s.reps).join(", ")}`
-      : run.map((s) => `${shown(s.load_kg)} × ${s.reps}`).join(" · ");
-    return `Last time · ${body}`;
-  };
-
-  /** rest AFTER a given set: next exercise-set's stored value, or live timer.
-   *
-   *  Scoped to the set's OWN exercise, not the entry's: set_index counts per
-   *  exercise, so a swapped entry holds two runs that both start at 0 and
-   *  "the set after this one" must never be read across them. Identical to
-   *  the old behaviour when nothing was swapped, where the two are the same
-   *  list. The live clock belongs to the newest set of all, for the same
-   *  reason: each run has a last set, and only one of them just happened. */
-  const restAfter = (s: SetInsert): string | null => {
-    const run = setsForExercise(s.exercise_id);
-    const nextSet = run.find((x) => x.set_index === s.set_index + 1);
-    if (nextSet)
-      return nextSet.rest_seconds_actual !== null
-        ? `rest ${formatClock(nextSet.rest_seconds_actual)}`
-        : null;
-    const isLast =
-      s.id === newestSetId && run.every((x) => x.set_index <= s.set_index);
-    if (isLast && restRef.current) {
-      const el = restElapsedSeconds();
-      if (el !== null && el <= MAX_REST_SECONDS)
-        return `rest ${formatClock(el)}`;
-    }
-    return null;
-  };
-
-  /** "1×8-15 @ 90 KG · 3×3-5" — an entry's full prescribed scheme */
-  const scheme = (entry: ExerciseEntry): string =>
-    entry.brackets.map((b) => formatRxTarget(b, unit)).join(" · ");
-
-  /** The load stepper's buttons: coarse pair outside, fine pair inside. Both
-   *  the label and the delta come from `stepKgFor`, so a per-exercise or
-   *  per-unit increment can never disagree with what the button says. The
-   *  fine pair is dropped when it would duplicate the coarse one. */
-  const loadSteps = (exerciseId: string, u: Unit): StepDef[] => {
-    const coarse = stepKgFor(exerciseId, u, false);
-    const fine = stepKgFor(exerciseId, u, true);
-    const label = (kg: number) => toDisplay(kg, u);
-    // `announce` says the step in the unit the lifter reads. Without it the
-    // spoken label carried the kg equivalent of a five-pound plate —
-    // "increase load by 2.2679618500000003".
-    const say = (kg: number) => `${label(kg)} ${u}`;
-    const steps: StepDef[] = [
-      { label: `− ${label(coarse)}`, delta: -coarse, announce: say(coarse) },
-      { label: `+ ${label(coarse)}`, delta: coarse, announce: say(coarse) },
-    ];
-    if (label(fine) === label(coarse)) return steps;
-    return [
-      steps[0],
-      {
-        label: `− ${label(fine)}`,
-        delta: -fine,
-        fine: true,
-        announce: say(fine),
-      },
-      {
-        label: `+ ${label(fine)}`,
-        delta: fine,
-        fine: true,
-        announce: say(fine),
-      },
-      steps[1],
-    ];
-  };
-
-  /** A movement logged by ticking it off rather than by weight and reps. */
-  const isTick = (entry: ExerciseEntry | null): boolean =>
-    entry?.brackets[0]?.tracking === "done";
-
-  /** "LOG WARMUP 1 OF 2", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan.
-   *  Warmups count against the warmups the coach wrote, working sets against
-   *  the working sets — two runs, two targets, never added together. */
-  const logLabel = (entry: ExerciseEntry): string => {
-    if (!setsLoaded) return "LOADING…";
-    if (setsFailed) return "LOG UNAVAILABLE";
-    if (isTick(entry)) {
-      // a tick has no warmup/working distinction to make; it counts against
-      // whatever its plan actually asked for
-      const n = entryProgress(entry) + 1;
-      const total = targetSets(entry);
-      return total > 0 && n <= total ? `DONE ${n} OF ${total}` : "MARK DONE";
-    }
-    if (setType === "warmup") {
-      const n = warmupCount(entry) + 1;
-      const total = warmupSets(entry);
-      return total > 0 && n <= total
-        ? `LOG WARMUP ${n} OF ${total}`
-        : "LOG WARMUP SET";
-    }
-    const n = workingCount(entry) + 1;
-    if (entry.brackets.length === 0) return `LOG SET ${n}`;
-    const total = workingSets(entry);
-    return n > total ? "LOG EXTRA SET" : `LOG SET ${n} OF ${total}`;
-  };
-
-  const req = padRequest();
-  const sheetOpen = sheet !== null || pad !== null || demoFor !== null;
-
-  return (
-    <div className="session-shell">
-      <div
-        className="session-scroll"
-        style={
-          noteEditingId && kbInset > 0 ? { paddingBottom: kbInset } : undefined
-        }
-      >
-        {(active.plan_note || active.coach_note) && (
-          <div className="session-notes">
-            {active.plan_note && (
-              <Note label="PLAN NOTE" text={active.plan_note} />
-            )}
-            {active.coach_note && (
-              <Note label="COACH" text={active.coach_note} />
-            )}
-          </div>
-        )}
-
-        <section className="rule-section">
-          <div className="section-head">
-            {/* the screen's h1: the workout being logged */}
-            <h1 className="field-label">
-              {active.workout_label
-                ? active.workout_label.toUpperCase()
-                : "WORKOUT"}
-            </h1>
-            {entries.length > 0 && (
-              <span className="section-meta">
-                {doneEntries} OF {entries.length} DONE
-              </span>
-            )}
-          </div>
-
-          {entries.map((entry, entryIndex) => {
-            // The heading the coach wrote — "Activations", "Cooldown" —
-            // shown above the first exercise that sits under it, exactly as
-            // the plan editor shows it. The session used to render one flat
-            // list, so a day the coach had shaped into parts arrived on the
-            // gym floor with the shape thrown away.
-            //
-            // Emitted on CHANGE rather than once per distinct name, which is
-            // what the plan editor does too: sections are contiguous by
-            // construction there, and if an older plan ever interleaved them,
-            // showing the heading again is honest about the order the day is
-            // actually in.
-            const sectionOf = (e: ExerciseEntry | undefined) =>
-              e?.brackets[0]?.section ?? null;
-            const section = sectionOf(entry);
-            const prevSection = sectionOf(entries[entryIndex - 1]);
-            const showSection = section !== null && section !== prevSection;
-            // MAIN WORK, on the same rule the plan editor uses: only once the
-            // day has a named part somewhere, and above the first exercise of
-            // each unsectioned run. A flat day gains no heading at all.
-            const showMain =
-              section === null &&
-              hasSections &&
-              (entryIndex === 0 || prevSection !== null);
-
-            const isOpen = entry.key === openKey;
-            const prescribed = entry.brackets.length > 0;
-            const done = entryProgress(entry);
-            // the plan's WORKING sets: a prescribed warmup has its own count
-            // on the log button and never inflates the day's target
-            const total = prescribed ? targetSets(entry) : null;
-            // An unprescribed exercise has no plan to meet, so it never hands
-            // the lead over to NEXT — there is always another set you might do.
-            const planMet = total !== null && done >= total;
-            const skipped = skips.has(entry.key);
-            const removable = !prescribed && setsForEntry(entry).length === 0;
-            const superset = supersetInfo.get(entry.key);
-            return (
-              <Fragment key={entry.key}>
-                {showSection && (
-                  <div className="section-head wk-section-head">
-                    <span className="field-label">{section.toUpperCase()}</span>
-                  </div>
-                )}
-                {showMain && (
-                  <div className="section-head wk-section-head wk-main-head">
-                    <span className="field-label">MAIN WORK</span>
-                  </div>
-                )}
-                <div
-                  ref={(el) => {
-                    if (el) itemRefs.current.set(entry.key, el);
-                    else itemRefs.current.delete(entry.key);
-                  }}
-                  className={`wk-item ${isOpen ? "wk-item-on" : ""}`}
-                >
-                  <div className="wk-row">
-                    {superset && (
-                      <span
-                        className={`wk-superset-rail ${superset.first ? "wk-superset-rail-start" : ""} ${superset.last ? "wk-superset-rail-end" : ""}`}
-                      >
-                        <span className="wk-superset-tag">{superset.tag}</span>
-                      </span>
-                    )}
-                    {isOpen ? (
-                      <>
-                        <button
-                          type="button"
-                          className="wk-header-open"
-                          aria-expanded={isOpen}
-                          aria-label={`collapse ${entry.name}`}
-                          onClick={() => toggleOpen(entry.key)}
-                        >
-                          {entry.name}{" "}
-                          <span className="chev" aria-hidden="true">
-                            ▾
-                          </span>
-                        </button>
-                        {/* How to do it. A sibling, not a child: the header
-                            is itself a button and buttons do not nest. Shown
-                            on the OPEN entry only — that is the one being
-                            done — and offered for every movement, because
-                            whether the seed has a demo is only known once
-                            the sheet asks. */}
-                        <button
-                          type="button"
-                          className="wk-demo"
-                          aria-label={`how to do ${entry.name}`}
-                          onClick={() =>
-                            setDemoFor({ id: entry.exercise_id, name: entry.name })
-                          }
-                        >
-                          HOW TO
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        className="wk-main"
-                        aria-expanded={isOpen}
-                        onClick={() => toggleOpen(entry.key)}
-                      >
-                        <span
-                          className={`wk-name ${skipped ? "wk-name-skipped" : ""}`}
-                        >
-                          {entry.name}
-                        </span>
-                        <span className="wk-target">
-                          {/* A swapped entry says so on the collapsed row and
-                              names what was planned: the row's title is now a
-                              movement the coach never wrote, and the lifter
-                              has to be able to see that at a glance and put
-                              it back. The target beside it is unchanged,
-                              because the plan is. */}
-                          {entry.substitutedFor && !skipped
-                            ? `INSTEAD OF ${entry.substitutedFor.name.toUpperCase()} · `
-                            : ""}
-                          {skipped
-                            ? "SKIPPED"
-                            : prescribed
-                              ? scheme(entry).toUpperCase()
-                              : "NO TARGET · BY FEEL"}
-                        </span>
-                        <span
-                          className={`wk-count ${total !== null && done >= total ? "wk-count-done" : ""}`}
-                        >
-                          {done}
-                          {total !== null ? `/${total}` : ""}
-                        </span>
-                      </button>
-                    )}
-                    {!isOpen && (
-                      /* UNDO ADD, not REMOVE: this only ever drops an extra you
-                       added this session and have not logged into. Two taps
-                       like every destructive action. */
-                      <button
-                        type="button"
-                        className={`drawer-action ${
-                          removable && dropArm === entry.key
-                            ? "drawer-action-armed"
-                            : ""
-                        }`}
-                        onClick={() => {
-                          if (!removable) {
-                            toggleSkip(entry);
-                            return;
-                          }
-                          if (dropArm === entry.key) {
-                            setDropArm(null);
-                            void removeExtra(entry);
-                          } else {
-                            setDropArm(entry.key);
-                          }
-                        }}
-                      >
-                        {removable
-                          ? dropArm === entry.key
-                            ? "UNDO ADD?"
-                            : "UNDO ADD"
-                          : skipped
-                            ? "UNSKIP"
-                            : "SKIP"}
-                      </button>
-                    )}
-                  </div>
-
-                  {isOpen && (
-                    <div className="wk-open">
+    return (
+      <>
                       <span className="rx-context">
                         {prescribed ? (
                           <>
@@ -2088,12 +1756,240 @@ export function Session() {
                           )}
                         </section>
                       )}
-                    </div>
-                  )}
-                </div>
-              </Fragment>
-            );
-          })}
+      </>
+    );
+  };
+
+  // plate maths is always about the whole loaded implement
+  const plateSplit = plateable
+    ? split(totalLoadKg, exerciseBarKg, inventory)
+    : null;
+  const hint = plateSplit
+    ? (() => {
+        const r = plateSplit;
+        return r.plates.length > 0
+          ? r.plates
+              .map(
+                (p) =>
+                  `${p.count > 1 ? `${p.count}×` : ""}${formatPlate(p.plate, unit)}`,
+              )
+              .join("·")
+          : exerciseBarKg > 0
+            ? "BAR ONLY"
+            : "EMPTY";
+      })()
+    : null;
+
+  /**
+   * "Last time · 60 kg × 8, 8, 6" — the previous SESSION's working sets for
+   * this movement, in the convention the screen is currently using.
+   *
+   * The run, not one set. A single "60 kg × 8" is the top of a shape and
+   * says nothing about whether the last set of it was a grind: what a lifter
+   * standing at the rack is deciding is whether to repeat the day or add
+   * weight, and the reps that fell away are the whole of that answer. When
+   * the load moved across the run each set is quoted with its own, because
+   * "60, 65, 70 × 8, 8, 6" would be a puzzle rather than a reminder.
+   *
+   * Reference text: it never competes with the target or the log button.
+   */
+  const lastTime = (exerciseId: string): string | null => {
+    const a = lastActuals[exerciseId];
+    if (!a) return null;
+    const shown = (kg: number) =>
+      `${toDisplay(enteredKg(kg, loadEntry), unit)} ${unit}${perSide ? "/side" : ""}`;
+    // a value cached before runs existed carries only the top set
+    const run = a.run && a.run.length > 0 ? a.run : [a];
+    const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);
+    const body = sameLoad
+      ? `${shown(run[0].load_kg)} × ${run.map((s) => s.reps).join(", ")}`
+      : run.map((s) => `${shown(s.load_kg)} × ${s.reps}`).join(" · ");
+    return `Last time · ${body}`;
+  };
+
+  /** rest AFTER a given set: next exercise-set's stored value, or live timer.
+   *
+   *  Scoped to the set's OWN exercise, not the entry's: set_index counts per
+   *  exercise, so a swapped entry holds two runs that both start at 0 and
+   *  "the set after this one" must never be read across them. Identical to
+   *  the old behaviour when nothing was swapped, where the two are the same
+   *  list. The live clock belongs to the newest set of all, for the same
+   *  reason: each run has a last set, and only one of them just happened. */
+  const restAfter = (s: SetInsert): string | null => {
+    const run = setsForExercise(s.exercise_id);
+    const nextSet = run.find((x) => x.set_index === s.set_index + 1);
+    if (nextSet)
+      return nextSet.rest_seconds_actual !== null
+        ? `rest ${formatClock(nextSet.rest_seconds_actual)}`
+        : null;
+    const isLast =
+      s.id === newestSetId && run.every((x) => x.set_index <= s.set_index);
+    if (isLast && restRef.current) {
+      const el = restElapsedSeconds();
+      if (el !== null && el <= MAX_REST_SECONDS)
+        return `rest ${formatClock(el)}`;
+    }
+    return null;
+  };
+
+  /** "1×8-15 @ 90 KG · 3×3-5" — an entry's full prescribed scheme */
+  const scheme = (entry: ExerciseEntry): string =>
+    entry.brackets.map((b) => formatRxTarget(b, unit)).join(" · ");
+
+  /** The load stepper's buttons: coarse pair outside, fine pair inside. Both
+   *  the label and the delta come from `stepKgFor`, so a per-exercise or
+   *  per-unit increment can never disagree with what the button says. The
+   *  fine pair is dropped when it would duplicate the coarse one. */
+  const loadSteps = (exerciseId: string, u: Unit): StepDef[] => {
+    const coarse = stepKgFor(exerciseId, u, false);
+    const fine = stepKgFor(exerciseId, u, true);
+    const label = (kg: number) => toDisplay(kg, u);
+    // `announce` says the step in the unit the lifter reads. Without it the
+    // spoken label carried the kg equivalent of a five-pound plate —
+    // "increase load by 2.2679618500000003".
+    const say = (kg: number) => `${label(kg)} ${u}`;
+    const steps: StepDef[] = [
+      { label: `− ${label(coarse)}`, delta: -coarse, announce: say(coarse) },
+      { label: `+ ${label(coarse)}`, delta: coarse, announce: say(coarse) },
+    ];
+    if (label(fine) === label(coarse)) return steps;
+    return [
+      steps[0],
+      {
+        label: `− ${label(fine)}`,
+        delta: -fine,
+        fine: true,
+        announce: say(fine),
+      },
+      {
+        label: `+ ${label(fine)}`,
+        delta: fine,
+        fine: true,
+        announce: say(fine),
+      },
+      steps[1],
+    ];
+  };
+
+  /** A movement logged by ticking it off rather than by weight and reps. */
+  const isTick = (entry: ExerciseEntry | null): boolean =>
+    entry?.brackets[0]?.tracking === "done";
+
+  /** "LOG WARMUP 1 OF 2", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan.
+   *  Warmups count against the warmups the coach wrote, working sets against
+   *  the working sets — two runs, two targets, never added together. */
+  const logLabel = (entry: ExerciseEntry): string => {
+    if (!setsLoaded) return "LOADING…";
+    if (setsFailed) return "LOG UNAVAILABLE";
+    if (isTick(entry)) {
+      // a tick has no warmup/working distinction to make; it counts against
+      // whatever its plan actually asked for
+      const n = entryProgress(entry) + 1;
+      const total = targetSets(entry);
+      return total > 0 && n <= total ? `DONE ${n} OF ${total}` : "MARK DONE";
+    }
+    if (setType === "warmup") {
+      const n = warmupCount(entry) + 1;
+      const total = warmupSets(entry);
+      return total > 0 && n <= total
+        ? `LOG WARMUP ${n} OF ${total}`
+        : "LOG WARMUP SET";
+    }
+    const n = workingCount(entry) + 1;
+    if (entry.brackets.length === 0) return `LOG SET ${n}`;
+    const total = workingSets(entry);
+    return n > total ? "LOG EXTRA SET" : `LOG SET ${n} OF ${total}`;
+  };
+
+  const req = padRequest();
+  const sheetOpen = sheet !== null || pad !== null || demoFor !== null;
+
+  return (
+    <div className="session-shell">
+      <div
+        className="session-scroll"
+        style={
+          noteEditingId && kbInset > 0 ? { paddingBottom: kbInset } : undefined
+        }
+      >
+        {(active.plan_note || active.coach_note) && (
+          <div className="session-notes">
+            {active.plan_note && (
+              <Note label="PLAN NOTE" text={active.plan_note} />
+            )}
+            {active.coach_note && (
+              <Note label="COACH" text={active.coach_note} />
+            )}
+          </div>
+        )}
+
+        <section className="rule-section">
+          <div className="section-head">
+            {/* the screen's h1: the workout being logged */}
+            <h1 className="field-label">
+              {active.workout_label
+                ? active.workout_label.toUpperCase()
+                : "WORKOUT"}
+            </h1>
+            {entries.length > 0 && (
+              <span className="section-meta">
+                {doneEntries} OF {entries.length} DONE
+              </span>
+            )}
+          </div>
+
+          <WorkoutOverview
+            entries={entries}
+            selectedEntryKey={selectedEntryKey}
+            expandedEntryKey={openKey}
+            onSelectEntry={setSelectedEntryKey}
+            onToggleEntry={toggleOpen}
+            onEnterFocus={enterFocus}
+            entryProgress={entryProgress}
+            isSkipped={(entry) => skips.has(entry.key)}
+            hasSections={hasSections}
+            supersetInfo={supersetInfo}
+            formatScheme={scheme}
+            onOpenDemo={(entry) =>
+              setDemoFor({ id: entry.exercise_id, name: entry.name })
+            }
+            renderRowAction={(entry) => {
+              const removable =
+                entry.brackets.length === 0 && setsForEntry(entry).length === 0;
+              const skipped = skips.has(entry.key);
+              return (
+                <button
+                  type="button"
+                  className={`drawer-action ${
+                    removable && dropArm === entry.key
+                      ? "drawer-action-armed"
+                      : ""
+                  }`}
+                  onClick={() => {
+                    if (!removable) {
+                      toggleSkip(entry);
+                      return;
+                    }
+                    if (dropArm === entry.key) {
+                      setDropArm(null);
+                      void removeExtra(entry);
+                    } else {
+                      setDropArm(entry.key);
+                    }
+                  }}
+                >
+                  {removable
+                    ? dropArm === entry.key
+                      ? "UNDO ADD?"
+                      : "UNDO ADD"
+                    : skipped
+                      ? "UNSKIP"
+                      : "SKIP"}
+                </button>
+              );
+            }}
+            renderEditor={renderEditor}
+          />
 
           {entries.length === 0 && (
             <p className="microcopy">

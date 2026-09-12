@@ -2749,6 +2749,11 @@
     padding-left: var(--s-6);
   }
 
+  /* Selection is a future focus destination, not accordion expansion. */
+  .wk-item-selected .wk-main {
+    box-shadow: inset 0 0 0 2px var(--accent-dim);
+  }
+
   /* collapsed entry: name / target / count in one tappable grid */
   .wk-main {
     flex: 1;
@@ -2800,6 +2805,18 @@
 
   .wk-count-done {
     color: var(--accent-dim);
+  }
+
+  .wk-expand {
+    flex: none;
+    min-width: var(--tap);
+    min-height: var(--tap);
+    padding: var(--s-4);
+    color: var(--text-dim);
+  }
+
+  .wk-focus-mode {
+    margin-bottom: var(--s-5);
   }
 
   /* expanded entry */
