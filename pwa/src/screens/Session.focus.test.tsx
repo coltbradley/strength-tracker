@@ -459,4 +459,105 @@ describe("Session focus presentation", () => {
 
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
   });
+
+  it("keeps a correction on its source entry through select + Focus mode, not the newly selected one", async () => {
+    const completedBench: SetInsert = {
+      id: "bench-set-1",
+      session_id: active.id,
+      exercise_id: "bench-press",
+      prescription_id: "bench",
+      set_index: 0,
+      set_type: "working",
+      load_kg: 20,
+      reps: 8,
+      performed_at: "2026-09-12T12:05:00.000Z",
+      rest_seconds_actual: null,
+      load_entry: "total",
+      rpe: null,
+    };
+    resetDbForTests();
+    await seed(
+      "reps",
+      [
+        prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
+        prescription("squat", "back-squat", "Back Squat", "reps", null, 1),
+      ],
+      [completedBench],
+    );
+    vi.mocked(getServerSessionSets).mockResolvedValue([completedBench]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    // Bench is already done, so the session opens in focus on Squat. Switch
+    // to overview, open Bench, and start correcting its logged set.
+    fireEvent.click(await screen.findByRole("button", { name: "View full workout" }));
+    fireEvent.click(await screen.findByRole("button", { name: "expand details" }));
+    fireEvent.click(await screen.findByRole("button", { name: "correct set 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
+    expect(
+      screen.getByRole("button", { name: "reps value — tap to type" }).textContent,
+    ).toBe("9");
+
+    // Select Squat (a future focus destination, not a navigation) and enter
+    // Focus mode. The correction in progress must win: Bench stays open with
+    // its staged edit, not Squat with a fresh prefill.
+    fireEvent.click(screen.getByRole("button", { name: "Back Squat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+
+    expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "reps value — tap to type" }).textContent,
+    ).toBe("9");
+    expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { exercise_id: "bench-press", reps: 9, load_kg: 20 },
+    });
+  });
+
+  it("keeps a correction staged through focus Next + View full workout (reverse route)", async () => {
+    resetDbForTests();
+    // The previous test's `mockResolvedValue` (no "Once") outlives
+    // `vi.clearAllMocks()` in `beforeEach`, which only clears call history —
+    // pin this test's own server response so it isn't run against a
+    // completed Bench Press left over from an earlier test.
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
+      prescription("squat", "back-squat", "Back Squat", "reps", null, 1),
+    ]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET 1 OF 1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next exercise" }));
+    expect(await screen.findByRole("heading", { name: "Back Squat" })).toBeTruthy();
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET 1 OF 1" }));
+    // past LOG_LOCK_MS, or the correction's own Save below is a no-op tap on
+    // a still-locked button.
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+
+    fireEvent.click(await screen.findByRole("button", { name: "correct set 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
+    expect(
+      screen.getByRole("button", { name: "reps value — tap to type" }).textContent,
+    ).toBe("9");
+
+    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
+
+    // The correction on Back Squat must still be the one on screen, staged.
+    expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "reps value — tap to type" }).textContent,
+    ).toBe("9");
+
+    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+    // calls[0] logged Bench, calls[1] logged Squat, calls[2] is the
+    // correction's replacement row (calls[3] is its matching void).
+    expect(vi.mocked(outbox.enqueue).mock.calls[2]?.[0]).toMatchObject({
+      payload: { exercise_id: "back-squat", reps: 9 },
+    });
+  });
 });

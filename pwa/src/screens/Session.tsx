@@ -818,12 +818,22 @@ export function Session() {
 
   const showOverview = () => {
     priorFocusKey.current = openKey;
-    setOpenKey(selectedEntryKey ?? priorFocusKey.current);
+    // A correction in progress pins the presentation switch to its own
+    // entry, the same way `toggleOpen` pins the accordion: a set is being
+    // fixed against a specific exercise, and neither an unrelated selection
+    // nor the entry that happened to be open before may steal it.
+    setOpenKey(editingEntryKey ?? selectedEntryKey ?? priorFocusKey.current);
     setPresentation("overview");
   };
 
   const enterFocus = () => {
     if (!focusDeckEnabled || !focusEligible) return;
+    if (editingEntryKey) {
+      setOpenKey(editingEntryKey);
+      setFocusKey(editingEntryKey);
+      setPresentation("focus");
+      return;
+    }
     const next = transitionPresentation(
       presentation,
       "focus",
@@ -929,8 +939,14 @@ export function Session() {
   const openedFor = useRef<string | null>(null);
   useEffect(() => {
     // wait for the sets merge: a mid-workout reload otherwise prefills from
-    // the wrong bracket and can clobber staged values while a sheet is open
-    if (!setsLoaded || !openEntry || prefillKey === null) return;
+    // the wrong bracket and can clobber staged values while a sheet is open.
+    // A correction in progress holds `entryKg`/`reps`/`setType`/`rpe` as the
+    // set BEING FIXED, not a draft — showOverview/enterFocus pin the open
+    // entry to it, but if presentation state ever changes openEntry out from
+    // under an active correction some other way, this must not overwrite
+    // those staged values with a fresh prefill for whatever is now open. That
+    // is how a correction on Bench once saved with Squat's numbers.
+    if (!setsLoaded || !openEntry || prefillKey === null || editing) return;
     // Opening an exercise is the one moment the TYPE is decided for you: the
     // plan's outstanding warmup, if it has one. This used to be a flat
     // `setSetType("working")` on every prefill, and logSet reset to working
