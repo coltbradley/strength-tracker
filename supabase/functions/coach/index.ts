@@ -46,6 +46,7 @@ import { createClient } from "@supabase/supabase-js";
 import { systemPrompt } from "./prompt.ts";
 import { captureError } from "./sentry.ts";
 import { extractMemory } from "./memory-extract.ts";
+import { recordRefusalUsage } from "./usage.ts";
 
 // Sonnet 5, at MEDIUM effort. This reverses the move to Opus, which its own
 // comment said was one line to undo, and it moves effort UP one step at the
@@ -726,18 +727,34 @@ Deno.serve(async (req) => {
   try {
     // The per-person switch, before the quota. Someone switched off should be
     // told that, not told they are out of messages, and their refusal must not
-    // land in coach_usage: a refusal row exists to keep a rolling quota honest
-    // for someone who HAS one, and a switched-off account does not.
+    // land in coach_usage: that table is an audit trail for quota decisions,
+    // and a switched-off account did not reach the quota check.
     const off = await coachSwitchedOff(db, userId);
     if (off) return json({ error: off }, 403);
 
     const refusal = await overLimit(db, userId);
     if (refusal) {
-      await db.from("coach_usage").insert({
-        user_id: userId,
-        model: MODEL,
-        refused: refusal,
-      });
+      await recordRefusalUsage(
+        () =>
+          db.from("coach_usage").insert({
+            user_id: userId,
+            model: MODEL,
+            refused: refusal,
+          }),
+        async (message) => {
+          console.error(
+            JSON.stringify({
+              event: "coach_refusal_usage_write_failed",
+              user_id: userId,
+              error: message,
+            }),
+          );
+          await captureError(
+            new Error(`coach refusal usage write: ${message}`),
+            { stage: "refusal_usage_write", user_id: userId },
+          );
+        },
+      );
       return json({ error: refusal }, 429);
     }
     if (turnId) {
