@@ -40,14 +40,13 @@ import {
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
-import { Stepper, type StepDef } from "../components/Stepper";
+import { type StepDef } from "../components/Stepper";
 import { Note } from "../components/Note";
 import { RestTimer, type ActiveRest } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
-import { RpeChips } from "../components/RpeChips";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
-import { PlateBar } from "../components/PlateBar";
+import { SetEditor } from "../components/session/SetEditor";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
@@ -91,7 +90,6 @@ import {
   formatPlate,
   formatRepRange,
   formatRxTarget,
-  formatStoredTwin,
   rxHasNoTm,
 } from "../lib/format";
 import { reportError, toast } from "../lib/errors";
@@ -139,9 +137,6 @@ interface PadSpec {
   fromPlates?: boolean;
 }
 
-// backoff stays a legal DB value (legacy sets render fine); it's just no
-// longer offered — warmup or working covers how the coach programs
-const SET_TYPES: SetType[] = ["warmup", "working"];
 const LOG_LOCK_MS = 400;
 // DB checks: reps between 0 and 100; rest_seconds_actual <= 3600
 const MAX_REPS = 100;
@@ -785,7 +780,6 @@ export function Session() {
   };
   const loadEntry: LoadEntry = resolveLoadEntry(loadEntryInput);
   const perSide = loadEntry === "per_side";
-  const showLoadEntry = openEntry !== null && offersLoadEntry(loadEntryInput);
   const totalLoadKg = totalKg(entryKg, loadEntry);
   // the total is what the column caps, so a per-side entry caps at half
   const maxEntryKg = perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
@@ -1462,12 +1456,6 @@ export function Session() {
       })()
     : null;
 
-  // per side, the arithmetic the app is doing on the user's behalf is the
-  // thing worth showing; otherwise the converted twin
-  const loadSub = perSide
-    ? `${toDisplay(totalLoadKg, unit)} ${unit} total`
-    : formatStoredTwin(entryKg, unit);
-
   /**
    * "Last time · 60 kg × 8, 8, 6" — the previous SESSION's working sets for
    * this movement, in the convention the screen is currently using.
@@ -1883,173 +1871,60 @@ export function Session() {
                         </div>
                       )}
 
-                      <div className="seg seg-types">
-                        {SET_TYPES.map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            className={`seg-btn ${setType === t ? "seg-on" : ""}`}
-                            onClick={() => setSetType(t)}
-                          >
-                            {t}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* A tick has no numbers to set. Showing a reps stepper
-                        and a load stepper for a banded glute bridge is the
-                        thing that made people stop logging the warmup half of
-                        a session at all. */}
-                      {isTick(entry) ? (
-                        <section className="rule-section">
-                          <p className="microcopy">
-                            No numbers for this one — tap below each time you
-                            finish a set.
-                          </p>
-                        </section>
-                      ) : (
-                        <>
-                          <section className="rule-section">
-                            <div className="section-head">
-                              <span className="field-label">REPS</span>
-                            </div>
-                            <Stepper
-                              label="reps"
-                              inline
-                              display={String(reps)}
-                              onTapValue={() => openPad("reps")}
-                              value={reps}
-                              min={0}
-                              max={MAX_REPS}
-                              onChange={(v) => setReps(Math.round(v))}
-                              steps={[
-                                { label: "−", delta: -1 },
-                                { label: "+", delta: 1 },
-                              ]}
-                            />
-                          </section>
-
-                          <section className="rule-section">
-                            <div className="section-head">
-                              <span className="field-label">
-                                LOAD · {unit.toUpperCase()}
-                              </span>
-                              {showLoadEntry && (
-                                /* a property of the movement, not a per-set choice:
-                             it only appears where a pair is possible, and it
-                             remembers per exercise like the bar does */
-                                <button
-                                  type="button"
-                                  className="plate-hint"
-                                  aria-label={
-                                    perSide
-                                      ? "one dumbbell in each hand; switch to one total weight"
-                                      : "one total weight; switch to one dumbbell in each hand"
-                                  }
-                                  onClick={toggleLoadEntry}
-                                >
-                                  {perSide ? "EACH HAND ×2" : "ONE TOTAL WEIGHT"}
-                                </button>
-                              )}
-                              {hint !== null && (
-                                <button
-                                  type="button"
-                                  className="plate-hint"
-                                  onClick={() => openSheet("plates")}
-                                >
-                                  {hint} ›
-                                </button>
-                              )}
-                              {/* The rating's only entrance, and it is
-                                  deliberately not a control of its own: this
-                                  head is already on screen, so a lifter who
-                                  never rates a set sees no extra row and takes
-                                  no extra tap on the way to LOG. It disappears
-                                  once the chips are up (they are their own
-                                  label) and never comes back for this
-                                  movement — asking twice for the same thing is
-                                  the friction the whole feature is avoiding. */}
-                              {!rpeShown(entry.exercise_id) && (
-                                <button
-                                  type="button"
-                                  className="rpe-reveal"
-                                  /* the visible words are inside the name, so
-                                     "tap plus RPE" still works by voice */
-                                  aria-label={`add an RPE rating to ${entry.name}`}
-                                  onClick={() =>
-                                    setRpeAsked(
-                                      (prev) =>
-                                        new Set([...prev, entry.exercise_id]),
-                                    )
-                                  }
-                                >
-                                  + RPE
-                                </button>
-                              )}
-                            </div>
-                            {showLoadEntry && (
-                              <div className="microcopy">
-                                {perSide
-                                  ? "Enter the weight on each dumbbell. The app counts both together."
-                                  : "Enter one total weight. Use this for one dumbbell or single-side work."}
-                              </div>
-                            )}
-                            <Stepper
-                              label="load"
-                              accent
-                              display={String(toDisplay(entryKg, unit))}
-                              subText={loadSub}
-                              onTapValue={() => openPad("load")}
-                              snap
-                              value={entryKg}
-                              min={0}
-                              max={maxEntryKg}
-                              onChange={setEntryKg}
-                              /* labels and deltas both come from the setting, so a
-                           custom increment can never make the button lie */
-                              steps={loadSteps(entry.exercise_id, unit)}
-                            />
-                            {/* The bar you are about to load, drawn. Renders
-                                nothing when the movement is not plateable or
-                                the target is the bar alone, so a dumbbell press
-                                never grows an empty diagram. */}
-                            {plateSplit && (
-                              <PlateBar
-                                split={plateSplit}
-                                barKg={exerciseBarKg}
-                                unit={unit}
-                              />
-                            )}
-                          </section>
-
-                          {/* Below the numbers and above LOG, where the
-                              question actually gets asked. Renders nothing
-                              until this movement's reveal has been tapped —
-                              the gate is inside the component, so there is
-                              one rule rather than one per caller. */}
-                          <RpeChips
-                            shown={rpeShown(entry.exercise_id)}
-                            value={rpe}
-                            onChange={setRpe}
-                          />
-                        </>
-                      )}
-
-                      {/* Once the plan is met, NEXT leads and extra sets recede.
-                        Exactly one of these two is primary at any moment: two
-                        filled buttons stacked on a phone read as a choice
-                        between equals, and mid-set the lifter should never
-                        have to work out which one the app meant. */}
-                      <button
-                        type="button"
-                        className={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
+                      <SetEditor
+                        entry={entry}
+                        /* A legacy backoff is legal historical data but not a
+                           selectable kind. Passing it through preserves an
+                           unchanged correction until the lifter picks one of
+                           the two supported kinds. */
+                        draft={{
+                          entryKg,
+                          reps,
+                          setType: setType as BracketKind,
+                          rpe,
+                        }}
+                        tracking={isTick(entry) ? "done" : "reps"}
+                        loadPresentation={{
+                          perSide,
+                          totalKg: totalLoadKg,
+                          plateSplit,
+                          barKg: exerciseBarKg,
+                          hint,
+                          canToggleEntry: offersLoadEntry(loadEntryInput),
+                        }}
+                        unit={unit}
+                        maxEntryKg={maxEntryKg}
+                        loadSteps={loadSteps(entry.exercise_id, unit)}
+                        rpeShown={rpeShown(entry.exercise_id)}
+                        logLabel={
+                          editing
+                            ? `SAVE SET ${editing.set.set_index + 1}`
+                            : logLabel(entry)
+                        }
+                        logClassName={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
                         disabled={logLocked || !setsLoaded || setsFailed}
-                        onClick={editing ? saveCorrection : logSet}
-                      >
-                        {editing
-                          ? `SAVE SET ${editing.set.set_index + 1}`
-                          : logLabel(entry)}
-                      </button>
+                        onDraftChange={(next) => {
+                          if (next.entryKg !== undefined) setEntryKg(next.entryKg);
+                          if (next.reps !== undefined) setReps(next.reps);
+                          if (next.setType !== undefined) setSetType(next.setType);
+                          if (next.rpe !== undefined) setRpe(next.rpe);
+                        }}
+                        onLog={editing ? saveCorrection : logSet}
+                        onOpenPlates={() => openSheet("plates")}
+                        onOpenPad={openPad}
+                        onToggleLoadEntry={toggleLoadEntry}
+                        onRevealRpe={() =>
+                          setRpeAsked(
+                            (prev) => new Set([...prev, entry.exercise_id]),
+                          )
+                        }
+                        onSkip={() => toggleSkip(entry)}
+                        onAddSet={logSet}
+                        onStartCorrection={(setId) => {
+                          const set = entrySets.find((s) => s.id === setId);
+                          if (set) startCorrection(set);
+                        }}
+                      />
 
                       {setsFailed && (
                         <p className="microcopy">

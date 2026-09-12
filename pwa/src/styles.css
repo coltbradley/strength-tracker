@@ -2821,6 +2821,14 @@
     padding: var(--s-2) 0 var(--s-8);
   }
 
+  /* Keep the extracted controls on the accordion's existing vertical rhythm.
+   * Before SetEditor, each of these sections was a direct child of .wk-open. */
+  .set-editor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-7);
+  }
+
   .wk-item-on .wk-open {
     padding-left: var(--s-6);
   }
