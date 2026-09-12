@@ -6,7 +6,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { cacheKeys, cacheSet, resetDbForTests } from "../lib/db";
+import { cacheGet, cacheKeys, cacheSet, resetDbForTests } from "../lib/db";
 import { resetAllSettings, setSetting } from "../lib/settings";
 import type { ActiveSession, ResolvedPrescriptionRow, SetInsert } from "../lib/types";
 
@@ -625,5 +625,66 @@ describe("Session focus presentation", () => {
 
     expect(await screen.findByText("0:45")).toBeTruthy();
     expect(screen.queryByText("1:30")).toBeNull();
+  });
+
+  it("flips a superset member's staged type from warmup to working after logging it, like logSet does", async () => {
+    resetDbForTests();
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+    const benchWarmup: ResolvedPrescriptionRow = {
+      ...prescription("bench-warmup", "bench-press", "Bench Press", "reps", 1, 1),
+      set_type: "warmup",
+      position: 0,
+    };
+    const benchWorking: ResolvedPrescriptionRow = {
+      ...prescription("bench-working", "bench-press", "Bench Press", "reps", 1, 1),
+      set_type: "working",
+      position: 1,
+    };
+    const row: ResolvedPrescriptionRow = {
+      ...prescription("row", "barbell-row", "Barbell Row", "reps", 1, 1),
+      position: 2,
+    };
+    await seed("reps", [benchWarmup, benchWorking, row]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("SUPERSET A · ROUND 1 OF 1");
+    // The fresh-open prefill that stages Bench on its outstanding warmup
+    // lands a render after mount; force it explicitly rather than race it,
+    // since this test is about what happens to the toggle AFTER logging, not
+    // about that prefill's own timing.
+    const a1 = screen.getByLabelText("A1 Bench Press");
+    fireEvent.click(within(a1).getByRole("button", { name: "warmup" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1));
+
+    // Bench's warmup is done and Row already met its target — only Bench's
+    // real working set remains.
+    await screen.findByRole("button", { name: "Log A1 only" });
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+    fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { exercise_id: "bench-press", set_type: "working" },
+    });
+  });
+
+  it("un-skips a superset member logged mid-round, like logging a single set does", async () => {
+    resetDbForTests();
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 1),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 1),
+    ]);
+    await cacheSet(cacheKeys.sessionSkips(active.id), ["row"]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("SUPERSET A · ROUND 1 OF 1");
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1));
+    expect(await cacheGet<string[]>(cacheKeys.sessionSkips(active.id))).toEqual([]);
   });
 });

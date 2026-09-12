@@ -1225,6 +1225,14 @@ export function Session() {
 
     setLogLocked(true);
     setVoidArm(null);
+    // logging on a skipped exercise means it's happening after all — same
+    // rule as logSet, applied to whichever round member(s) were skipped.
+    if (skips.has(first.key) || skips.has(second.key)) {
+      const unskipped = new Set(skips);
+      unskipped.delete(first.key);
+      unskipped.delete(second.key);
+      persistSkips(unskipped);
+    }
     const actualRest = recordableRest();
     const nextByExercise = new Map<string, number>();
     const nextIndex = (exerciseId: string) => {
@@ -1301,6 +1309,20 @@ export function Session() {
       for (const entry of members)
         delete stagedDraftsRef.current[`${entry.key}:${entry.exercise_id}`];
       setRoundError(null);
+
+      // What the NEXT round should stage, from the plan rather than a stale
+      // toggle — the same carry-over logSet does. Only the member that IS
+      // the open entry needs it here: `roundDraftFor` reads the top-level
+      // `setType` for that one and recomputes a fresh default for the other
+      // on every render, so the other member's warmup->working transition
+      // already happens on its own from the updated `sets`.
+      for (const entry of members) {
+        if (entry.key !== openEntry?.key) continue;
+        const warmupsLogged = setsForEntryOf(entry, next, rx, knownRxIds).filter(
+          (s) => s.set_type === "warmup",
+        ).length;
+        setSetType(warmupsLogged < warmupSets(entry) ? "warmup" : "working");
+      }
 
       const doneAfter = (entry: ExerciseEntry): boolean =>
         skips.has(entry.key) || entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
