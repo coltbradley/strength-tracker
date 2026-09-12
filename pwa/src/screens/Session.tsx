@@ -101,7 +101,6 @@ import {
   useAutoStartRest,
   useExerciseBarKg,
   useExercisePref,
-  useExerciseRestSeconds,
   usePlatesOnHand,
   useSetting,
 } from "../hooks/useSettings";
@@ -927,13 +926,6 @@ export function Session() {
     if (!openEntry) return;
     setExerciseLoadEntry(openEntry.exercise_id, perSide ? "total" : "per_side");
   };
-
-  // rest before the next set: the coach's bracket, then this movement's own
-  // preference, then the global default
-  const restSeconds = useExerciseRestSeconds(
-    openEntry?.exercise_id ?? null,
-    currentBracket?.rest_seconds ?? null,
-  );
 
   const prefilledFor = useRef<string | null>(null);
   const openedFor = useRef<string | null>(null);

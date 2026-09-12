@@ -587,7 +587,10 @@ describe("Session focus presentation", () => {
     vi.useRealTimers();
 
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(2));
-    const ops = vi.mocked(outbox.enqueueBatch).mock.calls[1]?.[0] ?? [];
+    const ops = (vi.mocked(outbox.enqueueBatch).mock.calls[1]?.[0] ?? []).filter(
+      (op): op is Extract<typeof op, { kind: "insert"; table: "sets" }> =>
+        op.kind === "insert" && op.table === "sets",
+    );
     // A1 (bench) just finished resting from round 1 — that elapsed time is
     // real, measured data. A2 (row) did not rest at all; it was logged in
     // the same tap, so its rest is unknown, never a copy of A1's.
