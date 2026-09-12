@@ -560,4 +560,70 @@ describe("Session focus presentation", () => {
       payload: { exercise_id: "back-squat", reps: 9 },
     });
   });
+
+  it("splits round rest across members: the first is measured, the second stays unknown", async () => {
+    resetDbForTests();
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1));
+    await screen.findByText("SUPERSET A · ROUND 2 OF 2");
+    // past LOG_LOCK_MS, or round 2's tap lands on a still-disabled button.
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+
+    // Round 1 started the rest clock in real time; freeze 45s past it and log
+    // round 2, then restore real timers before the next await.
+    const startedAt = Date.now();
+    vi.useFakeTimers();
+    vi.setSystemTime(startedAt + 45_000);
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    vi.useRealTimers();
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(2));
+    const ops = vi.mocked(outbox.enqueueBatch).mock.calls[1]?.[0] ?? [];
+    // A1 (bench) just finished resting from round 1 — that elapsed time is
+    // real, measured data. A2 (row) did not rest at all; it was logged in
+    // the same tap, so its rest is unknown, never a copy of A1's.
+    expect(ops[0]?.payload).toMatchObject({
+      exercise_id: "bench-press",
+      rest_seconds_actual: 45,
+    });
+    expect(ops[1]?.payload).toMatchObject({
+      exercise_id: "barbell-row",
+      rest_seconds_actual: null,
+    });
+  });
+
+  it("stages the rest strip from the round's own second member, not whichever entry happens to be open", async () => {
+    resetDbForTests();
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+    const benchRx: ResolvedPrescriptionRow = {
+      ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 1),
+      rest_seconds: 90,
+    };
+    const rowRx: ResolvedPrescriptionRow = {
+      ...prescription("row", "barbell-row", "Barbell Row", "reps", 1, 1),
+      rest_seconds: 45,
+    };
+    await seed("reps", [benchRx, rowRx]);
+    setSetting("focusDeckPreview", true);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    // Focus opens on Bench (the round's first, canonical member), so the
+    // top-level `restSeconds` hook value reflects Bench's own 90s bracket —
+    // the wrong number for a strip that starts after Row, the round's last
+    // performed exercise, whose own bracket says 45s.
+    await screen.findByText("SUPERSET A · ROUND 1 OF 1");
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+
+    expect(await screen.findByText("0:45")).toBeTruthy();
+    expect(screen.queryByText("1:30")).toBeNull();
+  });
 });

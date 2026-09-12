@@ -1232,7 +1232,11 @@ export function Session() {
       nextByExercise.set(exerciseId, value + 1);
       return value;
     };
-    const buildRoundSet = (entry: ExerciseEntry, draft: SetDraft) => {
+    const buildRoundSet = (
+      entry: ExerciseEntry,
+      draft: SetDraft,
+      restSecondsActual: number | null,
+    ) => {
       const bracket = bracketFor(
         entry,
         countFor(entry, draft.setType),
@@ -1250,12 +1254,32 @@ export function Session() {
         bracket,
         entryMode,
         nextIndex(entry.exercise_id),
-        actualRest,
+        restSecondsActual,
       );
     };
+    // A round is one tap: A1 and A2 land together, so only A1 (the round's
+    // first member) was actually rested for `actualRest` — that clock ran
+    // from the last set logged, which was A2's previous round. A2 itself did
+    // not rest at all; recording A1's elapsed time against it too would
+    // double-count one rest as two, so its own rest is unknown (null), the
+    // same as any other set whose rest was never measured.
+    const secondBracket = bracketFor(
+      second,
+      countFor(second, round.a2.setType),
+      round.a2.setType,
+    );
+    // The rest that follows THIS round is the one the coach wrote for
+    // whichever exercise was just performed last — A2, matching `forLabel`
+    // below — never the top-level `restSeconds` hook value, which reflects
+    // whichever entry happens to be `openEntry` (often A1, and possibly a
+    // different bracket_rest_seconds entirely).
+    const roundRestSeconds = getExerciseRestSeconds(
+      second.exercise_id,
+      secondBracket?.rest_seconds ?? null,
+    );
     const inserts = [
-      buildRoundSet(first, round.a1),
-      buildRoundSet(second, round.a2),
+      buildRoundSet(first, round.a1, actualRest),
+      buildRoundSet(second, round.a2, null),
     ];
 
     try {
@@ -1285,10 +1309,10 @@ export function Session() {
       const forLabel = `${members[1].name} set ${inserts[1].set_index + 1}`;
       const showStrip = autoStartRest && supersetPartnerOf(entries, members[0].key, doneAfter) === null;
       if (showStrip)
-        setRest({ startedAt: now, targetSeconds: restSeconds, forLabel });
+        setRest({ startedAt: now, targetSeconds: roundRestSeconds, forLabel });
       disarmRestAlert();
-      if (showStrip) armRestAlert(now + restSeconds * 1000, forLabel);
-      mirrorRest(showStrip ? restSeconds : null, showStrip ? forLabel : null);
+      if (showStrip) armRestAlert(now + roundRestSeconds * 1000, forLabel);
+      mirrorRest(showStrip ? roundRestSeconds : null, showStrip ? forLabel : null);
     } catch (error) {
       reportError(error, "queue superset round");
       setRoundError("This round could not be saved locally. Check storage and retry.");
