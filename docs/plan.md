@@ -177,11 +177,11 @@ Two parallel rounds had forked; this merged them and deployed the result.
 - [x] 5b Bodyweight without a session: a row on Today reading `v_bodyweight`.
 - [x] 5c sRPE from Today for 24 hours, through a one-column patch that cannot
       blank the session's note.
-- [ ] The three CI deploy settings (`SUPABASE_ACCESS_TOKEN`,
-      `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`). Until they exist,
-      `deploy.yml` skips the Supabase job and the schema half stays manual —
-      which is the ordering hazard docs/deploy.md exists to describe.
-## Phase 6: the endurance layer (scoped, not started)
+- [x] The three CI deploy settings (`SUPABASE_ACCESS_TOKEN`,
+      `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`), set 2026-09-12. A push
+      to main now deploys schema, functions and PWA in that order.
+
+## Phase 7: the endurance layer (E0 and E1 shipped)
 
 Researched 2026-09-06 in six parallel lanes. The strength log grows an endurance
 half and a planning engine above both, on the `training_plans` / `plan_phases`
@@ -204,6 +204,59 @@ tier that already exists.
 The invariant across every phase is that the strength app keeps working,
 unchanged, at every commit, and that the endurance half never becomes a
 dependency of the strength half.
+
+## Phase 8: the 2026-09-12 round (shipped)
+
+- [x] Bug reports are durable: written to `feedback` first, Sentry as a mirror
+      ([observability plan](superpowers/plans/2026-09-12-observability-recovery-plan.md)).
+- [x] Coach refusal telemetry can no longer fail invisibly.
+- [x] Coach plan writes tell Today to refresh; rest alerts gain a test route.
+- [x] Production readiness audit
+      ([record](superpowers/plans/2026-09-12-production-readiness-audit.md)).
+- [x] CI deploys the Supabase half (see Phase 6).
+- [~] Session focus deck
+      ([spec](superpowers/specs/2026-09-12-session-focus-deck-design.md),
+      [plan](superpowers/plans/2026-09-12-session-focus-deck-implementation.md)):
+      merged and deployed behind the device-local FOCUS MODE PREVIEW switch
+      (off by default). A pre-merge review found a correction that could save
+      another exercise's numbers, double-counted superset rest, warmup
+      carry-over, unequal superset targets and a lost tap target in the default
+      view; all fixed with tests before merge. Tasks 7 (phone acceptance) and 8
+      (make it the default) remain.
+- [x] ChatGPT access through an OpenAI Secure MCP Tunnel: a Keychain-backed
+      loopback relay and LaunchAgent supervisor (setup.md, "ChatGPT through a
+      Secure MCP Tunnel"). Code merged; the tunnel, runtime key and ChatGPT
+      app are interactive account steps nobody has done yet. The relay first
+      shipped answering CORS with `*`, which would have let any web page on
+      the Mac use the bearer; fixed before merge.
+- [x] Post-deploy review of the round's first three commits: a coach plan edit
+      blanked open Today cards, undated days had contradictory copy, and a
+      failed bug report toasted twice. Fixed.
+- [x] Claude Desktop and Claude Code MCP connections verified live against
+      production; Claude Code setup documented.
+
+## What's left, in order
+
+1. Phone acceptance for the focus deck at 360px (turn on FOCUS MODE PREVIEW in
+   Settings; the plan's Task 7 lists the eight checks, including superset
+   rounds and correcting a set while switching views), then Task 8: remove the
+   switch and make focus the default.
+2. Connect ChatGPT if wanted: the account steps in setup.md. Check tunnel
+   eligibility on your OpenAI account first; OpenAI does not state which plans
+   get it.
+3. Configure the prompt sweep (`SWEEP_SECRET` plus two Vault rows,
+   docs/deploy.md step 2). Until then closed-app check-in prompts never send.
+4. Verify push on a real phone (docs/deploy.md, "What needs a phone").
+5. Confirm `JAVASCRIPT-REACT-3` does not recur on a production plan read, then
+   resolve it in Sentry (observability plan, Task 4).
+6. Transactional plan copies: one Postgres RPC for duplicate/template/first-day
+   creates, so a timeout cannot leave an empty day or an empty confirmed
+   program (readiness audit).
+7. E2 state estimation, the next endurance phase ([endurance-plan.md](endurance-plan.md)).
+8. Backlog with no deadline: browser end-to-end tests, code-splitting the
+   713 KB main chunk after profiling a cold phone load, the 97
+   `auth_rls_initplan` advisor findings, coach eval run 2, and the Claude
+   Desktop conversational smoke test from Phase 2.
 
 ## Out of scope (per spec)
 

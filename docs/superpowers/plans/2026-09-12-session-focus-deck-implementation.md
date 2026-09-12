@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-12-session-focus-deck-design.md`
 
+**Status (2026-09-12):** Tasks 1-6 are implemented and merged to main behind
+the FOCUS MODE PREVIEW switch (commit history on `codex/session-focus-deck`;
+the step checkboxes below were not ticked as the work landed). A pre-merge
+review's five findings were fixed with tests on the branch. Automated gates
+passed on the merged tree. Task 7's manual phone checks and Task 8 are open.
+
 ## Global Constraints
 
 - Keep `Session.tsx` as the only source of truth for `setsRef`, selected entry, drafts, rest, substitutions, skips, and the append-only outbox.

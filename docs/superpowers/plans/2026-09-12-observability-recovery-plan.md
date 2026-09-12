@@ -21,7 +21,7 @@
 
 ---
 
-## Task 1: make the in-app report durable
+## Task 1: make the in-app report durable (done, `92cadbe`)
 
 **Files:**
 - Modify: `pwa/src/lib/errors.ts`
@@ -60,7 +60,7 @@ cd pwa && npm run build
 
 Expected: tests prove successful persistence, error visibility, and Sentry mirroring. Typecheck and build pass.
 
-## Task 2: preserve coach refusal telemetry
+## Task 2: preserve coach refusal telemetry (done, `3a143cf`)
 
 **Files:**
 - Create: `supabase/functions/coach/usage.ts`
@@ -90,7 +90,9 @@ cd supabase/functions/coach && deno test usage.test.ts
 cd supabase/functions/coach && deno check index.ts
 ```
 
-## Task 3: make database-before-PWA deploy real
+## Task 3: make database-before-PWA deploy real (done 2026-09-12)
+
+**Status:** the three settings exist. Run 34708663377 (workflow_dispatch) and run 34724741286 (push) both ran `supabase db push` and deployed the functions before Pages, with no skip notice.
 
 **Files:**
 - Verify: `.github/workflows/deploy.yml`
@@ -100,7 +102,7 @@ cd supabase/functions/coach && deno check index.ts
 
 **Verification:** Trigger a dry-run deployment that changes a harmless Supabase file and confirm the job does not report `Supabase deploy skipped`. Then deploy the PWA report fix. Do not expose or paste any secret into chat, source, or a commit.
 
-## Task 4: close the known production incident with evidence
+## Task 4: close the known production incident with evidence (open)
 
 The unresolved Sentry issue `JAVASCRIPT-REACT-3` came from release `main+624aec3`: the PWA selected `prescriptions.set_type` before migration `20260830120000_prescription_set_type` reached production. The migration is present now, but the incident remains unresolved.
 

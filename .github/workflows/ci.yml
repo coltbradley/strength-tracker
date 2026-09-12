@@ -25,6 +25,9 @@ jobs:
       # select strings are just strings) and only fails when that one tool is
       # actually called.
       - run: node scripts/check-selects.mjs
+      # The ChatGPT tunnel relay holds a real bearer; its tests pin that it
+      # refuses browsers and never leaks the token.
+      - run: node --test scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs
 
   mcp-server:
     name: edge function typecheck + tests (deno)

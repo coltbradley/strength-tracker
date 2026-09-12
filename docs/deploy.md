@@ -1,6 +1,28 @@
 # Release runbook
 
-## This round (2026-09-07) — release checklist
+## Where production stands (checked 2026-09-12)
+
+Pushing to `main` deploys. The three CI settings landed on 2026-09-12, so
+`deploy.yml` now runs `supabase db push`, deploys all four functions, and only
+then publishes Pages. Check a release with `gh run list` and the
+`migrations + edge functions` job log: it should say "Remote database is up to
+date" or list what it applied, and must not print "Supabase deploy skipped".
+
+Live as of that check: migrations match local through `20260907060000`;
+`mcp-server` v26, `coach` v15, `push-alerts` v5, `endurance-sync` v3 all
+ACTIVE; `/mcp-server/health` answers ok; the `alert-sweep` cron runs every five
+minutes.
+
+Still open from the 2026-09-07 checklist below:
+
+- **The prompt sweep is not configured.** No `SWEEP_SECRET` function secret
+  and no Vault rows exist, so every cron run succeeds while delivering nothing.
+  Rest alerts are unaffected. Morning check-in prompts only appear in-app on
+  foreground until step 2 below is done.
+- **Push on a real phone** has still never been verified end to end (see
+  "What needs a phone").
+
+## 2026-09-07 round — release checklist
 
 Thirteen commits: the coach moves back to Sonnet 5, a per-person coach switch,
 sign-in mail on AgentMail, E0 (endurance activities + sync) and E1 (subjective
@@ -411,8 +433,9 @@ data survives updates (IndexedDB is untouched).
 
 `deploy.yml` can push migrations and deploy both edge functions itself, in
 front of the Pages publish, so the client can never ship ahead of its schema.
-It does so only when three repository settings exist; until then it prints a
-notice and skips, and everything above stays by hand.
+It does so only when three repository settings exist; without them it prints a
+notice and skips, and everything above stays by hand. All three have been set
+since 2026-09-12.
 
 | Setting                 | Kind     | Where it comes from                                                                                                                          |
 | ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -421,9 +444,9 @@ notice and skips, and everything above stays by hand.
 | `SUPABASE_PROJECT_REF`  | variable | The project ref. Not secret, so a variable, but it stays out of the repo like every other ref.                                              |
 
 Add them under Settings → Secrets and variables → Actions. The next push that
-touches `supabase/` runs `supabase db push`, then `functions deploy mcp-server
---no-verify-jwt`, then `functions deploy coach`, and only after all three does
-the Pages job start. A push touching only `pwa/` skips the Supabase job and
+touches `supabase/` runs `supabase db push`, then deploys `mcp-server`
+(`--no-verify-jwt`), `coach`, `push-alerts` and `endurance-sync`, and only
+after all of them does the Pages job start. A push touching only `pwa/` skips the Supabase job and
 publishes straight away; a push touching only `supabase/` deploys the schema
 and functions and does NOT republish the client, so nobody's phone offers an
 update for a build that did not change.
@@ -472,7 +495,7 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
   three settings in "Automating the Supabase half" exist. Without them the PWA
   ships from a Pages build on push while a migration needs `supabase db push`
   and each edge function needs its own `supabase functions deploy` —
-  `mcp-server` and `coach` are two deploys, not one. Shipping PWA code that
+  each function is its own deploy. Shipping PWA code that
   reads or writes a column whose migration has not been pushed yet fails every
   such read or write until someone runs it — that has happened once already,
   with `prescriptions.set_type`. Push the migration FIRST, then the code that
