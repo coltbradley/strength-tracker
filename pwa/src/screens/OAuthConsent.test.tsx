@@ -127,4 +127,27 @@ describe("OAuthConsent", () => {
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
   });
+
+  it("shows the expired state when the OAuth API is absent", async () => {
+    // Import supabase to access the mocked object
+    const { supabase } = await import("../lib/supabase");
+    // Save the original oauth object
+    const originalOAuth = (supabase.auth as { oauth?: unknown }).oauth;
+    try {
+      // Temporarily set oauth to undefined
+      (supabase.auth as { oauth?: unknown }).oauth = undefined;
+      render(<OAuthConsent email="val@example.com" />);
+      // Verify expired message is shown
+      expect(
+        await screen.findByText(/this sign-in request has expired/i),
+      ).toBeTruthy();
+      // Verify Allow button doesn't exist
+      expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+      // Verify getAuthorizationDetails was not called
+      expect(h.getAuthorizationDetails).not.toHaveBeenCalled();
+    } finally {
+      // Restore the original oauth object
+      (supabase.auth as { oauth?: unknown }).oauth = originalOAuth;
+    }
+  });
 });
