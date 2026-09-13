@@ -414,7 +414,7 @@ export function registerSetTrainingPlan(
         "search_exercises).",
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         openWorldHint: false,
       },
       inputSchema: {
