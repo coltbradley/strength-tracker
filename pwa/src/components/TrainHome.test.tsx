@@ -179,6 +179,14 @@ describe("TrainHome", () => {
     expect(screen.queryByText("Workout details are loading.")).toBeNull();
   });
 
+  it("announces cached workout details freshness", () => {
+    renderHome({ prescriptionLoadState: "cached-error" });
+
+    expect(screen.getByRole("status").textContent).toBe(
+      "Couldn’t refresh, showing saved workout details.",
+    );
+  });
+
   it("routes rest days and first runs to Program or existing coach access", () => {
     const onOpenCoach = vi.fn();
     const { rerender } = renderHome({ workout: null });

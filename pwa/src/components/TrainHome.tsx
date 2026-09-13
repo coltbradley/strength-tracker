@@ -174,7 +174,7 @@ export function TrainHome({
               </p>
               {(prescriptionLoadState === "cached-offline" ||
                 prescriptionLoadState === "cached-error") && (
-                <p className="train-cache-note">
+                <p className="train-cache-note" role="status">
                   {prescriptionLoadState === "cached-offline"
                     ? "Offline, showing saved workout details."
                     : "Couldn’t refresh, showing saved workout details."}
