@@ -14,6 +14,18 @@ function tokensFrom(source: string): Record<string, string> {
   );
 }
 
+function ruleBody(source: string, selector: string): string {
+  const marker = `${selector} {`;
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error(`Missing CSS selector ${selector}`);
+
+  const bodyStart = start + marker.length;
+  const end = source.indexOf("}", bodyStart);
+  if (end < 0) throw new Error(`Unclosed CSS selector ${selector}`);
+
+  return source.slice(bodyStart, end);
+}
+
 describe("Warm Precision color tokens", () => {
   it("binds semantic light-theme roles to the approved palette", () => {
     const tokens = tokensFrom(styles);
@@ -60,5 +72,20 @@ describe("Warm Precision color tokens", () => {
     expect(indexHtml).toContain('<meta name="theme-color" content="#f7f6fa" />');
     expect(viteConfig).toContain('background_color: "#f7f6fa"');
     expect(viteConfig).toContain('theme_color: "#f7f6fa"');
+  });
+
+  it("keeps raw current-set ochre inside its semantic token declaration", () => {
+    expect(styles.match(/--current-set\s*:\s*#855600\s*;/gi)).toHaveLength(1);
+    expect(styles.replace(/--current-set\s*:\s*#855600\s*;/gi, "")).not.toMatch(/#855600/i);
+  });
+
+  it("uses the semantic focus progress role in each state selector", () => {
+    expect(ruleBody(styles, ".focus-set-segment")).toContain("var(--focus-set-future,");
+    expect(ruleBody(styles, ".focus-set-segment--completed")).toContain(
+      "var(--focus-set-completed,",
+    );
+    expect(ruleBody(styles, ".focus-set-segment--current")).toContain(
+      "var(--focus-set-current,",
+    );
   });
 });
