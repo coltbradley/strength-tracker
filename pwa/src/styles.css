@@ -3124,6 +3124,15 @@
     margin-top: var(--s-2);
   }
 
+  .superset-member-history {
+    margin-top: var(--s-2);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--track-1);
+  }
+
   .superset-round-error {
     margin: 0;
     color: var(--danger);

@@ -321,6 +321,50 @@ describe("Session focus presentation", () => {
     >);
   });
 
+  it("shows bodyweight history as reps without inventing a zero-kilogram load", async () => {
+    resetDbForTests();
+    vi.mocked(getExercises).mockResolvedValue({
+      data: [{ id: "push-up", name: "Push Up", equipment: "body only" }],
+    } as unknown as Awaited<ReturnType<typeof getExercises>>);
+    vi.mocked(getLastActuals).mockResolvedValue({
+      data: { "push-up": { load_kg: 0, reps: 12 } },
+      fromCache: false,
+      stale: null,
+    });
+    const row = prescription("pushup", "push-up", "Push Up", "reps", null, 2);
+    await seed("reps", [
+      { ...row, load_kg: null, resolved_load_kg: null, plate_load_kg: null },
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Last time · 12 reps")).toBeTruthy();
+    expect(screen.queryByText(/0 kg/i)).toBeNull();
+  });
+
+  it("omits zero-value history for completion tracking", async () => {
+    resetDbForTests();
+    vi.mocked(getLastActuals).mockResolvedValue({
+      data: { "farmer-carry": { load_kg: 0, reps: 0 } },
+      fromCache: false,
+      stale: null,
+    });
+    await seed("done", [
+      prescription("carry", "farmer-carry", "Farmer Carry", "done", null, 1),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("button", { name: "DONE" })).toBeTruthy();
+    expect(screen.queryByText(/Last time/i)).toBeNull();
+  });
+
   it("keeps tick-only focus navigation and logging on the same entry", async () => {
     resetDbForTests();
     await seed("reps", [
@@ -370,6 +414,30 @@ describe("Session focus presentation", () => {
     ).toBeTruthy();
     expect(screen.getByText("round 1 of 2")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
+  });
+
+  it("shows one compact historical line for each superset member", async () => {
+    resetDbForTests();
+    vi.mocked(getLastActuals).mockResolvedValue({
+      data: {
+        "bench-press": { load_kg: 20, reps: 8 },
+        "barbell-row": { load_kg: 50, reps: 10 },
+      },
+      fromCache: false,
+      stale: null,
+    });
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Last time · 20 kg × 8")).toBeTruthy();
+    expect(screen.getByText("Last time · 50 kg × 10")).toBeTruthy();
   });
 
   it("logs both members of a superset round through one ordered local batch", async () => {

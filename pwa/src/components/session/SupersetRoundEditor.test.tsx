@@ -166,4 +166,43 @@ describe("SupersetRoundEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Log A2 only" }));
     expect(onLogA2Only).toHaveBeenCalledTimes(1);
   });
+
+  it("names each-hand input and its stored total for a paired member", () => {
+    const a1Draft: SetDraft = {
+      entryKg: 40,
+      reps: 8,
+      setType: "working",
+      rpe: null,
+    };
+    render(
+      <SupersetRoundEditor
+        label="SUPERSET A · ROUND 1 OF 3"
+        a1={{
+          tag: "A1",
+          editor: {
+            ...editorProps(a1Entry, a1Draft),
+            loadPresentation: {
+              ...editorProps(a1Entry, a1Draft).loadPresentation,
+              perSide: true,
+              totalKg: 80,
+            },
+          },
+        }}
+        a2={{
+          tag: "A2",
+          editor: editorProps(a2Entry, {
+            entryKg: 50,
+            reps: 10,
+            setType: "working",
+            rpe: null,
+          }),
+        }}
+        onLogRound={vi.fn()}
+        onLogA1Only={vi.fn()}
+        onLogA2Only={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("EACH HAND × 2 · 80 KG TOTAL")).toBeTruthy();
+  });
 });

@@ -375,7 +375,7 @@ export function SetEditor({
         </>
       )}
 
-      {focus && lastPerformance !== null && (
+      {focus && tracking !== "done" && lastPerformance !== null && (
         <p className="focus-last-performance">{lastPerformance}</p>
       )}
 

@@ -2156,7 +2156,9 @@ export function Session() {
               presentation === "focus" && !editing ? "focus" : "overview"
             }
             lastPerformance={
-              presentation === "focus" ? lastTime(entry.exercise_id, true) : null
+              presentation === "focus" && !isTick(entry)
+                ? lastTime(entry.exercise_id, true, noLoadEditor)
+                : null
             }
             restSlot={restInline && !sheetOpen ? restTimerEl : undefined}
             disabled={logLocked || !setsLoaded || setsFailed}
@@ -2543,12 +2545,20 @@ export function Session() {
    *
    * Reference text: it never competes with the target or the log button.
    */
-  const lastTime = (exerciseId: string, latestOnly = false): string | null => {
+  const lastTime = (
+    exerciseId: string,
+    latestOnly = false,
+    repsOnly = false,
+    entryMode: LoadEntry = loadEntry,
+  ): string | null => {
     const a = lastActuals[exerciseId];
     if (!a) return null;
     const shown = (kg: number) =>
-      `${toDisplay(enteredKg(kg, loadEntry), unit)} ${unit}${perSide ? "/side" : ""}`;
-    if (latestOnly) return `Last time · ${shown(a.load_kg)} × ${a.reps}`;
+      `${toDisplay(enteredKg(kg, entryMode), unit)} ${unit}${entryMode === "per_side" ? "/side" : ""}`;
+    if (latestOnly)
+      return repsOnly
+        ? `Last time · ${a.reps} reps`
+        : `Last time · ${shown(a.load_kg)} × ${a.reps}`;
     // a value cached before runs existed carries only the top set
     const run = a.run && a.run.length > 0 ? a.run : [a];
     const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);
@@ -2721,6 +2731,12 @@ export function Session() {
       loadSteps: loadSteps(entry.exercise_id, unit),
       rpeShown: rpeShown(entry.exercise_id),
       logLabel: "unused",
+      lastPerformance: lastTime(
+        entry.exercise_id,
+        true,
+        isBodyweightEquipment(equipment) && storedLoad === 0,
+        entryMode,
+      ),
       disabled: logLocked || !setsLoaded || setsFailed,
       onDraftChange: (next: Partial<SetDraft>) => {
         setRoundDrafts((prior) => ({

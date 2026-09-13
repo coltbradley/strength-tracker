@@ -39,7 +39,7 @@ function MemberRow({ member }: { member: SupersetRoundMember }) {
     onDraftChange,
     onOpenPad,
   } = member.editor;
-  const { perSide } = loadPresentation;
+  const { perSide, totalKg } = loadPresentation;
   const coarseDown: StepDef | undefined = loadSteps[0];
   const coarseUp: StepDef | undefined = loadSteps[loadSteps.length - 1];
 
@@ -88,9 +88,15 @@ function MemberRow({ member }: { member: SupersetRoundMember }) {
       </div>
       {perSide && (
         <div className="microcopy superset-member-detail">
-          {toDisplay(draft.entryKg, unit)} × 2
+          EACH HAND × 2 · {toDisplay(totalKg, unit)} {unit.toUpperCase()} TOTAL
         </div>
       )}
+      {member.editor.lastPerformance !== null &&
+        member.editor.lastPerformance !== undefined && (
+          <div className="superset-member-history">
+            {member.editor.lastPerformance}
+          </div>
+        )}
     </section>
   );
 }
