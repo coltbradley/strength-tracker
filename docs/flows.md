@@ -59,6 +59,7 @@ Supabase sends the stock link email and the paste path is the working one.
   Offline: cached plan + note; no cache: warning; no program: empty state +
   Start empty session. The empty state waits for the data — a loading list
   never claims there are no programs.
+
 - **Edit a day** — Today → expand → Edit → `/plan/:id`. EXERCISES lead
   (sets/reps/load mode kg | %TM | by feel/superset letter/rest per exercise,
   add/remove); then the scheduled day (date picker, Today chip, ↑ Earlier /
@@ -126,15 +127,27 @@ Supabase sends the stock link email and the paste path is the working one.
 - **Switch exercise** — tap any closed row; it opens (previous closes) and
   scrolls into view, prefilled (prescription → this session → last session →
   configured fallback). Tapping the open header collapses it.
-- **Focus deck** — Settings → Display → FOCUS MODE PREVIEW is a device-local
-  switch, off by default. When enabled, eligible sessions open on one focused
-  entry or superset round; the full-workout overview remains available through
-  "View full workout". In overview, selecting an exercise name chooses the
-  next focus destination without opening its editor. "Focus mode" returns to
-  that selection, or to the entry that was focused before overview if nothing
-  was selected. Selection and expansion stay separate, and switching views
-  preserves staged values and the running rest clock. Selecting either member
-  of an unfinished superset returns to its canonical A1/A2 round.
+- **Focus deck** — the default presentation for an eligible session, from
+  Start or restore. The app header and tab bar hide while it is shown, and
+  the screen is deliberately spare: exercise name, `SET n OF m`, one hero
+  value (load for a loaded implement, reps for bodyweight — whichever is
+  hard to get right for the movement), the plate bar or per-hand breakdown
+  when it applies, the secondary field with its target quietly beside it,
+  and a bottom row of `−step / LOG SET / +step`. Everything else the
+  accordion shows inline — warmup/working, RPE, the plate calculator, the
+  per-hand/total toggle, skip, swap, last time, and the full logged-set
+  history (void, note, correct) — lives one tap away behind the quiet "•••"
+  control, in a sheet scoped to the current entry (or both members of an
+  open superset round). Starting a correction from that sheet closes it and
+  reveals the full inline editor (type, RPE, fine adjustment) on the main
+  screen, exempt from the minimalism for as long as the correction is open.
+  The full-workout overview remains available through "View full workout".
+  In overview, selecting an exercise name chooses the next focus
+  destination without opening its editor. "Focus mode" returns to that
+  selection, or to the entry that was focused before overview if nothing was
+  selected. Selection and expansion stay separate, and switching views
+  preserves staged values and the running rest clock. Selecting either
+  member of an unfinished superset returns to its canonical A1/A2 round.
 - **Focus-mode limitation** — duration-tracked workouts stay in overview and
   explain that duration tracking is unavailable in focus mode. The focus deck
   currently supports reps and tick-only exercises; it does not approximate a
