@@ -150,6 +150,58 @@ export function skipRow(
   };
 }
 
+/**
+ * The five mood words the check-in sheet offers as one-tap chips.
+ *
+ * Deliberately a flat list of words, not a scale: a spontaneous check-in is
+ * "what's going on", not a 1-5 rating, and the free text field is where
+ * anything more specific goes.
+ */
+export const MOOD_CHIPS = [
+  "Sore",
+  "Hurt",
+  "Tired",
+  "Stressed",
+  "Great",
+] as const;
+
+/** The comma-separated words currently in the box, trimmed, empties dropped. */
+export function chipTokens(text: string): string[] {
+  return text
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+}
+
+/** Whether `word` is one of the box's own tokens, not just a substring. */
+export function chipActive(text: string, word: string): boolean {
+  return chipTokens(text).some((t) => t.toLowerCase() === word.toLowerCase());
+}
+
+/**
+ * Add or remove one chip word from the box.
+ *
+ * A chip only ever adds or removes its OWN token: it never rewrites
+ * whatever else somebody typed, which is what makes a single shared text box
+ * safe to hand both a keyboard and five buttons at once.
+ */
+export function toggleChip(text: string, word: string): string {
+  const tokens = chipTokens(text);
+  const idx = tokens.findIndex((t) => t.toLowerCase() === word.toLowerCase());
+  if (idx === -1) tokens.push(word);
+  else tokens.splice(idx, 1);
+  return tokens.join(", ");
+}
+
+/** CHECK IN is live once there is something to save: typed text (chips are
+ *  just tokens inside it), or an energy rating with no text at all. */
+export function hasCheckinContent(
+  text: string,
+  energy: number | null,
+): boolean {
+  return text.trim().length > 0 || energy !== null;
+}
+
 export function checkinRow(
   id: string,
   userId: string,
@@ -165,7 +217,9 @@ export function painCheckRow(
   userId: string,
   phase: PainCheckInsert["phase"],
   nrs: number,
-  fields: Partial<Pick<PainCheckInsert, "episode_id" | "session_id" | "activity_id">>,
+  fields: Partial<
+    Pick<PainCheckInsert, "episode_id" | "session_id" | "activity_id">
+  >,
   now: string,
 ): PainCheckInsert {
   return {

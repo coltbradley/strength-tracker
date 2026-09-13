@@ -13,9 +13,13 @@ vi.mock("./data", () => ({ throwIf: vi.fn() }));
 import {
   answeredItems,
   checkinRow,
+  chipActive,
   getReadinessFor,
+  hasCheckinContent,
+  MOOD_CHIPS,
   painCheckRow,
   readinessRow,
+  toggleChip,
 } from "./checkins";
 
 const NOW = "2026-09-07T07:30:00.000Z";
@@ -24,9 +28,7 @@ describe("answeredItems", () => {
   it("counts only the six core items that were actually answered", () => {
     expect(answeredItems({})).toBe(0);
     expect(answeredItems({ sleep_hours: 7 })).toBe(1);
-    expect(
-      answeredItems({ sleep_hours: 7, fatigue: 3, mood: 4 }),
-    ).toBe(3);
+    expect(answeredItems({ sleep_hours: 7, fatigue: 3, mood: 4 })).toBe(3);
   });
 
   // Zero is a measurement, not an absence. This is the same line the schema
@@ -76,7 +78,13 @@ describe("readinessRow", () => {
   });
 
   it("keeps a zero, which is an answer", () => {
-    const row = readinessRow("id1", "u1", "2026-09-07", { alcohol_units: 0 }, NOW);
+    const row = readinessRow(
+      "id1",
+      "u1",
+      "2026-09-07",
+      { alcohol_units: 0 },
+      NOW,
+    );
     expect(row.alcohol_units).toBe(0);
   });
 
@@ -93,19 +101,87 @@ describe("readinessRow", () => {
 describe("checkinRow / painCheckRow", () => {
   it("stamps the kind and the time", () => {
     const r = checkinRow("c1", "u1", "post_session", { energy: 3 }, NOW);
-    expect(r).toMatchObject({ kind: "post_session", energy: 3, recorded_at: NOW });
+    expect(r).toMatchObject({
+      kind: "post_session",
+      energy: 3,
+      recorded_at: NOW,
+    });
   });
 
   // A 24-hour delayed signal is its own row with its own timestamp; it cannot
   // be a field on the run it follows.
   it("makes the next-morning pain check a row of its own", () => {
-    const r = painCheckRow("p1", "u1", "next_morning", 5, { episode_id: "e1" }, NOW);
+    const r = painCheckRow(
+      "p1",
+      "u1",
+      "next_morning",
+      5,
+      { episode_id: "e1" },
+      NOW,
+    );
     expect(r).toMatchObject({
       phase: "next_morning",
       nrs_0_10: 5,
       episode_id: "e1",
       captured_at: NOW,
     });
+  });
+});
+
+describe("mood chips: toggleChip / chipActive", () => {
+  it("has the five words the sheet offers", () => {
+    expect(MOOD_CHIPS).toEqual(["Sore", "Hurt", "Tired", "Stressed", "Great"]);
+  });
+
+  it("appends a word to empty text", () => {
+    expect(toggleChip("", "Sore")).toBe("Sore");
+  });
+
+  it("appends a second word after the first", () => {
+    expect(toggleChip("Sore", "Tired")).toBe("Sore, Tired");
+  });
+
+  it("is active once its word is a token in the text", () => {
+    expect(chipActive("Sore, Tired", "Tired")).toBe(true);
+    expect(chipActive("Sore, Tired", "Hurt")).toBe(false);
+  });
+
+  it("is case-insensitive", () => {
+    expect(chipActive("sore", "Sore")).toBe(true);
+  });
+
+  // Tapping the same chip again removes exactly that word and nothing else.
+  it("removes the word on a second tap, leaving the rest untouched", () => {
+    expect(toggleChip("Sore, Tired, Great", "Tired")).toBe("Sore, Great");
+    expect(chipActive(toggleChip("Sore, Tired", "Tired"), "Tired")).toBe(false);
+  });
+
+  it("removing the only word leaves the box empty", () => {
+    expect(toggleChip("Sore", "Sore")).toBe("");
+  });
+
+  // Free-typed prose is left alone: a chip only ever adds or removes its own
+  // comma-separated token, never rewrites what somebody typed.
+  it("does not disturb free text typed alongside a chip word", () => {
+    const withNote = toggleChip("legs are sore today", "Great");
+    expect(withNote).toBe("legs are sore today, Great");
+    expect(toggleChip(withNote, "Great")).toBe("legs are sore today");
+  });
+});
+
+describe("hasCheckinContent", () => {
+  it("is false with nothing entered", () => {
+    expect(hasCheckinContent("", null)).toBe(false);
+    expect(hasCheckinContent("   ", null)).toBe(false);
+  });
+
+  it("is true once there is text", () => {
+    expect(hasCheckinContent("feeling good", null)).toBe(true);
+  });
+
+  it("is true once a chip (or energy) is chosen, with no typed text", () => {
+    expect(hasCheckinContent("Great", null)).toBe(true);
+    expect(hasCheckinContent("", 3)).toBe(true);
   });
 });
 
