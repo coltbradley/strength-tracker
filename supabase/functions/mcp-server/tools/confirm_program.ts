@@ -22,6 +22,11 @@ export function registerConfirmProgram(
         "for the app. REQUIRES EXPLICIT USER APPROVAL IN CHAT FIRST: only call " +
         "this after the user has reviewed the program summary and clearly said " +
         "to confirm it. Confirmation is one-way.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         program_id: z
           .string()

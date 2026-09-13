@@ -91,7 +91,7 @@ export function registerFindSimilarDays(
           .default(5)
           .describe("Most matches to return, newest first. Default 5."),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "find_similar_days", async () => {

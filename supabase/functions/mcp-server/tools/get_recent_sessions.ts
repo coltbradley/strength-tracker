@@ -52,7 +52,7 @@ export function registerGetRecentSessions(
           .default(10)
           .describe("Number of sessions to return. Default 10, max 50."),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "get_recent_sessions", async () => {

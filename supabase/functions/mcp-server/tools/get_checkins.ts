@@ -53,7 +53,7 @@ export function registerGetCheckins(
           .default(50)
           .describe("Maximum rows to return. Default 50, max 200."),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "get_checkins", async () => {

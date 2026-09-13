@@ -32,7 +32,11 @@ export function registerExerciseNotes(
           .optional()
           .describe("Just this one. Omit for every note the user has."),
       },
-      annotations: { readOnlyHint: true },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
     },
     (args) =>
       guard(ctx, "get_exercise_notes", async () => {
@@ -61,6 +65,11 @@ export function registerExerciseNotes(
         "cue with a fresh sentence. Write an empty string to clear it. Use " +
         "this for things true of the movement every time; a note about one " +
         "session belongs on that session, and the lifter writes those.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         exercise_id: z
           .string()

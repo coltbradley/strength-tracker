@@ -19,6 +19,11 @@ export function registerSetTrainingMax(
         "(default today). History is kept: a new effective date adds a row, the " +
         "same date overwrites. %TM prescriptions resolve against the TM current " +
         "on the relevant date. Returns the previous current TM and the new value.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         exercise_id: z
           .string()

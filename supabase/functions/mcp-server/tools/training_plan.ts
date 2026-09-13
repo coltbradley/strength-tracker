@@ -160,12 +160,12 @@ export function validatePhases(
 
   const first = phases[0].starts_on;
   const last = phases[phases.length - 1].ends_on;
-  const starts_on = plan.starts_on === undefined
-    ? first
-    : assertIsoDate(plan.starts_on, "starts_on");
-  const ends_on = plan.ends_on === undefined
-    ? last
-    : assertIsoDate(plan.ends_on, "ends_on");
+  const starts_on =
+    plan.starts_on === undefined
+      ? first
+      : assertIsoDate(plan.starts_on, "starts_on");
+  const ends_on =
+    plan.ends_on === undefined ? last : assertIsoDate(plan.ends_on, "ends_on");
   if (ends_on < starts_on) {
     throw new ToolError(
       `The plan ends (${ends_on}) before it starts (${starts_on}).`,
@@ -183,7 +183,10 @@ export function validatePhases(
 
 type PhaseStatus = "past" | "current" | "upcoming";
 
-function phaseStatus(p: { starts_on: string; ends_on: string }, today: string): PhaseStatus {
+function phaseStatus(
+  p: { starts_on: string; ends_on: string },
+  today: string,
+): PhaseStatus {
   if (p.ends_on < today) return "past";
   if (p.starts_on > today) return "upcoming";
   return "current";
@@ -223,14 +226,23 @@ export function registerGetTrainingPlan(
         "creating another. There is at most one live plan; an unconfirmed one " +
         "is a proposal awaiting the user's approval and is returned with " +
         "confirmed=false.",
-      annotations: { readOnlyHint: true },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
     },
     () =>
       guard(ctx, "get_training_plan", async () => {
         const plan = await livePlan(db);
         if (plan === null) {
           return jsonResult({
-            data: { plan: null, current_phase: null, next_phase: null, phases: [] },
+            data: {
+              plan: null,
+              current_phase: null,
+              next_phase: null,
+              phases: [],
+            },
             metadata: {
               note:
                 "No training plan. set_training_plan writes one; it is " +
@@ -255,30 +267,45 @@ export function registerGetTrainingPlan(
         ) as unknown as PhaseRow[];
 
         // Programs filed under each phase, live ones only.
-        const programs = phases.length === 0 ? [] : (must(
-          await db.client
-            .from("programs")
-            .select("id, name, confirmed_at, phase_id")
-            .eq("user_id", db.ownerId)
-            .is("discarded_at", null)
-            .in("phase_id", phases.map((p) => p.id)),
-          "programs by phase",
-        ) as unknown as {
-          id: string;
-          name: string;
-          confirmed_at: string | null;
-          phase_id: string;
-        }[]);
-        const programsByPhase = new Map<string, { id: string; name: string; confirmed: boolean }[]>();
+        const programs =
+          phases.length === 0
+            ? []
+            : (must(
+                await db.client
+                  .from("programs")
+                  .select("id, name, confirmed_at, phase_id")
+                  .eq("user_id", db.ownerId)
+                  .is("discarded_at", null)
+                  .in(
+                    "phase_id",
+                    phases.map((p) => p.id),
+                  ),
+                "programs by phase",
+              ) as unknown as {
+                id: string;
+                name: string;
+                confirmed_at: string | null;
+                phase_id: string;
+              }[]);
+        const programsByPhase = new Map<
+          string,
+          { id: string; name: string; confirmed: boolean }[]
+        >();
         for (const p of programs) {
           const list = programsByPhase.get(p.phase_id) ?? [];
-          list.push({ id: p.id, name: p.name, confirmed: p.confirmed_at !== null });
+          list.push({
+            id: p.id,
+            name: p.name,
+            confirmed: p.confirmed_at !== null,
+          });
           programsByPhase.set(p.phase_id, list);
         }
 
         // Names for the primary lifts, through the same visibility gate every
         // exercise read takes. An id that no longer resolves is returned bare.
-        const allIds = [...new Set(phases.flatMap((p) => p.primary_exercise_ids ?? []))];
+        const allIds = [
+          ...new Set(phases.flatMap((p) => p.primary_exercise_ids ?? [])),
+        ];
         const names = new Map<string, string>();
         if (allIds.length > 0) {
           const visible = await visibleExerciseIds(db, allIds);
@@ -327,29 +354,36 @@ export function registerGetTrainingPlan(
               confirmed_at: plan.confirmed_at,
               created_at: plan.created_at,
             },
-            current_phase: current === null
-              ? null
-              : { id: current.id, name: current.name, position: current.position },
-            next_phase: next === null
-              ? null
-              : { id: next.id, name: next.name, starts_on: next.starts_on },
+            current_phase:
+              current === null
+                ? null
+                : {
+                    id: current.id,
+                    name: current.name,
+                    position: current.position,
+                  },
+            next_phase:
+              next === null
+                ? null
+                : { id: next.id, name: next.name, starts_on: next.starts_on },
             phases: shaped,
           },
           metadata: {
             today,
             phase_count: shaped.length,
-            note: plan.confirmed_at === null
-              ? "This plan is UNCONFIRMED: a proposal, not yet the plan. It " +
-                "becomes live with confirm_training_plan after the user " +
-                "approves it in chat."
-              : current === null
-              ? "No phase covers today" +
-                (next === null
-                  ? "; the plan's last phase has ended."
-                  : `; the next one, "${next.name}", starts ${next.starts_on}.`)
-              : `Today is in phase ${current.position + 1} of ${shaped.length}, ` +
-                `"${current.name}". Days written or edited should fit its ` +
-                "focus and progression.",
+            note:
+              plan.confirmed_at === null
+                ? "This plan is UNCONFIRMED: a proposal, not yet the plan. It " +
+                  "becomes live with confirm_training_plan after the user " +
+                  "approves it in chat."
+                : current === null
+                  ? "No phase covers today" +
+                    (next === null
+                      ? "; the plan's last phase has ended."
+                      : `; the next one, "${next.name}", starts ${next.starts_on}.`)
+                  : `Today is in phase ${current.position + 1} of ${shaped.length}, ` +
+                    `"${current.name}". Days written or edited should fit its ` +
+                    "focus and progression.",
           },
         });
       }),
@@ -378,6 +412,11 @@ export function registerSetTrainingPlan(
         "confirm in the same conversation. Phases are listed in order, may " +
         "not share a day, and every primary_exercise_id must exist (use " +
         "search_exercises).",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         objective: z
           .string()
@@ -551,7 +590,13 @@ export function registerSetTrainingPlan(
             .eq("plan_id", planId)
             .order("position", { ascending: true }),
           "read back phases",
-        ) as { id: string; position: number; name: string; starts_on: string; ends_on: string }[];
+        ) as {
+          id: string;
+          position: number;
+          name: string;
+          starts_on: string;
+          ends_on: string;
+        }[];
 
         const lines = [
           `## Plan written: ${args.objective}`,
@@ -560,20 +605,21 @@ export function registerSetTrainingPlan(
           "",
           "| # | Phase | From | To | Focus | Progression |",
           "| --- | --- | --- | --- | --- | --- |",
-          ...args.phases.map((p, i) =>
-            `| ${i + 1} | ${p.name} | ${p.starts_on} | ${p.ends_on} | ${p.focus ?? ""} | ${p.progression ?? ""} |`
+          ...args.phases.map(
+            (p, i) =>
+              `| ${i + 1} | ${p.name} | ${p.starts_on} | ${p.ends_on} | ${p.focus ?? ""} | ${p.progression ?? ""} |`,
           ),
           "",
           "This plan is UNCONFIRMED. Review it with the user; after explicit " +
-          `approval in chat, call confirm_training_plan with plan_id ${planId}.`,
+            `approval in chat, call confirm_training_plan with plan_id ${planId}.`,
         ];
         if (previous !== null) {
           lines.push(
             "",
             previous.confirmed_at !== null
               ? `The previous CONFIRMED plan (${previous.id}) is superseded as of ` +
-                "now, so the app shows no plan until this one is confirmed. " +
-                "Confirm it in this conversation."
+                  "now, so the app shows no plan until this one is confirmed. " +
+                  "Confirm it in this conversation."
               : `The previous unconfirmed draft (${previous.id}) is superseded.`,
           );
         }
@@ -585,8 +631,8 @@ export function registerSetTrainingPlan(
             starts_on: dates.starts_on,
             ends_on: dates.ends_on,
             superseded_plan_id: previous?.id ?? null,
-            superseded_plan_was_confirmed: previous !== null &&
-              previous.confirmed_at !== null,
+            superseded_plan_was_confirmed:
+              previous !== null && previous.confirmed_at !== null,
             phases,
           },
           lines.join("\n"),
@@ -611,6 +657,11 @@ export function registerConfirmTrainingPlan(
         "reviewed the plan summary and clearly said to confirm it. " +
         "Confirmation is one-way; a change after this is a new " +
         "set_training_plan.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         plan_id: z
           .string()
@@ -632,7 +683,11 @@ export function registerConfirmTrainingPlan(
         if (error) throw new Error(`confirm plan: ${error.message}`);
 
         if (data && data.length > 0) {
-          const row = data[0] as { id: string; objective: string; confirmed_at: string };
+          const row = data[0] as {
+            id: string;
+            objective: string;
+            confirmed_at: string;
+          };
           return jsonResult({
             plan_id: row.id,
             objective: row.objective,

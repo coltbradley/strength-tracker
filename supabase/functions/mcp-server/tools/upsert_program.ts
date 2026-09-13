@@ -104,14 +104,13 @@ function loadLabel(
   if (rx.load_kg != null) return kgLabel(rx.load_kg, rx.load_entry);
   if (rx.load_pct_tm != null) {
     const tm = tms.get(rx.exercise_id);
-    const resolved = tm != null
-      ? ` (~${
-        kgLabel(
-          Math.round((rx.load_pct_tm / 100) * tm * 10) / 10,
-          rx.load_entry,
-        )
-      })`
-      : "";
+    const resolved =
+      tm != null
+        ? ` (~${kgLabel(
+            Math.round((rx.load_pct_tm / 100) * tm * 10) / 10,
+            rx.load_entry,
+          )})`
+        : "";
     return `${rx.load_pct_tm}% TM${resolved}`;
   }
   return "by feel";
@@ -129,11 +128,9 @@ function summaryTable(
     "| Day | Date | Label | Section | # | Exercise | SS | Type | Sets x Reps | Load | Rest |",
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
   ];
-  for (
-    const w of [...program.workouts].sort(
-      (a, b) => a.day_index - b.day_index,
-    )
-  ) {
+  for (const w of [...program.workouts].sort(
+    (a, b) => a.day_index - b.day_index,
+  )) {
     // Array order IS the order written, so the review table shows it
     // rather than re-sorting by a field that no longer exists.
     for (const [position, p] of w.prescriptions.entries()) {
@@ -167,7 +164,11 @@ interface PhaseLookupRow {
   name: string;
   training_plans:
     | { id: string; confirmed_at: string | null; superseded_at: string | null }
-    | { id: string; confirmed_at: string | null; superseded_at: string | null }[]
+    | {
+        id: string;
+        confirmed_at: string | null;
+        superseded_at: string | null;
+      }[]
     | null;
 }
 
@@ -200,6 +201,11 @@ export function registerUpsertProgram(
         "screenshot. Adding days to a CONFIRMED program is live on the " +
         "calendar at once and needs confirm_change=true after the user's " +
         "approval in chat, like editing a day.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         program: programSchema.describe("The full program to write."),
         phase_id: z
@@ -272,18 +278,26 @@ export function registerUpsertProgram(
         // The phase, when given, must be this user's and on the LIVE plan. A
         // phase of a superseded plan is history; filing new days under it
         // would hide them from get_training_plan, which reads the live plan.
-        let phase: { id: string; name: string; plan_confirmed: boolean } | null =
-          null;
+        let phase: {
+          id: string;
+          name: string;
+          plan_confirmed: boolean;
+        } | null = null;
         // The program already filed under that phase, if any: the write adds
         // days to it rather than creating a second one.
-        let target: { id: string; name: string; confirmed_at: string | null } | null =
-          null;
+        let target: {
+          id: string;
+          name: string;
+          confirmed_at: string | null;
+        } | null = null;
         let filedCount = 0;
         if (args.phase_id !== undefined) {
           const rows = must(
             await db.client
               .from("plan_phases")
-              .select("id, name, training_plans!inner(id, confirmed_at, superseded_at)")
+              .select(
+                "id, name, training_plans!inner(id, confirmed_at, superseded_at)",
+              )
               .eq("user_id", db.ownerId)
               .eq("id", args.phase_id),
             "phase lookup",
@@ -299,7 +313,9 @@ export function registerUpsertProgram(
             ? row.training_plans[0]
             : row.training_plans;
           if (!plan) {
-            throw new ToolError(`Phase ${row.id} has no plan. Nothing to file under.`);
+            throw new ToolError(
+              `Phase ${row.id} has no plan. Nothing to file under.`,
+            );
           }
           if (plan.superseded_at !== null) {
             throw new ToolError(
@@ -308,7 +324,11 @@ export function registerUpsertProgram(
                 "plan's phase ids and file under one of those.",
             );
           }
-          phase = { id: row.id, name: row.name, plan_confirmed: plan.confirmed_at !== null };
+          phase = {
+            id: row.id,
+            name: row.name,
+            plan_confirmed: plan.confirmed_at !== null,
+          };
 
           const filed = must(
             await db.client
@@ -338,7 +358,15 @@ export function registerUpsertProgram(
         }
 
         if (target !== null && phase !== null) {
-          return await addDaysToProgram(db, ctx, program, tms, phase, target, filedCount);
+          return await addDaysToProgram(
+            db,
+            ctx,
+            program,
+            tms,
+            phase,
+            target,
+            filedCount,
+          );
         }
 
         // Upsert semantics: replace an UNCONFIRMED program with the same name.
@@ -410,7 +438,7 @@ export function registerUpsertProgram(
               db.ownerId,
               workoutIdByDay.get(w.day_index)!,
               w.prescriptions,
-            )
+            ),
           );
           const { error: rxError } = await db.client
             .from("prescriptions")
@@ -504,9 +532,9 @@ export function registerUpsertProgram(
             replaced_unconfirmed: staleWarning ? 0 : oldUnconfirmedIds.length,
             ...(staleWarning
               ? {
-                warning: staleWarning,
-                stale_unconfirmed_program_ids: oldUnconfirmedIds,
-              }
+                  warning: staleWarning,
+                  stale_unconfirmed_program_ids: oldUnconfirmedIds,
+                }
               : {}),
             workouts: program.workouts.length,
             prescriptions: program.workouts.reduce(
@@ -552,9 +580,10 @@ async function addDaysToProgram(
       .eq("program_id", target.id),
     "existing days",
   ) as { day_index: number }[];
-  const base = existingDays.length === 0
-    ? 0
-    : Math.max(...existingDays.map((d) => d.day_index)) + 1;
+  const base =
+    existingDays.length === 0
+      ? 0
+      : Math.max(...existingDays.map((d) => d.day_index)) + 1;
   const indexOf = (w: Program["workouts"][number]) => base + w.day_index;
 
   const workoutRows = must(
@@ -577,7 +606,11 @@ async function addDaysToProgram(
 
   try {
     const rxRows = program.workouts.flatMap((w) =>
-      prescriptionRows(db.ownerId, workoutIdByDay.get(indexOf(w))!, w.prescriptions)
+      prescriptionRows(
+        db.ownerId,
+        workoutIdByDay.get(indexOf(w))!,
+        w.prescriptions,
+      ),
     );
     const { error } = await db.client.from("prescriptions").insert(rxRows);
     if (error) throw new Error(`insert prescriptions: ${error.message}`);
@@ -586,7 +619,10 @@ async function addDaysToProgram(
       .from("planned_workouts")
       .delete()
       .eq("user_id", db.ownerId)
-      .in("id", workoutRows.map((w) => w.id));
+      .in(
+        "id",
+        workoutRows.map((w) => w.id),
+      );
     if (rollbackError) {
       log("error", "upsert_program_add_days_cleanup_failed", {
         request_id: ctx.requestId,
@@ -604,9 +640,9 @@ async function addDaysToProgram(
     `## Days added to: ${target.name}`,
     "",
     `Filed under plan phase "${phase.name}", which already had this program, ` +
-    `so the ${program.workouts.length} day(s) were ADDED to it rather than ` +
-    "written as a new program. The name you passed " +
-    `('${program.name}') was not used; the program keeps its own.`,
+      `so the ${program.workouts.length} day(s) were ADDED to it rather than ` +
+      "written as a new program. The name you passed " +
+      `('${program.name}') was not used; the program keeps its own.`,
     "",
     ...summaryTable(program, tms, indexOf),
     "",
@@ -638,7 +674,10 @@ async function addDaysToProgram(
         written: indexOf(w),
         planned_workout_id: workoutIdByDay.get(indexOf(w)),
       })),
-      prescriptions: program.workouts.reduce((n, w) => n + w.prescriptions.length, 0),
+      prescriptions: program.workouts.reduce(
+        (n, w) => n + w.prescriptions.length,
+        0,
+      ),
     },
     lines.join("\n"),
   );

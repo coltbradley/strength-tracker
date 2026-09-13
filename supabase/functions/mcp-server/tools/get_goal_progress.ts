@@ -25,7 +25,7 @@ export function registerGetGoalProgress(
             "Limit to one exercise id slug (e.g. 'Barbell_Deadlift'). Omit for all goals.",
           ),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "get_goal_progress", async () => {

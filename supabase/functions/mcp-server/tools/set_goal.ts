@@ -18,6 +18,11 @@ export function registerSetGoal(
         "Set an e1RM goal for an exercise, in kg, with an optional target date. " +
         "One goal per exercise: setting a new one replaces any existing goal for " +
         "that exercise. Track progress with get_goal_progress.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         exercise_id: z
           .string()

@@ -69,7 +69,7 @@ export function registerGetWeekSummary(
               "Give this or `weeks`; naming both takes the later date.",
           ),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "get_week_summary", async () => {

@@ -57,7 +57,7 @@ export function registerSearchExercises(
           .default(20)
           .describe("Max results to return. Default 20, max 50."),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "search_exercises", async () => {

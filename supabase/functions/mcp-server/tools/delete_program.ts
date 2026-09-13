@@ -31,6 +31,11 @@ export function registerDeleteProgram(
         "program requires confirm_delete_confirmed=true, only after the user " +
         "explicitly approved it in chat. Find ids via the program list " +
         "returned by upsert_program/confirm_program, or ask the user.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         program_id: z.string().uuid().describe("The program's id."),
         confirm_delete_confirmed: z

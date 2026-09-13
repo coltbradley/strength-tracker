@@ -317,3 +317,75 @@ Deno.test(
     await res.body?.cancel();
   },
 );
+
+// What each tool may do to data that already exists. destructive = it can
+// delete or overwrite something the lifter or another account already has.
+// Additive writes (a new unconfirmed program, a dated training max row that
+// does not replace another date) are not destructive. Keep in step with the
+// tool's own write; a wrong "false" here removes a confirmation prompt.
+const EXPECTED_ANNOTATIONS: Record<
+  string,
+  { readOnly: boolean; destructive: boolean }
+> = {
+  search_exercises: { readOnly: true, destructive: false },
+  resolve_exercises: { readOnly: true, destructive: false },
+  get_lift_history: { readOnly: true, destructive: false },
+  get_recent_sessions: { readOnly: true, destructive: false },
+  get_checkins: { readOnly: true, destructive: false },
+  get_goal_progress: { readOnly: true, destructive: false },
+  get_volume: { readOnly: true, destructive: false },
+  get_training_maxes: { readOnly: true, destructive: false },
+  get_week_summary: { readOnly: true, destructive: false },
+  get_memory: { readOnly: true, destructive: false },
+  list_programs: { readOnly: true, destructive: false },
+  get_program: { readOnly: true, destructive: false },
+  get_exercise_notes: { readOnly: true, destructive: false },
+  list_feedback: { readOnly: true, destructive: false },
+  find_similar_days: { readOnly: true, destructive: false },
+  get_training_plan: { readOnly: true, destructive: false },
+  upsert_program: { readOnly: false, destructive: false },
+  confirm_program: { readOnly: false, destructive: false },
+  repeat_planned_workout: { readOnly: false, destructive: false },
+  set_training_plan: { readOnly: false, destructive: false },
+  confirm_training_plan: { readOnly: false, destructive: false },
+  remember: { readOnly: false, destructive: false },
+  submit_feedback: { readOnly: false, destructive: false },
+  resolve_feedback: { readOnly: false, destructive: false },
+  add_exercise: { readOnly: false, destructive: false },
+  set_goal: { readOnly: false, destructive: true },
+  set_training_max: { readOnly: false, destructive: true },
+  set_exercise_note: { readOnly: false, destructive: true },
+  update_planned_workout: { readOnly: false, destructive: true },
+  update_exercise: { readOnly: false, destructive: true },
+  forget: { readOnly: false, destructive: true },
+  delete_program: { readOnly: false, destructive: true },
+  delete_exercise: { readOnly: false, destructive: true },
+};
+
+Deno.test("every tool declares what it does to existing data", async () => {
+  const res = await handleRequest(
+    rpc({ jsonrpc: "2.0", id: 9, method: "tools/list" }),
+  );
+  const { result } = await res.json();
+  const names = result.tools.map((t: { name: string }) => t.name).sort();
+  assertEquals(names, Object.keys(EXPECTED_ANNOTATIONS).sort());
+  for (const tool of result.tools) {
+    const expected = EXPECTED_ANNOTATIONS[tool.name];
+    assertEquals(
+      tool.annotations?.readOnlyHint,
+      expected.readOnly,
+      `${tool.name} readOnlyHint`,
+    );
+    assertEquals(
+      tool.annotations?.destructiveHint,
+      expected.destructive,
+      `${tool.name} destructiveHint`,
+    );
+    // Every tool reads and writes this lifter's own log, never the open web.
+    assertEquals(
+      tool.annotations?.openWorldHint,
+      false,
+      `${tool.name} openWorldHint`,
+    );
+  }
+});

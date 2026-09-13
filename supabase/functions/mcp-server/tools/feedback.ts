@@ -41,6 +41,11 @@ export function registerFeedback(
         "same thing twice in one conversation. This is NOT for notes about " +
         "training: coach notes belong on the planned workout, and the " +
         "lifter's own notes are theirs to write in the app.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         kind: z
           .enum(["feature", "bug", "data_gap", "question"])
@@ -116,13 +121,19 @@ export function registerFeedback(
           .describe("Include entries already dealt with. Default false."),
         n: z.number().int().min(1).max(100).default(25),
       },
-      annotations: { readOnlyHint: true },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
     },
     (args) =>
       guard(ctx, "list_feedback", async () => {
         let q = db.client
           .from("feedback")
-          .select("id, kind, title, detail, context, source, created_at, resolved_at")
+          .select(
+            "id, kind, title, detail, context, source, created_at, resolved_at",
+          )
           .eq("user_id", db.ownerId)
           .order("created_at", { ascending: false })
           .limit(args.n);
@@ -142,6 +153,11 @@ export function registerFeedback(
         "and an entry resolved on a guess is a request that silently " +
         "disappeared. Nothing is ever deleted; the record of having asked " +
         "stays.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         id: z.string().uuid().describe("Feedback id, from list_feedback."),
       },

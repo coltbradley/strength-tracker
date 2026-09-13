@@ -58,7 +58,7 @@ export function registerGetVolume(
             "Narrow to one exercise (use search_exercises for the id).",
           ),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "get_volume", async () => {
@@ -143,7 +143,7 @@ export function registerGetVolume(
         "means nothing without the number it is a percentage of, and asking " +
         "the user for their own training max when the database holds it is " +
         "the wrong way round.",
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       inputSchema: {},
     },
     () =>

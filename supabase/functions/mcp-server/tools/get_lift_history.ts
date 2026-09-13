@@ -97,7 +97,7 @@ export function registerGetLiftHistory(
             "Only include data on or after this ISO date (YYYY-MM-DD). Default: 90 days ago.",
           ),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "get_lift_history", async () => {

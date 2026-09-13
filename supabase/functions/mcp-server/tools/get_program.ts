@@ -130,7 +130,7 @@ export function registerGetProgram(
               "false: an unconfirmed program is a proposal, not the plan.",
           ),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "get_program", async () => {
@@ -291,7 +291,7 @@ export function registerListPrograms(
         "discussed. Take the id from here and pass it to get_program. " +
         "Discarded programs are not listed; an UNCONFIRMED one is a proposal " +
         "still waiting for the user's approval in chat.",
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     () =>
       guard(ctx, "list_programs", async () => {

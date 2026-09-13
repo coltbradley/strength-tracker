@@ -101,6 +101,11 @@ export function registerRepeatPlannedWorkout(
         "CONFIRMED program the new day is live on the user's calendar " +
         "immediately, so it needs confirm_change=true after their approval in " +
         "chat.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         planned_workout_id: z
           .string()
@@ -110,9 +115,7 @@ export function registerRepeatPlannedWorkout(
           ),
         scheduled_date: z
           .string()
-          .describe(
-            "The new date, YYYY-MM-DD in the user's own timezone.",
-          ),
+          .describe("The new date, YYYY-MM-DD in the user's own timezone."),
         confirm_change: z
           .boolean()
           .default(false)
@@ -198,12 +201,14 @@ export function registerRepeatPlannedWorkout(
 
         // 2. order, then 1. loads. Both operate on entries (ramps), so the
         // order of the two steps does not change the numbers.
-        const reordered = last === null
-          ? { rows, changed: false }
-          : reorderByPerformed(rows, firstPerformedAt(last.sets));
-        const lastLoads = last === null
-          ? new Map<string, number>()
-          : lastWorkingLoads(last.sets);
+        const reordered =
+          last === null
+            ? { rows, changed: false }
+            : reorderByPerformed(rows, firstPerformedAt(last.sets));
+        const lastLoads =
+          last === null
+            ? new Map<string, number>()
+            : lastWorkingLoads(last.sets);
         const newLoads = refreshedLoads(reordered.rows, lastLoads);
         const loadsReplaced: {
           exercise_id: string;
@@ -321,27 +326,30 @@ export function registerRepeatPlannedWorkout(
             exercise_id: p.exercise_id,
             section: p.section,
             sets: p.sets,
-            reps: p.reps_min === p.reps_max
-              ? `${p.reps_min}`
-              : `${p.reps_min}-${p.reps_max}`,
+            reps:
+              p.reps_min === p.reps_max
+                ? `${p.reps_min}`
+                : `${p.reps_min}-${p.reps_max}`,
             load_kg: p.load_kg,
             load_pct_tm: p.load_pct_tm,
             load_entry: p.load_entry,
             set_type: p.set_type,
             tracking: p.tracking,
-            superset: p.superset_group == null
-              ? null
-              : String.fromCharCode(64 + p.superset_group),
+            superset:
+              p.superset_group == null
+                ? null
+                : String.fromCharCode(64 + p.superset_group),
           })),
-          note: last === null
-            ? "This day had never been trained, so it was copied exactly: no " +
-              "loads or order to carry forward."
-            : program.confirmed_at !== null
-            ? "Live on the user's calendar now. Tell them which loads moved " +
-              "and whether the order changed; anything in notes_to_consider " +
-              "is a decision for you and them, not something written."
-            : "The program is not confirmed yet, so nothing changed on the " +
-              "calendar until confirm_program.",
+          note:
+            last === null
+              ? "This day had never been trained, so it was copied exactly: no " +
+                "loads or order to carry forward."
+              : program.confirmed_at !== null
+                ? "Live on the user's calendar now. Tell them which loads moved " +
+                  "and whether the order changed; anything in notes_to_consider " +
+                  "is a decision for you and them, not something written."
+                : "The program is not confirmed yet, so nothing changed on the " +
+                  "calendar until confirm_program.",
         });
       }),
   );

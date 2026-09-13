@@ -133,6 +133,11 @@ export function registerManageExercises(
         "with search_exercises — near-duplicates confuse history and prefill. " +
         "The id slug is derived from the name (e.g. 'Pallof Press' -> " +
         "'Pallof_Press') unless given explicitly.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         id: z
           .string()
@@ -201,6 +206,11 @@ export function registerManageExercises(
         "edit; it stays a shared library row. The id " +
         "itself cannot change (history references it), and exercises cannot " +
         "be deleted (logged sets reference them) — rename or repurpose instead.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         id: z
           .string()
@@ -284,6 +294,11 @@ export function registerManageExercises(
         "add_exercise calls. Seeded exercises ('free-exercise-db'/'curated') " +
         "can't be deleted (re-seeding restores them), and any referenced " +
         "exercise is protected: history is never orphaned.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         id: z.string().min(1).describe("Exercise id slug to delete."),
       },

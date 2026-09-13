@@ -2,7 +2,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
-import { guard, jsonResult, ToolError, type RequestContext } from "../lib/errors.ts";
+import {
+  guard,
+  jsonResult,
+  ToolError,
+  type RequestContext,
+} from "../lib/errors.ts";
 
 /**
  * Standing facts about the lifter, between conversations.
@@ -32,7 +37,11 @@ export function registerMemory(
         "table measures those against real sets and get_goal_progress reads " +
         "it.",
       inputSchema: {},
-      annotations: { readOnlyHint: true },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
     },
     () =>
       guard(ctx, "get_memory", async () => {
@@ -45,7 +54,10 @@ export function registerMemory(
             .order("updated_at", { ascending: false }),
           "memory",
         );
-        return jsonResult({ data: { memory: rows }, metadata: { count: rows.length } });
+        return jsonResult({
+          data: { memory: rows },
+          metadata: { count: rows.length },
+        });
       }),
   );
 
@@ -66,6 +78,11 @@ export function registerMemory(
         "sore today' belongs in that session's notes, which they write. " +
         "'Left shoulder has impingement, avoid overhead pressing' belongs " +
         "here. Check get_memory first so one fact is not stored five times.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         kind: z
           .enum(["injury", "constraint", "preference", "context"])
@@ -120,6 +137,11 @@ export function registerMemory(
         "stopped being true is not history worth keeping, it is something " +
         "that will make every future answer worse. Deleting is the only " +
         "destructive thing you can do here, so say what you removed.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         id: z.string().uuid().describe("Memory id, from get_memory."),
       },

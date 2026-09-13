@@ -307,7 +307,7 @@ export function registerResolveExercises(
               `['incline dumbbell press', 'lat pulldown', 'face pull']. Up to ${MAX_NAMES}.`,
           ),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     (args) =>
       guard(ctx, "resolve_exercises", async () => {

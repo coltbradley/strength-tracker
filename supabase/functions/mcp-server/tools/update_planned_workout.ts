@@ -79,6 +79,11 @@ export function registerUpdatePlannedWorkout(
         "Changing a day on a CONFIRMED program takes effect immediately on " +
         "the user's calendar, so it needs confirm_change=true and their " +
         "approval in chat first.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         planned_workout_id: z
           .string()
@@ -207,98 +212,98 @@ export function registerUpdatePlannedWorkout(
         let unresolvedPct: string[] = [];
         let unresolvedNote: string | null = null;
         if (args.prescriptions !== undefined) {
-        const prescriptions = args.prescriptions;
-        // Both plan-writing doors validate identically, on purpose: a day
-        // this tool would refuse must not be writable through upsert_program,
-        // and vice versa.
-        assertSupersetGroups(prescriptions, "this day");
-        await assertExercisesExist(db, prescriptions);
-        const tmRes = await resolveTrainingMaxes(db, prescriptions);
-        unresolvedPct = tmRes.unresolved_pct;
-        unresolvedNote = tmRes.note;
+          const prescriptions = args.prescriptions;
+          // Both plan-writing doors validate identically, on purpose: a day
+          // this tool would refuse must not be writable through upsert_program,
+          // and vice versa.
+          assertSupersetGroups(prescriptions, "this day");
+          await assertExercisesExist(db, prescriptions);
+          const tmRes = await resolveTrainingMaxes(db, prescriptions);
+          unresolvedPct = tmRes.unresolved_pct;
+          unresolvedNote = tmRes.note;
 
-        // What is on the day now, and has any of it been trained?
-        const existing = must(
-          await db.client
-            .from("prescriptions")
-            .select("id, exercise_id, position")
-            .eq("user_id", db.ownerId)
-            .eq("planned_workout_id", day.id),
-          "existing prescriptions",
-        ) as { id: string; exercise_id: string; position: number }[];
-
-        if (existing.length > 0) {
-          // Matches the before-delete trigger, which reads `sets` and not
-          // `v_live_sets`: a voided set still means this prescription was
-          // trained, and severing it would take the plan half of a logged
-          // session's adherence with it.
-          const logged = must(
+          // What is on the day now, and has any of it been trained?
+          const existing = must(
             await db.client
-              .from("sets")
-              .select("prescription_id")
+              .from("prescriptions")
+              .select("id, exercise_id, position")
               .eq("user_id", db.ownerId)
-              .in(
-                "prescription_id",
-                existing.map((p) => p.id),
-              ),
-            "logged set check",
-          ) as { prescription_id: string }[];
+              .eq("planned_workout_id", day.id),
+            "existing prescriptions",
+          ) as { id: string; exercise_id: string; position: number }[];
 
-          if (logged.length > 0) {
-            const trained = new Set(logged.map((s) => s.prescription_id));
-            const names = existing
-              .filter((p) => trained.has(p.id))
-              .map((p) => p.exercise_id);
-            throw new ToolError(
-              `This day has already been trained — ${
-                [...new Set(names)].join(", ")
-              } ` +
-                "has logged sets against it. Editing it would cut those sets " +
-                "off from what the plan asked for, which is how adherence is " +
-                "read, so it is refused. Edit a FUTURE day instead, or tell " +
-                "the user to adjust this one in the app.",
-            );
+          if (existing.length > 0) {
+            // Matches the before-delete trigger, which reads `sets` and not
+            // `v_live_sets`: a voided set still means this prescription was
+            // trained, and severing it would take the plan half of a logged
+            // session's adherence with it.
+            const logged = must(
+              await db.client
+                .from("sets")
+                .select("prescription_id")
+                .eq("user_id", db.ownerId)
+                .in(
+                  "prescription_id",
+                  existing.map((p) => p.id),
+                ),
+              "logged set check",
+            ) as { prescription_id: string }[];
+
+            if (logged.length > 0) {
+              const trained = new Set(logged.map((s) => s.prescription_id));
+              const names = existing
+                .filter((p) => trained.has(p.id))
+                .map((p) => p.exercise_id);
+              throw new ToolError(
+                `This day has already been trained — ${[...new Set(names)].join(
+                  ", ",
+                )} ` +
+                  "has logged sets against it. Editing it would cut those sets " +
+                  "off from what the plan asked for, which is how adherence is " +
+                  "read, so it is refused. Edit a FUTURE day instead, or tell " +
+                  "the user to adjust this one in the app.",
+              );
+            }
           }
-        }
 
-        const rows = prescriptionRows(db.ownerId, day.id, prescriptions);
+          const rows = prescriptionRows(db.ownerId, day.id, prescriptions);
 
-        // Park -> delete -> land. A failure between statements leaves the day
-        // holding both lists, which is visible and fixable on the next call;
-        // deleting first would leave it empty, which is the failure this whole
-        // tool exists to stop.
-        if (rows.length > 0) {
-          const parked = rows.map((r, i) => ({ ...r, position: PARK + i }));
-          const { error } = await db.client
-            .from("prescriptions")
-            .insert(parked);
-          if (error) throw new Error(`stage prescriptions: ${error.message}`);
-        }
-
-        if (existing.length > 0) {
-          const { error } = await db.client
-            .from("prescriptions")
-            .delete()
-            .eq("user_id", db.ownerId)
-            .eq("planned_workout_id", day.id)
-            .lt("position", PARK);
-          if (error) {
-            throw new Error(`remove old prescriptions: ${error.message}`);
+          // Park -> delete -> land. A failure between statements leaves the day
+          // holding both lists, which is visible and fixable on the next call;
+          // deleting first would leave it empty, which is the failure this whole
+          // tool exists to stop.
+          if (rows.length > 0) {
+            const parked = rows.map((r, i) => ({ ...r, position: PARK + i }));
+            const { error } = await db.client
+              .from("prescriptions")
+              .insert(parked);
+            if (error) throw new Error(`stage prescriptions: ${error.message}`);
           }
-        }
 
-        for (let i = 0; i < rows.length; i++) {
-          const { error } = await db.client
-            .from("prescriptions")
-            .update({ position: i })
-            .eq("user_id", db.ownerId)
-            .eq("planned_workout_id", day.id)
-            .eq("position", PARK + i);
-          if (error) {
-            throw new Error(`position prescriptions: ${error.message}`);
+          if (existing.length > 0) {
+            const { error } = await db.client
+              .from("prescriptions")
+              .delete()
+              .eq("user_id", db.ownerId)
+              .eq("planned_workout_id", day.id)
+              .lt("position", PARK);
+            if (error) {
+              throw new Error(`remove old prescriptions: ${error.message}`);
+            }
           }
-        }
-        replaced = existing.length;
+
+          for (let i = 0; i < rows.length; i++) {
+            const { error } = await db.client
+              .from("prescriptions")
+              .update({ position: i })
+              .eq("user_id", db.ownerId)
+              .eq("planned_workout_id", day.id)
+              .eq("position", PARK + i);
+            if (error) {
+              throw new Error(`position prescriptions: ${error.message}`);
+            }
+          }
+          replaced = existing.length;
         }
 
         const dayPatch: Record<string, unknown> = {};
@@ -321,10 +326,11 @@ export function registerUpdatePlannedWorkout(
           planned_workout_id: day.id,
           label: args.label ?? day.label,
           scheduled_date: args.scheduled_date ?? day.scheduled_date,
-          moved_from: args.scheduled_date !== undefined &&
-              args.scheduled_date !== day.scheduled_date
-            ? day.scheduled_date
-            : null,
+          moved_from:
+            args.scheduled_date !== undefined &&
+            args.scheduled_date !== day.scheduled_date
+              ? day.scheduled_date
+              : null,
           is_template: day.is_template,
           program: {
             id: program.id,
@@ -334,24 +340,29 @@ export function registerUpdatePlannedWorkout(
           exercises_replaced: args.prescriptions !== undefined,
           replaced,
           unresolved_pct: unresolvedPct,
-          ...(unresolvedNote === null ? {} : { unresolved_pct_note: unresolvedNote }),
+          ...(unresolvedNote === null
+            ? {}
+            : { unresolved_pct_note: unresolvedNote }),
           now: args.prescriptions?.length ?? null,
           exercises: (args.prescriptions ?? []).map((p, i) => ({
             position: i,
             exercise_id: p.exercise_id,
             sets: p.sets,
-            reps: p.reps_min === p.reps_max
-              ? `${p.reps_min}`
-              : `${p.reps_min}-${p.reps_max}`,
-            superset: p.superset_group == null
-              ? null
-              : String.fromCharCode(64 + p.superset_group),
+            reps:
+              p.reps_min === p.reps_max
+                ? `${p.reps_min}`
+                : `${p.reps_min}-${p.reps_max}`,
+            superset:
+              p.superset_group == null
+                ? null
+                : String.fromCharCode(64 + p.superset_group),
           })),
-          note: program.confirmed_at !== null
-            ? "Live on the user's calendar now. No confirm step: the day was " +
-              "edited in place, not written as a new program."
-            : "This program is not confirmed yet, so nothing changed on the " +
-              "user's calendar. confirm_program makes the whole program live.",
+          note:
+            program.confirmed_at !== null
+              ? "Live on the user's calendar now. No confirm step: the day was " +
+                "edited in place, not written as a new program."
+              : "This program is not confirmed yet, so nothing changed on the " +
+                "user's calendar. confirm_program makes the whole program live.",
         });
       }),
   );
