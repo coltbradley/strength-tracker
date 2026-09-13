@@ -175,11 +175,32 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     render(<Today presentation="train" />);
 
     await screen.findByText("Day 1");
-    expect(screen.getByText("1 movements · 3 prescribed sets")).toBeTruthy();
+    expect(
+      await screen.findByText("1 movements · 3 prescribed sets"),
+    ).toBeTruthy();
     expect(screen.getByText("Squat")).toBeTruthy();
     expect(screen.getByRole("link", { name: "View program" }).getAttribute("href")).toBe("/program");
     expect(screen.queryByText("THIS WEEK")).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(screen.queryByText("3×5")).toBeNull();
+  });
+
+  it("coalesces Train's overlapping prescription load for an undated workout", async () => {
+    let resolveRead: (value: {
+      data: ReturnType<typeof rxRow>[];
+      fromCache: boolean;
+      stale: null;
+    }) => void;
+    getResolvedPrescriptions.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+
+    render(<Today presentation="train" />);
+
+    await waitFor(() => expect(getResolvedPrescriptions).toHaveBeenCalledTimes(1));
+    resolveRead!({ data: [rxRow("Squat")], fromCache: false, stale: null });
   });
 });

@@ -320,6 +320,11 @@ export function Today({
   // changed again out from under it and its (now-stale) rows must not be
   // written back in on top of a fresher load.
   const rxGenerationRef = useRef(0);
+  // A cached row prevents later reads only after it resolves. Several effects
+  // can need the same row in that gap (Program selection, undated auto-open,
+  // and Train), so remember the in-flight generation as well. A plan change
+  // gets a new generation and deliberately starts a fresh read.
+  const rxInFlightRef = useRef(new Map<string, number>());
   // null while loading or loaded; otherwise WHY the load failed, because
   // "offline" and "the server refused" need different words below
   const [loadError, setLoadError] = useState<StaleReason | null>(null);
@@ -675,19 +680,23 @@ export function Today({
     selectedWorkoutIdRef.current = selectedWorkout?.id ?? null;
   }, [selectedWorkout]);
 
-  /** Unconditional fetch — no "already loaded" guard — for a caller that
-   *  already knows it wants fresh rows (onPlanChanged, below). Tags the
-   *  request with the current rx generation so a plan change that lands
-   *  mid-flight discards this result instead of writing stale rows back in
-   *  over a fresher load. */
+  /** Fresh fetch for a caller that knows it needs rows (including
+   *  onPlanChanged). Repeats within one generation coalesce; a plan change
+   *  advances the generation, so it still starts its own fresh read. */
   const fetchRx = useCallback((workoutId: string) => {
     const generation = rxGenerationRef.current;
+    if (rxInFlightRef.current.get(workoutId) === generation) return;
+    rxInFlightRef.current.set(workoutId, generation);
     getResolvedPrescriptions(workoutId)
       .then((r) => {
         if (rxGenerationRef.current !== generation) return;
         setRx((prev) => ({ ...prev, [workoutId]: r.data }));
       })
-      .catch((e: unknown) => reportError(e, "load prescriptions"));
+      .catch((e: unknown) => reportError(e, "load prescriptions"))
+      .finally(() => {
+        if (rxInFlightRef.current.get(workoutId) === generation)
+          rxInFlightRef.current.delete(workoutId);
+      });
   }, []);
 
   const loadRx = useCallback(
