@@ -253,6 +253,37 @@ describe("Session focus presentation", () => {
     });
   });
 
+  it("logs a bodyweight movement with no load at zero, never the hidden bar fallback", async () => {
+    resetDbForTests();
+    vi.mocked(getExercises).mockResolvedValue({
+      data: [{ id: "push-up", name: "Push Up", equipment: "body only" }],
+    } as unknown as Awaited<ReturnType<typeof getExercises>>);
+    const row = prescription("pushup", "push-up", "Push Up", "reps", null, 2);
+    await seed("reps", [
+      { ...row, load_kg: null, resolved_load_kg: null, plate_load_kg: null },
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    const log = await screen.findByRole("button", { name: "LOG SET" });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    fireEvent.click(log);
+
+    await vi.waitFor(() =>
+      expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+        payload: { exercise_id: "push-up", load_kg: 0 },
+      }),
+    );
+    vi.mocked(getExercises).mockResolvedValue({ data: [] } as unknown as Awaited<
+      ReturnType<typeof getExercises>
+    >);
+  });
+
   it("keeps tick-only focus navigation and logging on the same entry", async () => {
     resetDbForTests();
     await seed("reps", [

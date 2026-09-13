@@ -187,6 +187,14 @@ function twoMemberSuperset(
     : null;
 }
 
+/** A movement with no implement starts at zero load, never at the empty-bar
+ *  fallback: in focus mode its load field is hidden, so a 20 kg default would
+ *  be logged without anyone seeing it. */
+function bodyweightFallback(equipment: string | null) {
+  const fallback = getPrefillFallback();
+  return isBodyweightEquipment(equipment) ? { ...fallback, loadKg: 0 } : fallback;
+}
+
 export function Session() {
   const navigate = useNavigate();
   const unit = useUnit();
@@ -863,8 +871,14 @@ export function Session() {
   // Focus's hero is load or reps depending on whether there is an implement
   // at all. Gated to focus mode only (see SetEditor's `noLoad`) — the
   // accordion's long-standing load field is unchanged here.
+  // Only while the staged load really is zero: a bodyweight movement with a
+  // load staged (a weighted pull-up, or a fallback that got through) must
+  // keep its load visible, because `sets` is append-only and a number nobody
+  // could see would be logged for good.
   const noLoadEditor =
-    presentation === "focus" && isBodyweightEquipment(equipment);
+    presentation === "focus" &&
+    isBodyweightEquipment(equipment) &&
+    entryKg === 0;
   // per-exercise bar (0 = plate-loaded, e.g. leg press); persisted choice
   const exerciseBarKg = useExerciseBarKg(
     openEntry?.exercise_id ?? null,
@@ -1064,7 +1078,7 @@ export function Session() {
         ? { load_kg: lastThis.load_kg, reps: lastThis.reps }
         : null,
       lastSession: lastActuals[openEntry.exercise_id] ?? null,
-    });
+    }, bodyweightFallback(equipment));
     // every source above is a TOTAL; the steppers hold what gets typed
     const prefilledLoad =
       Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
@@ -2668,7 +2682,7 @@ export function Session() {
         : null,
       lastThisSession: last ? { load_kg: last.load_kg, reps: last.reps } : null,
       lastSession: lastActuals[entry.exercise_id] ?? null,
-    });
+    }, bodyweightFallback(equipMap[entry.exercise_id] ?? null));
     return {
       entryKg: Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100,
       reps: prefill.reps,
@@ -2725,7 +2739,7 @@ export function Session() {
         plateSplit,
         barKg,
         hint,
-        noLoad: isBodyweightEquipment(equipment),
+        noLoad: isBodyweightEquipment(equipment) && storedLoad === 0,
         canToggleEntry: offersLoadEntry({
           override: getExercisePref(entry.exercise_id).loadEntry,
           prescribed: entry.substitutedFor
