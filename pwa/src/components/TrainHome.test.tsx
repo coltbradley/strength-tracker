@@ -92,10 +92,12 @@ describe("TrainHome", () => {
     const { onStart } = renderHome();
 
     expect(screen.getByText("Upper strength")).toBeTruthy();
-    expect(screen.getByText("3 movements · 10 prescribed sets")).toBeTruthy();
+    expect(screen.getByText("3 movements · 10 sets")).toBeTruthy();
     expect(screen.getByText("First up")).toBeTruthy();
     expect(screen.getByText("Bench press")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "View program" }).getAttribute("href")).toBe("/program");
+    expect(
+      screen.getByRole("link", { name: "View program" }).getAttribute("href"),
+    ).toBe("/program");
     expect(screen.queryByRole("button", { name: /check in/i })).toBeNull();
     expect(screen.queryByText(/weigh/i)).toBeNull();
     expect(screen.queryByText(/calendar/i)).toBeNull();
@@ -115,7 +117,9 @@ describe("TrainHome", () => {
       },
     });
 
-    expect(screen.getByRole("link", { name: "Resume" }).getAttribute("href")).toBe("/session");
+    expect(
+      screen.getByRole("link", { name: "Resume" }).getAttribute("href"),
+    ).toBe("/session");
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
     expect(screen.queryByText("Bench press")).toBeNull();
   });
@@ -123,8 +127,22 @@ describe("TrainHome", () => {
   it("treats a completed workout as a Record action", () => {
     renderHome({ workout: { workout, state: "DONE" } });
 
-    expect(screen.getByRole("link", { name: "View record" }).getAttribute("href")).toBe("/history");
+    expect(
+      screen.getByRole("link", { name: "View record" }).getAttribute("href"),
+    ).toBe("/history");
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+  });
+
+  it("names an empty drafted day as a draft, never a rest day", () => {
+    renderHome({ workout: { workout, state: "DRAFT" }, prescriptions: [] });
+
+    expect(screen.getByText("Upper strength")).toBeTruthy();
+    expect(screen.getByText("No exercises planned yet.")).toBeTruthy();
+    expect(screen.queryByText("Rest day")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "View program" }).getAttribute("href"),
+    ).toBe("/program");
   });
 
   it("keeps loading and load failures truthful without a dashboard", () => {
@@ -166,7 +184,9 @@ describe("TrainHome", () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.getByText("Couldn’t load your plan while offline.")).toBeTruthy();
+    expect(
+      screen.getByText("Couldn’t load your plan while offline."),
+    ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
   });
 
@@ -174,7 +194,9 @@ describe("TrainHome", () => {
     renderHome({ prescriptions: null, prescriptionLoadState: "offline" });
 
     expect(
-      screen.getByText("Workout details are unavailable offline. Refresh your plan to retry."),
+      screen.getByText(
+        "Workout details are unavailable offline. Refresh your plan to retry.",
+      ),
     ).toBeTruthy();
     expect(screen.queryByText("Workout details are loading.")).toBeNull();
   });

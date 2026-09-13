@@ -2975,12 +2975,16 @@
     text-transform: uppercase;
   }
 
+  /* Uppercased here, not in the string: a superset's "round 1 of 3" comes
+   * from Session.tsx in sentence case and sat beside "SET 1 OF 5" looking
+   * like a different component. */
   .focus-deck-position {
     color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: var(--fs-label);
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--track-1);
+    text-transform: uppercase;
   }
 
   /* Noticeably larger and bolder than any other label on the screen —

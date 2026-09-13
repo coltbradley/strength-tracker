@@ -176,7 +176,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
 
     await screen.findByText("Day 1");
     expect(
-      await screen.findByText("1 movements · 3 prescribed sets"),
+      await screen.findByText("1 movement · 3 sets"),
     ).toBeTruthy();
     expect(screen.getByText("Squat")).toBeTruthy();
     expect(screen.getByRole("link", { name: "View program" }).getAttribute("href")).toBe("/program");
@@ -219,7 +219,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
       render(<Today presentation="train" />);
 
       expect(
-        await screen.findByText("1 movements · 3 prescribed sets"),
+        await screen.findByText("1 movement · 3 sets"),
       ).toBeTruthy();
       expect(screen.getByText(note)).toBeTruthy();
     },

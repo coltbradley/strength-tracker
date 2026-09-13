@@ -147,6 +147,16 @@ export function TrainHome({
             View program
           </Link>
         </div>
+      ) : workout.state === "DRAFT" ? (
+        // A dated day nobody has filled in yet. It is not a rest day and
+        // never a missed one: say what it is and send the way to fill it.
+        <div className="train-state">
+          <h1 className="train-title">{workout.workout.label ?? "Workout"}</h1>
+          <p className="train-quiet">No exercises planned yet.</p>
+          <Link className="train-link" to="/program">
+            View program
+          </Link>
+        </div>
       ) : workout.state !== "TODAY" ? (
         <div className="train-state">
           <h1 className="train-title">Rest day</h1>
@@ -170,7 +180,10 @@ export function TrainHome({
           ) : (
             <>
               <p className="train-shape">
-                {summary.movementCount} movements · {summary.prescribedSetCount} prescribed sets
+                {summary.movementCount}{" "}
+                {summary.movementCount === 1 ? "movement" : "movements"} ·{" "}
+                {summary.prescribedSetCount}{" "}
+                {summary.prescribedSetCount === 1 ? "set" : "sets"}
               </p>
               {(prescriptionLoadState === "cached-offline" ||
                 prescriptionLoadState === "cached-error") && (
