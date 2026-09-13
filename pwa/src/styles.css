@@ -1063,6 +1063,121 @@
     margin-top: calc(var(--s-4) - var(--screen-gap));
   }
 
+  /* ---- train home ---- */
+
+  /* Train answers one question, what happens now. It deliberately has none
+   * of Program's calendar, forms, or preview rows, so the open composition is
+   * built from type and rules rather than a second dashboard-card system. */
+  .train-home {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-8);
+    min-height: min(520px, calc(100dvh - 180px));
+    padding-top: var(--s-6);
+  }
+
+  .train-date,
+  .train-kicker {
+    color: #57417f;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-3);
+    text-transform: uppercase;
+  }
+
+  .train-state {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--s-6);
+    padding: var(--s-8) 0;
+  }
+
+  .train-title {
+    color: #302b3a;
+    font-size: clamp(32px, 10vw, 52px);
+    font-weight: 650;
+    letter-spacing: -0.04em;
+    line-height: 0.98;
+    overflow-wrap: break-word;
+  }
+
+  .train-shape {
+    color: #665f71;
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--track-2);
+    text-transform: uppercase;
+  }
+
+  .train-first-up {
+    border-top: 1px solid #766e7b;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding-top: var(--s-6);
+  }
+
+  .train-first-up span {
+    color: #665f71;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-3);
+    text-transform: uppercase;
+  }
+
+  .train-first-up strong {
+    color: #302b3a;
+    font-size: var(--fs-lg);
+    line-height: 1.2;
+  }
+
+  .train-quiet {
+    color: #665f71;
+    line-height: 1.5;
+  }
+
+  .train-cache-note {
+    color: #665f71;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-2);
+    text-transform: uppercase;
+  }
+
+  .train-home .btn-primary {
+    background: #57417f;
+    color: #fcfbfd;
+    text-decoration: none;
+  }
+
+  .train-home .btn-primary:active {
+    background: #463269;
+  }
+
+  .train-link {
+    align-self: flex-start;
+    color: #57417f;
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    letter-spacing: var(--track-3);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-transform: uppercase;
+  }
+
+  .train-recovery .orphan-card {
+    margin: 0;
+  }
+
   .week-item {
     border-bottom: var(--rule-hair);
   }

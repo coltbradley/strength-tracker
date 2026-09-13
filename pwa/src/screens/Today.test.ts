@@ -8,6 +8,7 @@ import {
   canDoWorkoutNow,
   doNowMicrocopy,
   showFirstRun,
+  trainWorkoutForToday,
   weekPageDate,
   weekPages,
   weekRangeLabel,
@@ -257,5 +258,43 @@ describe("showFirstRun", () => {
     expect(
       showFirstRun({ loaded: true, hasProgram: true, dismissed: true }),
     ).toBe(false);
+  });
+});
+
+describe("trainWorkoutForToday", () => {
+  const day = (o: Partial<PlannedWorkoutRow> = {}): PlannedWorkoutRow => ({
+    id: o.id ?? "w1",
+    program_id: "p1",
+    day_index: 0,
+    label: "PUSH",
+    notes: null,
+    scheduled_date: "2026-09-04",
+    plan_note: null,
+    skipped_at: null,
+    exercise_count: 3,
+    ...o,
+  });
+
+  it("keeps a completed workout scheduled today actionable as a record link", () => {
+    const workout = day();
+    const states = new Map([[workout.id, "DONE" as const]]);
+
+    expect(
+      trainWorkoutForToday([workout], states, "2026-09-04"),
+    ).toEqual({ workout, state: "DONE" });
+  });
+
+  it("uses the current undated program day when there is no calendar date", () => {
+    const first = day({ id: "first", scheduled_date: null });
+    const second = day({ id: "second", scheduled_date: null });
+    const states = new Map([
+      [first.id, "DONE" as const],
+      [second.id, "TODAY" as const],
+    ]);
+
+    expect(trainWorkoutForToday([first, second], states, "2026-09-04")).toEqual({
+      workout: second,
+      state: "TODAY",
+    });
   });
 });

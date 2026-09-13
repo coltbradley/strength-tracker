@@ -12,10 +12,18 @@
 
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
-vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => vi.fn(),
+  Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
+}));
 
 const {
   getPlannedWorkouts,
@@ -161,5 +169,17 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     await waitFor(() => expect(screen.queryByText("Squat")).toBeNull());
     // Must recover with the freshly-written plan, not sit blank forever.
     await waitFor(() => expect(screen.queryByText("Deadlift")).toBeTruthy());
+  });
+
+  it("renders Train as a separate surface while leaving Program's tree intact", async () => {
+    render(<Today presentation="train" />);
+
+    await screen.findByText("Day 1");
+    expect(screen.getByText("1 movements · 3 prescribed sets")).toBeTruthy();
+    expect(screen.getByText("Squat")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "View program" }).getAttribute("href")).toBe("/program");
+    expect(screen.queryByText("THIS WEEK")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByText("3×5")).toBeNull();
   });
 });

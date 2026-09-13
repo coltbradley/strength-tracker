@@ -24,6 +24,7 @@ import { RateSessionCard } from "../components/RateSessionCard";
 import { CalendarSheet, type CalendarDay } from "../components/CalendarSheet";
 import { TemplateSheet } from "../components/TemplateSheet";
 import { CheckInSheet } from "../components/CheckInSheet";
+import { TrainHome } from "../components/TrainHome";
 import {
   applyTemplate,
   createPlannedWorkout,
@@ -82,7 +83,7 @@ import type {
 /** How long the Start buttons wait on the open-session check (see below). */
 const GATE_TIMEOUT_MS = 2500;
 
-type WorkoutState =
+export type WorkoutState =
   | "DONE"
   | "SKIPPED"
   | "TODAY"
@@ -161,6 +162,24 @@ export function workoutStates(
     }
   }
   return map;
+}
+
+/**
+ * The single workout Train may speak for. Calendar plans keep their day even
+ * after completion, so a completed workout scheduled today remains visible as
+ * a Record action. Undated plans rely on the same TODAY state as Program.
+ */
+export function trainWorkoutForToday(
+  workouts: PlannedWorkoutRow[],
+  states: Map<string, WorkoutState>,
+  today: string,
+): { workout: PlannedWorkoutRow; state: WorkoutState } | null {
+  const dated = workouts.find((workout) => workout.scheduled_date === today);
+  if (dated)
+    return { workout: dated, state: states.get(dated.id) ?? "TODAY" };
+
+  const undated = workouts.find((workout) => states.get(workout.id) === "TODAY");
+  return undated ? { workout: undated, state: "TODAY" } : null;
 }
 
 /**
@@ -1003,6 +1022,84 @@ export function Today({
    *  from the UI. */
   const canStart = startGateOpen && !active && !orphan;
 
+  const trainWorkout = trainWorkoutForToday(workouts, states, today);
+  const trainWorkoutId = trainWorkout?.workout.id ?? null;
+  const trainPrescriptions = trainWorkout
+    ? (rx[trainWorkout.workout.id] ?? null)
+    : null;
+  // Program can be left while its calendar is on another day. Train still
+  // needs today's shape, so ask the existing prescription loader for today's
+  // row rather than inheriting that unrelated selection or creating a second
+  // fetch path.
+  useEffect(() => {
+    if (presentation === "train" && trainWorkoutId) loadRx(trainWorkoutId);
+  }, [presentation, trainWorkoutId, loadRx]);
+  const orphanRecovery = orphan ? (
+    <div className="orphan-card">
+      <div className="orphan-title">
+        OPEN SESSION · STARTED{" "}
+        {new Date(orphan.started_at)
+          .toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          })
+          .toUpperCase()}
+      </div>
+      <div className="microcopy">
+        Started earlier today but this phone lost track of it. Pick it back up,
+        finish it, or discard it.
+      </div>
+      <div className="detail-actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void adoptOrphan(orphan, "/session")}
+        >
+          Resume
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => void adoptOrphan(orphan, "/end")}
+        >
+          Finish
+        </button>
+        <button
+          type="button"
+          className={`btn ${orphanArm === orphan.id ? "btn-danger" : "btn-ghost"}`}
+          onClick={() =>
+            orphanArm === orphan.id
+              ? void discardOrphan(orphan)
+              : setOrphanArm(orphan.id)
+          }
+        >
+          {orphanArm === orphan.id ? "Discard?" : "Discard"}
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  if (presentation === "train") {
+    return (
+      <div className="screen" data-presentation={presentation}>
+        <TrainHome
+          dateContext={formatTodayHeading()}
+          programName={program?.name ?? null}
+          loading={list === null && loadError === null}
+          loadIssue={loadError}
+          stale={stale}
+          workout={trainWorkout}
+          prescriptions={trainPrescriptions}
+          active={active}
+          recovery={orphanRecovery}
+          startEnabled={canStart}
+          onStart={(workout) => void start(workout)}
+          onOpenCoach={() => openCoach()}
+        />
+      </div>
+    );
+  }
+
   /** shared expanded-day content, hierarchy: primary action → exercises →
    *  collapsed notes → secondary actions */
   const dayDetail = (w: PlannedWorkoutRow) => {
@@ -1209,50 +1306,7 @@ export function Today({
         </div>
       )}
 
-      {!active && orphan && (
-        <div className="orphan-card">
-          <div className="orphan-title">
-            OPEN SESSION · STARTED{" "}
-            {new Date(orphan.started_at)
-              .toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-              })
-              .toUpperCase()}
-          </div>
-          <div className="microcopy">
-            Started earlier today but this phone lost track of it. Pick it back
-            up, finish it, or discard it.
-          </div>
-          <div className="detail-actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => void adoptOrphan(orphan, "/session")}
-            >
-              Resume
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => void adoptOrphan(orphan, "/end")}
-            >
-              Finish
-            </button>
-            <button
-              type="button"
-              className={`btn ${orphanArm === orphan.id ? "btn-danger" : "btn-ghost"}`}
-              onClick={() =>
-                orphanArm === orphan.id
-                  ? void discardOrphan(orphan)
-                  : setOrphanArm(orphan.id)
-              }
-            >
-              {orphanArm === orphan.id ? "Discard?" : "Discard"}
-            </button>
-          </div>
-        </div>
-      )}
+      {!active && orphanRecovery}
 
       {/* A session that ended without a rating, for a day afterwards. Gated on
           `active` for the same reason the orphan card is: someone mid-workout
