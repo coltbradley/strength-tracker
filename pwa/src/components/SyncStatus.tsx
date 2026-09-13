@@ -1,5 +1,5 @@
-// Sync status: teal "N QUEUED" while pending, quiet "SYNCED" at rest, and a
-// burnt "N FAILED" pill when permanently-failed writes are parked.
+// Healthy sync is intentionally quiet. Queued, active, and failed writes stay
+// visible because they still need the lifter's attention or judgment.
 //
 // The two pills that cannot be fixed by asking again OPEN the queue instead of
 // pretending to act on it. A dead item needs a reason before it needs a retry,
@@ -35,10 +35,10 @@ export function SyncStatus() {
     ) : null;
 
   if (status.pending === 0 && status.state === "idle") {
+    if (!deadPill) return null;
     return (
       <span className="sync-group">
         {deadPill}
-        {!deadPill && <span className="sync-pill sync-ok">SYNCED</span>}
         {sheet}
       </span>
     );

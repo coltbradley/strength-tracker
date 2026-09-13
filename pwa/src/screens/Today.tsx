@@ -277,7 +277,13 @@ export function weekRangeLabel(dates: string[]): string {
     : `${a.getDate()} ${month(a)} – ${b.getDate()} ${month(b)}`;
 }
 
-export function Today({ userId }: { userId?: string | null } = {}) {
+export function Today({
+  userId,
+  presentation = "program",
+}: {
+  userId?: string | null;
+  presentation?: "train" | "program";
+} = {}) {
   const navigate = useNavigate();
   // The morning panel. Optional prop rather than a context read so the screen
   // stays constructible in a test without an auth provider, and so a signed-out
@@ -1180,7 +1186,7 @@ export function Today({ userId }: { userId?: string | null } = {}) {
   };
 
   return (
-    <div className="screen">
+    <div className="screen" data-presentation={presentation}>
       {active && (
         <div className="banner-row">
           <button

@@ -1,15 +1,11 @@
-// The two things that float over the app: ask the coach, report a problem.
-//
-// One dock rather than two loose buttons. They share a position, move
-// together, and cannot be dragged on top of each other.
+// Coach and problem reporting stay available from a quiet top-bar access row.
 //
 // OFFLINE is shown here rather than discovered on tap. The rest of this app
 // works underground on purpose — sets queue and sync later — but the coach is
 // an API call and simply cannot. A disabled button that says why is honest;
 // one that looks live and fails after a spinner is not.
 import { useEffect, useState } from "react";
-import { useSetting } from "../hooks/useSettings";
-import { useFabDrag, useOnline } from "../hooks/useFabDrag";
+import { useOnline } from "../hooks/useFabDrag";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
 import { CoachSheet } from "./CoachSheet";
 import { ReportBugSheet } from "./ReportBugSheet";
@@ -23,8 +19,6 @@ interface FabDockProps {
 }
 
 export function FabDock({ userId, route }: FabDockProps) {
-  const pos = useSetting("bugButtonPos");
-  const drag = useFabDrag(pos);
   const online = useOnline();
   const status = useOutboxStatus();
   const [open, setOpen] = useState<"coach" | "bug" | null>(null);
@@ -53,10 +47,7 @@ export function FabDock({ userId, route }: FabDockProps) {
       "info",
     );
 
-  // A drag ends with a click on whichever button was under the finger; that
-  // click must not open anything.
   const tap = (what: "coach" | "bug") => () => {
-    if (drag.movedRef.current) return;
     if (what === "coach" && coachOff) {
       toast(coachOff, "info");
       return;
@@ -100,10 +91,9 @@ export function FabDock({ userId, route }: FabDockProps) {
   return (
     <>
       <div
-        ref={drag.ref}
-        className={`fab-dock${drag.held ? " fab-dock-held" : ""}`}
-        style={drag.style}
-        {...drag.handlers}
+        className="header-actions"
+        role="group"
+        aria-label="Coach and recovery"
       >
         {/* Hidden, not disabled, when the coach is switched off for this
             person. A greyed-out button invites a tap and a explanation; an
@@ -113,10 +103,12 @@ export function FabDock({ userId, route }: FabDockProps) {
         {!coachOff && (
           <button
             type="button"
-            className={`fab-btn fab-coach${online ? "" : " fab-btn-off"}`}
+            className={`header-action header-action-coach${
+              online ? "" : " header-action-off"
+            }`}
             aria-label={
               online
-                ? "ask the coach (press and hold to move)"
+                ? "ask the coach"
                 : "ask the coach — offline, needs a connection"
             }
             aria-disabled={!online}
@@ -128,18 +120,17 @@ export function FabDock({ userId, route }: FabDockProps) {
                 <path d="M9 10.5h6M9 13h4" />
               </g>
             </svg>
+            <span>Coach</span>
             {!online && <span className="fab-off-dot" aria-hidden="true" />}
           </button>
         )}
 
         <button
           type="button"
-          className="fab-btn fab-bug"
-          aria-label="report a problem (press and hold to move)"
+          className="header-action header-action-report"
+          aria-label="report a problem"
           onClick={tap("bug")}
         >
-          {/* Drawn, not an emoji: emoji render differently on every platform
-              and this has to read at 20px on a cream card. */}
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <g fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
               <rect x="8" y="7.5" width="8" height="12" rx="4" />
@@ -147,6 +138,7 @@ export function FabDock({ userId, route }: FabDockProps) {
               <path d="M9.5 7a2.5 2.5 0 0 1 5 0" />
             </g>
           </svg>
+          <span>Report</span>
           {status.pending > 0 && (
             <span className="fab-queue" aria-hidden="true">
               {status.pending > 9 ? "9+" : status.pending}

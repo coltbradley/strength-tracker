@@ -79,13 +79,14 @@ function Shell({ userId }: { userId: string }) {
         <button
           type="button"
           className="topbar-title"
-          aria-label="go to Today"
+          aria-label="go to Train"
           onClick={() => navigate("/")}
         >
-          Strength Log
+          SET
         </button>
         <div className="topbar-right">
           <SyncStatus />
+          <FabDock userId={userId} route={location.pathname} />
           <button
             type="button"
             className="gear-btn"
@@ -101,37 +102,54 @@ function Shell({ userId }: { userId: string }) {
         className={
           inSession
             ? "content content-session"
-            : // The bug button floats over the bottom-right of this scroller.
-              // Without the extra bottom padding the last row of a long list
-              // (Today's exercise list, History) comes to rest underneath it
-              // with its right-hand value covered.
-              `content${showTabs ? " content-fab" : ""}`
+            : "content"
         }
       >
         <Routes>
-          <Route path="/" element={<Today userId={userId} />} />
+          <Route
+            path="/"
+            element={<Today userId={userId} presentation="train" />}
+          />
+          <Route
+            path="/program"
+            element={<Today userId={userId} presentation="program" />}
+          />
           <Route path="/session" element={<Session />} />
           <Route path="/history" element={<History />} />
           <Route path="/end" element={<End />} />
           <Route path="/plan/:id" element={<Plan />} />
-          <Route path="*" element={<Today userId={userId} />} />
+          <Route
+            path="*"
+            element={<Today userId={userId} presentation="train" />}
+          />
         </Routes>
       </main>
 
       {showTabs && (
-        <nav className="tabbar" ref={tabbar}>
+        <nav
+          className="tabbar"
+          ref={tabbar}
+          aria-label="Primary navigation"
+        >
           <NavLink
             to="/"
             end
             className={({ isActive }) => `tab ${isActive ? "tab-on" : ""}`}
           >
-            Today
+            Train
+          </NavLink>
+          <NavLink
+            to="/program"
+            end
+            className={({ isActive }) => `tab ${isActive ? "tab-on" : ""}`}
+          >
+            Program
           </NavLink>
           <NavLink
             to="/history"
             className={({ isActive }) => `tab ${isActive ? "tab-on" : ""}`}
           >
-            History
+            Record
           </NavLink>
         </nav>
       )}
@@ -140,11 +158,6 @@ function Shell({ userId }: { userId: string }) {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
-      {/* Every screen, always. It was hidden during a session to keep it off
-          the footer and the rest strip — which had it disappear at exactly the
-          moment "give me advice mid workout" is the whole point of it. It is
-          draggable; someone who finds it in the way moves it. */}
-      <FabDock userId={userId} route={location.pathname} />
       <Toasts />
     </div>
   );

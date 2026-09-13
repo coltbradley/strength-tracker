@@ -254,8 +254,6 @@
     --rail-accent: inset 3px 0 0 var(--accent);
 
     --z-rail: 1;
-    /* Floats over content, under every sheet — the bug button opens one. */
-    --z-fab: 30;
     --z-sheet: 40;
     --z-toast: 50;
 
@@ -457,8 +455,7 @@
   }
 
   /* Navigates home; 13px mono measures 16px tall. Hit-extended — the topbar's
-   * height is set by the 44px gear opposite, so this costs nothing. 8px of
-   * bleed, against ~150px of clear space before .topbar-right. */
+   * height is set by its 44px controls opposite. */
   .topbar-title {
     --hit-bleed: 8px;
     font-family: var(--font-mono);
@@ -471,7 +468,7 @@
   .topbar-right {
     display: flex;
     align-items: center;
-    gap: var(--s-5);
+    gap: var(--s-3);
   }
 
   .gear-btn {
@@ -484,6 +481,14 @@
     color: var(--text-dim);
   }
 
+  @media (max-width: 359px) {
+    /* Keep sync recovery and all three header controls inside the phone-width
+     * column. Their icon buttons retain accessible names and 44px targets. */
+    .header-action span:not(.fab-off-dot, .fab-queue) {
+      display: none;
+    }
+  }
+
   /* body already stops document-level pull-to-refresh; the inner scrollers
    * have to contain their own or over-scrolling a set list bounces the whole
    * app frame in standalone mode. */
@@ -493,12 +498,6 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: var(--s-8) var(--gutter) var(--s-9);
-  }
-
-  /* Room for the floating bug button to sit over, so the end of a long list
-   * is never stuck underneath it. Matches the button's own offset + height. */
-  .content-fab {
-    padding-bottom: calc(var(--tap-min) + var(--s-9) * 2);
   }
 
   /* session manages its own scroll + docked strips */
@@ -1816,11 +1815,6 @@
     border: var(--bw-hair) solid var(--rule-color);
   }
 
-  .sync-ok {
-    color: var(--text-dim);
-    border-color: transparent;
-  }
-
   .sync-pending,
   .sync-busy {
     color: var(--info);
@@ -3005,8 +2999,7 @@
    * (the burnt accent), never the cast-iron theme that exploration discarded. */
 
   body.focus-chrome-hidden .topbar,
-  body.focus-chrome-hidden .session-footer,
-  body.focus-chrome-hidden .fab-dock {
+  body.focus-chrome-hidden .session-footer {
     display: none;
   }
 
@@ -3768,72 +3761,50 @@
     margin-top: var(--s-8);
   }
 
-  /* -- floating dock (coach + report a problem) ---------------------------
-   * One dock, two buttons, dragged as a unit — two independently draggable
-   * things can be dragged on top of each other, which is worse than either
-   * being in the way. Paper-card chrome and ink glyphs, sized to the house
-   * tap target: quiet affordances, not calls to action. Position and the
-   * drag gesture live in hooks/useFabDrag.ts. */
-  .fab-dock {
-    position: fixed;
-    /* left/top are set inline by the drag hook, which owns the maths and the
-     * stored side + vertical fraction. */
-    z-index: var(--z-fab);
+  /* Quiet header access for the coach and problem report. Both remain 44px
+   * controls, but read as small text actions rather than floating buttons. */
+  .header-actions {
     display: flex;
-    flex-direction: column;
-    gap: var(--s-4);
-    /* The dock must receive the whole gesture once it is held, or the list
-     * scrolls out from under the finger mid-drag. */
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
-    -webkit-touch-callout: none;
-    transition: transform 120ms ease-out;
+    align-items: center;
+    gap: var(--s-2);
   }
 
-  /* Held and loose. Growing is the signal that carries on iOS, where
-   * navigator.vibrate does not exist. */
-  .fab-dock-held {
-    transform: scale(1.12);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .fab-dock {
-      transition: none;
-    }
-  }
-
-  .fab-btn {
+  .header-action {
     position: relative;
-    width: var(--tap-min);
-    height: var(--tap-min);
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     color: var(--text-dim);
-    background: var(--bg-raised);
-    border: var(--rule-strong);
-    border-radius: var(--radius-pill);
-    box-shadow: 0 1px 3px rgb(var(--ink-rgb) / 0.18);
+    gap: var(--s-2);
+    white-space: nowrap;
   }
 
-  .fab-btn:active {
-    background: var(--bg-input);
+  .header-action:active {
+    color: var(--text);
   }
 
-  .fab-btn svg {
-    width: 20px;
-    height: 20px;
+  .header-action svg {
+    width: 16px;
+    height: 16px;
   }
 
-  /* The coach is the primary of the two and carries the accent. */
-  .fab-coach {
-    color: var(--accent-dim);
+  .header-action span:not(.fab-off-dot, .fab-queue) {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+  }
+
+  .header-action-coach {
+    color: var(--text);
   }
 
   /* Offline is shown, not discovered on tap: the coach is an API call and
    * genuinely cannot work, unlike the rest of this app. */
-  .fab-btn-off {
+  .header-action-off {
     color: var(--text-dim);
     opacity: 0.65;
   }
