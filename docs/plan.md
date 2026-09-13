@@ -214,15 +214,22 @@ dependency of the strength half.
 - [x] Production readiness audit
       ([record](superpowers/plans/2026-09-12-production-readiness-audit.md)).
 - [x] CI deploys the Supabase half (see Phase 6).
-- [~] Session focus deck
+- [x] Session focus deck
       ([spec](superpowers/specs/2026-09-12-session-focus-deck-design.md),
-      [plan](superpowers/plans/2026-09-12-session-focus-deck-implementation.md)):
-      merged and deployed behind the device-local FOCUS MODE PREVIEW switch
-      (off by default). A pre-merge review found a correction that could save
+      [plan](superpowers/plans/2026-09-12-session-focus-deck-implementation.md),
+      [redesign](superpowers/specs/2026-09-12-focus-mode-and-checkin-redesign.md)):
+      the first version reused the accordion's editor and looked unchanged, so
+      it was rebuilt as a minimal one-exercise screen (name, load, bar, reps,
+      rest, LOG SET; everything else behind one ••• sheet) and made the
+      default. Reviews before each merge fixed a correction that could save
       another exercise's numbers, double-counted superset rest, warmup
-      carry-over, unequal superset targets and a lost tap target in the default
-      view; all fixed with tests before merge. Tasks 7 (phone acceptance) and 8
-      (make it the default) remain.
+      carry-over, unequal superset targets, a lost tap target, and a bodyweight
+      set that could log a hidden 20 kg. Screens in
+      `design-log/2026-09-12-focus-mode/`.
+- [x] Passive check-in: free text, Sore/Hurt/Tired/Stressed/Great chips and
+      optional energy, any time, no daily prompt; `get_checkins` MCP tool;
+      notes feed the Haiku memory pass through a claimed, single-flight route
+      (migration `20260908000000`).
 - [x] ChatGPT access through an OpenAI Secure MCP Tunnel: a Keychain-backed
       loopback relay and LaunchAgent supervisor (setup.md, "ChatGPT through a
       Secure MCP Tunnel"). Code merged; the tunnel, runtime key and ChatGPT
@@ -237,15 +244,16 @@ dependency of the strength half.
 
 ## What's left, in order
 
-1. Phone acceptance for the focus deck at 360px (turn on FOCUS MODE PREVIEW in
-   Settings; the plan's Task 7 lists the eight checks, including superset
-   rounds and correcting a set while switching views), then Task 8: remove the
-   switch and make focus the default.
+1. Use focus mode and the check-in on a real workout: a barbell ramp, a
+   dumbbell pair, a superset round, a bodyweight movement, and correcting a
+   set from the ••• sheet. Then write a check-in with a note and confirm a
+   standing fact (an injury, say) appears in the coach's memory.
 2. Connect ChatGPT if wanted: the account steps in setup.md. Check tunnel
    eligibility on your OpenAI account first; OpenAI does not state which plans
    get it.
 3. Configure the prompt sweep (`SWEEP_SECRET` plus two Vault rows,
-   docs/deploy.md step 2). Until then closed-app check-in prompts never send.
+   docs/deploy.md step 2). The daily prompt is now off by default, so this
+   only matters for the weekly symptom prompt sent while the app is closed.
 4. Verify push on a real phone (docs/deploy.md, "What needs a phone").
 5. Confirm `JAVASCRIPT-REACT-3` does not recur on a production plan read, then
    resolve it in Sentry (observability plan, Task 4).
