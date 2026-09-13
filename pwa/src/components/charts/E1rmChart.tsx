@@ -1,5 +1,5 @@
 // Hand-rolled SVG line chart: best e1RM per session. Ink polyline, dashed
-// teal goal line, orange dot on the latest point, hairline left/bottom frame,
+// teal goal line, Aubergine dot on the latest point, hairline left/bottom frame,
 // month tick labels underneath.
 
 import { useUnit } from "../../hooks/useUnit";

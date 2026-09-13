@@ -1,5 +1,5 @@
-// Hand-rolled bar chart: working sets per ISO week, most recent bar in
-// orange, hairline baseline.
+// Hand-rolled bar chart: working sets per ISO week, most recent bar in the
+// Aubergine accent, hairline baseline.
 
 import { formatShortDate } from "../../lib/format";
 import type { WeeklyVolumeRow } from "../../lib/types";

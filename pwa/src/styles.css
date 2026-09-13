@@ -98,31 +98,31 @@
      *   pwa/vite.config.ts  manifest.background_color
      *   pwa/vite.config.ts  manifest.theme_color
      */
-    --paper: #f4eede;
-    --paper-raised: #fbf6e9;
-    --paper-input: #fffdf6;
-    --cream: #fff9eb;
+    --paper: #f7f6fa;
+    --paper-raised: #fcfbfd;
+    --paper-input: #fcfbfd;
+    --cream: #fcfbfd;
 
     /* One ink triple, split into channels so every tint below derives from it
      * instead of being retyped. This replaces 58 hand-inlined ink literals
      * across 17 distinct alpha values. */
-    --ink-rgb: 42 45 50;
+    --ink-rgb: 48 43 58;
 
-    /* Burnt orange, darkened for contrast: #bd5410 is 4.08:1 on paper and
-     * carries --text-inverse at 4.51:1. --burnt-press is the :active step,
-     * --burnt-deep the small-mono-text step (5.59:1 — it is read, not just
-     * seen). */
-    --burnt: #bd5410;
-    --burnt-press: #a34a0c;
-    --burnt-deep: #9c4407;
+    /* Aubergine carries primary actions and their text labels. Ochre is
+     * exposed only through the current-set semantic role below. */
+    --aubergine: #57417f;
+    --aubergine-press: #463269;
+    --current-set: #855600;
+    --completed-set: #665f71;
+    --control-outline: #766e7b;
     --brick: #a8321f;
 
     /* Competition plate colours. These are INFORMATION, not decoration: a
      * lifter reads the stack by colour before reading any number, which is the
      * whole reason the plate diagram is worth drawing. Desaturated from the
      * IWF hues so a 44px strip cannot out-shout the load it describes — the
-     * plates explain the number, they do not compete with it. Nothing else on
-     * the set screen carries a hue. */
+     * plates explain the number, they do not compete with it. On the set
+     * screen, hue is otherwise reserved for the current-set marker. */
     --plate-25: #b2404a;
     --plate-20: #4a6fb8;
     --plate-15: #c9a227;
@@ -132,7 +132,6 @@
     --plate-1h: #8a8f97;
     --plate-steel: #6f757e;
     --plate-collar: #565b63;
-    --olive: #7a5f10;
     --teal: #2e6e7e;
 
     /* -- colour roles: the only names component rules may reference -------- */
@@ -159,18 +158,22 @@
     --rule-strong: var(--bw-hair) solid var(--rule-strong-color);
 
     /* Where a hairline is the ONLY boundary of an interactive control or the
-     * only mark for a selected/upcoming state, it has to clear WCAG 1.4.11's
-     * 3:1. α .53 is 3.07:1. Decorative rules above stay light on purpose. */
-    --control-border-color: rgb(var(--ink-rgb) / 0.53);
+     * only mark for a selected/upcoming state, use the explicit outline role.
+     * Decorative rules above stay lighter on purpose. */
+    --control-border-color: var(--control-outline);
 
     --scrim: rgb(var(--ink-rgb) / 0.35);
 
-    --accent: var(--burnt);
-    --accent-press: var(--burnt-press);
-    --accent-dim: var(--burnt-deep);
+    --accent: var(--aubergine);
+    --accent-press: var(--aubergine-press);
+    --accent-dim: var(--aubergine);
     --danger: var(--brick);
-    --warn: var(--olive);
+    --warn: var(--accent-dim);
     --info: var(--teal);
+    --focus-set-current: var(--current-set);
+    --focus-set-completed: var(--completed-set);
+    --focus-set-completed-mark: var(--cream);
+    --focus-set-future: var(--control-outline);
 
     /* -- type ------------------------------------------------------------- */
     --font-sans: Chivo, system-ui, -apple-system, sans-serif;
@@ -368,8 +371,8 @@
    * the UA ring is a black double ring against warm paper, and Phase B added
    * focus trapping to six dialogs, which means keyboard focus is now a real
    * navigation surface rather than an accident. Pin it: :focus-visible only,
-   * so a thumb tap never draws it. --accent-dim is 5.59:1 on paper, well past
-   * the 3:1 that WCAG 1.4.11 asks of a focus indicator. */
+   * so a thumb tap never draws it. Aubergine stays well above the 3:1 that
+   * WCAG 1.4.11 asks of a focus indicator on this light canvas. */
   :where(
     a,
     button,
@@ -1078,7 +1081,7 @@
 
   .train-date,
   .train-kicker {
-    color: #57417f;
+    color: var(--accent);
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     font-weight: 700;
@@ -1096,7 +1099,7 @@
   }
 
   .train-title {
-    color: #302b3a;
+    color: var(--text);
     font-size: clamp(32px, 10vw, 52px);
     font-weight: 650;
     letter-spacing: -0.04em;
@@ -1105,7 +1108,7 @@
   }
 
   .train-shape {
-    color: #665f71;
+    color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: var(--fs-label);
     font-variant-numeric: tabular-nums;
@@ -1114,7 +1117,7 @@
   }
 
   .train-first-up {
-    border-top: 1px solid #766e7b;
+    border-top: var(--bw-hair) solid var(--control-border-color);
     display: flex;
     flex-direction: column;
     gap: var(--s-2);
@@ -1122,7 +1125,7 @@
   }
 
   .train-first-up span {
-    color: #665f71;
+    color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     font-weight: 700;
@@ -1131,18 +1134,18 @@
   }
 
   .train-first-up strong {
-    color: #302b3a;
+    color: var(--text);
     font-size: var(--fs-lg);
     line-height: 1.2;
   }
 
   .train-quiet {
-    color: #665f71;
+    color: var(--text-dim);
     line-height: 1.5;
   }
 
   .train-cache-note {
-    color: #665f71;
+    color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: var(--fs-micro);
     letter-spacing: var(--track-2);
@@ -1150,18 +1153,18 @@
   }
 
   .train-home .btn-primary {
-    background: #57417f;
-    color: #fcfbfd;
+    background: var(--accent);
+    color: var(--text-inverse);
     text-decoration: none;
   }
 
   .train-home .btn-primary:active {
-    background: #463269;
+    background: var(--accent-press);
   }
 
   .train-link {
     align-self: flex-start;
-    color: #57417f;
+    color: var(--accent);
     display: inline-flex;
     align-items: center;
     min-height: var(--tap);
@@ -1435,8 +1438,8 @@
 
   /* Micro-label controls that ride in a baseline-aligned .section-head, so
    * they are hit-extended rather than grown: the plate calculator, the
-   * total/per-side toggle, and the RPE reveal. 6px of bleed. --accent-dim is
-   * 5.59:1 and these are read, not just seen. */
+   * total/per-side toggle, and the RPE reveal. 6px of bleed. Aubergine keeps
+   * these read labels high-contrast without using a decorative tint. */
   .plate-hint,
   .rpe-reveal {
     --hit-bleed: 6px;
@@ -1830,7 +1833,7 @@
     gap: var(--s-6);
   }
 
-  /* overtime: keep counting up, in burnt orange */
+  /* overtime: keep counting up in the Aubergine accent */
   .rest-timer-done {
     border-top-color: var(--rule-strong-color);
   }
@@ -2106,7 +2109,7 @@
   }
 
   /* Shown only while sign-out is armed with unsynced sets queued. Reads as a
-     warning, not a decoration: the ink is --warn at 5.22:1. */
+     warning through its border and copy, with a non-ochre semantic color. */
   .settings-warn {
     color: var(--warn);
     border-left: var(--bw-thick) solid var(--warn);
@@ -2126,9 +2129,9 @@
    *
    * Colour appears only where something is genuinely parked. Ordinary queued
    * writes are the normal state of an offline-first app and are set in the
-   * body ink like everything else; --info (4.94:1) marks HELD, which is not a
-   * fault, and --danger (5.9:1) marks FAILED. The accent is never used here:
-   * 4.08:1 does not carry text this small. */
+   * body ink like everything else; --info marks HELD, which is not a fault,
+   * and --danger marks FAILED. The accent is never used here, so these status
+   * colors remain distinct from routine actions. */
   .queue-list {
     display: grid;
     gap: 0;
@@ -2455,8 +2458,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* --text-dim, not the accent: this is small prose, and #bd5410 is 4.08:1 —
-     AA for large text and UI only. */
+  /* --text-dim, not the accent: this is small prose, not an action label. */
   .week-line-plan {
     font-family: var(--font-mono);
     font-size: var(--fs-label);
@@ -2843,8 +2845,8 @@
     line-height: 1.5;
   }
 
-  /* Prose, so it is set in --text and never in --accent: #bd5410 is 4.08:1,
-   * which is AA for large text and UI and NOT for body copy this size. */
+  /* Prose, so it is set in --text and never in --accent: the full reason can
+   * be several sentences. */
   .first-run-body {
     margin-top: var(--s-7);
   }
@@ -3004,8 +3006,8 @@
   /* One shared, non-interactive line sits immediately before the focus
    * controls. FocusDeck keeps the spoken set/round status; these marks are
    * hidden from assistive tech and use shape as well as semantic color roles
-   * so color alone never carries completion state. Task 5 can bind the
-   * --focus-set-* semantic roles to the approved palette. */
+   * so color alone never carries completion state. --focus-set-* roles are
+   * bound in the token block above. */
   .focus-set-progress {
     display: flex;
     width: 100%;
@@ -3157,7 +3159,7 @@
    * history with its void/note/correct actions) stays reachable but stays
    * visually secondary. This follows docs/design-log/2026-09-07-world-class
    * in STRUCTURE only — the palette is unchanged, still this app's tokens
-   * (the burnt accent), never the cast-iron theme that exploration discarded. */
+   * (the Aubergine accent), never the cast-iron theme that exploration discarded. */
 
   body.focus-chrome-hidden .session-footer {
     display: none;

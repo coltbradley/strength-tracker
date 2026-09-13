@@ -1,5 +1,5 @@
 // Rest strip — docked above the session footer (in-flow, not floating).
-// Counts down to the target, then keeps counting up in burnt ("OVER"):
+// Counts down to the target, then keeps counting up in the Aubergine accent ("OVER"):
 // rest is recorded either way when the next set is logged.
 // Notification API is used only if permission was already granted — never
 // prompts. It is also not enough on its own: an installed iOS web app has no

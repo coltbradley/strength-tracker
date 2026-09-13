@@ -34,8 +34,8 @@ export default defineConfig({
         scope: base,
         // keep in sync with --paper in src/styles.css and the theme-color
         // meta in index.html
-        background_color: "#f4eede",
-        theme_color: "#f4eede",
+        background_color: "#f7f6fa",
+        theme_color: "#f7f6fa",
         icons: [
           {
             src: "icons/icon-192.png",
