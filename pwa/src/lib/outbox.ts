@@ -155,6 +155,16 @@ interface Deps {
    * would sit there until the next `online` event or the next write.
    */
   onIdentityChange?: (fn: (id: string | null) => void) => () => void;
+  /**
+   * Told about an op right after it actually reaches the server — not when
+   * it is enqueued, and not for one that stays pending, held or dead. This
+   * is the hook a caller uses to react to a write being CONFIRMED rather than
+   * merely queued: the checkin-memory extraction route is fire-and-forget
+   * and must ask about a check-in only once the server has it, offline or
+   * not. Best-effort: a throwing listener is caught and never turns a
+   * successful sync into a failed one.
+   */
+  onSynced?: (op: OutboxOp) => void;
 }
 
 type ErrorClass = "retry" | "dead" | "auth" | "fk-prescription";
@@ -262,6 +272,7 @@ export function createOutbox({
   isOnline,
   currentUserId,
   onIdentityChange,
+  onSynced,
 }: Deps): Outbox {
   let status: OutboxStatus = {
     pending: 0,
@@ -412,6 +423,11 @@ export function createOutbox({
           if (err === null) {
             await db.delete("outbox", row.key);
             setStatus({ ...counts(await readAll(db)), lastError: null });
+            try {
+              onSynced?.(item.op);
+            } catch {
+              // A listener's own bug must never look like a sync failure.
+            }
             break attempt;
           }
 

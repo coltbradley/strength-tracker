@@ -4,8 +4,9 @@
 
 import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
-import { getDb } from "./db";
+import { getDb, type OutboxOp } from "./db";
 import { getCurrentUserId, onUserChange } from "./currentUser";
+import { notifyCheckinMemory } from "./checkinMemory";
 import {
   createOutbox,
   type OutboxTransport,
@@ -77,4 +78,12 @@ export const outbox = createOutbox({
   // Identity resolves asynchronously, and the flusher holds every stamped
   // item until it does. This is what un-holds them.
   onIdentityChange: onUserChange,
+  // A checkins row with a note, once the SERVER has it, is worth reading for
+  // a standing fact. Fire-and-forget and best-effort by design (see
+  // notifyCheckinMemory): the check-in already saved, this rides along after.
+  onSynced: (op: OutboxOp) => {
+    if (op.kind === "insert" && op.table === "checkins" && op.payload.note) {
+      notifyCheckinMemory();
+    }
+  },
 });
