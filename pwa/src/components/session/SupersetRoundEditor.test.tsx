@@ -26,6 +26,11 @@ const a2Entry: ExerciseEntry = {
   brackets: [],
 };
 
+const loadSteps = [
+  { label: "− 2.5", delta: -2.5, announce: "2.5 kg" },
+  { label: "+ 2.5", delta: 2.5, announce: "2.5 kg" },
+];
+
 function editorProps(entry: ExerciseEntry, draft: SetDraft): SetEditorProps {
   return {
     entry,
@@ -41,7 +46,7 @@ function editorProps(entry: ExerciseEntry, draft: SetDraft): SetEditorProps {
     },
     unit: "kg",
     maxEntryKg: 999,
-    loadSteps: [],
+    loadSteps,
     rpeShown: false,
     logLabel: "unused",
     disabled: false,
@@ -104,14 +109,20 @@ describe("SupersetRoundEditor", () => {
     const onLogRound = vi.fn();
     render(<Harness onLogRound={onLogRound} onLogA1Only={vi.fn()} />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[1]);
-    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[1]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[0],
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[1],
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[1],
+    );
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));
 
     expect(onLogRound).toHaveBeenCalledWith({
-      a1: expect.objectContaining({ reps: 9 }),
-      a2: expect.objectContaining({ reps: 12 }),
+      a1: expect.objectContaining({ entryKg: 42.5 }),
+      a2: expect.objectContaining({ entryKg: 55 }),
     });
   });
 

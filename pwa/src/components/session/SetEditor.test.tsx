@@ -80,9 +80,7 @@ describe("SetEditor", () => {
 
   it("uses a completion action without numeric inputs for tick-only work", () => {
     render(
-      <SetEditor
-        {...props({ tracking: "done", logLabel: "DONE 1 OF 3" })}
-      />,
+      <SetEditor {...props({ tracking: "done", logLabel: "DONE 1 OF 3" })} />,
     );
 
     expect(screen.getByRole("button", { name: /done 1 of 3/i })).toBeTruthy();
@@ -137,8 +135,12 @@ describe("SetEditor", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "reps value — tap to type" }));
-    fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "reps value — tap to type" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "load value — tap to type" }),
+    );
     fireEvent.click(
       screen.getByRole("button", {
         name: "one dumbbell in each hand; switch to one total weight",
@@ -156,5 +158,124 @@ describe("SetEditor", () => {
     expect(onToggleLoadEntry).toHaveBeenCalledTimes(1);
     expect(onOpenPlates).toHaveBeenCalledTimes(1);
     expect(onRevealRpe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SetEditor focus variant", () => {
+  const loadSteps = [
+    { label: "− 2.5", delta: -2.5, announce: "2.5 kg" },
+    { label: "− 0.5", delta: -0.5, fine: true, announce: "0.5 kg" },
+    { label: "+ 0.5", delta: 0.5, fine: true, announce: "0.5 kg" },
+    { label: "+ 2.5", delta: 2.5, announce: "2.5 kg" },
+  ];
+
+  it("makes load the hero and moves its coarse step to the bottom bar beside LOG", () => {
+    render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          loadSteps,
+          repsTargetLabel: "8-15",
+          loadPresentation: {
+            ...props().loadPresentation,
+            perSide: false,
+            totalKg: 30,
+          },
+        })}
+      />,
+    );
+
+    // the coarse pair flanks the log action — the only step control visible
+    expect(
+      screen.getByRole("button", { name: "decrease load by 2.5 kg" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "increase load by 2.5 kg" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "LOG SET 1 OF 3" })).toBeTruthy();
+    // no other step buttons compete with it — fine adjustment and reps' own
+    // nudge are gone from the default screen; tap-to-type still reaches both
+    expect(
+      screen.queryByRole("button", { name: "increase load by 0.5 kg" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "increase reps by 1" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "reps value — tap to type" }),
+    ).toBeTruthy();
+    // reps keeps its target quietly beside it
+    expect(screen.getByText("target 8-15")).toBeTruthy();
+    // no labels or secondary controls compete with the hero
+    expect(screen.queryByText("LOAD · KG")).toBeNull();
+    expect(screen.queryByText("REPS")).toBeNull();
+  });
+
+  it("makes reps the hero and omits the load field for a bodyweight movement", () => {
+    render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          loadPresentation: {
+            perSide: false,
+            totalKg: 0,
+            plateSplit: null,
+            barKg: 0,
+            hint: null,
+            canToggleEntry: false,
+            noLoad: true,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("no load — bodyweight")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /load value/i })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "decrease reps by 1" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "increase reps by 1" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "LOG SET 1 OF 3" })).toBeTruthy();
+  });
+
+  it("keeps a single large tick action with no step bar for tracking = done", () => {
+    render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          tracking: "done",
+          logLabel: "DONE 1 OF 3",
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /done 1 of 3/i })).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /increase|decrease/ }),
+    ).toBeNull();
+  });
+
+  it("gives a superset member (no log of its own) its hero step buttons without a log button", () => {
+    render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          showLog: false,
+          loadSteps,
+          loadPresentation: {
+            ...props().loadPresentation,
+            perSide: false,
+            totalKg: 30,
+          },
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "increase load by 2.5 kg" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /log set/i })).toBeNull();
   });
 });
