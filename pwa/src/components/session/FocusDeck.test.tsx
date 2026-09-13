@@ -61,6 +61,78 @@ describe("FocusDeck", () => {
     expect(screen.queryByText(/REMAINING/)).toBeNull();
   });
 
+  it("marks completed, current, and future sets in order without another spoken status", () => {
+    const { container } = render(
+      <FocusDeck
+        {...props({ entryProgress: () => 1 })}
+      />,
+    );
+
+    const progress = container.querySelector(".focus-set-progress");
+    expect(progress?.getAttribute("aria-hidden")).toBe("true");
+    expect(
+      [...(progress?.querySelectorAll("[data-state]") ?? [])].map(
+        (segment) => [
+          segment.getAttribute("data-state"),
+          segment.textContent,
+        ],
+      ),
+    ).toEqual([
+      ["completed", "✓"],
+      ["current", "●"],
+      ["future", ""],
+    ]);
+    expect(screen.getByText("SET 2 OF 3")).toBeTruthy();
+    expect(container.querySelectorAll(".focus-deck-position")).toHaveLength(1);
+  });
+
+  it("omits the segmented line for by-feel work", () => {
+    const byFeel = entry("by-feel", "Carry", 0);
+    byFeel.brackets = [];
+    const { container } = render(
+      <FocusDeck
+        {...props({ entries: [byFeel], entry: byFeel })}
+      />,
+    );
+
+    expect(screen.getByText("SET BY FEEL")).toBeTruthy();
+    expect(container.querySelector(".focus-set-progress")).toBeNull();
+  });
+
+  it("shows one shared superset round line derived from both members", () => {
+    const a1 = entry("a1", "Bench Press", 3);
+    const a2 = entry("a2", "Barbell Row", 4);
+    a1.brackets[0] = { ...a1.brackets[0]!, superset_group: 1 };
+    a2.brackets[0] = { ...a2.brackets[0]!, superset_group: 1 };
+    const progressByKey: Record<string, number> = { a1: 2, a2: 1 };
+    const { container } = render(
+      <FocusDeck
+        {...props({
+          entries: [a1, a2],
+          entry: a1,
+          entryProgress: (candidate) => progressByKey[candidate.key] ?? 0,
+          supersetHeading: { title: "Superset A", subtitle: "round 2 of 3" },
+          renderEditor: () => (
+            <section className="superset-round-editor">
+              <div className="superset-round-actions">
+                <button type="button">Log round</button>
+              </div>
+            </section>
+          ),
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Superset A" })).toBeTruthy();
+    expect(screen.getByText("round 2 of 3")).toBeTruthy();
+    expect(container.querySelectorAll(".focus-set-progress")).toHaveLength(1);
+    expect(
+      [...container.querySelectorAll(".focus-set-progress [data-state]")].map(
+        (segment) => segment.getAttribute("data-state"),
+      ),
+    ).toEqual(["completed", "current", "future"]);
+  });
+
   it("keeps the supplied tick-only editor and offers the quiet overview action", () => {
     render(<FocusDeck {...props()} />);
 

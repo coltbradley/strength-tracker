@@ -32,6 +32,73 @@ export interface FocusDeckProps {
   supersetHeading?: { title: string; subtitle: string } | null;
 }
 
+function focusSetPosition(
+  entry: ExerciseEntry,
+  entries: readonly ExerciseEntry[],
+  entryProgress: FocusDeckProps["entryProgress"],
+  supersetHeading: FocusDeckProps["supersetHeading"],
+): { progress: number; target: number } {
+  const progress = entryProgress(entry);
+  const target = targetSets(entry);
+  const group = entry.brackets[0]?.superset_group;
+
+  if (supersetHeading && group !== undefined && group !== null) {
+    const pair = entries.filter(
+      (candidate) => candidate.brackets[0]?.superset_group === group,
+    );
+    if (pair.length === 2) {
+      const [a1, a2] = pair;
+      const progressA = entryProgress(a1!);
+      const progressB = entryProgress(a2!);
+      const targetA = targetSets(a1!);
+      const targetB = targetSets(a2!);
+      const exhaustedA = targetA > 0 && progressA >= targetA;
+      const exhaustedB = targetB > 0 && progressB >= targetB;
+      const tail = exhaustedA !== exhaustedB;
+
+      return {
+        progress: Math.min(progressA, progressB),
+        target: tail ? Math.max(targetA, targetB) : Math.min(targetA, targetB),
+      };
+    }
+  }
+
+  return { progress, target };
+}
+
+function FocusSetProgress({
+  progress,
+  target,
+}: {
+  progress: number;
+  target: number;
+}) {
+  if (target <= 0) return null;
+
+  const completed = Math.min(Math.max(0, progress), target);
+  return (
+    <div className="focus-set-progress" aria-hidden="true">
+      {Array.from({ length: target }, (_, index) => {
+        const state =
+          index < completed
+            ? "completed"
+            : index === completed
+              ? "current"
+              : "future";
+        return (
+          <span
+            key={index}
+            className={`focus-set-segment focus-set-segment--${state}`}
+            data-state={state}
+          >
+            {state === "completed" ? "✓" : state === "current" ? "●" : ""}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * A narrow presentation of the same session state that powers the overview.
  * It owns no draft or persistence state: Session supplies the controlled
@@ -57,8 +124,12 @@ export function FocusDeck({
   const entryIndex = entries.findIndex(
     (candidate) => candidate.key === entry.key,
   );
-  const progress = entryProgress(entry);
-  const target = targetSets(entry);
+  const { progress, target } = focusSetPosition(
+    entry,
+    entries,
+    entryProgress,
+    supersetHeading,
+  );
   const complete = entryDone(entry);
   const next = complete
     ? (entries
@@ -102,7 +173,10 @@ export function FocusDeck({
         </div>
       </div>
 
-      <div className="focus-deck-editor">{renderEditor(entry)}</div>
+      <div className="focus-deck-editor">
+        <FocusSetProgress progress={progress} target={target} />
+        {renderEditor(entry)}
+      </div>
 
       {next && canAdvance && (
         <button

@@ -111,8 +111,10 @@ export function SupersetRoundEditor({
   onLogA1Only,
   onLogA2Only,
 }: SupersetRoundEditorProps) {
+  const controlsLabel = label.replace(/\s*·\s*ROUND\b.*$/i, "").trim();
+
   return (
-    <section className="superset-round-editor" aria-label={label}>
+    <section className="superset-round-editor" aria-label={controlsLabel}>
       <div className="superset-round-members">
         <MemberRow member={a1} />
         <MemberRow member={a2} />

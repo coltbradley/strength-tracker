@@ -3001,6 +3001,43 @@
     gap: var(--s-7);
   }
 
+  /* One shared, non-interactive line sits immediately before the focus
+   * controls. FocusDeck keeps the spoken set/round status; these marks are
+   * hidden from assistive tech and use shape as well as semantic color roles
+   * so color alone never carries completion state. Task 5 can bind the
+   * --focus-set-* semantic roles to the approved palette. */
+  .focus-set-progress {
+    display: flex;
+    width: 100%;
+    gap: var(--s-2);
+    flex: none;
+  }
+
+  .focus-set-segment {
+    flex: 1 1 0;
+    min-width: 0;
+    height: var(--s-6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: var(--bw) solid
+      var(--focus-set-future, var(--control-border-color));
+    color: var(--focus-set-future, var(--control-border-color));
+    font-size: var(--fs-label);
+    line-height: 1;
+  }
+
+  .focus-set-segment--completed {
+    border-color: var(--focus-set-completed, var(--text-dim));
+    background: var(--focus-set-completed, var(--text-dim));
+    color: var(--focus-set-completed-mark, var(--bg-raised));
+  }
+
+  .focus-set-segment--current {
+    border-color: var(--focus-set-current, var(--text));
+    color: var(--focus-set-current, var(--text));
+  }
+
   /* The plain hero editor stretches to fill .focus-deck-editor so its own
    * bottom bar (margin-top: auto) can anchor to the true bottom of the
    * screen rather than to the end of however little content it has. A

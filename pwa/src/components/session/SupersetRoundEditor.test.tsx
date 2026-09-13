@@ -105,6 +105,18 @@ function Harness({
 }
 
 describe("SupersetRoundEditor", () => {
+  it("leaves round status to the FocusDeck instead of repeating it as a region name", () => {
+    const { container } = render(
+      <Harness onLogRound={vi.fn()} onLogA1Only={vi.fn()} />,
+    );
+
+    expect(screen.getByRole("region", { name: "SUPERSET A" })).toBeTruthy();
+    expect(
+      screen.queryByRole("region", { name: "SUPERSET A · ROUND 1 OF 3" }),
+    ).toBeNull();
+    expect(container.querySelector(".focus-set-progress")).toBeNull();
+  });
+
   it("edits A1 and A2 independently and logs both with one action", () => {
     const onLogRound = vi.fn();
     render(<Harness onLogRound={onLogRound} onLogA1Only={vi.fn()} />);
