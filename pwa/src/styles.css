@@ -2825,8 +2825,10 @@
    * extra state to reconcile after a return to the overview. The compact
    * labels leave the editor as the visual priority. */
   .focus-deck {
+    flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
     gap: var(--s-7);
     padding: var(--s-2) 0 calc(var(--s-8) + env(safe-area-inset-bottom));
   }
@@ -2863,9 +2865,25 @@
   }
 
   .focus-deck-editor {
+    flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
     gap: var(--s-7);
+  }
+
+  /* The plain hero editor stretches to fill .focus-deck-editor so its own
+   * bottom bar (margin-top: auto) can anchor to the true bottom of the
+   * screen rather than to the end of however little content it has. A
+   * superset round (SupersetRoundEditor, not this) is not part of this
+   * chain — each member's own bar still anchors to ITS OWN box, and the
+   * round's shared Log round / Log A1 / Log A2 row sits in normal flow
+   * below both, which is already where it belongs. */
+  .set-editor-focus {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   .superset-round-editor,
@@ -2924,7 +2942,9 @@
    * in STRUCTURE only — the palette is unchanged, still this app's tokens
    * (the burnt accent), never the cast-iron theme that exploration discarded. */
 
-  body.focus-chrome-hidden .topbar {
+  body.focus-chrome-hidden .topbar,
+  body.focus-chrome-hidden .session-footer,
+  body.focus-chrome-hidden .fab-dock {
     display: none;
   }
 
@@ -2934,10 +2954,31 @@
     padding-top: calc(env(safe-area-inset-top) + var(--s-8));
   }
 
+  /* The section wrapping FocusDeck (in place of the accordion's own
+   * .rule-section, which this deliberately is not — no top rule, no
+   * workout-name header row). Stretched to fill whatever height
+   * .session-scroll is not using, so the bottom bar's own margin:auto can
+   * anchor it to the bottom of the screen instead of the bottom of content
+   * that no longer fills it. */
+  .focus-shell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* One faint line: a small control to leave for the overview, ••• to open
+   * everything else. Nothing else lives here — the workout name and its
+   * done count moved to the "more" sheet's own title, and DONE counting
+   * moved out entirely (see the design's own case against a percentage). */
   .focus-deck-top {
     display: flex;
     align-items: center;
     justify-content: space-between;
+  }
+
+  .focus-deck-overview {
+    font-size: var(--fs-lg);
   }
 
   .focus-deck-more {
@@ -3003,8 +3044,26 @@
     flex-wrap: wrap;
   }
 
-  .focus-hero-section {
-    margin-top: var(--s-2);
+  /* The whole hero (load-then-reps or reps-then-load) as ONE flex item, so
+   * it — not each piece separately — can take equal auto margins above and
+   * below: name/position stay pinned at the top, the bottom bar (its own
+   * margin-top: auto, below) stays pinned at the bottom, and this settles
+   * into the space left over, however much or little that is. */
+  .focus-hero-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-7);
+    margin: auto 0;
+  }
+
+  /* No rule above either section, and no accent underline on the hero
+   * value: nothing on this screen competes with the number and LOG for
+   * visual weight. The accordion's own .rule-section and
+   * .stepper-value-accent are untouched — this only reaches the focus
+   * variant's markup. */
+  .set-editor-focus .rule-section {
+    border-top: none;
+    padding-top: 0;
   }
 
   .focus-hero-section .stepper-value-row {
@@ -3016,12 +3075,13 @@
    * the room the accordion's shared editor never could. */
   .focus-hero-section .stepper-value {
     font-size: 84px;
+    border-bottom: none;
   }
 
   .focus-hero-section .stepper-sub {
     font-size: var(--fs-lg);
     color: var(--text);
-    padding-bottom: var(--s-6);
+    padding-bottom: 0;
   }
 
   .focus-load-detail {
@@ -3032,18 +3092,36 @@
     margin-top: var(--s-4);
   }
 
+  /* PlateBar draws only the bar and its plates — no panel behind it. (Its
+   * class name collides with an unrelated element in the plate CALCULATOR
+   * sheet's own diagram, which does want a filled background; scoping this
+   * to the hero section reaches only the one drawn here.) The plate text
+   * stays small and quiet, an answer to check against the bar, not a label. */
+  .focus-hero-section .plate-bar {
+    background: none;
+  }
+
+  .focus-hero-section .plate-bar-key {
+    font-size: var(--fs-label);
+    font-weight: 500;
+    color: var(--text-dim);
+  }
+
   /* The bottom action row: the hero's own coarse step flanking the log
    * button, so the number that matters is always one thumb-width from the
    * action that commits it. A superset member (no log button of its own —
    * the round's shared Log round / Log A1 / Log A2 actions live in
    * .superset-round-actions) gets a spacer in the middle instead, so its
    * step buttons flank empty space rather than something that reads as
-   * committable on its own. */
+   * committable on its own. margin-top: auto anchors it to the bottom of
+   * whatever space .set-editor-focus has to give — see the flex chain on
+   * .focus-shell, .focus-deck, .focus-deck-editor and .set-editor-focus. */
   .focus-bar {
     display: flex;
     align-items: stretch;
     gap: var(--s-5);
-    margin-top: var(--s-7);
+    margin-top: auto;
+    padding-top: var(--s-7);
   }
 
   .focus-bar-step {
@@ -3064,6 +3142,14 @@
   .focus-tick-log {
     flex: 1;
     width: auto;
+  }
+
+  /* A tick exercise has no bottom bar (bottomBar is false for tracking
+   * "done") — this button is its only flex item after the hero, so it
+   * anchors to the bottom the same way .focus-bar does. */
+  .focus-tick-log {
+    margin-top: auto;
+    padding-top: var(--s-7);
   }
 
   .focus-bar-spacer {

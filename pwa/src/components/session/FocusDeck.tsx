@@ -67,9 +67,10 @@ export function FocusDeck({
         <button
           type="button"
           className="focus-deck-overview"
+          aria-label="View full workout"
           onClick={onViewFullWorkout}
         >
-          View full workout
+          ≡
         </button>
         {onOpenMore && (
           <button

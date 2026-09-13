@@ -2126,7 +2126,13 @@ export function Session() {
             logLabel={
               editing
                 ? `SAVE SET ${editing.set.set_index + 1}`
-                : logLabel(entry)
+                : presentation === "focus" && workoutDone
+                  ? "FINISH"
+                  : presentation === "focus"
+                    ? isTick(entry)
+                      ? "DONE"
+                      : "LOG SET"
+                    : logLabel(entry)
             }
             logClassName={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
             // A correction is a deliberate, one-off edit to history, exempt
@@ -2138,6 +2144,7 @@ export function Session() {
               presentation === "focus" && !editing ? "focus" : "overview"
             }
             repsTargetLabel={repsTargetLabel}
+            restSlot={restInline && !sheetOpen ? restTimerEl : undefined}
             disabled={logLocked || !setsLoaded || setsFailed}
             onDraftChange={(next) => {
               if (!editing) rememberStagedDraft(entry, next);
@@ -2146,7 +2153,13 @@ export function Session() {
               if (next.setType !== undefined) setSetType(next.setType);
               if (next.rpe !== undefined) setRpe(next.rpe);
             }}
-            onLog={editing ? saveCorrection : () => logSet()}
+            onLog={
+              editing
+                ? saveCorrection
+                : presentation === "focus" && workoutDone
+                  ? finishWorkout
+                  : () => logSet()
+            }
             onOpenPlates={() => openSheet("plates")}
             onOpenPad={openPad}
             onToggleLoadEntry={toggleLoadEntry}
@@ -2751,6 +2764,46 @@ export function Session() {
   const req = padRequest();
   const sheetOpen =
     sheet !== null || pad !== null || demoFor !== null || moreOpen;
+  const inFocusDeck =
+    presentation === "focus" && focusEligible && focusEntry !== null;
+  // Every set of the whole workout is done — not just the current exercise.
+  // The primary action has nothing left to log against, so it becomes the
+  // one way out of the workout instead of a button that would only stage an
+  // unplanned extra set.
+  const workoutDone = entries.length > 0 && entries.every(entryDone);
+  const finishWorkout = () => {
+    // ending the session ends the rest; nothing to announce
+    disarmRestAlert();
+    navigate("/end");
+  };
+  // The rest clock renders INSIDE the hero editor (just above its bottom
+  // bar) instead of Session's own fixed strip, but only for the plain,
+  // single-entry case that editor actually is — mid-correction or mid-round
+  // it reverts to the strip, since neither of those paths has a bottom bar
+  // of its own to sit above.
+  const restInline = inFocusDeck && !editing && focusSupersetPair === null;
+  const restTimerEl = (
+    <RestTimer
+      rest={rest}
+      onAdjust={(d) => {
+        if (!rest) return;
+        const targetSeconds = Math.max(0, rest.targetSeconds + d);
+        setRest({ ...rest, targetSeconds });
+        mirrorRest(targetSeconds, rest.forLabel);
+        // the closed-app alert follows the target
+        armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
+      }}
+      onEdit={() => openPad("rest")}
+      /* dismissing hides the strip only: the clock keeps measuring, so
+         the mirror keeps its startedAt with a null target — and a strip
+         nobody wants to see is a buzz nobody wants either */
+      onDone={() => {
+        setRest(null);
+        mirrorRest(null, null);
+        disarmRestAlert();
+      }}
+    />
+  );
 
   return (
     <div className="session-shell">
@@ -2760,7 +2813,9 @@ export function Session() {
           noteEditingId && kbInset > 0 ? { paddingBottom: kbInset } : undefined
         }
       >
-        {(active.plan_note || active.coach_note) && (
+        {/* Session notes move to the top of the "more" sheet in focus mode —
+            see below — so the default screen stays to the hero and LOG. */}
+        {!inFocusDeck && (active.plan_note || active.coach_note) && (
           <div className="session-notes">
             {active.plan_note && (
               <Note label="PLAN NOTE" text={active.plan_note} />
@@ -2771,22 +2826,24 @@ export function Session() {
           </div>
         )}
 
-        <section className="rule-section">
-          <div className="section-head">
-            {/* the screen's h1: the workout being logged */}
-            <h1 className="field-label">
-              {active.workout_label
-                ? active.workout_label.toUpperCase()
-                : "WORKOUT"}
-            </h1>
-            {entries.length > 0 && (
-              <span className="section-meta">
-                {doneEntries} OF {entries.length} DONE
-              </span>
-            )}
-          </div>
+        <section className={inFocusDeck ? "focus-shell" : "rule-section"}>
+          {!inFocusDeck && (
+            <div className="section-head">
+              {/* the screen's h1: the workout being logged */}
+              <h1 className="field-label">
+                {active.workout_label
+                  ? active.workout_label.toUpperCase()
+                  : "WORKOUT"}
+              </h1>
+              {entries.length > 0 && (
+                <span className="section-meta">
+                  {doneEntries} OF {entries.length} DONE
+                </span>
+              )}
+            </div>
+          )}
 
-          {presentation === "focus" && focusEligible && focusEntry ? (
+          {inFocusDeck && focusEntry ? (
             <FocusDeck
               entries={entries}
               entry={focusEntry}
@@ -2887,28 +2944,12 @@ export function Session() {
         </section>
       </div>
 
-      {!sheetOpen && (
-        <RestTimer
-          rest={rest}
-          onAdjust={(d) => {
-            if (!rest) return;
-            const targetSeconds = Math.max(0, rest.targetSeconds + d);
-            setRest({ ...rest, targetSeconds });
-            mirrorRest(targetSeconds, rest.forLabel);
-            // the closed-app alert follows the target
-            armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
-          }}
-          onEdit={() => openPad("rest")}
-          /* dismissing hides the strip only: the clock keeps measuring, so
-             the mirror keeps its startedAt with a null target — and a strip
-             nobody wants to see is a buzz nobody wants either */
-          onDone={() => {
-            setRest(null);
-            mirrorRest(null, null);
-            disarmRestAlert();
-          }}
-        />
-      )}
+      {/* In focus mode, the plain hero editor renders this same timer
+          inline, just above its own bottom bar (restSlot) — the fixed strip
+          would otherwise duplicate it below a footer that is itself hidden
+          there. Mid-correction or mid-round, neither of which has a bottom
+          bar of its own to sit above, it falls back to this fixed strip. */}
+      {!sheetOpen && !restInline && restTimerEl}
 
       <div className="session-footer">
         <button
@@ -2922,11 +2963,7 @@ export function Session() {
         <button
           type="button"
           className="btn btn-outline-ink"
-          onClick={() => {
-            // ending the session ends the rest; nothing to announce
-            disarmRestAlert();
-            navigate("/end");
-          }}
+          onClick={finishWorkout}
         >
           Finish
         </button>
@@ -3029,6 +3066,26 @@ export function Session() {
           }
           onClose={() => setMoreOpen(false)}
         >
+          {(active.plan_note || active.coach_note) && (
+            <div className="session-notes">
+              {active.plan_note && (
+                <Note label="PLAN NOTE" text={active.plan_note} />
+              )}
+              {active.coach_note && (
+                <Note label="COACH" text={active.coach_note} />
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => {
+              setMoreOpen(false);
+              finishWorkout();
+            }}
+          >
+            Finish workout
+          </button>
           {(focusSupersetPair ?? [focusEntry]).map((target, i) => (
             <div
               key={target.key}

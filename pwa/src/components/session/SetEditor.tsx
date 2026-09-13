@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { PlateBar } from "../PlateBar";
 import { RpeChips } from "../RpeChips";
 import { Stepper, stepTo, type StepDef } from "../Stepper";
@@ -55,6 +56,11 @@ export interface SetEditorProps {
    *  focus mode instead of the accordion's separate TARGET line. Null when
    *  the exercise carries no prescription (by-feel work). */
   repsTargetLabel?: string | null;
+  /** The rest clock, when Session has one running — rendered just above the
+   *  bottom bar instead of Session's own fixed strip, so it reads as part of
+   *  this set rather than a document-level ticker with the log action below
+   *  it. Focus mode only; Session keeps its own strip for everything else. */
+  restSlot?: ReactNode;
   onDraftChange(next: Partial<SetDraft>): void;
   onLog(): void;
   onOpenPlates(): void;
@@ -123,6 +129,7 @@ export function SetEditor({
   disabled,
   variant = "overview",
   repsTargetLabel = null,
+  restSlot,
   onDraftChange,
   onLog,
   onOpenPlates,
@@ -200,11 +207,7 @@ export function SetEditor({
             </button>
           )}
           {hint !== null && (
-            <button
-              type="button"
-              className="plate-hint"
-              onClick={onOpenPlates}
-            >
+            <button type="button" className="plate-hint" onClick={onOpenPlates}>
               {hint} ›
             </button>
           )}
@@ -247,11 +250,13 @@ export function SetEditor({
         onChange={(entryKg) => onDraftChange({ entryKg })}
         steps={focus ? [] : loadSteps}
       />
-      {heroIsLoad && (
+      {/* Per-hand count only — never the lb/kg twin conversion the accordion
+          shows (loadSub): that's a fine detail for the "more" sheet, not the
+          hero. "15 × 2" is this app's own convention for a stored total
+          entered as two matching implements (see CLAUDE.md's load_kg note). */}
+      {heroIsLoad && perSide && (
         <div className="microcopy focus-load-detail">
-          {perSide
-            ? `two — ${toDisplay(totalKg, unit)} ${unit} total`
-            : loadSub}
+          {toDisplay(draft.entryKg, unit)} × 2
         </div>
       )}
       {plateSplit && <PlateBar split={plateSplit} barKg={barKg} unit={unit} />}
@@ -322,6 +327,25 @@ export function SetEditor({
     </div>
   );
 
+  const heroContent =
+    tracking === "done" ? (
+      <section className="rule-section">
+        <p className="microcopy">
+          No numbers for this one — tap below each time you finish a set.
+        </p>
+      </section>
+    ) : heroIsLoad ? (
+      <>
+        {loadSection}
+        {repsSection}
+      </>
+    ) : (
+      <>
+        {repsSection}
+        {(!focus || !noLoad) && loadSection}
+      </>
+    );
+
   return (
     <div className={`set-editor ${focus ? "set-editor-focus" : ""}`}>
       {!focus && (
@@ -339,36 +363,25 @@ export function SetEditor({
         </div>
       )}
 
-      {tracking === "done" ? (
-        <section className="rule-section">
-          <p className="microcopy">
-            No numbers for this one — tap below each time you finish a set.
-          </p>
-        </section>
+      {/* Focus wraps the hero in one group so the whole thing (not each
+          piece separately) can be given equal auto margins above and below,
+          leaving the name/position pinned at the top and the bottom bar
+          pinned at the bottom. Overview keeps the plain, ungrouped markup it
+          always had — .set-editor's own gap already sets its rhythm. */}
+      {focus ? (
+        <div className="focus-hero-group">{heroContent}</div>
       ) : (
         <>
-          {heroIsLoad ? (
-            <>
-              {loadSection}
-              {repsSection}
-            </>
-          ) : (
-            <>
-              {repsSection}
-              {(!focus || !noLoad) && loadSection}
-            </>
-          )}
-
-          {!focus && (
-            <RpeChips
-              shown={rpeShown}
-              value={draft.rpe}
-              onChange={(rpe) => onDraftChange({ rpe })}
-            />
-          )}
+          {heroContent}
+          <RpeChips
+            shown={rpeShown}
+            value={draft.rpe}
+            onChange={(rpe) => onDraftChange({ rpe })}
+          />
         </>
       )}
 
+      {focus && restSlot}
       {bottomBar}
 
       {!focus && showLog && (
