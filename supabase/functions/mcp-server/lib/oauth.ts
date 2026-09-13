@@ -109,9 +109,15 @@ export async function verifyOAuthToken(
   getUser: GetUser = defaultGetUser,
 ): Promise<Caller | "rejected" | "unavailable"> {
   const claims = decodeJwtPayload(token);
+  const clientId =
+    typeof claims?.client_id === "string" ? claims.client_id : undefined;
   const caller = claims ? callerFromClaims(claims) : null;
   if (!caller) {
-    log("warn", "oauth_rejected", { request_id: requestId, reason: "claims" });
+    log("warn", "oauth_rejected", {
+      request_id: requestId,
+      reason: "claims",
+      client_id: clientId,
+    });
     return "rejected";
   }
   try {
@@ -128,6 +134,7 @@ export async function verifyOAuthToken(
         {
           request_id: requestId,
           status: error.status,
+          client_id: clientId,
         },
       );
       return unreachable ? "unavailable" : "rejected";
@@ -137,6 +144,7 @@ export async function verifyOAuthToken(
       log("warn", "oauth_rejected", {
         request_id: requestId,
         reason: "subject",
+        client_id: clientId,
       });
       return "rejected";
     }
@@ -145,6 +153,7 @@ export async function verifyOAuthToken(
     log("error", "oauth_unavailable", {
       request_id: requestId,
       error: err instanceof Error ? err.message : String(err),
+      client_id: clientId,
     });
     return "unavailable";
   }
