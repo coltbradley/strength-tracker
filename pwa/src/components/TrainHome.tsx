@@ -50,6 +50,7 @@ export function TrainHome({
   stale,
   workout,
   prescriptions,
+  prescriptionLoadState,
   active,
   recovery,
   startEnabled,
@@ -63,6 +64,7 @@ export function TrainHome({
   stale?: "offline" | "error" | null;
   workout: TrainWorkout | null;
   prescriptions: ResolvedPrescriptionRow[] | null;
+  prescriptionLoadState: "loading" | "loaded" | "offline" | "error";
   active: ActiveSession | null;
   /** Recovery is owned by Today because it reconciles and repairs sessions. */
   recovery: ReactNode;
@@ -152,7 +154,13 @@ export function TrainHome({
           <div className="train-kicker">{programName}</div>
           <h1 className="train-title">{workout.workout.label ?? "Workout"}</h1>
           {summary === null ? (
-            <p className="train-quiet">Workout details are loading.</p>
+            <p className="train-quiet">
+              {prescriptionLoadState === "offline"
+                ? "Workout details are unavailable offline. Refresh your plan to retry."
+                : prescriptionLoadState === "error"
+                  ? "Couldn’t load workout details. Refresh your plan to retry."
+                  : "Workout details are loading."}
+            </p>
           ) : (
             <>
               <p className="train-shape">

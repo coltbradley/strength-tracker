@@ -96,6 +96,8 @@ export type WorkoutState =
    *  existed. */
   | "DRAFT";
 
+type PrescriptionLoadState = "loading" | "loaded" | StaleReason;
+
 /** How long the swipe track must sit still before we call it settled. */
 const SETTLE_MS = 120;
 
@@ -174,7 +176,11 @@ export function trainWorkoutForToday(
   states: Map<string, WorkoutState>,
   today: string,
 ): { workout: PlannedWorkoutRow; state: WorkoutState } | null {
-  const dated = workouts.find((workout) => workout.scheduled_date === today);
+  const dated =
+    workouts.find(
+      (workout) =>
+        workout.scheduled_date === today && states.get(workout.id) === "TODAY",
+    ) ?? workouts.find((workout) => workout.scheduled_date === today);
   if (dated)
     return { workout: dated, state: states.get(dated.id) ?? "TODAY" };
 
@@ -314,6 +320,12 @@ export function Today({
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
   const [active, setActive] = useState<ActiveSession | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
+  // A missing row alone is ambiguous: it can mean a request is still in
+  // flight or that it failed. Train needs the difference so it does not leave
+  // a failed details request looking like an endless load.
+  const [rxLoadState, setRxLoadState] = useState<
+    Record<string, PrescriptionLoadState>
+  >({});
   // Bumped every time onPlanChanged clears rx below. A getResolvedPrescriptions
   // call already in flight when that happens captures the generation it
   // started on; if the generation has moved by the time it resolves, the plan
@@ -687,12 +699,21 @@ export function Today({
     const generation = rxGenerationRef.current;
     if (rxInFlightRef.current.get(workoutId) === generation) return;
     rxInFlightRef.current.set(workoutId, generation);
+    setRxLoadState((prev) => ({ ...prev, [workoutId]: "loading" }));
     getResolvedPrescriptions(workoutId)
       .then((r) => {
         if (rxGenerationRef.current !== generation) return;
         setRx((prev) => ({ ...prev, [workoutId]: r.data }));
+        setRxLoadState((prev) => ({ ...prev, [workoutId]: "loaded" }));
       })
-      .catch((e: unknown) => reportError(e, "load prescriptions"))
+      .catch((e: unknown) => {
+        if (rxGenerationRef.current !== generation) return;
+        setRxLoadState((prev) => ({
+          ...prev,
+          [workoutId]: staleReason(e),
+        }));
+        reportError(e, "load prescriptions");
+      })
       .finally(() => {
         if (rxInFlightRef.current.get(workoutId) === generation)
           rxInFlightRef.current.delete(workoutId);
@@ -739,6 +760,7 @@ export function Today({
         rxGenerationRef.current += 1;
         setSelectedDate(today);
         setRx({});
+        setRxLoadState({});
         reload();
         if (selectedWorkoutIdRef.current) fetchRx(selectedWorkoutIdRef.current);
         if (expandedRef.current) fetchRx(expandedRef.current);
@@ -1036,6 +1058,12 @@ export function Today({
   const trainPrescriptions = trainWorkout
     ? (rx[trainWorkout.workout.id] ?? null)
     : null;
+  const trainPrescriptionLoadState: PrescriptionLoadState =
+    trainWorkout === null
+      ? "loaded"
+      : trainPrescriptions === null
+        ? (rxLoadState[trainWorkout.workout.id] ?? "loading")
+        : "loaded";
   // Program can be left while its calendar is on another day. Train still
   // needs today's shape, so ask the existing prescription loader for today's
   // row rather than inheriting that unrelated selection or creating a second
@@ -1099,6 +1127,7 @@ export function Today({
           stale={stale}
           workout={trainWorkout}
           prescriptions={trainPrescriptions}
+          prescriptionLoadState={trainPrescriptionLoadState}
           active={active}
           recovery={orphanRecovery}
           startEnabled={canStart}

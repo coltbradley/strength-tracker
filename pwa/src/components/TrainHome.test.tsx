@@ -64,6 +64,7 @@ function renderHome(
         loadIssue={null}
         workout={{ workout, state: "TODAY" }}
         prescriptions={rows}
+        prescriptionLoadState="loaded"
         active={null}
         recovery={null}
         startEnabled
@@ -136,6 +137,7 @@ describe("TrainHome", () => {
           loadIssue={null}
           workout={null}
           prescriptions={null}
+          prescriptionLoadState="loading"
           active={null}
           recovery={null}
           startEnabled={false}
@@ -155,6 +157,7 @@ describe("TrainHome", () => {
           loadIssue="offline"
           workout={null}
           prescriptions={null}
+          prescriptionLoadState="loaded"
           active={null}
           recovery={null}
           startEnabled={false}
@@ -165,6 +168,15 @@ describe("TrainHome", () => {
     );
     expect(screen.getByText("Couldn’t load your plan while offline.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+  });
+
+  it("does not mistake unavailable offline details for a pending load", () => {
+    renderHome({ prescriptions: null, prescriptionLoadState: "offline" });
+
+    expect(
+      screen.getByText("Workout details are unavailable offline. Refresh your plan to retry."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Workout details are loading.")).toBeNull();
   });
 
   it("routes rest days and first runs to Program or existing coach access", () => {
@@ -182,6 +194,7 @@ describe("TrainHome", () => {
           loadIssue={null}
           workout={null}
           prescriptions={null}
+          prescriptionLoadState="loaded"
           active={null}
           recovery={null}
           startEnabled={false}

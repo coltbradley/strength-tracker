@@ -185,6 +185,25 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     expect(screen.queryByText("3×5")).toBeNull();
   });
 
+  it("shows a failed Train details read and retries it when the plan refreshes", async () => {
+    getResolvedPrescriptions.mockRejectedValue(new Error("connection lost"));
+
+    render(<Today presentation="train" />);
+
+    await screen.findByText("Couldn’t load workout details. Refresh your plan to retry.");
+
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [rxRow("Deadlift")],
+      fromCache: false,
+      stale: null,
+    });
+
+    notifyPlanChanged();
+
+    expect(await screen.findByText("Deadlift")).toBeTruthy();
+    expect(getResolvedPrescriptions).toHaveBeenCalledTimes(2);
+  });
+
   it("coalesces Train's overlapping prescription load for an undated workout", async () => {
     let resolveRead: (value: {
       data: ReturnType<typeof rxRow>[];

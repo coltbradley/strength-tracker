@@ -284,6 +284,22 @@ describe("trainWorkoutForToday", () => {
     ).toEqual({ workout, state: "DONE" });
   });
 
+  it.each(["DONE", "SKIPPED"] as const)(
+    "prefers an unfinished same-day workout over a %s one",
+    (completedState) => {
+    const completed = day({ id: "completed" });
+    const ready = day({ id: "ready", day_index: 1 });
+    const states = new Map([
+      [completed.id, completedState],
+      [ready.id, "TODAY" as const],
+    ]);
+
+    expect(
+      trainWorkoutForToday([completed, ready], states, "2026-09-04"),
+    ).toEqual({ workout: ready, state: "TODAY" });
+    },
+  );
+
   it("uses the current undated program day when there is no calendar date", () => {
     const first = day({ id: "first", scheduled_date: null });
     const second = day({ id: "second", scheduled_date: null });
