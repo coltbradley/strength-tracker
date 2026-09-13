@@ -31,13 +31,7 @@
 //   ordinary answer. Rating a set after the fact is a correction like any
 //   other, because `sets` is append-only.
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { type StepDef } from "../components/Stepper";
 import { Note } from "../components/Note";
@@ -48,7 +42,9 @@ import { PlateSheet } from "../components/PlateSheet";
 import { SetEditor, type SetDraft } from "../components/session/SetEditor";
 import { SupersetRoundEditor } from "../components/session/SupersetRoundEditor";
 import { FocusDeck } from "../components/session/FocusDeck";
+import { FocusMoreSheet } from "../components/session/FocusMoreSheet";
 import { WorkoutOverview } from "../components/session/WorkoutOverview";
+import { RpeChips } from "../components/RpeChips";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
@@ -102,7 +98,6 @@ import {
   useExerciseBarKg,
   useExercisePref,
   usePlatesOnHand,
-  useSetting,
 } from "../hooks/useSettings";
 import {
   getExerciseBarKg,
@@ -122,6 +117,7 @@ import {
 import { cancelRestAlert, scheduleRestAlert } from "../lib/push";
 import {
   enteredKg,
+  isBodyweightEquipment,
   loadEntryForSet,
   offersLoadEntry,
   resolveLoadEntry,
@@ -184,7 +180,9 @@ function twoMemberSuperset(
     end++;
   if (end - start !== 1) return null;
   const pair = [entries[start], entries[end]] as const;
-  return pair.every((entry) => (entry.brackets[0]?.tracking ?? "reps") === "reps")
+  return pair.every(
+    (entry) => (entry.brackets[0]?.tracking ?? "reps") === "reps",
+  )
     ? pair
     : null;
 }
@@ -193,7 +191,6 @@ export function Session() {
   const navigate = useNavigate();
   const unit = useUnit();
   const autoStartRest = useAutoStartRest();
-  const focusDeckEnabled = useSetting("focusDeckPreview");
   const inventory = usePlatesOnHand(unit);
 
   const [active, setActive] = useState<ActiveSession | null | undefined>(
@@ -239,9 +236,14 @@ export function Session() {
   const [equipMap, setEquipMap] = useState<Record<string, string | null>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(null);
-  const [presentation, setPresentation] = useState<SessionPresentation>(() =>
-    focusDeckEnabled ? "focus" : "overview",
-  );
+  // Focus is the default for an eligible session; the mount effect below
+  // corrects this to "overview" once sets have loaded and the entries this
+  // session actually has (a timed prescription among them, say) are known.
+  // `entries` is not computed yet at this point in the render, so this
+  // cannot read eligibility directly — the effect is the single source of
+  // truth for it.
+  const [presentation, setPresentation] =
+    useState<SessionPresentation>("focus");
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const priorFocusKey = useRef<string | null>(null);
 
@@ -367,6 +369,15 @@ export function Session() {
   // editor sits deep in the scroller with its Save/Cancel row underneath
   const kbInset = useKeyboardInset();
   const [sheet, setSheet] = useState<"search" | "swap" | "plates" | null>(null);
+  // Focus mode's one door to everything its default screen hides: RPE, a set
+  // note, warmup/working, skip, the plate calculator, correcting or voiding a
+  // logged set, last time, and the full LOGGED history. Its own boolean
+  // rather than a variant of `sheet` above — those are all Session-owned
+  // overlays already keyed by a specific exercise via closures, and folding
+  // this in would mean widening that type for a sheet that, unlike the
+  // others, needs the CURRENT focus entry (or superset pair) rather than a
+  // fixed target passed at open time.
+  const [moreOpen, setMoreOpen] = useState(false);
   /** the movement whose how-to sheet is open (photos + steps from the seed) */
   const [demoFor, setDemoFor] = useState<{ id: string; name: string } | null>(
     null,
@@ -374,7 +385,6 @@ export function Session() {
   const [pad, setPad] = useState<PadSpec | null>(null);
   const [allExercises, setAllExercises] = useState<ExerciseRow[]>([]);
   const [exercisesFailed, setExercisesFailed] = useState(false);
-
 
   // The bootstrap load can come up empty (first run, offline, cold cache);
   // opening a picker retries rather than showing a lying spinner. Both
@@ -705,14 +715,14 @@ export function Session() {
     setOpenKey(entries.find((e) => !entryDone(e))?.key ?? null);
   }, [setsLoaded, entries, entryDone]);
 
-  // Read the rollout flag only when this session starts. Changing a device
-  // preference while lifting does not create another session presentation or
-  // discard the draft that is already on screen.
+  // Decided once per session start/restore, from the canonical entries this
+  // session actually has — never persisted, so a reload always re-derives it
+  // rather than promising to restore a visual mode nobody saved.
   const focusPresentationStarted = useRef(false);
   useEffect(() => {
     if (!setsLoaded || focusPresentationStarted.current) return;
     focusPresentationStarted.current = true;
-    if (!focusDeckEnabled || !focusEligible) {
+    if (!focusEligible) {
       setPresentation("overview");
       return;
     }
@@ -720,7 +730,27 @@ export function Session() {
     setFocusKey(key);
     setOpenKey(key);
     setPresentation("focus");
-  }, [entries, entryDone, focusDeckEnabled, focusEligible, openKey, setsLoaded]);
+  }, [entries, entryDone, focusEligible, openKey, setsLoaded]);
+
+  // Focus is meant to read as one exercise at arm's length, not the app plus
+  // one exercise — so the shared header and tab bar (App.tsx owns them; the
+  // tab bar is already hidden for the whole /session route) hide for as long
+  // as this screen is actually showing them. A body class rather than lifted
+  // state: App has no reason to know Session's presentation, and this is the
+  // one rule that needs it to. Always cleaned up on unmount or mode change,
+  // so leaving the screen never leaves the rest of the app headerless.
+  useEffect(() => {
+    if (presentation !== "focus") return;
+    document.body.classList.add("focus-chrome-hidden");
+    return () => document.body.classList.remove("focus-chrome-hidden");
+  }, [presentation]);
+
+  // The "more" sheet describes ONE exercise (or round); switching what focus
+  // is showing under it — by advancing, or by leaving focus altogether —
+  // must not leave it open describing something no longer on screen.
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [openKey, presentation]);
 
   // superset grouping: consecutive entries sharing a non-null group get
   // A1/A2 tags and a bracket rail
@@ -796,6 +826,11 @@ export function Session() {
     ? (equipMap[openEntry.exercise_id] ?? null)
     : null;
   const plateable = equipment === "barbell" || equipment === "machine";
+  // Focus's hero is load or reps depending on whether there is an implement
+  // at all. Gated to focus mode only (see SetEditor's `noLoad`) — the
+  // accordion's long-standing load field is unchanged here.
+  const noLoadEditor =
+    presentation === "focus" && isBodyweightEquipment(equipment);
   // per-exercise bar (0 = plate-loaded, e.g. leg press); persisted choice
   const exerciseBarKg = useExerciseBarKg(
     openEntry?.exercise_id ?? null,
@@ -808,10 +843,7 @@ export function Session() {
 
   const toggleOpen = (key: string) => {
     setOpenKey((prev) =>
-      pinnedOverviewEntryKey(
-        prev === key ? null : key,
-        editingEntryKey,
-      ),
+      pinnedOverviewEntryKey(prev === key ? null : key, editingEntryKey),
     );
   };
 
@@ -826,7 +858,7 @@ export function Session() {
   };
 
   const enterFocus = () => {
-    if (!focusDeckEnabled || !focusEligible) return;
+    if (!focusEligible) return;
     if (editingEntryKey) {
       setOpenKey(editingEntryKey);
       setFocusKey(editingEntryKey);
@@ -1000,7 +1032,8 @@ export function Session() {
       lastSession: lastActuals[openEntry.exercise_id] ?? null,
     });
     // every source above is a TOTAL; the steppers hold what gets typed
-    const prefilledLoad = Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
+    const prefilledLoad =
+      Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
     setEntryKg(prefilledLoad);
     setReps(p.reps);
     if (stagedDraftsRef.current[draftKey]) {
@@ -1106,7 +1139,9 @@ export function Session() {
     // verify would number this set 0 on top of whatever is already logged.
     if (!entryToLog || !sessionId || logLocked || !setsLoaded || setsFailed)
       return;
-    delete stagedDraftsRef.current[`${entryToLog.key}:${entryToLog.exercise_id}`];
+    delete stagedDraftsRef.current[
+      `${entryToLog.key}:${entryToLog.exercise_id}`
+    ];
     setLogLocked(true);
     window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     setVoidArm(null);
@@ -1184,7 +1219,10 @@ export function Session() {
     // off nothing about `rest` changes, so nothing else would ever write the
     // new startedAt — and no strip also means there is none to restore, which
     // is the null target.
-    mirrorRest(showStrip ? targetRestSeconds : null, showStrip ? forLabel : null);
+    mirrorRest(
+      showStrip ? targetRestSeconds : null,
+      showStrip ? forLabel : null,
+    );
     // What the NEXT set should be, from the plan rather than from a reset:
     // this was an unconditional "working", so a coach's second prescribed
     // warmup arrived pre-set to working and got logged as one.
@@ -1195,9 +1233,7 @@ export function Session() {
       knownRxIds,
     ).filter((s) => s.set_type === "warmup").length;
     if (entryToLog.key === openEntry?.key)
-      setSetType(
-        warmupsLogged < warmupSets(entryToLog) ? "warmup" : "working",
-      );
+      setSetType(warmupsLogged < warmupSets(entryToLog) ? "warmup" : "working");
     // The rating does NOT carry to the next set. Load and reps do, because
     // they are the plan repeating; how hard set 3 felt is not a prediction
     // about set 4, and a sticky value would quietly attach one lifter's one
@@ -1286,7 +1322,11 @@ export function Session() {
       // This transaction is the local commit point. No set reaches React or
       // the cache until both queue rows exist together in IndexedDB.
       await outbox.enqueueBatch(
-        inserts.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })),
+        inserts.map((payload) => ({
+          kind: "insert" as const,
+          table: "sets" as const,
+          payload,
+        })),
       );
       const next = applySets((prior) => [...prior, ...inserts]);
       cacheSet(cacheKeys.sessionSets(sessionId), next).catch((error: unknown) =>
@@ -1310,26 +1350,37 @@ export function Session() {
       // already happens on its own from the updated `sets`.
       for (const entry of members) {
         if (entry.key !== openEntry?.key) continue;
-        const warmupsLogged = setsForEntryOf(entry, next, rx, knownRxIds).filter(
-          (s) => s.set_type === "warmup",
-        ).length;
+        const warmupsLogged = setsForEntryOf(
+          entry,
+          next,
+          rx,
+          knownRxIds,
+        ).filter((s) => s.set_type === "warmup").length;
         setSetType(warmupsLogged < warmupSets(entry) ? "warmup" : "working");
       }
 
       const doneAfter = (entry: ExerciseEntry): boolean =>
-        skips.has(entry.key) || entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
+        skips.has(entry.key) ||
+        entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
       const now = Date.now();
       restRef.current = { startedAt: now };
       const forLabel = `${members[1].name} set ${inserts[1].set_index + 1}`;
-      const showStrip = autoStartRest && supersetPartnerOf(entries, members[0].key, doneAfter) === null;
+      const showStrip =
+        autoStartRest &&
+        supersetPartnerOf(entries, members[0].key, doneAfter) === null;
       if (showStrip)
         setRest({ startedAt: now, targetSeconds: roundRestSeconds, forLabel });
       disarmRestAlert();
       if (showStrip) armRestAlert(now + roundRestSeconds * 1000, forLabel);
-      mirrorRest(showStrip ? roundRestSeconds : null, showStrip ? forLabel : null);
+      mirrorRest(
+        showStrip ? roundRestSeconds : null,
+        showStrip ? forLabel : null,
+      );
     } catch (error) {
       reportError(error, "queue superset round");
-      setRoundError("This round could not be saved locally. Check storage and retry.");
+      setRoundError(
+        "This round could not be saved locally. Check storage and retry.",
+      );
     } finally {
       window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     }
@@ -1398,6 +1449,11 @@ export function Session() {
     if (editing?.set.id === s.id) return;
     setVoidArm(null);
     setNoteEditingId(null);
+    // Correcting a set — reached from focus mode only via the "more" sheet's
+    // LOGGED list — is a deliberate switch to the hero editor. Leaving the
+    // sheet open over it would show SAVE/Cancel behind an overlay meant for
+    // browsing, not for the one active edit.
+    setMoreOpen(false);
     // Only the first tap displaces the staged values; re-tapping a different
     // set mid-correction must still restore what was there BEFORE editing.
     const staged = editing?.staged ?? { entryKg, reps, setType, rpe };
@@ -1737,7 +1793,9 @@ export function Session() {
         initial: String(draft.reps),
         allowDecimal: false,
         onCommit: (value) => {
-          updateDraft({ reps: Math.min(MAX_REPS, Math.max(0, Math.round(value))) });
+          updateDraft({
+            reps: Math.min(MAX_REPS, Math.max(0, Math.round(value))),
+          });
           setPad(null);
         },
         onCancel: () => setPad(null),
@@ -1825,7 +1883,23 @@ export function Session() {
             : a,
         ).id;
 
-  const renderEditor = (entry: ExerciseEntry, showAdvance = true) => {
+  /**
+   * `part` decides which of this entry's three pieces render:
+   *  - "full" (the accordion, unchanged): context (target/last-time/swap),
+   *    the editor, and the full LOGGED history, in that order.
+   *  - "hero" (focus mode's default screen): just the correcting note (when
+   *    a correction is in progress — that state was entered deliberately and
+   *    stays visible) and the editor itself. Context and LOGGED are left to
+   *    "detail" so the default screen stays to the load/reps and LOG.
+   *  - "detail" (focus mode's "more" sheet): context, the correcting note,
+   *    and the full LOGGED history — everything "hero" leaves out. Never the
+   *    editor itself: the hero editor is not duplicated into the sheet.
+   */
+  const renderEditor = (
+    entry: ExerciseEntry,
+    showAdvance = true,
+    part: "full" | "hero" | "detail" = "full",
+  ) => {
     const prescribed = entry.brackets.length > 0;
     const done = entryProgress(entry);
     const total = prescribed ? targetSets(entry) : null;
@@ -1853,14 +1927,20 @@ export function Session() {
     // more full round, offering "Log round" to add an unprescribed 4th set to
     // A1 alongside A2's legitimate one, and the label undercounted the day's
     // real round total.
-    const roundProgressA = pairedRound ? entryProgress(focusSupersetPair[0]) : 0;
-    const roundProgressB = pairedRound ? entryProgress(focusSupersetPair[1]) : 0;
+    const roundProgressA = pairedRound
+      ? entryProgress(focusSupersetPair[0])
+      : 0;
+    const roundProgressB = pairedRound
+      ? entryProgress(focusSupersetPair[1])
+      : 0;
     const roundTargetA = pairedRound ? targetSets(focusSupersetPair[0]) : 0;
     const roundTargetB = pairedRound ? targetSets(focusSupersetPair[1]) : 0;
     const roundExhaustedA = roundTargetA > 0 && roundProgressA >= roundTargetA;
     const roundExhaustedB = roundTargetB > 0 && roundProgressB >= roundTargetB;
     const roundTail = roundExhaustedA !== roundExhaustedB;
-    const roundIndex = pairedRound ? Math.min(roundProgressA, roundProgressB) + 1 : 0;
+    const roundIndex = pairedRound
+      ? Math.min(roundProgressA, roundProgressB) + 1
+      : 0;
     const roundTotal = pairedRound
       ? roundTail
         ? Math.max(roundTargetA, roundTargetB)
@@ -1878,49 +1958,53 @@ export function Session() {
             : "a2"
       : null;
 
-    return (
-      <>
-                      <span className="rx-context">
-                        {prescribed ? (
-                          <>
-                            TARGET {scheme(entry).toUpperCase()}
-                            {entry.brackets.length > 1 && currentBracket
-                              ? ` · NOW ${formatRepRange(currentBracket.reps_min, currentBracket.reps_max)} REPS`
-                              : ""}
-                            {currentBracket?.rest_seconds != null
-                              ? ` · REST ${formatClock(currentBracket.rest_seconds)}`
-                              : ""}
-                            {entry.brackets.some(rxHasNoTm)
-                              ? " · NO TM SET"
-                              : ""}
-                          </>
-                        ) : (
-                          `NO TARGET · BY FEEL${equipment ? ` · ${equipment.toUpperCase()}` : ""}`
-                        )}
-                      </span>
+    // "8-15" beside reps in focus mode, instead of the full TARGET line
+    // (moved to "detail"). Only meaningful for the plain SetEditor path —
+    // a paired round computes its own per-member label in `roundEditorFor`.
+    const repsTargetLabel =
+      prescribed && currentBracket
+        ? formatRepRange(currentBracket.reps_min, currentBracket.reps_max)
+        : null;
 
-                      {/* "Last time" is the CHOSEN movement's own history:
+    const contextBlock = (
+      <>
+        <span className="rx-context">
+          {prescribed ? (
+            <>
+              TARGET {scheme(entry).toUpperCase()}
+              {entry.brackets.length > 1 && currentBracket
+                ? ` · NOW ${formatRepRange(currentBracket.reps_min, currentBracket.reps_max)} REPS`
+                : ""}
+              {currentBracket?.rest_seconds != null
+                ? ` · REST ${formatClock(currentBracket.rest_seconds)}`
+                : ""}
+              {entry.brackets.some(rxHasNoTm) ? " · NO TM SET" : ""}
+            </>
+          ) : (
+            `NO TARGET · BY FEEL${equipment ? ` · ${equipment.toUpperCase()}` : ""}`
+          )}
+        </span>
+
+        {/* "Last time" is the CHOSEN movement's own history:
                           `entry.exercise_id` is what is being lifted, and
                           `lastActuals` is keyed by exercise, so the swap
                           moves this line with it and never quotes the
                           planned movement's numbers at a different one. */}
-                      {lastTime(entry.exercise_id) && (
-                        <div className="microcopy">
-                          {lastTime(entry.exercise_id)}
-                        </div>
-                      )}
+        {lastTime(entry.exercise_id) && (
+          <div className="microcopy">{lastTime(entry.exercise_id)}</div>
+        )}
 
-                      {entry.substitutedFor && (
-                        <div className="microcopy swap-note">
-                          Instead of {entry.substitutedFor.name}. The plan’s
-                          target still counts here.
-                          {swapFrozen(entry)
-                            ? " Sets are logged against it, so it stays."
-                            : ""}
-                        </div>
-                      )}
+        {entry.substitutedFor && (
+          <div className="microcopy swap-note">
+            Instead of {entry.substitutedFor.name}. The plan’s target still
+            counts here.
+            {swapFrozen(entry)
+              ? " Sets are logged against it, so it stays."
+              : ""}
+          </div>
+        )}
 
-                      {/* Only while nothing has been logged against the swap.
+        {/* Only while nothing has been logged against the swap.
                           Those sets name the chosen exercise and are
                           append-only, so there is nothing left here to undo —
                           see `swapFrozen`. Not mid-correction either: the set
@@ -1928,270 +2012,288 @@ export function Session() {
                           under, and offering to change the movement in the
                           same breath only invites the reader to think
                           otherwise. */}
-                      {!swapFrozen(entry) && !editing && (
-                        <div className="swap-actions">
-                          <button
-                            type="button"
-                            className="swap-action"
-                            onClick={() => openSheet("swap")}
-                          >
-                            {entry.substitutedFor
-                              ? "SWAP AGAIN"
-                              : "SWAP EXERCISE"}
-                          </button>
-                          {entry.substitutedFor && (
-                            <button
-                              type="button"
-                              className="swap-action"
-                              onClick={() => undoSwap(entry)}
-                            >
-                              UNDO SWAP
-                            </button>
-                          )}
-                        </div>
-                      )}
+        {!swapFrozen(entry) && !editing && (
+          <div className="swap-actions">
+            <button
+              type="button"
+              className="swap-action"
+              onClick={() => openSheet("swap")}
+            >
+              {entry.substitutedFor ? "SWAP AGAIN" : "SWAP EXERCISE"}
+            </button>
+            {entry.substitutedFor && (
+              <button
+                type="button"
+                className="swap-action"
+                onClick={() => undoSwap(entry)}
+              >
+                UNDO SWAP
+              </button>
+            )}
+          </div>
+        )}
+      </>
+    );
 
-                      {editing && (
-                        <div className="microcopy correcting-note">
-                          Correcting set {editing.set.set_index + 1} · was{" "}
-                          {toDisplay(
-                            enteredKg(
-                              editing.set.load_kg,
-                              editing.set.load_entry ?? "total",
-                            ),
-                            unit,
-                          )}{" "}
-                          {unit}
-                          {editing.set.load_entry === "per_side"
-                            ? "/side"
-                            : ""}{" "}
-                          × {editing.set.reps}
-                        </div>
-                      )}
+    // The correction in progress is a state the lifter entered deliberately
+    // (tapping a logged set in "detail"), so it stays visible in "hero" too —
+    // unlike the rest of contextBlock, hiding this one would leave SAVE/
+    // Cancel on screen with no explanation of what they apply to.
+    const correctingNote = editing && (
+      <div className="microcopy correcting-note">
+        Correcting set {editing.set.set_index + 1} · was{" "}
+        {toDisplay(
+          enteredKg(editing.set.load_kg, editing.set.load_entry ?? "total"),
+          unit,
+        )}{" "}
+        {unit}
+        {editing.set.load_entry === "per_side" ? "/side" : ""} ×{" "}
+        {editing.set.reps}
+      </div>
+    );
 
-                      {pairedRound && roundA1 && roundA2 ? (
-                        <SupersetRoundEditor
-                          label={`SUPERSET ${roundLetter} · ROUND ${roundIndex} OF ${roundTotal}`}
-                          a1={{
-                            tag: roundTagA1,
-                            editor: roundEditorFor(focusSupersetPair[0], roundA1),
-                          }}
-                          a2={{
-                            tag: roundTagA2,
-                            editor: roundEditorFor(focusSupersetPair[1], roundA2),
-                          }}
-                          disabled={logLocked || !setsLoaded || setsFailed}
-                          error={roundError}
-                          singleLogLabel={`Log ${roundTagA1} only`}
-                          pendingMember={pendingRoundMember}
-                          onLogRound={(drafts) =>
-                            void logRound({
-                              keys: [focusSupersetPair[0].key, focusSupersetPair[1].key],
-                              roundIndex,
-                              a1: drafts.a1,
-                              a2: drafts.a2,
-                            })
-                          }
-                          onLogA1Only={() => {
-                            if (!sessionId || logLocked || !setsLoaded || setsFailed)
-                              return;
-                            logSet(roundA1, focusSupersetPair[0]);
-                            setRoundDrafts((prior) => {
-                              const next = { ...prior };
-                              delete next[focusSupersetPair[0].key];
-                              return next;
-                            });
-                          }}
-                          onLogA2Only={() => {
-                            if (!sessionId || logLocked || !setsLoaded || setsFailed)
-                              return;
-                            logSet(roundA2, focusSupersetPair[1]);
-                            setRoundDrafts((prior) => {
-                              const next = { ...prior };
-                              delete next[focusSupersetPair[1].key];
-                              return next;
-                            });
-                          }}
-                        />
-                      ) : (
-                      <SetEditor
-                        entry={entry}
-                        /* A legacy backoff is legal historical data but not a
+    const editorBlock = (
+      <>
+        {pairedRound && roundA1 && roundA2 ? (
+          <SupersetRoundEditor
+            label={`SUPERSET ${roundLetter} · ROUND ${roundIndex} OF ${roundTotal}`}
+            a1={{
+              tag: roundTagA1,
+              editor: roundEditorFor(focusSupersetPair[0], roundA1),
+            }}
+            a2={{
+              tag: roundTagA2,
+              editor: roundEditorFor(focusSupersetPair[1], roundA2),
+            }}
+            disabled={logLocked || !setsLoaded || setsFailed}
+            error={roundError}
+            singleLogLabel={`Log ${roundTagA1} only`}
+            pendingMember={pendingRoundMember}
+            onLogRound={(drafts) =>
+              void logRound({
+                keys: [focusSupersetPair[0].key, focusSupersetPair[1].key],
+                roundIndex,
+                a1: drafts.a1,
+                a2: drafts.a2,
+              })
+            }
+            onLogA1Only={() => {
+              if (!sessionId || logLocked || !setsLoaded || setsFailed) return;
+              logSet(roundA1, focusSupersetPair[0]);
+              setRoundDrafts((prior) => {
+                const next = { ...prior };
+                delete next[focusSupersetPair[0].key];
+                return next;
+              });
+            }}
+            onLogA2Only={() => {
+              if (!sessionId || logLocked || !setsLoaded || setsFailed) return;
+              logSet(roundA2, focusSupersetPair[1]);
+              setRoundDrafts((prior) => {
+                const next = { ...prior };
+                delete next[focusSupersetPair[1].key];
+                return next;
+              });
+            }}
+          />
+        ) : (
+          <SetEditor
+            entry={entry}
+            /* A legacy backoff is legal historical data but not a
                            selectable kind. Passing it through preserves an
                            unchanged correction until the lifter picks one of
                            the two supported kinds. */
-                        draft={{
-                          entryKg,
-                          reps,
-                          setType: setType as BracketKind,
-                          rpe,
-                        }}
-                        tracking={isTick(entry) ? "done" : "reps"}
-                        loadPresentation={{
-                          perSide,
-                          totalKg: totalLoadKg,
-                          plateSplit,
-                          barKg: exerciseBarKg,
-                          hint,
-                          canToggleEntry: offersLoadEntry(loadEntryInput),
-                        }}
-                        unit={unit}
-                        maxEntryKg={maxEntryKg}
-                        loadSteps={loadSteps(entry.exercise_id, unit)}
-                        rpeShown={rpeShown(entry.exercise_id)}
-                        logLabel={
-                          editing
-                            ? `SAVE SET ${editing.set.set_index + 1}`
-                            : logLabel(entry)
-                        }
-                        logClassName={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
-                        disabled={logLocked || !setsLoaded || setsFailed}
-                        onDraftChange={(next) => {
-                          if (!editing) rememberStagedDraft(entry, next);
-                          if (next.entryKg !== undefined) setEntryKg(next.entryKg);
-                          if (next.reps !== undefined) setReps(next.reps);
-                          if (next.setType !== undefined) setSetType(next.setType);
-                          if (next.rpe !== undefined) setRpe(next.rpe);
-                        }}
-                        onLog={editing ? saveCorrection : () => logSet()}
-                        onOpenPlates={() => openSheet("plates")}
-                        onOpenPad={openPad}
-                        onToggleLoadEntry={toggleLoadEntry}
-                        onRevealRpe={() =>
-                          setRpeAsked(
-                            (prev) => new Set([...prev, entry.exercise_id]),
-                          )
-                        }
-                      />
-                      )}
+            draft={{
+              entryKg,
+              reps,
+              setType: setType as BracketKind,
+              rpe,
+            }}
+            tracking={isTick(entry) ? "done" : "reps"}
+            loadPresentation={{
+              perSide,
+              totalKg: totalLoadKg,
+              plateSplit,
+              barKg: exerciseBarKg,
+              hint,
+              canToggleEntry: offersLoadEntry(loadEntryInput),
+              noLoad: noLoadEditor,
+            }}
+            unit={unit}
+            maxEntryKg={maxEntryKg}
+            loadSteps={loadSteps(entry.exercise_id, unit)}
+            rpeShown={rpeShown(entry.exercise_id)}
+            logLabel={
+              editing
+                ? `SAVE SET ${editing.set.set_index + 1}`
+                : logLabel(entry)
+            }
+            logClassName={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
+            // A correction is a deliberate, one-off edit to history, exempt
+            // from focus mode's default minimalism: every field (type, RPE,
+            // fine adjustment) stays inline and reachable rather than behind
+            // "more", which is closed the moment a correction starts anyway
+            // (see `startCorrection`).
+            variant={
+              presentation === "focus" && !editing ? "focus" : "overview"
+            }
+            repsTargetLabel={repsTargetLabel}
+            disabled={logLocked || !setsLoaded || setsFailed}
+            onDraftChange={(next) => {
+              if (!editing) rememberStagedDraft(entry, next);
+              if (next.entryKg !== undefined) setEntryKg(next.entryKg);
+              if (next.reps !== undefined) setReps(next.reps);
+              if (next.setType !== undefined) setSetType(next.setType);
+              if (next.rpe !== undefined) setRpe(next.rpe);
+            }}
+            onLog={editing ? saveCorrection : () => logSet()}
+            onOpenPlates={() => openSheet("plates")}
+            onOpenPad={openPad}
+            onToggleLoadEntry={toggleLoadEntry}
+            onRevealRpe={() =>
+              setRpeAsked((prev) => new Set([...prev, entry.exercise_id]))
+            }
+          />
+        )}
 
-                      {setsFailed && (
-                        <p className="microcopy">
-                          This session’s logged sets could not be read from this
-                          device, so a new set would be numbered as if nothing
-                          had been logged. Reload to try again. Nothing already
-                          logged is lost.
-                        </p>
-                      )}
+        {setsFailed && (
+          <p className="microcopy">
+            This session’s logged sets could not be read from this device, so a
+            new set would be numbered as if nothing had been logged. Reload to
+            try again. Nothing already logged is lost.
+          </p>
+        )}
 
-                      {editing && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-block"
-                          onClick={cancelCorrection}
-                        >
-                          Cancel correction
-                        </button>
-                      )}
+        {editing && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-block"
+            onClick={cancelCorrection}
+          >
+            Cancel correction
+          </button>
+        )}
 
-                      {/* The partner mid-superset, the next exercise once the
+        {/* The partner mid-superset, the next exercise once the
                           round is over. It leads only once this exercise's
                           own plan is met — the same rule as before, so
                           exactly one of these two buttons is ever primary. */}
-                      {showAdvance && advanceTo && !editing && (
-                        <button
-                          type="button"
-                          className={`btn ${planMet ? "btn-primary" : "btn-outline-ink"} btn-block`}
-                          onClick={() => setOpenKey(advanceTo.key)}
-                        >
-                          Next · {advanceTo.name}
-                        </button>
-                      )}
+        {showAdvance && advanceTo && !editing && (
+          <button
+            type="button"
+            className={`btn ${planMet ? "btn-primary" : "btn-outline-ink"} btn-block`}
+            onClick={() => setOpenKey(advanceTo.key)}
+          >
+            Next · {advanceTo.name}
+          </button>
+        )}
+      </>
+    );
 
-                      {entrySets.length > 0 && (
-                        <section className="rule-section">
-                          <div className="section-head">
-                            <span className="field-label">LOGGED</span>
-                            <span className="section-meta">
-                              {done}
-                              {total !== null ? ` OF ${total}` : ""}
-                            </span>
-                          </div>
-                          <div className="logged-sets">
-                            {entrySets
-                              .slice()
-                              // set_index is scoped per EXERCISE, so after a
-                              // swap two movements in one entry both count
-                              // from 0 and the index alone no longer orders
-                              // them. When it ties, the clock decides — the
-                              // newest set belongs at the top either way.
-                              .sort(
-                                (a, b) =>
-                                  b.set_index - a.set_index ||
-                                  b.performed_at.localeCompare(a.performed_at),
-                              )
-                              .map((s) => (
-                                <div key={s.id} className="logged-set-wrap">
-                                  <SetRow
-                                    set={s}
-                                    unit={unit}
-                                    restLabel={restAfter(s)}
-                                    onVoid={() => voidSet(s)}
-                                    voidArmed={voidArm === s.id}
-                                    onArmVoid={() => setVoidArm(s.id)}
-                                    /* a tick has no numbers to correct */
-                                    onEdit={
-                                      isTick(entry)
-                                        ? undefined
-                                        : () => startCorrection(s)
-                                    }
-                                    editing={editing?.set.id === s.id}
-                                  />
-                                  {noteEditingId === s.id ? (
-                                    <div className="set-note-editor">
-                                      <textarea
-                                        className="input note-input set-note-input"
-                                        rows={2}
-                                        autoFocus
-                                        enterKeyHint="done"
-                                        value={noteDraft}
-                                        onChange={(e) =>
-                                          setNoteDraft(e.target.value)
-                                        }
-                                        /* the keyboard animates in over ~250ms;
+    // Scoped to THIS entry, not the outer `entrySets` (which tracks
+    // `openEntry`): a superset's "detail" view calls this twice, once per
+    // member, and each one's own logged history must follow its own
+    // exercise — reading the outer, single-entry value here would show A1's
+    // sets under A2's heading whenever A2 is not the entry currently open.
+    const entrySetsForThis = setsForEntry(entry);
+    const newestSetIdForThis =
+      entrySetsForThis.length === 0
+        ? null
+        : entrySetsForThis.reduce((a, b) =>
+            b.set_index > a.set_index ||
+            (b.set_index === a.set_index && b.performed_at > a.performed_at)
+              ? b
+              : a,
+          ).id;
+
+    const loggedBlock = entrySetsForThis.length > 0 && (
+      <section className="rule-section">
+        <div className="section-head">
+          <span className="field-label">LOGGED</span>
+          <span className="section-meta">
+            {done}
+            {total !== null ? ` OF ${total}` : ""}
+          </span>
+        </div>
+        <div className="logged-sets">
+          {entrySetsForThis
+            .slice()
+            // set_index is scoped per EXERCISE, so after a
+            // swap two movements in one entry both count
+            // from 0 and the index alone no longer orders
+            // them. When it ties, the clock decides — the
+            // newest set belongs at the top either way.
+            .sort(
+              (a, b) =>
+                b.set_index - a.set_index ||
+                b.performed_at.localeCompare(a.performed_at),
+            )
+            .map((s) => (
+              <div key={s.id} className="logged-set-wrap">
+                <SetRow
+                  set={s}
+                  unit={unit}
+                  restLabel={restAfter(s)}
+                  onVoid={() => voidSet(s)}
+                  voidArmed={voidArm === s.id}
+                  onArmVoid={() => setVoidArm(s.id)}
+                  /* a tick has no numbers to correct */
+                  onEdit={isTick(entry) ? undefined : () => startCorrection(s)}
+                  editing={editing?.set.id === s.id}
+                />
+                {noteEditingId === s.id ? (
+                  <div className="set-note-editor">
+                    <textarea
+                      className="input note-input set-note-input"
+                      rows={2}
+                      autoFocus
+                      enterKeyHint="done"
+                      value={noteDraft}
+                      onChange={(e) => setNoteDraft(e.target.value)}
+                      /* the keyboard animates in over ~250ms;
                                          scroll once it has settled so Save and
                                          Cancel land above it */
-                                        onFocus={(e) => {
-                                          const el = e.currentTarget
-                                            .parentElement as HTMLElement | null;
-                                          window.setTimeout(() => {
-                                            el?.scrollIntoView({
-                                              block: "center",
-                                              behavior: prefersReducedMotion()
-                                                ? "auto"
-                                                : "smooth",
-                                            });
-                                          }, 300);
-                                        }}
-                                        placeholder="Note on this set…"
-                                      />
-                                      <div className="set-note-actions">
-                                        <button
-                                          type="button"
-                                          className="btn btn-ghost"
-                                          onClick={() => setNoteEditingId(null)}
-                                        >
-                                          Cancel
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="btn btn-secondary"
-                                          onClick={() => saveNote(s.id)}
-                                        >
-                                          Save
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ) : setNotes[s.id] ? (
-                                    <button
-                                      type="button"
-                                      className="set-note-preview"
-                                      onClick={() => openNote(s.id)}
-                                    >
-                                      {setNotes[s.id]}
-                                    </button>
-                                  ) : s.id === newestSetId ? (
-                                    /* + NOTE on the NEWEST set only. A set that
+                      onFocus={(e) => {
+                        const el = e.currentTarget
+                          .parentElement as HTMLElement | null;
+                        window.setTimeout(() => {
+                          el?.scrollIntoView({
+                            block: "center",
+                            behavior: prefersReducedMotion()
+                              ? "auto"
+                              : "smooth",
+                          });
+                        }, 300);
+                      }}
+                      placeholder="Note on this set…"
+                    />
+                    <div className="set-note-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setNoteEditingId(null)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => saveNote(s.id)}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                ) : setNotes[s.id] ? (
+                  <button
+                    type="button"
+                    className="set-note-preview"
+                    onClick={() => openNote(s.id)}
+                  >
+                    {setNotes[s.id]}
+                  </button>
+                ) : s.id === newestSetIdForThis ? (
+                  /* + NOTE on the NEWEST set only. A set that
                                      already HAS a note still shows it (the
                                      branch above), and an older one can still
                                      be annotated by tapping its row — but five
@@ -2199,41 +2301,185 @@ export function Session() {
                                      chrome, which roughly doubled the height of
                                      this section for an action almost nobody
                                      takes on a set from twenty minutes ago. */
-                                    <button
-                                      type="button"
-                                      className="set-note-add"
-                                      onClick={() => openNote(s.id)}
-                                    >
-                                      + NOTE
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      className="set-note-add set-note-add-quiet"
-                                      aria-label={`add a note to set ${s.set_index + 1}`}
-                                      onClick={() => openNote(s.id)}
-                                    >
-                                      +
-                                    </button>
-                                  )}
-                                </div>
-                              ))}
-                          </div>
-                          {/* Shown on the FIRST set of a session only. It taught
+                  <button
+                    type="button"
+                    className="set-note-add"
+                    onClick={() => openNote(s.id)}
+                  >
+                    + NOTE
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="set-note-add set-note-add-quiet"
+                    aria-label={`add a note to set ${s.set_index + 1}`}
+                    onClick={() => openNote(s.id)}
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+            ))}
+        </div>
+        {/* Shown on the FIRST set of a session only. It taught
                             something worth knowing once — the set itself is
                             the tap target, ✕ removes — and then repeated
                             itself under every open exercise, in every
                             session, forever. By the third week it was
                             furniture. */}
-                          {entrySets.length === 1 && (
-                            <div className="microcopy">
-                              Wrong number? Tap the set to correct it, or ✕ to
-                              remove it.
-                            </div>
-                          )}
-                        </section>
-                      )}
+        {entrySetsForThis.length === 1 && (
+          <div className="microcopy">
+            Wrong number? Tap the set to correct it, or ✕ to remove it.
+          </div>
+        )}
+      </section>
+    );
+
+    if (part === "hero") {
+      return (
+        <>
+          {correctingNote}
+          {editorBlock}
+        </>
+      );
+    }
+    if (part === "detail") {
+      return (
+        <>
+          {contextBlock}
+          {correctingNote}
+          {loggedBlock}
+        </>
+      );
+    }
+    return (
+      <>
+        {contextBlock}
+        {correctingNote}
+        {editorBlock}
+        {loggedBlock}
       </>
+    );
+  };
+
+  /** The draft + change handler for whichever entry the "more" sheet is
+   *  currently showing a warmup/working toggle or RPE row for — the round
+   *  drafts for a paired superset member, or the top-level staged draft
+   *  otherwise. Mirrors `roundEditorFor`'s and the plain `<SetEditor>`'s own
+   *  `onDraftChange` exactly, so a set type or RPE change made from the
+   *  sheet is indistinguishable from one made through the hero editor. */
+  const moreDraftFor = (
+    target: ExerciseEntry,
+  ): { draft: SetDraft; onChange: (next: Partial<SetDraft>) => void } => {
+    if (
+      focusSupersetPair &&
+      (target.key === focusSupersetPair[0].key ||
+        target.key === focusSupersetPair[1].key)
+    ) {
+      return {
+        draft: roundDraftFor(target),
+        onChange: (next) => {
+          setRoundDrafts((prior) => ({
+            ...prior,
+            [target.key]: { ...roundDraftFor(target), ...next },
+          }));
+          setRoundError(null);
+        },
+      };
+    }
+    return {
+      draft: { entryKg, reps, setType: setType as BracketKind, rpe },
+      onChange: (next) => {
+        if (!editing) rememberStagedDraft(target, next);
+        if (next.entryKg !== undefined) setEntryKg(next.entryKg);
+        if (next.reps !== undefined) setReps(next.reps);
+        if (next.setType !== undefined) setSetType(next.setType);
+        if (next.rpe !== undefined) setRpe(next.rpe);
+      },
+    };
+  };
+
+  /** Warmup/working, RPE, skip, the plate calculator, and the per-hand/total
+   *  toggle for ONE entry — everything the focus hero used to show inline,
+   *  now living only in the "more" sheet. A tick exercise has no numeric
+   *  draft to fine-tune (see `SetEditor`'s own `tracking === "done"`
+   *  branch), so only skip is offered for one. */
+  const moreExtrasFor = (target: ExerciseEntry) => {
+    const skipped = skips.has(target.key);
+    const skipAction = (
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={() => toggleSkip(target)}
+      >
+        {skipped ? "UNSKIP" : "SKIP"}
+      </button>
+    );
+    if (isTick(target)) {
+      return <div className="focus-more-actions">{skipAction}</div>;
+    }
+    const targetEquipment = equipMap[target.exercise_id] ?? null;
+    const targetPlateable =
+      targetEquipment === "barbell" || targetEquipment === "machine";
+    const targetLoadEntryInput = {
+      override: getExercisePref(target.exercise_id).loadEntry,
+      prescribed: target.substitutedFor
+        ? null
+        : (target.brackets[0]?.load_entry ?? null),
+      equipment: targetEquipment,
+      name: target.name,
+    };
+    const targetCanToggle = offersLoadEntry(targetLoadEntryInput);
+    const targetLoadEntry = resolveLoadEntry(targetLoadEntryInput);
+    const { draft, onChange } = moreDraftFor(target);
+    return (
+      <div className="focus-more-extras">
+        <div className="seg seg-types">
+          {(["warmup", "working"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`seg-btn ${draft.setType === t ? "seg-on" : ""}`}
+              onClick={() => onChange({ setType: t })}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <div className="focus-more-actions">
+          {targetPlateable && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => openSheet("plates", target.key)}
+            >
+              Plate calculator
+            </button>
+          )}
+          {targetCanToggle && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() =>
+                setExerciseLoadEntry(
+                  target.exercise_id,
+                  targetLoadEntry === "per_side" ? "total" : "per_side",
+                )
+              }
+            >
+              {targetLoadEntry === "per_side"
+                ? "each hand"
+                : "one total weight"}
+            </button>
+          )}
+          {skipAction}
+        </div>
+        <RpeChips
+          shown
+          value={draft.rpe}
+          onChange={(rpe) => onChange({ rpe })}
+        />
+      </div>
     );
   };
 
@@ -2373,9 +2619,7 @@ export function Session() {
             reps_max: bracket.reps_max,
           }
         : null,
-      lastThisSession: last
-        ? { load_kg: last.load_kg, reps: last.reps }
-        : null,
+      lastThisSession: last ? { load_kg: last.load_kg, reps: last.reps } : null,
       lastSession: lastActuals[entry.exercise_id] ?? null,
     });
     return {
@@ -2393,7 +2637,11 @@ export function Session() {
       : defaultRoundDraft(entry));
 
   const roundEditorFor = (entry: ExerciseEntry, draft: SetDraft) => {
-    const bracket = bracketFor(entry, countFor(entry, draft.setType), draft.setType);
+    const bracket = bracketFor(
+      entry,
+      countFor(entry, draft.setType),
+      draft.setType,
+    );
     const equipment = equipMap[entry.exercise_id] ?? null;
     const entryMode = resolveLoadEntry({
       override: getExercisePref(entry.exercise_id).loadEntry,
@@ -2430,9 +2678,12 @@ export function Session() {
         plateSplit,
         barKg,
         hint,
+        noLoad: isBodyweightEquipment(equipment),
         canToggleEntry: offersLoadEntry({
           override: getExercisePref(entry.exercise_id).loadEntry,
-          prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
+          prescribed: entry.substitutedFor
+            ? null
+            : (bracket?.load_entry ?? null),
           equipment,
           name: entry.name,
         }),
@@ -2498,7 +2749,8 @@ export function Session() {
     : null;
   const plateEntry = roundInputEntry ?? openEntry;
   const req = padRequest();
-  const sheetOpen = sheet !== null || pad !== null || demoFor !== null;
+  const sheetOpen =
+    sheet !== null || pad !== null || demoFor !== null || moreOpen;
 
   return (
     <div className="session-shell">
@@ -2547,9 +2799,12 @@ export function Session() {
               }}
               canAdvance={
                 !editing &&
-                (focusSupersetPair === null || focusSupersetPair.every(entryDone))
+                (focusSupersetPair === null ||
+                  focusSupersetPair.every(entryDone))
               }
-              renderEditor={(entry) => renderEditor(entry, false)}
+              renderEditor={(entry) => renderEditor(entry, false, "hero")}
+              onOpenMore={() => setMoreOpen(true)}
+              formatScheme={scheme}
             />
           ) : (
             <>
@@ -2560,63 +2815,64 @@ export function Session() {
                 </p>
               )}
               <WorkoutOverview
-            entries={entries}
-            selectedEntryKey={selectedEntryKey}
-            expandedEntryKey={openKey}
-            onSelectEntry={setSelectedEntryKey}
-            onToggleEntry={toggleOpen}
-            onEnterFocus={enterFocus}
-            focusModeAvailable={focusDeckEnabled && focusEligible}
-            entryProgress={entryProgress}
-            isSkipped={(entry) => skips.has(entry.key)}
-            hasSections={hasSections}
-            supersetInfo={supersetInfo}
-            formatScheme={scheme}
-            onOpenDemo={(entry) =>
-              setDemoFor({ id: entry.exercise_id, name: entry.name })
-            }
-            renderRowAction={(entry) => {
-              const removable =
-                entry.brackets.length === 0 && setsForEntry(entry).length === 0;
-              const skipped = skips.has(entry.key);
-              return (
-                <button
-                  type="button"
-                  className={`drawer-action ${
-                    removable && dropArm === entry.key
-                      ? "drawer-action-armed"
-                      : ""
-                  }`}
-                  onClick={() => {
-                    if (!removable) {
-                      toggleSkip(entry);
-                      return;
-                    }
-                    if (dropArm === entry.key) {
-                      setDropArm(null);
-                      void removeExtra(entry);
-                    } else {
-                      setDropArm(entry.key);
-                    }
-                  }}
-                >
-                  {removable
-                    ? dropArm === entry.key
-                      ? "UNDO ADD?"
-                      : "UNDO ADD"
-                    : skipped
-                      ? "UNSKIP"
-                      : "SKIP"}
-                </button>
-              );
-            }}
-            renderEditor={renderEditor}
+                entries={entries}
+                selectedEntryKey={selectedEntryKey}
+                expandedEntryKey={openKey}
+                onSelectEntry={setSelectedEntryKey}
+                onToggleEntry={toggleOpen}
+                onEnterFocus={enterFocus}
+                focusModeAvailable={focusEligible}
+                entryProgress={entryProgress}
+                isSkipped={(entry) => skips.has(entry.key)}
+                hasSections={hasSections}
+                supersetInfo={supersetInfo}
+                formatScheme={scheme}
+                onOpenDemo={(entry) =>
+                  setDemoFor({ id: entry.exercise_id, name: entry.name })
+                }
+                renderRowAction={(entry) => {
+                  const removable =
+                    entry.brackets.length === 0 &&
+                    setsForEntry(entry).length === 0;
+                  const skipped = skips.has(entry.key);
+                  return (
+                    <button
+                      type="button"
+                      className={`drawer-action ${
+                        removable && dropArm === entry.key
+                          ? "drawer-action-armed"
+                          : ""
+                      }`}
+                      onClick={() => {
+                        if (!removable) {
+                          toggleSkip(entry);
+                          return;
+                        }
+                        if (dropArm === entry.key) {
+                          setDropArm(null);
+                          void removeExtra(entry);
+                        } else {
+                          setDropArm(entry.key);
+                        }
+                      }}
+                    >
+                      {removable
+                        ? dropArm === entry.key
+                          ? "UNDO ADD?"
+                          : "UNDO ADD"
+                        : skipped
+                          ? "UNSKIP"
+                          : "SKIP"}
+                    </button>
+                  );
+                }}
+                renderEditor={renderEditor}
               />
 
               {entries.length === 0 && (
                 <p className="microcopy">
-                  Nothing planned for this session. Add an exercise to start logging
-                  — load and reps prefill from your last time.
+                  Nothing planned for this session. Add an exercise to start
+                  logging — load and reps prefill from your last time.
                 </p>
               )}
               <button
@@ -2754,12 +3010,46 @@ export function Session() {
           targetKg={roundInputEditor?.loadPresentation.totalKg ?? totalLoadKg}
           unit={unit}
           equipment={equipMap[plateEntry.exercise_id] ?? null}
-          onTypeTarget={() => openPad("load", true, roundInputEntry?.key ?? null)}
+          onTypeTarget={() =>
+            openPad("load", true, roundInputEntry?.key ?? null)
+          }
           onClose={() => {
             setSheet(null);
             setRoundInputKey(null);
           }}
         />
+      )}
+
+      {moreOpen && focusEntry && (
+        <FocusMoreSheet
+          title={
+            focusSupersetPair
+              ? `SUPERSET ${(supersetInfo.get(focusSupersetPair[0].key)?.tag ?? "A1").replace(/\d+$/, "")} · MORE`
+              : `${focusEntry.name.toUpperCase()} · MORE`
+          }
+          onClose={() => setMoreOpen(false)}
+        >
+          {(focusSupersetPair ?? [focusEntry]).map((target, i) => (
+            <div
+              key={target.key}
+              className="focus-more-section"
+              aria-label={
+                focusSupersetPair
+                  ? `${supersetInfo.get(target.key)?.tag ?? (i === 0 ? "A1" : "A2")} ${target.name} · more`
+                  : `${target.name} · more`
+              }
+            >
+              {focusSupersetPair && (
+                <div className="focus-more-heading">
+                  {supersetInfo.get(target.key)?.tag ?? (i === 0 ? "A1" : "A2")}{" "}
+                  · {target.name}
+                </div>
+              )}
+              {renderEditor(target, false, "detail")}
+              {moreExtrasFor(target)}
+            </div>
+          ))}
+        </FocusMoreSheet>
       )}
 
       {req && <NumberPad req={req} />}

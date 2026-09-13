@@ -438,17 +438,12 @@ const SETTINGS = {
     parse: (raw) => (typeof raw === "boolean" ? raw : null),
   }),
 
-  // A device-local rollout switch. This only chooses which existing session
-  // presentation opens first; it is deliberately not training data and never
-  // leaves this phone for Supabase.
-  focusDeckPreview: def<boolean>({
-    group: "display",
-    label: "FOCUS MODE PREVIEW",
-    help: "Use the focused set-entry view when a workout starts.",
-    control: { kind: "toggle" },
-    defaults: () => false,
-    parse: (raw) => (typeof raw === "boolean" ? raw : null),
-  }),
+  // `focusDeckPreview` (the early-access rollout switch for session focus
+  // mode) lived here through 2026-09-12. Focus is now the default for every
+  // eligible session and the switch is gone — see docs/decisions.md. Removed
+  // rather than migrated: an envelope that still carries the key just carries
+  // an inert boolean nothing reads, exactly like a fresh install's absent
+  // key. Do not reuse this comment's key name for an unrelated setting.
 
   weekStartsOn: def<number>({
     group: "display",
