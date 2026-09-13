@@ -137,10 +137,8 @@ describe("outbox", () => {
     expect(
       (await db.getAll("outbox")).map(
         (item) =>
-          (item.op as Extract<
-            OutboxOp,
-            { kind: "insert"; table: "sets" }
-          >).payload.id,
+          (item.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>)
+            .payload.id,
       ),
     ).toEqual([setA.id, setB.id]);
   });
@@ -898,7 +896,9 @@ describe("outbox visibility", () => {
     });
     expect(entries[2]).toMatchObject({ cause: null, user_id: ALICE });
     // Replay order is the queue order, and the view shows it that way.
-    expect(entries.map((e) => e.key)).toEqual([...entries.map((e) => e.key)].sort((a, b) => a - b));
+    expect(entries.map((e) => e.key)).toEqual(
+      [...entries.map((e) => e.key)].sort((a, b) => a - b),
+    );
   });
 
   it("retryDead re-queues only the failures whose answer can change", async () => {
@@ -980,5 +980,88 @@ describe("outbox visibility", () => {
 
     expect(await box.retryDead()).toEqual({ requeued: 1, stuck: 0 });
     expect(calls).toHaveLength(1);
+  });
+
+  // onSynced: the hook a caller uses to react to a write actually reaching the
+  // server, as opposed to merely being queued. The checkin-memory extraction
+  // route is fire-and-forget and must run AFTER the note is on the server —
+  // firing it on enqueue would ask about a check-in the server has not seen
+  // yet, offline or not.
+  describe("onSynced", () => {
+    it("is called with the op once it actually reaches the server", async () => {
+      let online = false;
+      const { transport } = makeTransport();
+      const synced: OutboxOp[] = [];
+      const box = createOutbox({
+        getDb,
+        transport,
+        isOnline: () => online,
+        onSynced: (op) => synced.push(op),
+      });
+      await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+      await box.flush(); // drain the enqueue-triggered flush while offline
+      expect(synced).toEqual([]);
+      online = true;
+      await box.flush();
+      expect(synced).toEqual([
+        { kind: "insert", table: "sets", payload: setA },
+      ]);
+    });
+
+    it("is not called for an item that stays pending (offline/retryable)", async () => {
+      let online = false;
+      const { transport } = makeTransport([netErr()]);
+      const synced: OutboxOp[] = [];
+      const box = createOutbox({
+        getDb,
+        transport,
+        isOnline: () => online,
+        onSynced: (op) => synced.push(op),
+      });
+      await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+      await box.flush(); // drain the enqueue-triggered flush while offline
+      online = true;
+      await box.flush();
+      expect(synced).toEqual([]);
+    });
+
+    it("is not called for an item the server refuses (dead)", async () => {
+      let online = false;
+      const { transport } = makeTransport([checkErr]);
+      const synced: OutboxOp[] = [];
+      const box = createOutbox({
+        getDb,
+        transport,
+        isOnline: () => online,
+        onSynced: (op) => synced.push(op),
+      });
+      await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+      await box.flush(); // drain the enqueue-triggered flush while offline
+      online = true;
+      await box.flush();
+      expect(synced).toEqual([]);
+    });
+
+    it("fires once per item for a batch, in replay order", async () => {
+      let online = false;
+      const { transport } = makeTransport();
+      const synced: string[] = [];
+      const box = createOutbox({
+        getDb,
+        transport,
+        isOnline: () => online,
+        onSynced: (op) => {
+          if (op.kind === "insert" && op.table === "sets") {
+            synced.push((op.payload as SetInsert).id);
+          }
+        },
+      });
+      await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+      await box.enqueue({ kind: "insert", table: "sets", payload: setB });
+      await box.flush(); // drain the enqueue-triggered flushes while offline
+      online = true;
+      await box.flush();
+      expect(synced).toEqual([setA.id, setB.id]);
+    });
   });
 });

@@ -45,7 +45,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { systemPrompt } from "./prompt.ts";
 import { captureError } from "./sentry.ts";
-import { extractMemory } from "./memory-extract.ts";
+import {
+  extractFromCheckins,
+  extractMemory,
+  type CheckinNote,
+} from "./memory-extract.ts";
 import { recordRefusalUsage } from "./usage.ts";
 
 // Sonnet 5, at MEDIUM effort. This reverses the move to Opus, which its own
@@ -301,12 +305,37 @@ async function coachSwitchedOff(
   );
 }
 
+/**
+ * Tokens billed against this user in the trailing 30 days, across every
+ * `kind` — a token spent on the memory-extraction pass (turn OR check-in) is
+ * the same money as a token spent answering, so both count here even though
+ * only 'turn' rows count toward the daily MESSAGE limit below.
+ */
+async function monthlySpentTokens(
+  db: ReturnType<typeof serviceClient>,
+  userId: string,
+): Promise<number> {
+  const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const { data, error } = await db
+    .from("coach_usage")
+    .select("input_tokens, output_tokens")
+    .eq("user_id", userId)
+    .gte("created_at", monthAgo);
+  if (error) throw new Error(`usage check: ${error.message}`);
+  // Input counted too, weighted by price. Only output was metered, and input
+  // is both the cheaper-per-token side AND the side the user controls: a
+  // near-max-context request 150 times a day is real money the cap never saw.
+  return (data ?? []).reduce((n, row) => {
+    const r = row as { input_tokens: number; output_tokens: number };
+    return n + (r.output_tokens ?? 0) + (r.input_tokens ?? 0) / 5;
+  }, 0);
+}
+
 async function overLimit(
   db: ReturnType<typeof serviceClient>,
   userId: string,
 ): Promise<string | null> {
   const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
-  const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
 
   // `refused is null`: a refusal row must not itself count toward the limit.
   // Counting them meant every retry after hitting the cap extended the rolling
@@ -330,19 +359,7 @@ async function overLimit(
     return `Daily limit reached (${LIMIT_TURNS_PER_DAY} messages). It resets a day after your first message today.`;
   }
 
-  const { data, error: sErr } = await db
-    .from("coach_usage")
-    .select("input_tokens, output_tokens")
-    .eq("user_id", userId)
-    .gte("created_at", monthAgo);
-  if (sErr) throw new Error(`usage check: ${sErr.message}`);
-  // Input counted too, weighted by price. Only output was metered, and input
-  // is both the cheaper-per-token side AND the side the user controls: a
-  // near-max-context request 150 times a day is real money the cap never saw.
-  const spent = (data ?? []).reduce((n, row) => {
-    const r = row as { input_tokens: number; output_tokens: number };
-    return n + (r.output_tokens ?? 0) + (r.input_tokens ?? 0) / 5;
-  }, 0);
+  const spent = await monthlySpentTokens(db, userId);
   if (spent >= LIMIT_OUTPUT_TOKENS_PER_MONTH) {
     return "Monthly limit reached for the coach. Tell Colt if you need it raised.";
   }
@@ -655,8 +672,162 @@ async function record(a: {
   }
 }
 
+/**
+ * How far back, and how many at once, `POST /coach/checkin-memory` reads.
+ *
+ * 14 days matches the check-in note's own shelf life as a standing-fact
+ * source: older than that, whatever mattered has either already come up in a
+ * conversation (and been caught by `extractMemory`) or has stopped being
+ * current. 10 is a batch, not a backlog drain — a person who checked in
+ * fifty times unread would still finish over five calls of this route rather
+ * than one that reads fifty notes' worth of tokens at once.
+ */
+const CHECKIN_MEMORY_WINDOW_DAYS = 14;
+const CHECKIN_MEMORY_BATCH = 10;
+
+/**
+ * `POST /coach/checkin-memory` — read this CALLER's own unprocessed check-in
+ * notes and extract standing facts from them, out of band from any
+ * conversation.
+ *
+ * Authenticated the same way as the chat endpoint (the caller's Supabase
+ * session), and it reads only THAT caller's own check-ins — there is no
+ * userId in the request body to trust. It is a plain JSON response, not a
+ * stream: the PWA calls it fire-and-forget after a check-in syncs and never
+ * shows its result to the lifter (see pwa/src/lib/sync.ts's onSynced hook).
+ */
+async function handleCheckinMemory(req: Request): Promise<Response> {
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) return json({ error: "The coach is not configured" }, 503);
+
+  const userId = await resolveUser(req);
+  if (!userId) return json({ error: "Sign in to use the coach" }, 401);
+
+  // Same two gates the chat endpoint enforces, and in the same order: WHO may
+  // use the coach at all, then whether THIS account has it switched off.
+  if (ALLOWED_USERS && !ALLOWED_USERS.has(userId.toLowerCase())) {
+    return json({ error: "The coach isn't enabled for this account." }, 403);
+  }
+
+  const db = serviceClient();
+
+  try {
+    const off = await coachSwitchedOff(db, userId);
+    if (off) return json({ error: off }, 403);
+
+    // Only the MONTHLY token cap applies here, never the daily message
+    // count: extraction rows are already excluded from that count
+    // (coach_usage.kind), and re-deriving the exclusion by checking it here
+    // too would just be a second place for the two to disagree.
+    const spent = await monthlySpentTokens(db, userId);
+    if (spent >= LIMIT_OUTPUT_TOKENS_PER_MONTH) {
+      return json({ error: "Monthly limit reached for the coach." }, 429);
+    }
+  } catch (e) {
+    await captureError(e, {
+      stage: "checkin_memory_usage_check",
+      user_id: userId,
+    });
+    return json(
+      { error: e instanceof Error ? e.message : "Could not check usage" },
+      503,
+    );
+  }
+
+  const since = new Date(
+    Date.now() - CHECKIN_MEMORY_WINDOW_DAYS * 86_400_000,
+  ).toISOString();
+  let notes: CheckinNote[];
+  try {
+    const { data, error } = await db
+      .from("checkins")
+      .select("id, note, recorded_at")
+      .eq("user_id", userId)
+      .not("note", "is", null)
+      .is("memory_extracted_at", null)
+      .gte("recorded_at", since)
+      .order("recorded_at", { ascending: true })
+      .limit(CHECKIN_MEMORY_BATCH);
+    if (error) throw new Error(error.message);
+    notes = (data ?? [])
+      .filter(
+        (r): r is { id: string; note: string; recorded_at: string } =>
+          typeof (r as { note?: unknown }).note === "string",
+      )
+      .map((r) => ({ id: r.id, text: r.note, recorded_at: r.recorded_at }));
+  } catch (e) {
+    await captureError(e, { stage: "checkin_memory_read", user_id: userId });
+    return json(
+      { error: e instanceof Error ? e.message : "Could not read check-ins" },
+      503,
+    );
+  }
+
+  if (notes.length === 0) return json({ processed: 0, written: 0 });
+
+  // CLAIM before spending anything. Two devices syncing at once (or one phone
+  // flushing a backlog) call this route concurrently, and both would otherwise
+  // read the same unstamped batch, pay Haiku twice and write the same fact
+  // twice. A conditional update is atomic per row, so each check-in is claimed
+  // by exactly one request; the loser gets nothing back and extracts nothing.
+  // A failed extraction RELEASES its claim so the rows are retried next time.
+  let claimed: string[];
+  try {
+    const { data, error } = await db
+      .from("checkins")
+      .update({ memory_extracted_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .in("id", notes.map((n) => n.id))
+      .is("memory_extracted_at", null)
+      .select("id");
+    if (error) throw new Error(error.message);
+    claimed = (data ?? []).map((r) => (r as { id: string }).id);
+  } catch (e) {
+    await captureError(e, { stage: "checkin_memory_claim", user_id: userId });
+    return json({ error: "Could not claim check-ins" }, 503);
+  }
+  const claimedSet = new Set(claimed);
+  notes = notes.filter((n) => claimedSet.has(n.id));
+  if (notes.length === 0) return json({ processed: 0, written: 0 });
+
+  const anthropic = new Anthropic({ apiKey });
+  try {
+    const result = await extractFromCheckins({ db, anthropic, userId, notes });
+    return json(result);
+  } catch (e) {
+    const { error: releaseError } = await db
+      .from("checkins")
+      .update({ memory_extracted_at: null })
+      .eq("user_id", userId)
+      .in("id", claimed);
+    if (releaseError) {
+      await captureError(new Error(releaseError.message), {
+        stage: "checkin_memory_release",
+        user_id: userId,
+      });
+    }
+    console.error(
+      JSON.stringify({
+        event: "coach_checkin_memory_failed",
+        user_id: userId,
+        error: e instanceof Error ? e.message : String(e),
+      }),
+    );
+    await captureError(e, { stage: "checkin_memory_extract", user_id: userId });
+    return json({ error: "Could not process check-ins" }, 500);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+
+  // The one branch off the chat endpoint's own path. Everything below this
+  // block is the original single-endpoint behaviour, untouched.
+  if (new URL(req.url).pathname.endsWith("/checkin-memory")) {
+    if (req.method !== "POST") return json({ error: "Use POST" }, 405);
+    return await handleCheckinMemory(req);
+  }
+
   if (req.method !== "POST") {
     return json({ error: "Use POST" }, 405);
   }

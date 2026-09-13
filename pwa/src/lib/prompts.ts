@@ -13,9 +13,7 @@
 // the lifter, and a 7am prompt means 7am where they are.
 
 export type PromptKind =
-  | "daily_readiness"
-  | "ostrc_weekly"
-  | "next_morning_pain";
+  "daily_readiness" | "ostrc_weekly" | "next_morning_pain";
 
 export interface PromptPrefs {
   dailyEnabled: boolean;
@@ -45,7 +43,13 @@ export interface PromptPrefs {
 }
 
 export const DEFAULT_PROMPT_PREFS: PromptPrefs = {
-  dailyEnabled: true,
+  // Off by default. The morning three-scale panel this was written for is no
+  // longer the entry point: check-in is a button that is always there
+  // (CheckInSheet), not something worth a scheduled nag for. The mechanism
+  // stays -- someone could opt back into a daily reminder, and weekly OSTRC
+  // below is a real, still-enabled use of the same machinery -- only the
+  // shipped default changes.
+  dailyEnabled: false,
   dailyAt: "07:30",
   dailyWindowHours: 4,
   weeklyEnabled: true,

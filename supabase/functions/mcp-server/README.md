@@ -6,7 +6,9 @@ connects through `mcp-remote` with a static bearer token and gets 12 tools.
 
 Read (`readOnlyHint`): `search_exercises`, `resolve_exercises` (the same
 lookup for many names at once, in one round trip), `get_lift_history`,
-`get_recent_sessions`, `get_goal_progress`.
+`get_recent_sessions`, `get_checkins` (the lifter's own words from the
+always-available Check in button and the readiness panel — events, not a
+trend), `get_goal_progress`.
 
 Write: `upsert_program` (always unconfirmed), `confirm_program`,
 `delete_program`, `set_training_max`, `set_goal`, `add_exercise`,

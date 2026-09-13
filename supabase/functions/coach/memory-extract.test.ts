@@ -17,6 +17,7 @@ import { assertEquals } from "jsr:@std/assert@^1";
 import {
   isSameFact,
   lifterWords,
+  meaningfulCheckinNotes,
   newFacts,
   parseFacts,
 } from "./memory-extract.ts";
@@ -220,4 +221,29 @@ Deno.test("newFacts: at most three from one message", () => {
 
 Deno.test("newFacts: nothing new is the ordinary outcome", () => {
   assertEquals(newFacts([], ["Trains at 6am before work"]), []);
+});
+
+// meaningfulCheckinNotes: which of a batch of check-in notes are worth an
+// Anthropic call at all. A one-word "ok" costs the same tokens as a real
+// sentence and never contains a standing fact; filtering it out here means a
+// batch of ten check-ins that are all "ok" spends nothing rather than one
+// cheap, pointless call.
+Deno.test("meaningfulCheckinNotes: drops empty and near-empty notes", () => {
+  const notes = [
+    { id: "1", text: "ok", recorded_at: "2026-09-01T00:00:00Z" },
+    { id: "2", text: "  ", recorded_at: "2026-09-02T00:00:00Z" },
+    {
+      id: "3",
+      text: "shoulder's been cranky on overhead work",
+      recorded_at: "2026-09-03T00:00:00Z",
+    },
+  ];
+  assertEquals(
+    meaningfulCheckinNotes(notes).map((n) => n.id),
+    ["3"],
+  );
+});
+
+Deno.test("meaningfulCheckinNotes: an empty batch stays empty", () => {
+  assertEquals(meaningfulCheckinNotes([]), []);
 });

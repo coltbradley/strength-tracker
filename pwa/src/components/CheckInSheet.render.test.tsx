@@ -1,31 +1,40 @@
 // @vitest-environment jsdom
-// The panel as a person actually meets it.
+// The check-in sheet as a person actually meets it.
 //
-// The behaviour worth pinning is that SKIPPING IS FINE. A panel somebody must
-// complete is a panel somebody stops opening, and this data is only worth
-// anything if it accrues every day. So: the sheet saves with nothing answered,
-// a chosen value can be un-chosen, and an unanswered question never reaches the
-// database as a zero.
+// Two things live in here now, and they are tested separately because they
+// save differently. The SPONTANEOUS check-in (text + mood chips + optional
+// energy) is a single explicit "Check in" action that writes one `checkins`
+// row. The morning readiness scales are unchanged from before this rebuild —
+// still autosave-as-you-go, still skippable, still merge onto today's row —
+// just moved behind a collapsed disclosure so the sheet leads with the thing
+// that is always worth doing rather than the thing that is worth doing once
+// a day.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 // vi.hoisted, because vi.mock factories are lifted above every const in the
 // file and would otherwise close over an uninitialised binding.
-const { enqueue, getReadinessFor } = vi.hoisted(() => ({
+const { enqueue, getReadinessFor, toast } = vi.hoisted(() => ({
   enqueue: vi.fn(),
   getReadinessFor: vi.fn(),
+  toast: vi.fn(),
 }));
 vi.mock("../lib/sync", () => ({ outbox: { enqueue } }));
-vi.mock("../lib/errors", () => ({ reportError: vi.fn(), toast: vi.fn() }));
+vi.mock("../lib/errors", () => ({ reportError: vi.fn(), toast }));
 // Stubbed so importing the sheet does not drag in a Supabase client; the pure
 // helpers are re-exported from the real module because THEY are what is under
 // test here (what reaches the payload), not the network read.
 vi.mock("../lib/supabase", () => ({ supabase: {} }));
 vi.mock("../lib/data", () => ({ throwIf: vi.fn() }));
 vi.mock("../lib/checkins", async () => {
-  const actual = await vi.importActual<typeof import("../lib/checkins")>(
-    "../lib/checkins",
-  );
+  const actual =
+    await vi.importActual<typeof import("../lib/checkins")>("../lib/checkins");
   return { ...actual, getReadinessFor };
 });
 
@@ -37,6 +46,7 @@ beforeEach(() => {
   enqueue.mockResolvedValue(undefined);
   getReadinessFor.mockReset();
   getReadinessFor.mockResolvedValue(null);
+  toast.mockReset();
 });
 
 async function open(props: Record<string, unknown> = {}) {
@@ -49,19 +59,136 @@ async function open(props: Record<string, unknown> = {}) {
       {...props}
     />,
   );
-  await waitFor(() => screen.getByText("Fatigue"));
+  await waitFor(() => screen.getByLabelText("How are you feeling?"));
   return { onClose, view };
 }
 
 const writes = (table: string) =>
   enqueue.mock.calls.map((c) => c[0]).filter((op) => op.table === table);
 
-describe("CheckInSheet", () => {
-  // Three taps, no keyboard, nothing to scroll. It was eight items; a panel
-  // that takes a minute gets answered for a fortnight, and this data is only
-  // worth anything if it accrues for months.
-  it("asks three things and no more", async () => {
+function box(): HTMLTextAreaElement {
+  return screen.getByLabelText("How are you feeling?") as HTMLTextAreaElement;
+}
+
+describe("CheckInSheet: spontaneous check-in", () => {
+  it("opens with an empty box, no chip on, and Check in disabled", () => {
+    return open().then(() => {
+      expect(box().value).toBe("");
+      expect(
+        screen.getByRole("button", { name: /^check in$/i }),
+      ).toHaveProperty("disabled", true);
+    });
+  });
+
+  it("offers the five mood words", async () => {
     await open();
+    for (const word of ["Sore", "Hurt", "Tired", "Stressed", "Great"]) {
+      expect(screen.getByRole("button", { name: word })).toBeTruthy();
+    }
+  });
+
+  it("typing enables Check in", async () => {
+    await open();
+    fireEvent.change(box(), { target: { value: "legs are wrecked" } });
+    expect(screen.getByRole("button", { name: /^check in$/i })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  it("tapping a chip appends its word to the box and enables Check in", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Sore" }));
+    expect(box().value).toBe("Sore");
+    expect(
+      screen.getByRole("button", { name: "Sore" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(screen.getByRole("button", { name: /^check in$/i })).toHaveProperty(
+      "disabled",
+      false,
+    );
+  });
+
+  it("tapping the same chip again removes it", async () => {
+    await open();
+    const chip = screen.getByRole("button", { name: "Tired" });
+    fireEvent.click(chip);
+    fireEvent.click(chip);
+    expect(box().value).toBe("");
+    expect(chip.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: /^check in$/i })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
+  it("multiple chips accumulate in the box", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Sore" }));
+    fireEvent.click(screen.getByRole("button", { name: "Great" }));
+    expect(box().value).toBe("Sore, Great");
+  });
+
+  it("an energy pick alone enables Check in, and taps again to clear", async () => {
+    await open();
+    const three = screen.getByRole("button", { name: "Energy 3 of 5" });
+    fireEvent.click(three);
+    expect(three.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: /^check in$/i })).toHaveProperty(
+      "disabled",
+      false,
+    );
+    fireEvent.click(three);
+    expect(three.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: /^check in$/i })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
+  it("saves a spontaneous checkins row with the note and energy, then closes", async () => {
+    const { onClose } = await open();
+    fireEvent.change(box(), { target: { value: "shoulder is cranky" } });
+    fireEvent.click(screen.getByRole("button", { name: "Energy 4 of 5" }));
+    fireEvent.click(screen.getByRole("button", { name: /^check in$/i }));
+    await waitFor(() => expect(writes("checkins").length).toBe(1));
+    const p = writes("checkins")[0].payload;
+    expect(p).toMatchObject({
+      user_id: "u1",
+      kind: "spontaneous",
+      note: "shoulder is cranky",
+      energy: 4,
+    });
+    expect(typeof p.id).toBe("string");
+    expect(p.id.length).toBeGreaterThan(0);
+    expect(onClose).toHaveBeenCalled();
+    expect(toast).toHaveBeenCalled();
+  });
+
+  it("never writes a checkins row for an untouched sheet", async () => {
+    const { view } = await open();
+    view.unmount();
+    expect(writes("checkins")).toEqual([]);
+  });
+});
+
+describe("CheckInSheet: readiness disclosure (unchanged behaviour)", () => {
+  async function openReadiness(props: Record<string, unknown> = {}) {
+    const opened = await open(props);
+    fireEvent.click(
+      screen.getByRole("button", { name: /sleep, fatigue, soreness/i }),
+    );
+    await waitFor(() => screen.getByText("Fatigue"));
+    return opened;
+  }
+
+  it("is collapsed by default", async () => {
+    await open();
+    expect(screen.queryByText("Fatigue")).toBeNull();
+  });
+
+  it("asks three things and no more once opened", async () => {
+    await openReadiness();
     expect(screen.getByText("Sleep")).toBeTruthy();
     expect(screen.getByText("Fatigue")).toBeTruthy();
     expect(screen.getByText("Soreness")).toBeTruthy();
@@ -70,22 +197,15 @@ describe("CheckInSheet", () => {
     expect(screen.queryByText("Resting HR")).toBeNull();
   });
 
-  // Nothing to press means nothing to fail to press.
-  it("offers no Save button at all", async () => {
-    await open();
-    expect(screen.queryByRole("button", { name: /^save/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /^done$/i })).toBeTruthy();
-  });
-
   it("writes nothing when it is opened and closed untouched", async () => {
-    const { view } = await open();
+    const { view } = await openReadiness();
     view.unmount();
     expect(writes("daily_readiness")).toEqual([]);
   });
 
   // Closing IS saving. Walking away must not cost the answer.
   it("keeps what was answered when the sheet just closes", async () => {
-    const { view } = await open();
+    const { view } = await openReadiness();
     fireEvent.click(screen.getByRole("button", { name: "Fatigue 4 of 5" }));
     view.unmount();
     await waitFor(() => expect(writes("daily_readiness").length).toBe(1));
@@ -97,7 +217,7 @@ describe("CheckInSheet", () => {
   });
 
   it("clears a value when the chosen one is tapped again", async () => {
-    const { view } = await open();
+    const { view } = await openReadiness();
     const four = screen.getByRole("button", { name: "Fatigue 4 of 5" });
     fireEvent.click(four);
     expect(four.getAttribute("aria-pressed")).toBe("true");
@@ -109,11 +229,9 @@ describe("CheckInSheet", () => {
     expect(writes("daily_readiness")[0].payload.fatigue).toBeNull();
   });
 
-  // "Not today" has to leave a trace or the button is decoration: duePrompts
-  // honours a recorded skip and stops asking for the day.
-  it("records a skip and closes, without writing a panel", async () => {
+  it("records a skip without writing a panel", async () => {
     const onSkipped = vi.fn();
-    const { onClose } = await open({ onSkipped });
+    const { onClose } = await openReadiness({ onSkipped });
     fireEvent.click(screen.getByRole("button", { name: /not today/i }));
     await waitFor(() => expect(writes("report_prompts").length).toBe(1));
     const p = writes("report_prompts")[0].payload;
@@ -128,7 +246,7 @@ describe("CheckInSheet", () => {
   });
 
   it("keeps the rest one tap away rather than gone", async () => {
-    await open();
+    await openReadiness();
     fireEvent.click(screen.getByRole("button", { name: /anything else/i }));
     expect(screen.getByText("Stress")).toBeTruthy();
     expect(screen.getByText("Mood")).toBeTruthy();
@@ -143,7 +261,7 @@ describe("CheckInSheet", () => {
       recorded_at: "2026-09-07T07:00:00.000Z",
       fatigue: 3,
     });
-    const { view } = await open();
+    const { view } = await openReadiness();
     await waitFor(() =>
       expect(
         screen

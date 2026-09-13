@@ -39,14 +39,38 @@ describe("localDate / atLocalTime", () => {
   });
 });
 
+// The daily readiness prompt ships DISABLED: the morning panel is no longer
+// the entry point (see CheckInSheet), and the check-in that replaced it is a
+// button that is always there rather than something to nag about. The
+// scheduling logic below still exists and is still tested -- weekly OSTRC
+// still uses it, and someone could opt back into a daily reminder -- so every
+// test in this block enables it explicitly rather than relying on the
+// shipped default.
+const DAILY_ON = { ...DEFAULT_PROMPT_PREFS, dailyEnabled: true };
+
+describe("daily readiness prefs", () => {
+  it("ships disabled by default", () => {
+    expect(DEFAULT_PROMPT_PREFS.dailyEnabled).toBe(false);
+  });
+
+  it("is absent when switched off, which is the shipped default", () => {
+    expect(
+      find(
+        duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state()),
+        "daily_readiness",
+      ),
+    ).toBeUndefined();
+  });
+});
+
 describe("daily readiness", () => {
   it("is overdue once its time has passed and the panel is unanswered", () => {
-    const p = find(duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state()), "daily_readiness");
+    const p = find(duePrompts(MON_0900, DAILY_ON, state()), "daily_readiness");
     expect(p?.overdue).toBe(true);
   });
 
   it("is scheduled, not overdue, before its time", () => {
-    const p = find(duePrompts(MON_0600, DEFAULT_PROMPT_PREFS, state()), "daily_readiness");
+    const p = find(duePrompts(MON_0600, DAILY_ON, state()), "daily_readiness");
     expect(p?.overdue).toBe(false);
     expect(p?.fireAt.getHours()).toBe(7);
   });
@@ -57,7 +81,7 @@ describe("daily readiness", () => {
   // future answer rather than one.
   it("goes quiet once its window closes rather than nagging all day", () => {
     const late = new Date(2026, 8, 7, 22, 0, 0);
-    const p = find(duePrompts(late, DEFAULT_PROMPT_PREFS, state()), "daily_readiness");
+    const p = find(duePrompts(late, DAILY_ON, state()), "daily_readiness");
     expect(p?.overdue).toBe(false);
     expect(localDate(p!.fireAt)).toBe("2026-09-08");
   });
@@ -65,7 +89,8 @@ describe("daily readiness", () => {
   it("is still askable inside the window", () => {
     const midMorning = new Date(2026, 8, 7, 10, 0, 0);
     expect(
-      find(duePrompts(midMorning, DEFAULT_PROMPT_PREFS, state()), "daily_readiness")?.overdue,
+      find(duePrompts(midMorning, DAILY_ON, state()), "daily_readiness")
+        ?.overdue,
     ).toBe(true);
   });
 
@@ -74,7 +99,11 @@ describe("daily readiness", () => {
   // silence: only one of them says "not today".
   it("stops asking for the day once explicitly skipped", () => {
     const p = find(
-      duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state({ skippedReadinessDate: "2026-09-07" })),
+      duePrompts(
+        MON_0900,
+        DAILY_ON,
+        state({ skippedReadinessDate: "2026-09-07" }),
+      ),
       "daily_readiness",
     );
     expect(p?.overdue).toBe(false);
@@ -85,7 +114,11 @@ describe("daily readiness", () => {
     const tomorrow = new Date(2026, 8, 8, 9, 0, 0);
     expect(
       find(
-        duePrompts(tomorrow, DEFAULT_PROMPT_PREFS, state({ skippedReadinessDate: "2026-09-07" })),
+        duePrompts(
+          tomorrow,
+          DAILY_ON,
+          state({ skippedReadinessDate: "2026-09-07" }),
+        ),
         "daily_readiness",
       )?.overdue,
     ).toBe(true);
@@ -93,7 +126,11 @@ describe("daily readiness", () => {
 
   it("moves to tomorrow once today's panel is answered", () => {
     const p = find(
-      duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state({ lastReadinessDate: "2026-09-07" })),
+      duePrompts(
+        MON_0900,
+        DAILY_ON,
+        state({ lastReadinessDate: "2026-09-07" }),
+      ),
       "daily_readiness",
     );
     expect(p?.overdue).toBe(false);
@@ -101,8 +138,10 @@ describe("daily readiness", () => {
   });
 
   it("is absent when switched off", () => {
-    const prefs = { ...DEFAULT_PROMPT_PREFS, dailyEnabled: false };
-    expect(find(duePrompts(MON_0900, prefs, state()), "daily_readiness")).toBeUndefined();
+    const prefs = { ...DAILY_ON, dailyEnabled: false };
+    expect(
+      find(duePrompts(MON_0900, prefs, state()), "daily_readiness"),
+    ).toBeUndefined();
   });
 });
 
@@ -110,7 +149,11 @@ describe("weekly OSTRC", () => {
   // Its recall period IS the measurement, so more often is off-label and less
   // often asks somebody to remember further back than it was validated for.
   it("comes due on its weekday when a week has passed", () => {
-    const prefs = { ...DEFAULT_PROMPT_PREFS, weeklyWeekday: 1, weeklyAt: "08:00" };
+    const prefs = {
+      ...DEFAULT_PROMPT_PREFS,
+      weeklyWeekday: 1,
+      weeklyAt: "08:00",
+    };
     const p = find(
       duePrompts(MON_0900, prefs, state({ lastOstrcRecallEnd: "2026-08-31" })),
       "ostrc_weekly",
@@ -119,7 +162,11 @@ describe("weekly OSTRC", () => {
   });
 
   it("does not come due twice in one week", () => {
-    const prefs = { ...DEFAULT_PROMPT_PREFS, weeklyWeekday: 1, weeklyAt: "08:00" };
+    const prefs = {
+      ...DEFAULT_PROMPT_PREFS,
+      weeklyWeekday: 1,
+      weeklyAt: "08:00",
+    };
     const p = find(
       duePrompts(MON_0900, prefs, state({ lastOstrcRecallEnd: "2026-09-06" })),
       "ostrc_weekly",
@@ -130,7 +177,11 @@ describe("weekly OSTRC", () => {
   });
 
   it("waits for its weekday rather than firing on any day", () => {
-    const prefs = { ...DEFAULT_PROMPT_PREFS, weeklyWeekday: 5, weeklyAt: "18:00" };
+    const prefs = {
+      ...DEFAULT_PROMPT_PREFS,
+      weeklyWeekday: 5,
+      weeklyAt: "18:00",
+    };
     const p = find(duePrompts(MON_0900, prefs, state()), "ostrc_weekly");
     expect(p?.overdue).toBe(false);
     expect(p!.fireAt.getDay()).toBe(5);
@@ -140,7 +191,10 @@ describe("weekly OSTRC", () => {
   // have a problem cannot tell you when the problem started.
   it("is asked even when nothing hurts", () => {
     const prefs = { ...DEFAULT_PROMPT_PREFS, weeklyWeekday: 1 };
-    const p = find(duePrompts(MON_0900, prefs, state({ hasOpenEpisode: false })), "ostrc_weekly");
+    const p = find(
+      duePrompts(MON_0900, prefs, state({ hasOpenEpisode: false })),
+      "ostrc_weekly",
+    );
     expect(p).toBeDefined();
   });
 });
@@ -165,7 +219,11 @@ describe("next-morning pain check", () => {
   // load-bearing assumption of the whole injury half.
   it("is silent when nothing is being monitored", () => {
     const p = find(
-      duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state({ lastTrainedDate: "2026-09-06" })),
+      duePrompts(
+        MON_0900,
+        DEFAULT_PROMPT_PREFS,
+        state({ lastTrainedDate: "2026-09-06" }),
+      ),
       "next_morning_pain",
     );
     expect(p).toBeUndefined();
@@ -173,7 +231,11 @@ describe("next-morning pain check", () => {
 
   it("is silent when they did not train", () => {
     const p = find(
-      duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state({ hasOpenEpisode: true })),
+      duePrompts(
+        MON_0900,
+        DEFAULT_PROMPT_PREFS,
+        state({ hasOpenEpisode: true }),
+      ),
       "next_morning_pain",
     );
     expect(p).toBeUndefined();
@@ -194,8 +256,8 @@ describe("next-morning pain check", () => {
 
 describe("overduePrompts", () => {
   it("is the subset whose moment has passed", () => {
-    const all = duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state());
-    const over = overduePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state());
+    const all = duePrompts(MON_0900, DAILY_ON, state());
+    const over = overduePrompts(MON_0900, DAILY_ON, state());
     expect(over.every((p) => p.overdue)).toBe(true);
     expect(over.length).toBeLessThanOrEqual(all.length);
     expect(over.map((p) => p.kind)).toContain("daily_readiness");
@@ -205,7 +267,10 @@ describe("overduePrompts", () => {
     const over = overduePrompts(
       MON_0600,
       DEFAULT_PROMPT_PREFS,
-      state({ lastReadinessDate: "2026-09-07", lastOstrcRecallEnd: "2026-09-06" }),
+      state({
+        lastReadinessDate: "2026-09-07",
+        lastOstrcRecallEnd: "2026-09-06",
+      }),
     );
     expect(over).toEqual([]);
   });

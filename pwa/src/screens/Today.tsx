@@ -1266,7 +1266,7 @@ export function Today({ userId }: { userId?: string | null } = {}) {
           className="checkin-open"
           onClick={() => setCheckInOpen(true)}
         >
-          How are you today?
+          Check in
         </button>
       )}
 
