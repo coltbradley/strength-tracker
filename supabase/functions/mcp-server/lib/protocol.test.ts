@@ -59,7 +59,9 @@ Deno.test("initialize returns a protocol version and server info", async () => {
 });
 
 Deno.test("tools/list advertises every tool with a usable schema", async () => {
-  const res = await handleRequest(rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }));
+  const res = await handleRequest(
+    rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+  );
   assertEquals(res.status, 200);
   const { result } = await res.json();
   const names: string[] = result.tools.map((t: { name: string }) => t.name);
@@ -74,6 +76,9 @@ Deno.test("tools/list advertises every tool with a usable schema", async () => {
     "resolve_exercises",
     "get_lift_history",
     "get_recent_sessions",
+    // Check-ins: the lifter's own words from the always-available "Check in"
+    // button and the readiness panel. Events, not a trend.
+    "get_checkins",
     "get_goal_progress",
     // The week as one row. It exists so "how was last week" stops being dozens
     // of set rows added up in a model's head, which was slow and gave a
@@ -117,25 +122,42 @@ Deno.test("a browser preflight succeeds without credentials", async () => {
   );
   assertEquals(res.status, 204);
   assertEquals(res.headers.get("access-control-allow-origin"), "*");
-  assertStringIncludes(res.headers.get("access-control-allow-headers") ?? "", "authorization");
-  assertStringIncludes(res.headers.get("access-control-allow-headers") ?? "", "mcp-protocol-version");
+  assertStringIncludes(
+    res.headers.get("access-control-allow-headers") ?? "",
+    "authorization",
+  );
+  assertStringIncludes(
+    res.headers.get("access-control-allow-headers") ?? "",
+    "mcp-protocol-version",
+  );
 });
 
-Deno.test("responses carry CORS so a browser client can read them", async () => {
-  const res = await handleRequest(rpc(INITIALIZE));
-  assertEquals(res.headers.get("access-control-allow-origin"), "*");
-  assertStringIncludes(res.headers.get("access-control-expose-headers") ?? "", "mcp-session-id");
-  await res.body?.cancel();
-});
+Deno.test(
+  "responses carry CORS so a browser client can read them",
+  async () => {
+    const res = await handleRequest(rpc(INITIALIZE));
+    assertEquals(res.headers.get("access-control-allow-origin"), "*");
+    assertStringIncludes(
+      res.headers.get("access-control-expose-headers") ?? "",
+      "mcp-session-id",
+    );
+    await res.body?.cancel();
+  },
+);
 
-Deno.test("/health answers without a credential and leaks nothing", async () => {
-  const res = await handleRequest(new Request(`${URL_}/health`, { method: "GET" }));
-  assertEquals(res.status, 200);
-  const body = await res.json();
-  assertEquals(body.status, "ok");
-  // No user ids, no counts, no configuration.
-  assertEquals(Object.keys(body).sort(), ["server", "status", "transport"]);
-});
+Deno.test(
+  "/health answers without a credential and leaks nothing",
+  async () => {
+    const res = await handleRequest(
+      new Request(`${URL_}/health`, { method: "GET" }),
+    );
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals(body.status, "ok");
+    // No user ids, no counts, no configuration.
+    assertEquals(Object.keys(body).sort(), ["server", "status", "transport"]);
+  },
+);
 
 Deno.test("no token is 401 and says how to authenticate", async () => {
   const res = await handleRequest(
@@ -161,7 +183,9 @@ Deno.test("an unreachable token store is 503, never 401", async () => {
   // someone hunting a credential that is perfectly good, and would train a
   // client to discard a working key. SUPABASE_URL points at a closed port here,
   // which is exactly the outage being modelled.
-  const res = await handleRequest(rpc(INITIALIZE, { authorization: "Bearer nope" }));
+  const res = await handleRequest(
+    rpc(INITIALIZE, { authorization: "Bearer nope" }),
+  );
   assertEquals(res.status, 503);
   const body = await res.json();
   assertStringIncludes(body.error, "verify");
@@ -169,41 +193,53 @@ Deno.test("an unreachable token store is 503, never 401", async () => {
   assertEquals(typeof body.request_id, "string");
 });
 
-Deno.test("x-api-key is accepted, for clients with no custom-header field", async () => {
-  const res = await handleRequest(
-    new Request(URL_, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        "x-api-key": SECRET,
-      },
-      body: JSON.stringify(INITIALIZE),
-    }),
-  );
-  assertEquals(res.status, 200);
-  const body = await res.json();
-  assertEquals(body.result.serverInfo.name, "strength-tracker");
-});
+Deno.test(
+  "x-api-key is accepted, for clients with no custom-header field",
+  async () => {
+    const res = await handleRequest(
+      new Request(URL_, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "x-api-key": SECRET,
+        },
+        body: JSON.stringify(INITIALIZE),
+      }),
+    );
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals(body.result.serverInfo.name, "strength-tracker");
+  },
+);
 
 Deno.test("GET is refused with Allow, not with a hang or a 500", async () => {
   const res = await handleRequest(
-    new Request(URL_, { method: "GET", headers: { authorization: `Bearer ${SECRET}` } }),
+    new Request(URL_, {
+      method: "GET",
+      headers: { authorization: `Bearer ${SECRET}` },
+    }),
   );
   assertEquals(res.status, 405);
   assertEquals(res.headers.get("allow"), "POST");
   await res.body?.cancel();
 });
 
-Deno.test("malformed JSON gets a JSON-RPC parse error, not a crash", async () => {
-  const res = await handleRequest(
-    new Request(URL_, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}` },
-      body: "{ not json",
-    }),
-  );
-  assertEquals(res.status, 400);
-  const body = await res.json();
-  assertEquals(body.error.code, -32700);
-});
+Deno.test(
+  "malformed JSON gets a JSON-RPC parse error, not a crash",
+  async () => {
+    const res = await handleRequest(
+      new Request(URL_, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${SECRET}`,
+        },
+        body: "{ not json",
+      }),
+    );
+    assertEquals(res.status, 400);
+    const body = await res.json();
+    assertEquals(body.error.code, -32700);
+  },
+);

@@ -31,6 +31,7 @@ import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
 import { registerExerciseNotes } from "../tools/exercise_notes.ts";
 import { registerFeedback } from "../tools/feedback.ts";
+import { registerGetCheckins } from "../tools/get_checkins.ts";
 import { registerGetGoalProgress } from "../tools/get_goal_progress.ts";
 import { registerGetLiftHistory } from "../tools/get_lift_history.ts";
 import {
@@ -70,6 +71,7 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerResolveExercises(server, db, ctx);
   registerGetLiftHistory(server, db, ctx);
   registerGetRecentSessions(server, db, ctx);
+  registerGetCheckins(server, db, ctx);
   registerGetGoalProgress(server, db, ctx);
   registerGetVolume(server, db, ctx);
   registerGetWeekSummary(server, db, ctx);
@@ -112,7 +114,8 @@ const CORS: Record<string, string> = {
   "access-control-allow-methods": "POST, GET, DELETE, OPTIONS",
   "access-control-allow-headers":
     "authorization, x-api-key, content-type, accept, mcp-session-id, mcp-protocol-version, last-event-id",
-  "access-control-expose-headers": "mcp-session-id, mcp-protocol-version, www-authenticate",
+  "access-control-expose-headers":
+    "mcp-session-id, mcp-protocol-version, www-authenticate",
   "access-control-max-age": "86400",
 };
 
@@ -171,13 +174,20 @@ export async function handleRequest(req: Request): Promise<Response> {
     // "is this URL an MCP server" question do not need a credential.
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname.endsWith("/health")) {
-      return json(200, { status: "ok", server: "strength-tracker", transport: "streamable-http" });
+      return json(200, {
+        status: "ok",
+        server: "strength-tracker",
+        transport: "streamable-http",
+      });
     }
 
     // Auth before anything else.
     const caller = await resolveCaller(req, requestId);
     if (caller instanceof Response) {
-      finish("error", caller.status === 401 ? "unauthorized" : "auth unavailable");
+      finish(
+        "error",
+        caller.status === 401 ? "unauthorized" : "auth unavailable",
+      );
       return withCors(caller);
     }
     userLabel = caller.label;
@@ -195,7 +205,11 @@ export async function handleRequest(req: Request): Promise<Response> {
         }),
         {
           status: 405,
-          headers: { "content-type": "application/json", allow: "POST", ...CORS },
+          headers: {
+            "content-type": "application/json",
+            allow: "POST",
+            ...CORS,
+          },
         },
       );
     }
