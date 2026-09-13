@@ -35,7 +35,7 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   give it the next index: that is how a corrected set 2 became set 5.
   `isNoopCorrection` normalises undefined to null before comparing, because a
   row cached before a column exists reads back undefined and `undefined ===
-  null` is false: without it, saving an unrated set unrated writes a void and a
+null` is false: without it, saving an unrated set unrated writes a void and a
   duplicate row.
   `set_notes` is the one editable set-adjacent row (a user annotation,
   last-write-wins) — the sessions.notes mutability class, never a way to
@@ -529,14 +529,25 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   composite readiness score anywhere, ever: subjective and objective recovery
   measures do not correlate, so a composite merges signals that move
   independently and hides which one moved.
-  The panel asks THREE things (sleep, fatigue, soreness) and saves as it is
-  answered, with no Save button: the lowest-stakes version of a question is one
-  you cannot get wrong by walking away from it, and a panel that takes a minute
-  gets answered for a fortnight. The other items still exist and are one tap
-  away. A daily prompt goes quiet after four hours rather than nagging until
-  bedtime, and "not today" is RECORDED (`report_prompts`, which is also the
-  adherence denominator) so the asking actually stops. Losing the athlete costs
-  every future answer; losing one day costs one day.
+  The three-question panel (sleep, fatigue, soreness) used to be the whole
+  sheet; it is now a collapsed "Sleep, fatigue, soreness" disclosure inside
+  `CheckInSheet`, closed by default, behind a SPONTANEOUS check-in that leads
+  instead — one text box ("How are you feeling?"), five mood chips (Sore,
+  Hurt, Tired, Stressed, Great) that append their word into the box and
+  remove it on a second tap, and an optional 1-5 energy. "Check in" writes one
+  `checkins` row (kind 'spontaneous') through the outbox the moment any of
+  text/chip/energy is present; the readiness scales, once opened, still
+  autosave with no Save button exactly as before, still merge onto today's
+  row, and are still one tap away behind "Anything else?". A once-a-day thing
+  should not be what somebody meets every time they want to say something,
+  which is also why the daily readiness PROMPT (prompts.ts, unchanged
+  otherwise) now ships with `dailyEnabled: false`: the always-visible "Check
+  in" button replaced the reason to nag for it, and "not today" is still
+  RECORDED (`report_prompts`, the adherence denominator) for anyone who
+  re-enables it. `checkins.memory_extracted_at` (20260908000000) tracks which
+  notes the coach function's out-of-band checkin-memory route has already
+  read for standing facts, and `coach_memory.source` admits 'checkin'
+  alongside 'coach' and 'extracted' for what it finds.
   OSTRC severity is derived in a view and scored PER `instrument` version, so a
   scoring correction is a CREATE OR REPLACE and never a backfill over data
   nobody can re-collect. Escalation is on PERSISTENCE, not intensity: for one

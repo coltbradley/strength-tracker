@@ -1909,6 +1909,7 @@ this pass would silently have halved everyone's daily allowance.
 nobody mentioned in the chat and offer to delete it. `source` carries exactly
 one fact, how the row got here, and nothing may branch on it for ownership:
 that is the mistake `exercises.source` made.
+
 ## A schema error is not a bad day for wifi
 
 `fetchWithCache` is the read layer's whole offline story: try the server, and
@@ -1931,8 +1932,7 @@ it: no code is "offline", everything else — including a throw from our own
 code, which is a bug and not weather — is "error".
 
 The fallback itself did not change shape. The cache is still served whenever it
-exists, because the alternative is a blank screen mid-session over a transient
-500. What changed is that hiding a real error behind cached data is no longer
+exists, because the alternative is a blank screen mid-session over a transient 500. What changed is that hiding a real error behind cached data is no longer
 silent: it is reported once per message per thirty seconds (History fires seven
 reads at once, and seven toasts for one broken view is noise, not information),
 and the banner says "couldn’t refresh" in the warning colour rather than
@@ -2067,7 +2067,6 @@ test it.
 
 Until then: the wake lock keeps the screen on while the app is open, the tone
 fires while it is open, and a reopened app shows the right time.
-
 
 ## The loop: a percentage with no training max is written, a day is recognised and repeated, and the session gets a review
 
@@ -2213,7 +2212,7 @@ Departures from the design, and decisions it left open:
   `exclude using gist (plan_id with =, daterange(...) with &&)`, which needs
   `btree_gist`. PGlite, this repository's validation path for the whole
   migration chain, does not ship it as a loadable extension: `create extension
-  btree_gist` fails in a bare `new PGlite()`, and works only when the harness
+btree_gist` fails in a bare `new PGlite()`, and works only when the harness
   is constructed with the contrib module — a change to `validate-db.mjs`,
   `check-selects.mjs` and CI, not to a migration. An AFTER ROW trigger states
   the same rule (after-row, so two overlapping phases in ONE bulk insert are
@@ -2265,7 +2264,7 @@ Departures from the design, and decisions it left open:
   case: state `late` plus a confirmed plan whose current phase is
   "Accumulation" with focus "hypertrophy, 8-12 reps"; user says "write me a
   heavy single day for Thursday"; checks `tools_forbidden: ["upsert_program",
-  "update_planned_workout"]` and `answer_any: [/accumulation/i]`; rubric
+"update_planned_workout"]` and `answer_any: [/accumulation/i]`; rubric
   "names the phase and asks whether to depart from it rather than writing the
   day or refusing".
 
@@ -2362,7 +2361,6 @@ no edge runtime were reachable. What is pinned by tests is the cryptography,
 the RLS, the client's network behaviour and the built worker's shape; what the
 phone checklist has to prove is that Apple's push service accepts the VAPID
 token and that the platform honours `waitUntil` for a sleep of a full rest.
-
 
 ## A build artifact on a branch, so the server could ship from a session with no CLI
 
@@ -2592,7 +2590,6 @@ routine. Planned days need a time of day before E5 can enforce the rule that
 matters most to the one constraint he actually stated, which is that strength
 does not get cut.
 
-
 ## Endurance actuals: a third writer, and the row that arrived twice
 
 E0 of the endurance layer (20260907030000). The design is
@@ -2705,7 +2702,6 @@ minutes`. For about an hour after every ISO Monday boundary those straddle two
 buckets and the count is partial. It failed at 00:47 UTC on a Monday and looked
 exactly like the new migration having broken something. Summed across weeks now;
 which bucket they land in is what the timezone checks are for.
-
 
 ## The athlete answers, and skipping is a first-class answer
 
@@ -2828,3 +2824,79 @@ A smaller thing found by the tests: the sheet's action button said "Close" on an
 untouched panel, which is the same accessible name as the sheet's own dismiss
 control. Two buttons with one name is a screen reader saying the same word twice
 and meaning different things. It says "Done" unconditionally.
+
+## The check-in stops asking and starts listening
+
+The three-scale morning panel above was the whole sheet, opened from "How are
+you today?", and scheduled to nag once a day. It is now a collapsed
+disclosure inside the same `CheckInSheet`, and a SPONTANEOUS check-in leads
+instead: one text box, five mood chips that append their own word into it and
+remove it on a second tap, an optional 1-5 energy, and a "Check in" button
+that writes one `checkins` row (kind 'spontaneous') the moment any of the
+three carries something. No prompt schedules it and no window closes on it,
+because the thing worth making unlimited is the thing that costs nothing to
+skip.
+
+**The daily PROMPT default flips; the mechanism does not.** `prompts.ts`'s
+`duePrompts` turned out to be wired nowhere in the app — no caller ever
+invoked `armPrompt('daily_readiness', ...)` or read `duePrompts` for the
+in-app fallback — so there was no live nag to remove, only a default to stop
+shipping. `DEFAULT_PROMPT_PREFS.dailyEnabled` is now `false`. Deleting the
+daily half of the module instead was considered and rejected: weekly OSTRC
+prompting is a real, still-enabled use of the identical scheduling logic
+(window, overdue, skip-recorded), and forking one cadence out because its
+default changed would leave two copies of a rule that has to stay the same
+rule. Someone can still opt back into a scheduled daily reminder; they just
+do not get one by default.
+
+**Chip state is derived, not tracked.** A mood chip could have been a
+separate `Set<string>` of "active" words kept in sync with the text box by
+hand, but a single shared box means the person can also just type — and free
+typing would desync a hand-kept set the moment they edited around a
+chip-added word. Instead `chipActive` reads the box's own comma-separated
+tokens and compares one against `word`; `toggleChip` adds or removes exactly
+that token. The box is the only state. The cost is a chip reading as "on" if
+someone happens to type its exact word as its own comma-separated token by
+hand — accepted, because the alternative (two sources of truth for one
+five-word vocabulary) fails more often and less predictably.
+
+**Standing facts from a note that was never sent to anyone.**
+`memory-extract.ts`'s post-turn pass already solved "read the lifter's own
+words, dedupe against existing memory, cap at three facts" for a coach
+conversation; a spontaneous check-in note is the same kind of material with
+no conversation for it to ride along on. Rather than a second extractor with
+its own rules (and its own chance to disagree with the first about what
+counts as a standing fact), `extractFromCheckins` reuses
+`extractionPrompt`/`parseFacts`/`newFacts` against a batch of notes framed as
+their own JSON array. `checkins.memory_extracted_at` (migration 20260908000000) is the read marker — service-written, because the extraction
+route runs as the service role like every other write `coach_memory`
+receives, and a lifter typing in the sheet has no reason to touch it.
+`coach_memory.source` widens to admit `'checkin'`: display and audit only,
+the same rule `source` has kept since it first distinguished `'coach'` from
+`'extracted'`.
+
+**One route, one endpoint, one behaviour unchanged.** The coach edge function
+had served exactly one streaming endpoint since it existed. Rather than a
+second Supabase function (a second deploy, a second set of secrets, a second
+place `COACH_ALLOWED_USERS` has to be checked), `POST /coach/checkin-memory`
+is a path branch at the top of the same `Deno.serve` handler, checked before
+the existing method guard and returning before falling into any of the
+existing endpoint's logic. It shares `resolveUser`, `ALLOWED_USERS`,
+`coachSwitchedOff` and — via a new `monthlySpentTokens` factored out of
+`overLimit` — the monthly token cap. It deliberately does NOT share the daily
+message-count half of `overLimit`: that check counts `kind = 'turn'` rows, an
+extraction is not a message, and calling the whole function would have
+refused a check-in's extraction to someone who had merely sent 150 chat
+messages that day for an unrelated reason.
+
+**The trigger is a hook that did not exist.** The obvious place to fire the
+extraction is "after a check-in with a note reaches the server," and nothing
+in the outbox said when that was — `enqueue` returns once the write is
+QUEUED, and `subscribe` fires on any status change, neither of which is "this
+specific op just synced." `Outbox.onSynced(op)` is the addition: called once,
+with the op, exactly where the flush loop deletes a row for a `null` transport
+error — never for one that stays pending, held or dead. `sync.ts` wires it to
+`notifyCheckinMemory()` for a `checkins` insert whose payload carries a note.
+Firing on enqueue instead was rejected outright: offline, that would ask the
+server about a note the server does not have yet, and the fire-and-forget
+call would have nothing to read.
