@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { targetSets, type ExerciseEntry } from "../../lib/entries";
+import { twoMemberSuperset } from "../../lib/sessionFocus";
 
 export interface FocusDeckProps {
   entries: readonly ExerciseEntry[];
@@ -40,27 +41,21 @@ function focusSetPosition(
 ): { progress: number; target: number } {
   const progress = entryProgress(entry);
   const target = targetSets(entry);
-  const group = entry.brackets[0]?.superset_group;
+  const pair = supersetHeading ? twoMemberSuperset(entries, entry.key) : null;
+  if (pair !== null) {
+    const [a1, a2] = pair;
+    const progressA = entryProgress(a1);
+    const progressB = entryProgress(a2);
+    const targetA = targetSets(a1);
+    const targetB = targetSets(a2);
+    const exhaustedA = targetA > 0 && progressA >= targetA;
+    const exhaustedB = targetB > 0 && progressB >= targetB;
+    const tail = exhaustedA !== exhaustedB;
 
-  if (supersetHeading && group !== undefined && group !== null) {
-    const pair = entries.filter(
-      (candidate) => candidate.brackets[0]?.superset_group === group,
-    );
-    if (pair.length === 2) {
-      const [a1, a2] = pair;
-      const progressA = entryProgress(a1!);
-      const progressB = entryProgress(a2!);
-      const targetA = targetSets(a1!);
-      const targetB = targetSets(a2!);
-      const exhaustedA = targetA > 0 && progressA >= targetA;
-      const exhaustedB = targetB > 0 && progressB >= targetB;
-      const tail = exhaustedA !== exhaustedB;
-
-      return {
-        progress: Math.min(progressA, progressB),
-        target: tail ? Math.max(targetA, targetB) : Math.min(targetA, targetB),
-      };
-    }
+    return {
+      progress: Math.min(progressA, progressB),
+      target: tail ? Math.max(targetA, targetB) : Math.min(targetA, targetB),
+    };
   }
 
   return { progress, target };

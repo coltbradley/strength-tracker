@@ -112,6 +112,7 @@ import {
   isFocusEligible,
   pinnedOverviewEntryKey,
   transitionPresentation,
+  twoMemberSuperset,
   type SessionPresentation,
 } from "../lib/sessionFocus";
 import { cancelRestAlert, scheduleRestAlert } from "../lib/push";
@@ -159,33 +160,6 @@ type SupersetRoundDraft = {
   a1: SetDraft;
   a2: SetDraft;
 };
-
-/** Only a consecutive ordinary two-member run can use the paired round UI. */
-function twoMemberSuperset(
-  entries: ExerciseEntry[],
-  key: string | null,
-): readonly [ExerciseEntry, ExerciseEntry] | null {
-  if (key === null) return null;
-  const index = entries.findIndex((entry) => entry.key === key);
-  const group = entries[index]?.brackets[0]?.superset_group ?? null;
-  if (index < 0 || group === null) return null;
-  let start = index;
-  let end = index;
-  while (start > 0 && entries[start - 1].brackets[0]?.superset_group === group)
-    start--;
-  while (
-    end < entries.length - 1 &&
-    entries[end + 1].brackets[0]?.superset_group === group
-  )
-    end++;
-  if (end - start !== 1) return null;
-  const pair = [entries[start], entries[end]] as const;
-  return pair.every(
-    (entry) => (entry.brackets[0]?.tracking ?? "reps") === "reps",
-  )
-    ? pair
-    : null;
-}
 
 /** A movement with no implement starts at zero load, never at the empty-bar
  *  fallback: in focus mode its load field is hidden, so a 20 kg default would

@@ -133,6 +133,40 @@ describe("FocusDeck", () => {
     ).toEqual(["completed", "current", "future"]);
   });
 
+  it("uses the focused consecutive pair when another pair reuses its group number", () => {
+    const a1 = entry("a1", "Bench Press", 3);
+    const a2 = entry("a2", "Barbell Row", 4);
+    const gap = entry("gap", "Overhead Press", 1);
+    const b1 = entry("b1", "Curl", 5);
+    const b2 = entry("b2", "Pushdown", 6);
+    for (const member of [a1, a2, b1, b2]) {
+      member.brackets[0] = { ...member.brackets[0]!, superset_group: 1 };
+    }
+    const progressByKey: Record<string, number> = {
+      a1: 1,
+      a2: 0,
+      b1: 3,
+      b2: 3,
+    };
+    const { container } = render(
+      <FocusDeck
+        {...props({
+          entries: [a1, a2, gap, b1, b2],
+          entry: a1,
+          entryProgress: (candidate) => progressByKey[candidate.key] ?? 0,
+          supersetHeading: { title: "Superset A", subtitle: "round 1 of 3" },
+          renderEditor: () => <section className="superset-round-editor" />,
+        })}
+      />,
+    );
+
+    expect(
+      [...container.querySelectorAll(".focus-set-progress [data-state]")].map(
+        (segment) => segment.getAttribute("data-state"),
+      ),
+    ).toEqual(["current", "future", "future"]);
+  });
+
   it("keeps the supplied tick-only editor and offers the quiet overview action", () => {
     render(<FocusDeck {...props()} />);
 
