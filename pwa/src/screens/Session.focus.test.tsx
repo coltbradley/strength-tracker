@@ -216,9 +216,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "LOG SET 1 OF 1" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
     });
@@ -231,7 +229,7 @@ describe("Session focus presentation", () => {
 
     expect(screen.getByRole("heading", { name: "Back Squat" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "LOG SET 1 OF 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
       payload: { exercise_id: "back-squat", prescription_id: "squat" },
     });
@@ -248,9 +246,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "LOG SET 1 OF 2" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
 
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
@@ -269,16 +265,14 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "LOG SET 1 OF 1" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Next exercise" }),
     );
 
     expect(screen.getByRole("heading", { name: "Farmer Carry" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "DONE 1 OF 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "DONE" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
       payload: {
         exercise_id: "farmer-carry",
@@ -737,9 +731,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "LOG SET 1 OF 1" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Next exercise" }),
     );
@@ -747,7 +739,7 @@ describe("Session focus presentation", () => {
       await screen.findByRole("heading", { name: "Back Squat" }),
     ).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "LOG SET 1 OF 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     // past LOG_LOCK_MS, or the correction's own Save below is a no-op tap on
     // a still-locked button.
     await new Promise((resolve) => window.setTimeout(resolve, 450));
