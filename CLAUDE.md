@@ -35,7 +35,7 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   give it the next index: that is how a corrected set 2 became set 5.
   `isNoopCorrection` normalises undefined to null before comparing, because a
   row cached before a column exists reads back undefined and `undefined ===
-null` is false: without it, saving an unrated set unrated writes a void and a
+  null` is false: without it, saving an unrated set unrated writes a void and a
   duplicate row.
   `set_notes` is the one editable set-adjacent row (a user annotation,
   last-write-wins) — the sessions.notes mutability class, never a way to
@@ -222,12 +222,12 @@ null` is false: without it, saving an unrated set unrated writes a void and a
 - Identity: the MCP server has NO auth.uid() (it authenticates with a bearer
   token, not a session) and runs as the service role, which bypasses RLS. The
   token IS the identity: `mcp_tokens` maps its SHA-256 to a user, and every
-  tool must filter and stamp `db.ownerId` itself. A client that signed in instead sends a Supabase OAuth access token;
-  `lib/oauth.ts` accepts it ONLY when it carries `client_id` (a plain session
-  JWT is refused, because this server bypasses RLS) and verifies it with
-  `auth.getUser`, yielding the same `Caller`. Dynamic client registration is
-  open; the gate is the lifter's sign-in plus Allow on `/oauth/consent`.
-  Build the `Db` handle per
+  tool must filter and stamp `db.ownerId` itself. A client that signed in
+  instead sends a Supabase OAuth access token; `lib/oauth.ts` accepts it ONLY
+  when it carries `client_id` (a plain session JWT is refused, because this
+  server bypasses RLS) and verifies it with `auth.getUser`, yielding the same
+  `Caller`. Dynamic client registration is open; the gate is the lifter's
+  sign-in plus Allow on `/oauth/consent`. Build the `Db` handle per
   request (`dbFor`); NEVER cache it or anything derived from a user id at
   module scope — edge isolates are reused across callers, and that is how one
   person's data reaches another. The connection may be cached; the identity
