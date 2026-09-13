@@ -19,6 +19,8 @@ export interface DemoStore {
   sets: Row[];
   set_voids: Row[];
   set_notes: Row[];
+  /** Empty by default, matching the real `coach_access` default of enabled. */
+  coach_access: Row[];
   /** weigh-ins with no session attached; unioned with sessions.bodyweight_kg
    *  by the v_bodyweight stand-in, the same as in SQL */
   bodyweight_log: Row[];
@@ -283,8 +285,29 @@ function todayRx(workoutId: string): Row[] {
       rest_seconds: 75,
       notes: LONG_COACH_NOTE,
     },
+    // A paired dumbbell prescription makes the per-side storage convention
+    // visible in the narrow-phone demo without changing product behavior.
+    {
+      exercise_id: "Seated_Dumbbell_Press",
+      sets: 3,
+      reps_min: 8,
+      reps_max: 10,
+      load_kg: 40,
+      load_entry: "per_side",
+      rest_seconds: 90,
+    },
     // no load at all — coach said "by feel"
     { exercise_id: "Hanging_Leg_Raise", sets: 3, reps_min: 10, reps_max: 15 },
+    // Completion-only work has one literal action, never an invented load or
+    // repetition value. This exists to exercise that approved focus state.
+    {
+      exercise_id: "Plank",
+      sets: 3,
+      reps_min: 0,
+      reps_max: 0,
+      tracking: "done",
+      rest_seconds: 45,
+    },
     // %TM with NO training max -> "no TM set" warning
     {
       exercise_id: "Standing_Military_Press",
@@ -668,6 +691,7 @@ function emptyStore(): DemoStore {
     sets: [],
     set_voids: [],
     set_notes: [],
+    coach_access: [],
     bodyweight_log: [],
   };
 }
