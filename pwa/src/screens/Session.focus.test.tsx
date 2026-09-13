@@ -295,9 +295,12 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
+    // A live round names itself, not its first member — see "Superset A" /
+    // "round 1 of 1" below — so the duplicated exercise-name heading is gone.
     expect(
-      await screen.findByRole("heading", { name: "Bench Press" }),
+      await screen.findByRole("heading", { name: "Superset A" }),
     ).toBeTruthy();
+    expect(screen.getByText("round 1 of 2")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
   });
 
@@ -313,7 +316,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));
 
     await vi.waitFor(() =>
@@ -368,7 +371,7 @@ describe("Session focus presentation", () => {
         </MemoryRouter>,
       );
 
-      await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+      await screen.findByText("round 1 of 2");
       fireEvent.click(
         screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[0],
       );
@@ -405,7 +408,7 @@ describe("Session focus presentation", () => {
         </MemoryRouter>,
       );
 
-      expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+      expect(await screen.findByText("round 1 of 2")).toBeTruthy();
       fireEvent.click(
         screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[0]!,
       );
@@ -420,7 +423,7 @@ describe("Session focus presentation", () => {
       expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
         "20",
       );
-      expect(screen.getByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+      expect(screen.getByText("round 1 of 2")).toBeTruthy();
       expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
@@ -439,7 +442,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    await screen.findByText("round 1 of 2");
     const increaseLoad = screen.getAllByRole("button", {
       name: "increase load by 2.5 kg",
     });
@@ -470,7 +473,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    await screen.findByText("round 1 of 2");
     fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
@@ -522,7 +525,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Barbell Row" }));
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
 
-    expect(await screen.findByText("SUPERSET A · ROUND 1 OF 2")).toBeTruthy();
+    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Log round" })).toBeTruthy();
   });
 
@@ -569,7 +572,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    await screen.findByText("round 1 of 2");
     const a1 = screen.getByLabelText("A1 Bench Press");
     const a2 = screen.getByLabelText("A2 Barbell Row");
     fireEvent.click(
@@ -786,12 +789,12 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("SUPERSET A · ROUND 1 OF 2");
+    await screen.findByText("round 1 of 2");
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
     );
-    await screen.findByText("SUPERSET A · ROUND 2 OF 2");
+    await screen.findByText("round 2 of 2");
     // past LOG_LOCK_MS, or round 2's tap lands on a still-disabled button.
     await new Promise((resolve) => window.setTimeout(resolve, 450));
 
@@ -847,7 +850,7 @@ describe("Session focus presentation", () => {
     // top-level `restSeconds` hook value reflects Bench's own 90s bracket —
     // the wrong number for a strip that starts after Row, the round's last
     // performed exercise, whose own bracket says 45s.
-    await screen.findByText("SUPERSET A · ROUND 1 OF 1");
+    await screen.findByText("round 1 of 1");
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));
 
     expect(await screen.findByText("0:45")).toBeTruthy();
@@ -892,7 +895,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("SUPERSET A · ROUND 1 OF 1");
+    await screen.findByText("round 1 of 1");
     // The fresh-open prefill that stages Bench on its outstanding warmup
     // lands a render after mount; force it explicitly rather than race it,
     // since this test is about what happens to the toggle AFTER logging, not
@@ -936,7 +939,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("SUPERSET A · ROUND 1 OF 1");
+    await screen.findByText("round 1 of 1");
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));
 
     await vi.waitFor(() =>
@@ -960,7 +963,7 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText("SUPERSET A · ROUND 1 OF 1");
+    await screen.findByText("round 1 of 1");
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
@@ -969,8 +972,8 @@ describe("Session focus presentation", () => {
     // Bench (A1, target 1) is done; Row (A2, target 2) still owes a set. This
     // is the last set of a two-round day, not "round 2 of 1", and only Row
     // has anything left to log — Bench must not be offered another set.
-    expect(await screen.findByText("SUPERSET A · ROUND 2 OF 2")).toBeTruthy();
-    expect(screen.queryByText(/ROUND 2 OF 1/)).toBeNull();
+    expect(await screen.findByText("round 2 of 2")).toBeTruthy();
+    expect(screen.queryByText(/round 2 of 1/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Log A1 only" })).toBeNull();
     expect(screen.getByRole("button", { name: "Log A2 only" })).toBeTruthy();

@@ -22,6 +22,14 @@ export interface FocusDeckProps {
   /** Same formatter `WorkoutOverview` uses for a TARGET line, reused so the
    *  quiet "next" line names a scheme in the one convention the app has. */
   formatScheme?(entry: ExerciseEntry): string;
+  /**
+   * Replaces the exercise name + set position with a superset round's own
+   * identity ("Superset A" / "round 1 of 3") while a live round is showing
+   * two member blocks below — naming the exercise twice on one screen is
+   * exactly what a superset's compact members already do. Null (the default)
+   * keeps the ordinary single-exercise header.
+   */
+  supersetHeading?: { title: string; subtitle: string } | null;
 }
 
 /**
@@ -44,6 +52,7 @@ export function FocusDeck({
   renderEditor,
   onOpenMore,
   formatScheme,
+  supersetHeading = null,
 }: FocusDeckProps) {
   const entryIndex = entries.findIndex(
     (candidate) => candidate.key === entry.key,
@@ -85,8 +94,12 @@ export function FocusDeck({
       </div>
 
       <div className="focus-deck-status" aria-live="polite">
-        <h1 className="focus-deck-name">{entry.name}</h1>
-        <div className="focus-deck-position">{setPosition}</div>
+        <h1 className="focus-deck-name">
+          {supersetHeading ? supersetHeading.title : entry.name}
+        </h1>
+        <div className="focus-deck-position">
+          {supersetHeading ? supersetHeading.subtitle : setPosition}
+        </div>
       </div>
 
       <div className="focus-deck-editor">{renderEditor(entry)}</div>

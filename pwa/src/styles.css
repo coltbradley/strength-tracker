@@ -2858,9 +2858,15 @@
     letter-spacing: var(--track-1);
   }
 
+  /* Noticeably larger and bolder than any other label on the screen —
+   * focus mode has exactly one exercise to name, so its name can carry the
+   * weight a workout-full accordion never could. (There was no --fs-xl
+   * token: this rule silently inherited the body size until now.) */
   .focus-deck-name {
     margin: 0;
-    font-size: var(--fs-xl);
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: var(--track-tight);
     line-height: 1.1;
   }
 
@@ -2886,38 +2892,80 @@
     min-height: 0;
   }
 
-  .superset-round-editor,
-  .superset-round-members,
+  /* Fills the same space a plain hero editor would (see the flex chain
+   * comment above .set-editor-focus): the two compact member blocks settle
+   * into the middle of the screen with `margin: auto 0`, and LOG ROUND
+   * anchors to the bottom safe area with `margin-top: auto`, exactly like
+   * the single-exercise bottom bar — no scrolling either way needs. */
+  .superset-round-editor {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .superset-round-members {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-8);
+    margin: auto 0;
+  }
+
   .superset-round-actions {
     display: flex;
     flex-direction: column;
     gap: var(--s-5);
+    margin-top: auto;
+    padding-top: var(--s-7);
   }
 
-  .superset-round-label,
   .superset-round-member-label {
     color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: var(--fs-label);
     letter-spacing: var(--track-1);
     text-transform: uppercase;
-  }
-
-  .superset-round-member {
-    padding: var(--s-5);
-    border: 1px solid var(--line);
-  }
-
-  .superset-round-member-label {
     margin-bottom: var(--s-4);
   }
 
-  .superset-round-remaining,
-  .superset-round-error {
-    margin: 0;
+  /* One member of a round: a small label, then load × reps on one line —
+   * see .superset-member-row — with no PlateBar and no bordered box, so two
+   * of these plus LOG ROUND still fit one screen without scrolling. */
+  .superset-member-compact {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .superset-member-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-4);
+  }
+
+  /* Half the single-exercise hero's 84px: secondary to it in weight, never
+   * competing, but still the biggest thing in its own compact block. */
+  .superset-member-row .stepper-value {
+    font-size: 42px;
+    border-bottom: none;
+  }
+
+  .superset-member-row .stepper-sub {
+    font-size: var(--fs-lg);
+    color: var(--text);
+    padding-bottom: 0;
+  }
+
+  .superset-member-x {
+    color: var(--text-dim);
+    font-size: var(--fs-lg);
+  }
+
+  .superset-member-detail {
+    margin-top: var(--s-2);
   }
 
   .superset-round-error {
+    margin: 0;
     color: var(--danger);
   }
 

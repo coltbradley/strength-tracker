@@ -133,7 +133,10 @@ describe("SupersetRoundEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
 
     expect(onLogA1Only).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(/A2.*remaining/i)).toBeTruthy();
+    // The round no longer spells out A2's remaining state in a sentence —
+    // it stays visible as its own compact block rather than disappearing as
+    // if the round were already over.
+    expect(screen.getByLabelText("A2 Barbell Row")).toBeTruthy();
   });
 
   it("offers only A2 when A1 has already been persisted", () => {

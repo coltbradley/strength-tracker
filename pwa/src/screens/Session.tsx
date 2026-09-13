@@ -756,6 +756,40 @@ export function Session() {
   // A1/A2 tags and a bracket rail
   const supersetInfo = useMemo(() => supersetInfoOf(entries), [entries]);
 
+  // The focus deck's own header, for the one case it isn't just the
+  // exercise name: a live round replaces "Romanian Deadlift / SET 1 OF 3"
+  // with "Superset A" / "round 1 of 3" so the two member names underneath
+  // are never named twice on one screen. Mirrors the exhaustion math
+  // `renderEditor` uses to build `SupersetRoundEditor`'s (now aria-only)
+  // label — kept here too because FocusDeck renders its own header outside
+  // that closure. Null falls back to FocusDeck's default (entry name +
+  // set position), which covers correction and the plain single-exercise case.
+  const focusRoundHeading =
+    !editing && presentation === "focus" && focusSupersetPair !== null
+      ? (() => {
+          const [a1, a2] = focusSupersetPair;
+          const letter = (supersetInfo.get(a1.key)?.tag ?? "A1").replace(
+            /\d+$/,
+            "",
+          );
+          const progressA = entryProgress(a1);
+          const progressB = entryProgress(a2);
+          const targetA = targetSets(a1);
+          const targetB = targetSets(a2);
+          const exhaustedA = targetA > 0 && progressA >= targetA;
+          const exhaustedB = targetB > 0 && progressB >= targetB;
+          const tail = exhaustedA !== exhaustedB;
+          const index = Math.min(progressA, progressB) + 1;
+          const total = tail
+            ? Math.max(targetA, targetB)
+            : Math.min(targetA, targetB);
+          return {
+            title: `Superset ${letter}`,
+            subtitle: `round ${index} of ${total}`,
+          };
+        })()
+      : null;
+
   /** Does this day have any named part? If not, it needs no headings at all. */
   const hasSections = useMemo(
     () => entries.some((e) => (e.brackets[0]?.section ?? null) !== null),
@@ -2862,6 +2896,7 @@ export function Session() {
               renderEditor={(entry) => renderEditor(entry, false, "hero")}
               onOpenMore={() => setMoreOpen(true)}
               formatScheme={scheme}
+              supersetHeading={focusRoundHeading}
             />
           ) : (
             <>
