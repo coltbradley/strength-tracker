@@ -182,7 +182,27 @@ curl -sS https://<PROJECT_REF>.supabase.co/functions/v1/mcp-server \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-### ChatGPT through a Secure MCP Tunnel
+### Any client that supports sign-in (ChatGPT, claude.ai, Claude Desktop connectors)
+
+Add the server URL and sign in with your Strength Log account. No token.
+
+    https://<project-ref>.supabase.co/functions/v1/mcp-server
+
+- **ChatGPT** (Plus, Pro, Business, Enterprise, Edu; web only): turn on
+  Developer mode (the OpenAI developer-mode guide has the current menu path),
+  then create an app with the URL
+  above and authentication **OAuth**. ChatGPT opens a sign-in window: enter the
+  email code, then **Allow**.
+- **claude.ai / Claude Desktop**: Settings → Connectors → Add custom connector,
+  paste the URL, Connect, sign in, **Allow**.
+- Disconnect from the app's Settings → CONNECTED APPS.
+
+The sign-in window is a normal browser page, not the installed app, so it asks
+for an email code even on a phone where the app is already signed in.
+Menu names in ChatGPT and Claude move; the OpenAI developer-mode guide and
+Anthropic's connector docs are the current source.
+
+### ChatGPT through a Secure MCP Tunnel (fallback, superseded by sign-in)
 
 This uses the same private-tunnel shape as Premiere Transcriber: ChatGPT sends
 MCP requests to OpenAI's tunnel endpoint, `tunnel-client` runs on this Mac,
@@ -288,13 +308,9 @@ Finally revoke the `Colt · ChatGPT tunnel` row in `mcp_tokens` using the SQL
 printed by `scripts/issue-mcp-token.mjs`. The public MCP endpoint stays online
 for other clients.
 
-**What this is not.** There is no OAuth here, so a client that insists on an
-OAuth flow (rather than accepting a static key) cannot do one-click "add
-connector" against this server. Adding that means running an authorization
-server — endpoints, PKCE, dynamic client registration, a consent screen — which
-is a real project and buys one thing: a nicer install for clients that refuse
-API keys. Per-user tokens already give the multi-user identity; OAuth would only
-change how a token is obtained.
+**Tokens still work.** `scripts/issue-mcp-token.mjs` tokens are for clients
+with a header field (Claude Desktop via mcp-remote, scripts). Sign-in is for
+everything else.
 
 ## 4. Smoke test the analysis path (no UI needed)
 
@@ -391,14 +407,14 @@ server setting there would be a third write-ownership class — see CLAUDE.md).
 
 ### What is shared and what is not
 
-| Thing                                               | Shared?                   |
-| --------------------------------------------------- | ------------------------- |
-| Sets, sessions, programs, training maxes, goals     | no                        |
-| Custom exercises (`source = 'custom'`)              | no, one owner each        |
-| Seeded library (free-exercise-db, curated, edited)  | yes                       |
-| `app_config.tz` (household default zone)            | yes, overridable per user |
-| MCP tokens                                          | no, one identity each     |
-| PWA device settings (plates, bars, rest, units)     | per device, not per user  |
+| Thing                                              | Shared?                   |
+| -------------------------------------------------- | ------------------------- |
+| Sets, sessions, programs, training maxes, goals    | no                        |
+| Custom exercises (`source = 'custom'`)             | no, one owner each        |
+| Seeded library (free-exercise-db, curated, edited) | yes                       |
+| `app_config.tz` (household default zone)           | yes, overridable per user |
+| MCP tokens                                         | no, one identity each     |
+| PWA device settings (plates, bars, rest, units)    | per device, not per user  |
 
 That last row is the one to know: two people sharing one phone share its plate
 inventory and per-exercise preferences. Two phones, no overlap.
@@ -480,15 +496,14 @@ SMTP_PASS=<an AgentMail API key, Dashboard -> API Keys>
 Three things that are easy to get wrong:
 
 **Use a dedicated inbox.** AgentMail requires the From address to match the
-inbox it authenticates as, so `SMTP_USER` *is* the sender. Do not reuse an
+inbox it authenticates as, so `SMTP_USER` _is_ the sender. Do not reuse an
 existing research or listening inbox: its deliverability reputation is the wrong
 one for auth mail, and a friend receiving a login code from an unfamiliar alias
 reads it as phishing. Make one for this app.
 
 **The password is an API key, not a mailbox password.** Dashboard -> API Keys.
 
-**Port 587 needs STARTTLS before AUTH**; authenticating first is rejected with a
-538. If sign-in mail starts failing that way, switch `port` to 465 (implicit
+**Port 587 needs STARTTLS before AUTH**; authenticating first is rejected with a 538. If sign-in mail starts failing that way, switch `port` to 465 (implicit
 TLS) in `config.toml`. Both are supported; 587 is set because it is what the
 previous Gmail config used.
 
@@ -580,19 +595,19 @@ dashboard's analytics are the thing that is down.
 
 ## Env var reference
 
-| Where                     | Var                                           | What                                                 |
-| ------------------------- | --------------------------------------------- | ---------------------------------------------------- |
-| Edge function secret      | `ANTHROPIC_API_KEY`                           | the coach's key; the coach 503s without it           |
-| Edge fn secret (optional) | `COACH_ALLOWED_USERS`                         | uuids that may use the coach; everyone if unset      |
-| Edge fn secret (optional) | `COACH_LOG_CONTENT`                           | `off` stops storing prompts/answers in `coach_usage` |
-| Edge fn secret (optional) | `SENTRY_DSN`                                  | error tracking for both functions; no-op if unset    |
-| Edge function secret      | `MCP_SECRET`                                  | LEGACY single-user bearer token                      |
-| Edge function secret      | `OWNER_USER_ID`                               | LEGACY user that `MCP_SECRET` maps to                |
-| Edge runtime (auto)       | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`   | injected by platform                                 |
-| PWA build                 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | public client creds                                  |
-| PWA build (optional)      | `VITE_SENTRY_DSN`                             | error tracking; no-op if unset                       |
-| GitHub Actions secret     | `SUPABASE_ACCESS_TOKEN`                       | lets `deploy.yml` push migrations + functions; skipped if unset |
-| GitHub Actions secret     | `SUPABASE_DB_PASSWORD`                        | `db push` needs Postgres itself, not just the API    |
+| Where                     | Var                                           | What                                                                |
+| ------------------------- | --------------------------------------------- | ------------------------------------------------------------------- |
+| Edge function secret      | `ANTHROPIC_API_KEY`                           | the coach's key; the coach 503s without it                          |
+| Edge fn secret (optional) | `COACH_ALLOWED_USERS`                         | uuids that may use the coach; everyone if unset                     |
+| Edge fn secret (optional) | `COACH_LOG_CONTENT`                           | `off` stops storing prompts/answers in `coach_usage`                |
+| Edge fn secret (optional) | `SENTRY_DSN`                                  | error tracking for both functions; no-op if unset                   |
+| Edge function secret      | `MCP_SECRET`                                  | LEGACY single-user bearer token                                     |
+| Edge function secret      | `OWNER_USER_ID`                               | LEGACY user that `MCP_SECRET` maps to                               |
+| Edge runtime (auto)       | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`   | injected by platform                                                |
+| PWA build                 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | public client creds                                                 |
+| PWA build (optional)      | `VITE_SENTRY_DSN`                             | error tracking; no-op if unset                                      |
+| GitHub Actions secret     | `SUPABASE_ACCESS_TOKEN`                       | lets `deploy.yml` push migrations + functions; skipped if unset     |
+| GitHub Actions secret     | `SUPABASE_DB_PASSWORD`                        | `db push` needs Postgres itself, not just the API                   |
 | GitHub Actions variable   | `SUPABASE_PROJECT_REF`                        | which project the workflow links; not secret, still not in the repo |
 
 `MCP_SECRET` / `OWNER_USER_ID` are the pre-multi-user credential: one secret

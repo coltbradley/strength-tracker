@@ -12,6 +12,15 @@ additional_redirect_urls = [
   "http://localhost:5173",
 ]
 
+# MCP sign-in (docs/decisions.md 2026-09-13). The hosted project is configured
+# in the dashboard; this mirrors it for `supabase start`. Dynamic registration
+# is open by design: the gate is the lifter's sign-in plus Allow on
+# /oauth/consent, which names the client and its redirect host.
+[auth.oauth_server]
+enabled = true
+allow_dynamic_registration = true
+authorization_url_path = "/oauth/consent"
+
 # Code-only sign-in email ({{ .Token }}, no link): links are useless inside
 # an installed iOS PWA (they open in Safari, whose storage the app can't
 # see), and a 6-digit code is less clunky everywhere else too. Custom
