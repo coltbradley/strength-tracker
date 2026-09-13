@@ -54,3 +54,21 @@ Implementation commit: `b95cd12` (`Add segmented focus set progress`).
   progress line reduces the vertical space available to the editor slightly.
 - Final theme colors are intentionally not bound yet; Task 5 must map the
   semantic roles and review the visual contrast.
+
+## I1 review follow-up
+
+- RED: the reused-group regression failed against the original FocusDeck logic:
+  it marked the first segment completed from A1's progress instead of leaving
+  the shared round current. The fixture uses two same-number pairs separated
+  by a non-superset entry; a fully consecutive four-member run is not a valid
+  two-member pair under Session's existing rule.
+- Fix: extracted `twoMemberSuperset` into `lib/sessionFocus.ts` and reused it
+  from both Session and FocusDeck. The progress line now calculates against
+  the exact focused consecutive pair instead of filtering all entries by
+  numeric group.
+- GREEN: FocusDeck, SupersetRoundEditor, Session focus, and sessionFocus tests
+  passed, 4 files and 48 tests. `npm run typecheck` passed.
+- Follow-up commit: `4c40c46` (`Fix reused superset progress groups`).
+- Follow-up files: `pwa/src/components/session/FocusDeck.tsx`,
+  `pwa/src/components/session/FocusDeck.test.tsx`,
+  `pwa/src/lib/sessionFocus.ts`, and `pwa/src/screens/Session.tsx`.
