@@ -3211,18 +3211,6 @@
     text-align: right;
   }
 
-  /* "target 8-15" beside reps — the one piece of the accordion's TARGET line
-   * that stays on the default screen, since reps without it is a number with
-   * no way to know if it is enough. */
-  .focus-target {
-    display: block;
-    margin-top: var(--s-2);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    letter-spacing: var(--track-1);
-  }
-
   /* The "more" sheet: everything focus mode's default screen leaves out,
    * given room to breathe rather than packed as tight as the accordion. */
   .focus-more {
@@ -3294,6 +3282,7 @@
   .focus-hero-section .stepper-value {
     font-size: 84px;
     border-bottom: none;
+    font-variant-numeric: tabular-nums;
   }
 
   .focus-hero-section .stepper-sub {
@@ -3306,8 +3295,13 @@
     margin-top: 0;
   }
 
-  .focus-no-load {
-    margin-top: var(--s-4);
+  .focus-last-performance {
+    margin: 0;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--track-1);
   }
 
   /* PlateBar draws only the bar and its plates — no panel behind it. (Its
@@ -3337,9 +3331,13 @@
   .focus-bar {
     display: flex;
     align-items: stretch;
-    gap: var(--s-5);
+    gap: 0;
     margin-top: auto;
-    padding-top: var(--s-7);
+    background: var(--accent);
+    border: var(--bw) solid var(--accent);
+    border-radius: 0;
+    color: var(--text-inverse);
+    overflow: hidden;
   }
 
   .focus-bar-step {
@@ -3348,18 +3346,34 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: var(--bw) solid var(--control-border-color);
-    border-radius: var(--radius);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
     font-family: var(--font-mono);
     font-weight: 700;
     font-size: var(--fs-lg);
-    color: var(--text);
   }
 
   .focus-bar .btn-log,
   .focus-tick-log {
     flex: 1;
     width: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+  }
+
+  .focus-bar-step + .focus-bar-log,
+  .focus-bar-log + .focus-bar-step {
+    border-left: var(--bw-hair) solid var(--text-inverse);
+  }
+
+  .focus-bar-step:active,
+  .focus-bar .btn-log:active,
+  .focus-tick-log:active {
+    background: var(--accent-press);
   }
 
   /* A tick exercise has no bottom bar (bottomBar is false for tracking
@@ -3367,7 +3381,11 @@
    * anchors to the bottom the same way .focus-bar does. */
   .focus-tick-log {
     margin-top: auto;
-    padding-top: var(--s-7);
+    min-height: var(--tap-log);
+    padding: 0 var(--s-7);
+    background: var(--accent);
+    border: var(--bw) solid var(--accent);
+    color: var(--text-inverse);
   }
 
   .focus-bar-spacer {

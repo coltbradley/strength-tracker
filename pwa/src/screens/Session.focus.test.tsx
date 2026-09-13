@@ -43,7 +43,7 @@ vi.mock("../lib/sync", () => ({
 
 import { Session } from "./Session";
 import { outbox } from "../lib/sync";
-import { getExercises, getServerSessionSets } from "../lib/data";
+import { getExercises, getLastActuals, getServerSessionSets } from "../lib/data";
 
 const active: ActiveSession = {
   id: "session-focus-1",
@@ -120,7 +120,43 @@ describe("Session focus presentation", () => {
     expect(
       await screen.findByRole("button", { name: "View full workout" }),
     ).toBeTruthy();
+    expect(screen.queryByText(/target 8/i)).toBeNull();
     expect(document.body.classList.contains("focus-chrome-hidden")).toBe(true);
+  });
+
+  it("shows one compact latest-set line for the substituted movement", async () => {
+    await cacheSet(cacheKeys.sessionSwaps(active.id), {
+      bench: {
+        exercise_id: "dumbbell-bench",
+        name: "Dumbbell Bench Press",
+        planned_exercise_id: "bench-press",
+        planned_name: "Bench Press",
+      },
+    });
+    vi.mocked(getLastActuals).mockResolvedValue({
+      data: {
+        "dumbbell-bench": {
+          load_kg: 22.5,
+          reps: 7,
+          run: [
+            { load_kg: 20, reps: 8 },
+            { load_kg: 22.5, reps: 7 },
+          ],
+        },
+        "bench-press": { load_kg: 100, reps: 1 },
+      },
+      fromCache: false,
+      stale: null,
+    });
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Last time · 22.5 kg × 7")).toBeTruthy();
+    expect(screen.queryByText("Last time · 100 kg × 1")).toBeNull();
+    expect(screen.getAllByText(/Last time ·/i)).toHaveLength(1);
   });
 
   it("returns to overview without discarding staged values", async () => {
@@ -935,7 +971,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "more options for Bench Press" }),
     );
-    const a1More = screen.getByLabelText("A1 Bench Press · more");
+    const a1More = await screen.findByLabelText("A1 Bench Press · more");
     fireEvent.click(within(a1More).getByRole("button", { name: "warmup" }));
     fireEvent.click(screen.getByRole("button", { name: "CLOSE" }));
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));

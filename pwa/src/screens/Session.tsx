@@ -1978,14 +1978,6 @@ export function Session() {
             : "a2"
       : null;
 
-    // "8-15" beside reps in focus mode, instead of the full TARGET line
-    // (moved to "detail"). Only meaningful for the plain SetEditor path —
-    // a paired round computes its own per-member label in `roundEditorFor`.
-    const repsTargetLabel =
-      prescribed && currentBracket
-        ? formatRepRange(currentBracket.reps_min, currentBracket.reps_max)
-        : null;
-
     const contextBlock = (
       <>
         <span className="rx-context">
@@ -2163,7 +2155,9 @@ export function Session() {
             variant={
               presentation === "focus" && !editing ? "focus" : "overview"
             }
-            repsTargetLabel={repsTargetLabel}
+            lastPerformance={
+              presentation === "focus" ? lastTime(entry.exercise_id, true) : null
+            }
             restSlot={restInline && !sheetOpen ? restTimerEl : undefined}
             disabled={logLocked || !setsLoaded || setsFailed}
             onDraftChange={(next) => {
@@ -2549,11 +2543,12 @@ export function Session() {
    *
    * Reference text: it never competes with the target or the log button.
    */
-  const lastTime = (exerciseId: string): string | null => {
+  const lastTime = (exerciseId: string, latestOnly = false): string | null => {
     const a = lastActuals[exerciseId];
     if (!a) return null;
     const shown = (kg: number) =>
       `${toDisplay(enteredKg(kg, loadEntry), unit)} ${unit}${perSide ? "/side" : ""}`;
+    if (latestOnly) return `Last time · ${shown(a.load_kg)} × ${a.reps}`;
     // a value cached before runs existed carries only the top set
     const run = a.run && a.run.length > 0 ? a.run : [a];
     const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);

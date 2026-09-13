@@ -175,7 +175,6 @@ describe("SetEditor focus variant", () => {
         {...props({
           variant: "focus",
           loadSteps,
-          repsTargetLabel: "8-15",
           loadPresentation: {
             ...props().loadPresentation,
             perSide: false,
@@ -204,11 +203,30 @@ describe("SetEditor focus variant", () => {
     expect(
       screen.getByRole("button", { name: "reps value — tap to type" }),
     ).toBeTruthy();
-    // reps keeps its target quietly beside it
-    expect(screen.getByText("target 8-15")).toBeTruthy();
+    // target guidance remains in More, so neither value competes with the hero
+    expect(screen.queryByText("target 8-15")).toBeNull();
     // no labels or secondary controls compete with the hero
     expect(screen.queryByText("LOAD · KG")).toBeNull();
     expect(screen.queryByText("REPS")).toBeNull();
+  });
+
+  it("makes the per-side convention explicit beside the loaded focus hero", () => {
+    render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          loadSteps,
+          loadPresentation: {
+            ...props().loadPresentation,
+            perSide: true,
+            totalKg: 60,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("EACH HAND × 2 · 60 KG TOTAL")).toBeTruthy();
+    expect(screen.getByText("30 kg per hand")).toBeTruthy();
   });
 
   it("makes reps the hero and omits the load field for a bodyweight movement", () => {
@@ -229,8 +247,8 @@ describe("SetEditor focus variant", () => {
       />,
     );
 
-    expect(screen.getByText("no load — bodyweight")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /load value/i })).toBeNull();
+    expect(screen.queryByText(/bodyweight|no load/i)).toBeNull();
     expect(
       screen.getByRole("button", { name: "decrease reps by 1" }),
     ).toBeTruthy();
@@ -254,6 +272,9 @@ describe("SetEditor focus variant", () => {
     expect(screen.getByRole("button", { name: /done 1 of 3/i })).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: /increase|decrease/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/no numbers for this one/i),
     ).toBeNull();
   });
 

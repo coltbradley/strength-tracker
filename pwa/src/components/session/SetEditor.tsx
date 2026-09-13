@@ -52,10 +52,10 @@ export interface SetEditorProps {
    * needs a second copy of them to expose them from two places.
    */
   variant?: "overview" | "focus";
-  /** "8-15" — the current bracket's rep range, shown quietly beside reps in
-   *  focus mode instead of the accordion's separate TARGET line. Null when
-   *  the exercise carries no prescription (by-feel work). */
-  repsTargetLabel?: string | null;
+  /** One compact, movement-specific previous performance for the focus hero.
+   *  Session derives this from the selected entry, so substitutions never
+   *  quote history from the planned movement. */
+  lastPerformance?: string | null;
   /** The rest clock, when Session has one running — rendered just above the
    *  bottom bar instead of Session's own fixed strip, so it reads as part of
    *  this set rather than a document-level ticker with the log action below
@@ -128,7 +128,7 @@ export function SetEditor({
   showLog = true,
   disabled,
   variant = "overview",
-  repsTargetLabel = null,
+  lastPerformance = null,
   restSlot,
   onDraftChange,
   onLog,
@@ -149,10 +149,6 @@ export function SetEditor({
   const heroIsReps = focus && tracking === "reps" && Boolean(noLoad);
   const coarseDown = loadSteps[0];
   const coarseUp = loadSteps[loadSteps.length - 1];
-
-  const repsTarget = repsTargetLabel !== null && (
-    <span className="focus-target">target {repsTargetLabel}</span>
-  );
 
   const repsSection = (
     <section
@@ -178,10 +174,6 @@ export function SetEditor({
         onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
         steps={focus ? [] : [REPS_STEP_DOWN, REPS_STEP_UP]}
       />
-      {focus && repsTarget}
-      {focus && noLoad && (
-        <p className="microcopy focus-no-load">no load — bodyweight</p>
-      )}
     </section>
   );
 
@@ -256,7 +248,7 @@ export function SetEditor({
           entered as two matching implements (see CLAUDE.md's load_kg note). */}
       {heroIsLoad && perSide && (
         <div className="microcopy focus-load-detail">
-          {toDisplay(draft.entryKg, unit)} × 2
+          EACH HAND × 2 · {toDisplay(totalKg, unit)} {unit.toUpperCase()} TOTAL
         </div>
       )}
       {plateSplit && <PlateBar split={plateSplit} barKg={barKg} unit={unit} />}
@@ -329,11 +321,13 @@ export function SetEditor({
 
   const heroContent =
     tracking === "done" ? (
-      <section className="rule-section">
-        <p className="microcopy">
-          No numbers for this one — tap below each time you finish a set.
-        </p>
-      </section>
+      focus ? null : (
+        <section className="rule-section">
+          <p className="microcopy">
+            No numbers for this one — tap below each time you finish a set.
+          </p>
+        </section>
+      )
     ) : heroIsLoad ? (
       <>
         {loadSection}
@@ -379,6 +373,10 @@ export function SetEditor({
             onChange={(rpe) => onDraftChange({ rpe })}
           />
         </>
+      )}
+
+      {focus && lastPerformance !== null && (
+        <p className="focus-last-performance">{lastPerformance}</p>
       )}
 
       {focus && restSlot}
