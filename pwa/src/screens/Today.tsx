@@ -96,7 +96,11 @@ export type WorkoutState =
    *  existed. */
   | "DRAFT";
 
-type PrescriptionLoadState = "loading" | "loaded" | StaleReason;
+type PrescriptionLoadState =
+  | "loading"
+  | "loaded"
+  | StaleReason
+  | `cached-${StaleReason}`;
 
 /** How long the swipe track must sit still before we call it settled. */
 const SETTLE_MS = 120;
@@ -704,7 +708,10 @@ export function Today({
       .then((r) => {
         if (rxGenerationRef.current !== generation) return;
         setRx((prev) => ({ ...prev, [workoutId]: r.data }));
-        setRxLoadState((prev) => ({ ...prev, [workoutId]: "loaded" }));
+        setRxLoadState((prev) => ({
+          ...prev,
+          [workoutId]: r.stale === null ? "loaded" : `cached-${r.stale}`,
+        }));
       })
       .catch((e: unknown) => {
         if (rxGenerationRef.current !== generation) return;
@@ -1063,7 +1070,7 @@ export function Today({
       ? "loaded"
       : trainPrescriptions === null
         ? (rxLoadState[trainWorkout.workout.id] ?? "loading")
-        : "loaded";
+        : (rxLoadState[trainWorkout.workout.id] ?? "loaded");
   // Program can be left while its calendar is on another day. Train still
   // needs today's shape, so ask the existing prescription loader for today's
   // row rather than inheriting that unrelated selection or creating a second

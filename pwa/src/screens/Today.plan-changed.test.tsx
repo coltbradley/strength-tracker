@@ -204,6 +204,50 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     expect(getResolvedPrescriptions).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ["offline", "Offline, showing saved workout details."],
+    ["error", "Couldn’t refresh, showing saved workout details."],
+  ] as const)(
+    "keeps cached %s Train details usable while naming their freshness",
+    async (stale, note) => {
+      getResolvedPrescriptions.mockResolvedValue({
+        data: [rxRow("Squat")],
+        fromCache: true,
+        stale,
+      });
+
+      render(<Today presentation="train" />);
+
+      expect(
+        await screen.findByText("1 movements · 3 prescribed sets"),
+      ).toBeTruthy();
+      expect(screen.getByText(note)).toBeTruthy();
+    },
+  );
+
+  it("replaces stale cached Train details when the plan refreshes", async () => {
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [rxRow("Squat")],
+      fromCache: true,
+      stale: "offline",
+    });
+
+    render(<Today presentation="train" />);
+
+    await screen.findByText("Offline, showing saved workout details.");
+
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [rxRow("Deadlift")],
+      fromCache: false,
+      stale: null,
+    });
+    notifyPlanChanged();
+
+    expect(await screen.findByText("Deadlift")).toBeTruthy();
+    expect(screen.queryByText("Offline, showing saved workout details.")).toBeNull();
+    expect(getResolvedPrescriptions).toHaveBeenCalledTimes(2);
+  });
+
   it("coalesces Train's overlapping prescription load for an undated workout", async () => {
     let resolveRead: (value: {
       data: ReturnType<typeof rxRow>[];

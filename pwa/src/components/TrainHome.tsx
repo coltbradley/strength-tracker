@@ -64,7 +64,13 @@ export function TrainHome({
   stale?: "offline" | "error" | null;
   workout: TrainWorkout | null;
   prescriptions: ResolvedPrescriptionRow[] | null;
-  prescriptionLoadState: "loading" | "loaded" | "offline" | "error";
+  prescriptionLoadState:
+    | "loading"
+    | "loaded"
+    | "offline"
+    | "error"
+    | "cached-offline"
+    | "cached-error";
   active: ActiveSession | null;
   /** Recovery is owned by Today because it reconciles and repairs sessions. */
   recovery: ReactNode;
@@ -166,6 +172,14 @@ export function TrainHome({
               <p className="train-shape">
                 {summary.movementCount} movements · {summary.prescribedSetCount} prescribed sets
               </p>
+              {(prescriptionLoadState === "cached-offline" ||
+                prescriptionLoadState === "cached-error") && (
+                <p className="train-cache-note">
+                  {prescriptionLoadState === "cached-offline"
+                    ? "Offline, showing saved workout details."
+                    : "Couldn’t refresh, showing saved workout details."}
+                </p>
+              )}
               {summary.firstUp && (
                 <div className="train-first-up">
                   <span>First up</span>
