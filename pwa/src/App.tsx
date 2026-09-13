@@ -19,6 +19,8 @@ import { SettingsSheet } from "./components/SettingsSheet";
 import { Toasts } from "./components/Toasts";
 import { FabDock } from "./components/FabDock";
 import { setSentryUser } from "./lib/errors";
+import { OAuthConsent } from "./screens/OAuthConsent";
+import { isConsentPath } from "./lib/oauthConsent";
 
 function Shell({ userId }: { userId: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -102,13 +104,7 @@ function Shell({ userId }: { userId: string }) {
         </div>
       </header>
 
-      <main
-        className={
-          inSession
-            ? "content content-session"
-            : "content"
-        }
-      >
+      <main className={inSession ? "content content-session" : "content"}>
         <Routes>
           <Route
             path="/"
@@ -130,11 +126,7 @@ function Shell({ userId }: { userId: string }) {
       </main>
 
       {showTabs && (
-        <nav
-          className="tabbar"
-          ref={tabbar}
-          aria-label="Primary navigation"
-        >
+        <nav className="tabbar" ref={tabbar} aria-label="Primary navigation">
           <NavLink
             to="/"
             end
@@ -191,6 +183,18 @@ export function App() {
       <>
         <Toasts />
         <Login />
+      </>
+    );
+  }
+
+  // MCP sign-in consent renders INSTEAD of the shell: no reconciliation, no
+  // outbox flush, no nav. Signed-out visitors met Login above with the URL
+  // intact, so they arrive here after entering their code.
+  if (isConsentPath(window.location.pathname, import.meta.env.BASE_URL)) {
+    return (
+      <>
+        <Toasts />
+        <OAuthConsent email={session.user.email ?? null} />
       </>
     );
   }
