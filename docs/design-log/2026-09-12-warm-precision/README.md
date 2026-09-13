@@ -1,12 +1,22 @@
 # Warm Precision browser verification
 
-Verified on 13 September 2026 against `npm run demo` at
-`http://localhost:5199/?demo=default`, using the Codex in-app browser at a
-390 × 844 CSS-pixel viewport. The requested `agent-browser` CLI was not
-available on this host (`command not found`), so this uses the documented
-in-app-browser fallback. The fallback captured the representative screens
-inline in the verification run, but exposes PNG bytes only to the browser tool,
-not as writable workspace files. No PNGs are therefore claimed in this folder.
+Verified on 13 September 2026 against `npm run demo`, first with the Codex
+in-app browser and then with local headless Chrome at a 390 × 844 CSS-pixel
+viewport. The requested `agent-browser` CLI was not available on this host
+(`command not found`), so the interaction pass used the documented browser
+fallback. A Chrome DevTools Protocol pass then captured the four representative
+screens below at device scale factor 2. Each capture reports a non-blank body,
+the expected 390 × 844 viewport, and no framework error overlay.
+
+## Captures
+
+- [`train.png`](train.png): immediate workout and one Start action.
+- [`loaded-focus.png`](loaded-focus.png): loaded barbell work with set progress,
+  plate instruction, history, and the commit dock.
+- [`bodyweight-focus.png`](bodyweight-focus.png): reps as the only hero, with no
+  fake load field.
+- [`superset-focus.png`](superset-focus.png): one shared round state and commit
+  action for two compact members.
 
 ## What passed
 

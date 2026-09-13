@@ -164,7 +164,7 @@ export function SetEditor({
         inline={!heroIsReps}
         accent={heroIsReps}
         display={String(draft.reps)}
-        subText={heroIsReps ? "REPS" : undefined}
+        subText={focus ? "REPS" : undefined}
         onTapValue={
           onOpenPad === undefined ? undefined : () => onOpenPad("reps")
         }

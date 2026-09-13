@@ -205,9 +205,26 @@ describe("SetEditor focus variant", () => {
     ).toBeTruthy();
     // target guidance remains in More, so neither value competes with the hero
     expect(screen.queryByText("target 8-15")).toBeNull();
-    // no labels or secondary controls compete with the hero
+    // the load hero needs no redundant field label or secondary controls
     expect(screen.queryByText("LOAD · KG")).toBeNull();
-    expect(screen.queryByText("REPS")).toBeNull();
+  });
+
+  it("labels the secondary reps value in loaded focus", () => {
+    render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          loadSteps,
+          loadPresentation: {
+            ...props().loadPresentation,
+            perSide: false,
+            totalKg: 30,
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("REPS")).toBeTruthy();
   });
 
   it("makes the per-side convention explicit beside the loaded focus hero", () => {
