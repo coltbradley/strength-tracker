@@ -75,4 +75,26 @@ describe("notifyCheckinMemory", () => {
     // worth an operator alert on its own — the route already reports to
     // Sentry server-side. Nothing to assert beyond "did not throw".
   });
+
+  it("runs one request at a time and collapses overlapping calls into one follow-up", async () => {
+    let release!: () => void;
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = () => resolve(new Response("{}", { status: 200 }));
+        }),
+    );
+    notifyCheckinMemory();
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    notifyCheckinMemory();
+    notifyCheckinMemory();
+    notifyCheckinMemory();
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    release();
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await settle();
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });

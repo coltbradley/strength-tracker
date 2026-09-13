@@ -35,7 +35,7 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   give it the next index: that is how a corrected set 2 became set 5.
   `isNoopCorrection` normalises undefined to null before comparing, because a
   row cached before a column exists reads back undefined and `undefined ===
-null` is false: without it, saving an unrated set unrated writes a void and a
+  null` is false: without it, saving an unrated set unrated writes a void and a
   duplicate row.
   `set_notes` is the one editable set-adjacent row (a user annotation,
   last-write-wins) — the sessions.notes mutability class, never a way to

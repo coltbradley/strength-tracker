@@ -765,11 +765,47 @@ async function handleCheckinMemory(req: Request): Promise<Response> {
 
   if (notes.length === 0) return json({ processed: 0, written: 0 });
 
+  // CLAIM before spending anything. Two devices syncing at once (or one phone
+  // flushing a backlog) call this route concurrently, and both would otherwise
+  // read the same unstamped batch, pay Haiku twice and write the same fact
+  // twice. A conditional update is atomic per row, so each check-in is claimed
+  // by exactly one request; the loser gets nothing back and extracts nothing.
+  // A failed extraction RELEASES its claim so the rows are retried next time.
+  let claimed: string[];
+  try {
+    const { data, error } = await db
+      .from("checkins")
+      .update({ memory_extracted_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .in("id", notes.map((n) => n.id))
+      .is("memory_extracted_at", null)
+      .select("id");
+    if (error) throw new Error(error.message);
+    claimed = (data ?? []).map((r) => (r as { id: string }).id);
+  } catch (e) {
+    await captureError(e, { stage: "checkin_memory_claim", user_id: userId });
+    return json({ error: "Could not claim check-ins" }, 503);
+  }
+  const claimedSet = new Set(claimed);
+  notes = notes.filter((n) => claimedSet.has(n.id));
+  if (notes.length === 0) return json({ processed: 0, written: 0 });
+
   const anthropic = new Anthropic({ apiKey });
   try {
     const result = await extractFromCheckins({ db, anthropic, userId, notes });
     return json(result);
   } catch (e) {
+    const { error: releaseError } = await db
+      .from("checkins")
+      .update({ memory_extracted_at: null })
+      .eq("user_id", userId)
+      .in("id", claimed);
+    if (releaseError) {
+      await captureError(new Error(releaseError.message), {
+        stage: "checkin_memory_release",
+        user_id: userId,
+      });
+    }
     console.error(
       JSON.stringify({
         event: "coach_checkin_memory_failed",

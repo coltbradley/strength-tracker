@@ -22,8 +22,26 @@ async function bearer(): Promise<string | null> {
  * on the LOG path.
  */
 export function notifyCheckinMemory(): void {
-  void run();
+  // Single flight per device: a backlog of check-ins syncing back to back
+  // would otherwise fire one overlapping request each. One runs; anything
+  // that arrives meanwhile asks for exactly one more pass afterwards, which
+  // picks up every note the first pass had not yet seen.
+  if (inFlight) {
+    again = true;
+    return;
+  }
+  inFlight = true;
+  void run().finally(() => {
+    inFlight = false;
+    if (again) {
+      again = false;
+      notifyCheckinMemory();
+    }
+  });
 }
+
+let inFlight = false;
+let again = false;
 
 async function run(): Promise<void> {
   try {
