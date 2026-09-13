@@ -2998,15 +2998,26 @@
    * in STRUCTURE only — the palette is unchanged, still this app's tokens
    * (the burnt accent), never the cast-iron theme that exploration discarded. */
 
-  body.focus-chrome-hidden .topbar,
   body.focus-chrome-hidden .session-footer {
     display: none;
   }
 
-  /* The topbar normally carries the safe-area-top inset; hiding it must not
-   * let the deck's own content slide under a notch or a dynamic island. */
-  body.focus-chrome-hidden .session-scroll {
-    padding-top: calc(env(safe-area-inset-top) + var(--s-8));
+  /* Focus clears route chrome and the brand, but keeps the compact utility
+   * group reachable for coaching, settings, and write recovery. The topbar
+   * continues to own the safe-area inset. */
+  body.focus-chrome-hidden .topbar {
+    padding-bottom: var(--s-2);
+    border-bottom: 0;
+  }
+
+  body.focus-chrome-hidden .topbar-title {
+    display: none;
+  }
+
+  body.focus-chrome-hidden .topbar-right {
+    width: 100%;
+    justify-content: flex-end;
+    gap: var(--s-3);
   }
 
   /* The section wrapping FocusDeck (in place of the accordion's own

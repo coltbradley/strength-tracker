@@ -84,7 +84,11 @@ function Shell({ userId }: { userId: string }) {
         >
           SET
         </button>
-        <div className="topbar-right">
+        <div
+          className="topbar-right"
+          role="group"
+          aria-label="Support and recovery"
+        >
           <SyncStatus />
           <FabDock userId={userId} route={location.pathname} />
           <button

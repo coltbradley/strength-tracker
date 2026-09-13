@@ -86,6 +86,7 @@ beforeEach(() => {
     state: "idle",
     lastError: null,
   };
+  document.body.classList.remove("focus-chrome-hidden");
 });
 
 describe("primary navigation", () => {
@@ -169,5 +170,32 @@ describe("primary navigation", () => {
     render(<App />);
     fireEvent.click(within(document.querySelector(".topbar") as HTMLElement).getByRole("button", { name: "settings" }));
     expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+  });
+
+  it("keeps support and recovery access available during a focus session", () => {
+    window.history.replaceState({}, "", "/session");
+    document.body.classList.add("focus-chrome-hidden");
+    h.status = { ...h.status, pending: 1, dead: 1, state: "error" };
+    render(<App />);
+
+    expect(screen.getByText("Session screen")).toBeTruthy();
+    expect(document.body.classList.contains("focus-chrome-hidden")).toBe(true);
+
+    const tools = screen.getByRole("group", { name: "Support and recovery" });
+    expect(
+      within(tools).getByRole("button", { name: "ask the coach" }),
+    ).toBeTruthy();
+    expect(
+      within(tools).getByRole("button", { name: "report a problem" }),
+    ).toBeTruthy();
+    expect(
+      within(tools).getByRole("button", { name: "settings" }),
+    ).toBeTruthy();
+    expect(
+      within(tools).getByRole("button", { name: "review 1 failed writes" }),
+    ).toBeTruthy();
+    expect(
+      within(tools).getByRole("button", { name: "1 STUCK · RETRY" }),
+    ).toBeTruthy();
   });
 });

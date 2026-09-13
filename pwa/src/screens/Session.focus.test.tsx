@@ -120,6 +120,7 @@ describe("Session focus presentation", () => {
     expect(
       await screen.findByRole("button", { name: "View full workout" }),
     ).toBeTruthy();
+    expect(document.body.classList.contains("focus-chrome-hidden")).toBe(true);
   });
 
   it("returns to overview without discarding staged values", async () => {

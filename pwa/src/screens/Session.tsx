@@ -740,13 +740,11 @@ export function Session() {
     setPresentation("focus");
   }, [entries, entryDone, focusEligible, openKey, setsLoaded]);
 
-  // Focus is meant to read as one exercise at arm's length, not the app plus
-  // one exercise — so the shared header and tab bar (App.tsx owns them; the
-  // tab bar is already hidden for the whole /session route) hide for as long
-  // as this screen is actually showing them. A body class rather than lifted
-  // state: App has no reason to know Session's presentation, and this is the
-  // one rule that needs it to. Always cleaned up on unmount or mode change,
-  // so leaving the screen never leaves the rest of the app headerless.
+  // Focus is meant to read as one exercise at arm's length, so route chrome
+  // and the wordmark hide while this screen is actually showing focus. The
+  // compact utility group remains in the shared topbar for support and
+  // recovery. A body class rather than lifted state keeps App out of Session's
+  // presentation decision. Always cleaned up on unmount or mode change.
   useEffect(() => {
     if (presentation !== "focus") return;
     document.body.classList.add("focus-chrome-hidden");
