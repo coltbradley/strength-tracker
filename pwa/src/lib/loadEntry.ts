@@ -31,6 +31,18 @@ function isPerSideEquipment(equipment: string | null): boolean {
 }
 
 /**
+ * The free-exercise-db equipment string for "no implement at all". Used to
+ * decide whether the focus deck's hero is load or reps — see `SetEditor`'s
+ * `loadPresentation.noLoad`. Deliberately exact-match, not a prefix test:
+ * `null` (a custom exercise with no equipment asserted) is NOT the same
+ * claim as "this movement has no load", and treating it as bodyweight would
+ * hide a real load field on exercises that simply have not set one.
+ */
+export function isBodyweightEquipment(equipment: string | null): boolean {
+  return equipment !== null && equipment.toLowerCase() === "body only";
+}
+
+/**
  * Movement names that are explicitly ONE limb at a time. These are 'total':
  * the load is honest, it is the REPS that are per side (deliberately not
  * modelled — log each side as its own set).
