@@ -13,6 +13,7 @@ import { NumberPad, type PadRequest } from "./NumberPad";
 import { OutboxSheet } from "./OutboxSheet";
 import { Sheet } from "./Sheet";
 import { TrainingMaxSheet } from "./TrainingMaxSheet";
+import { ConnectedApps } from "./ConnectedApps";
 import {
   GROUP_LABEL,
   GROUP_ORDER,
@@ -380,6 +381,7 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
           the server — not on this device with the rest of these settings.
         </div>
       </section>
+      <ConnectedApps />
 
       <section className="settings-group">
         <div className="field-label">DATA</div>
@@ -543,11 +545,16 @@ function ClosedAppAlerts({
     sendRestAlertTest()
       .then((result) => {
         if (result === "sent") {
-          toast("Test sent. Lock the phone or close the app to see the system notification.");
+          toast(
+            "Test sent. Lock the phone or close the app to see the system notification.",
+          );
         } else if (result === "unavailable") {
           toast("No active rest-alert subscription on this phone.", "error");
         } else {
-          toast("The test could not reach the push service. Try again with signal.", "error");
+          toast(
+            "The test could not reach the push service. Try again with signal.",
+            "error",
+          );
         }
       })
       .catch((e: unknown) => reportError(e, "rest alert test"))
