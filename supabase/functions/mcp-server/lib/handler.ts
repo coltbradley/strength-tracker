@@ -26,6 +26,7 @@ import { resolveCaller } from "./auth.ts";
 import { dbFor } from "./db.ts";
 import type { RequestContext } from "./errors.ts";
 import { log } from "./log.ts";
+import { protectedResourceMetadata } from "./oauth.ts";
 import { captureError } from "./sentry.ts";
 import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
@@ -179,6 +180,15 @@ export async function handleRequest(req: Request): Promise<Response> {
         server: "strength-tracker",
         transport: "streamable-http",
       });
+    }
+
+    // RFC 9728 discovery, before auth for the same reason as /health: a client
+    // with no credential has to be able to learn how to get one.
+    if (
+      req.method === "GET" &&
+      url.pathname.endsWith("/.well-known/oauth-protected-resource")
+    ) {
+      return json(200, protectedResourceMetadata());
     }
 
     // Auth before anything else.

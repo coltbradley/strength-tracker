@@ -13,9 +13,18 @@
 // MCP_SECRET mapped to a single OWNER_USER_ID. Both still work, so an existing
 // Claude Desktop config keeps running across this deploy with nothing to
 // change. Issue a real token per person and drop the env vars when convenient.
+//
+// OAUTH: clients that sign in (ChatGPT, claude.ai) send a Supabase OAuth access
+// token instead. lib/oauth.ts verifies it and yields the same Caller, so nothing
+// past this file can tell the two apart. See docs/decisions.md 2026-09-13.
 
 import { getClient } from "./db.ts";
 import { log } from "./log.ts";
+import {
+  looksLikeJwt,
+  resourceMetadataUrl,
+  verifyOAuthToken,
+} from "./oauth.ts";
 
 /** The authenticated caller. `label` is for logs only, never for authorization. */
 export interface Caller {
@@ -44,14 +53,15 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   return diff === 0;
 }
 
-/** 401 that tells a client HOW to authenticate, per RFC 9110. Clients render
- *  this far better than a bare 401, and MCP hosts use it to prompt for a key. */
+/** 401 that tells a client HOW to authenticate, per RFC 9110 and RFC 9728.
+ *  `resource_metadata` is how ChatGPT and claude.ai find the sign-in flow; a
+ *  client holding a static token never sees this unless its token is bad. */
 function unauthorized(detail: string): Response {
   return new Response(JSON.stringify({ error: "Unauthorized", detail }), {
     status: 401,
     headers: {
       "content-type": "application/json",
-      "www-authenticate": 'Bearer realm="strength-tracker"',
+      "www-authenticate": `Bearer realm="strength-tracker", resource_metadata="${resourceMetadataUrl()}"`,
     },
   });
 }
@@ -85,8 +95,32 @@ export async function resolveCaller(
   // Legacy single-user secret, checked first so it costs no database round trip.
   const legacySecret = Deno.env.get("MCP_SECRET");
   const legacyUser = Deno.env.get("OWNER_USER_ID");
-  if (legacySecret && legacyUser && (await timingSafeEqual(token, legacySecret))) {
+  if (
+    legacySecret &&
+    legacyUser &&
+    (await timingSafeEqual(token, legacySecret))
+  ) {
     return { userId: legacyUser, label: "legacy owner token" };
+  }
+
+  // Supabase OAuth access token (ChatGPT, claude.ai, any client that signed in).
+  // Checked after the legacy secret and before the mcp_tokens lookup: a JWT is
+  // never in mcp_tokens, so looking it up would only spend a round trip.
+  if (looksLikeJwt(token)) {
+    const result = await verifyOAuthToken(token, requestId);
+    if (result === "rejected") {
+      return unauthorized("Sign in again, or use an MCP token.");
+    }
+    if (result === "unavailable") {
+      return new Response(
+        JSON.stringify({
+          error: "Could not verify credentials",
+          request_id: requestId,
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      );
+    }
+    return result;
   }
 
   let client;
@@ -126,7 +160,10 @@ export async function resolveCaller(
       error: error.message,
     });
     return new Response(
-      JSON.stringify({ error: "Could not verify credentials", request_id: requestId }),
+      JSON.stringify({
+        error: "Could not verify credentials",
+        request_id: requestId,
+      }),
       { status: 503, headers: { "content-type": "application/json" } },
     );
   }

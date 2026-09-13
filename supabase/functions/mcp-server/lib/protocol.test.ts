@@ -18,6 +18,7 @@ Deno.env.set("OWNER_USER_ID", USER);
 // Never contacted by initialize/tools/list, but getClient() asserts they exist.
 Deno.env.set("SUPABASE_URL", "http://127.0.0.1:1");
 Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "service-role-not-used-here");
+Deno.env.set("SUPABASE_ANON_KEY", "anon-not-used-here");
 
 const { handleRequest } = await import("./handler.ts");
 
@@ -241,5 +242,78 @@ Deno.test(
     assertEquals(res.status, 400);
     const body = await res.json();
     assertEquals(body.error.code, -32700);
+  },
+);
+
+Deno.test(
+  "protected-resource metadata is served without credentials",
+  async () => {
+    const res = await handleRequest(
+      new Request(`${URL_}/.well-known/oauth-protected-resource`, {
+        method: "GET",
+      }),
+    );
+    assertEquals(res.status, 200);
+    assertEquals(res.headers.get("access-control-allow-origin"), "*");
+    const doc = await res.json();
+    assertStringIncludes(doc.resource, "/functions/v1/mcp-server");
+    assertStringIncludes(doc.authorization_servers[0], "/auth/v1");
+  },
+);
+
+Deno.test(
+  "every 401 points the client at the metadata, so it can start sign-in",
+  async () => {
+    const res = await handleRequest(
+      new Request(URL_, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(INITIALIZE),
+      }),
+    );
+    assertEquals(res.status, 401);
+    assertStringIncludes(
+      res.headers.get("www-authenticate") ?? "",
+      'resource_metadata="http://127.0.0.1:1/functions/v1/mcp-server/.well-known/oauth-protected-resource"',
+    );
+    await res.body?.cancel();
+  },
+);
+
+Deno.test(
+  "an OAuth token the auth server cannot be asked about is 503, never 401",
+  async () => {
+    const enc = (v: unknown) =>
+      btoa(JSON.stringify(v))
+        .replaceAll("+", "-")
+        .replaceAll("/", "_")
+        .replace(/=+$/, "");
+    const token = `${enc({ alg: "ES256" })}.${enc({
+      sub: USER,
+      role: "authenticated",
+      client_id: "c1",
+    })}.sig`;
+    const res = await handleRequest(
+      rpc(INITIALIZE, { authorization: `Bearer ${token}` }),
+    );
+    assertEquals(res.status, 503);
+    await res.body?.cancel();
+  },
+);
+
+Deno.test(
+  "a session JWT with no client_id is 401 without contacting anyone",
+  async () => {
+    const enc = (v: unknown) =>
+      btoa(JSON.stringify(v))
+        .replaceAll("+", "-")
+        .replaceAll("/", "_")
+        .replace(/=+$/, "");
+    const token = `${enc({ alg: "ES256" })}.${enc({ sub: USER, role: "authenticated" })}.sig`;
+    const res = await handleRequest(
+      rpc(INITIALIZE, { authorization: `Bearer ${token}` }),
+    );
+    assertEquals(res.status, 401);
+    await res.body?.cancel();
   },
 );
