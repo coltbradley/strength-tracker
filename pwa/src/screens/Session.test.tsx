@@ -14,9 +14,8 @@ import type {
 } from "../lib/types";
 
 vi.mock("../lib/data", async () => {
-  const actual = await vi.importActual<typeof import("../lib/data")>(
-    "../lib/data",
-  );
+  const actual =
+    await vi.importActual<typeof import("../lib/data")>("../lib/data");
   return {
     ...actual,
     getExercises: vi.fn(async () => ({ data: [] })),
@@ -109,19 +108,31 @@ describe("Session corrections", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "expand details" }));
-    fireEvent.click(await screen.findByRole("button", { name: "correct set 1" }));
+    // This scenario is eligible for focus, which is now the default on
+    // start — go to the workout overview first, since "expand details" is
+    // the accordion's own control.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "View full workout" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "expand details" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "correct set 1" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
 
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" }).textContent,
+      screen.getByRole("button", { name: "reps value — tap to type" })
+        .textContent,
     ).toBe("9");
 
     fireEvent.click(screen.getByRole("button", { name: "expand details" }));
 
     expect(screen.getByText("TARGET 1×8 @ 20 KG · REST 1:00")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" }).textContent,
+      screen.getByRole("button", { name: "reps value — tap to type" })
+        .textContent,
     ).toBe("9");
     expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
     expect(outbox.enqueue).not.toHaveBeenCalled();

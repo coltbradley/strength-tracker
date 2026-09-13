@@ -26,6 +26,11 @@ const a2Entry: ExerciseEntry = {
   brackets: [],
 };
 
+const loadSteps = [
+  { label: "− 2.5", delta: -2.5, announce: "2.5 kg" },
+  { label: "+ 2.5", delta: 2.5, announce: "2.5 kg" },
+];
+
 function editorProps(entry: ExerciseEntry, draft: SetDraft): SetEditorProps {
   return {
     entry,
@@ -41,7 +46,7 @@ function editorProps(entry: ExerciseEntry, draft: SetDraft): SetEditorProps {
     },
     unit: "kg",
     maxEntryKg: 999,
-    loadSteps: [],
+    loadSteps,
     rpeShown: false,
     logLabel: "unused",
     disabled: false,
@@ -104,14 +109,20 @@ describe("SupersetRoundEditor", () => {
     const onLogRound = vi.fn();
     render(<Harness onLogRound={onLogRound} onLogA1Only={vi.fn()} />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[1]);
-    fireEvent.click(screen.getAllByRole("button", { name: "increase reps by 1" })[1]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[0],
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[1],
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[1],
+    );
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));
 
     expect(onLogRound).toHaveBeenCalledWith({
-      a1: expect.objectContaining({ reps: 9 }),
-      a2: expect.objectContaining({ reps: 12 }),
+      a1: expect.objectContaining({ entryKg: 42.5 }),
+      a2: expect.objectContaining({ entryKg: 55 }),
     });
   });
 
@@ -122,7 +133,10 @@ describe("SupersetRoundEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
 
     expect(onLogA1Only).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(/A2.*remaining/i)).toBeTruthy();
+    // The round no longer spells out A2's remaining state in a sentence —
+    // it stays visible as its own compact block rather than disappearing as
+    // if the round were already over.
+    expect(screen.getByLabelText("A2 Barbell Row")).toBeTruthy();
   });
 
   it("offers only A2 when A1 has already been persisted", () => {

@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import { PlateBar } from "../PlateBar";
 import { RpeChips } from "../RpeChips";
-import { Stepper, type StepDef } from "../Stepper";
+import { Stepper, stepTo, type StepDef } from "../Stepper";
 import type { BracketKind, ExerciseEntry } from "../../lib/entries";
 import { formatStoredTwin } from "../../lib/format";
 import type { PlateSplit } from "../../lib/plates";
@@ -24,6 +25,10 @@ export interface SetEditorProps {
     barKg: number;
     hint: string | null;
     canToggleEntry: boolean;
+    /** No implement at all — a bodyweight movement. Showing a load field here
+     *  would be a fake zero someone has to read past, not a fact the app
+     *  knows. Reps become the only editable number. */
+    noLoad?: boolean;
   };
   unit: Unit;
   maxEntryKg: number;
@@ -34,6 +39,28 @@ export interface SetEditorProps {
   /** A paired round supplies one shared commit action outside both editors. */
   showLog?: boolean;
   disabled: boolean;
+  /**
+   * "overview" (default) is the accordion's long-standing layout: every
+   * control inline, reps then load, both with their own step row. "focus" is
+   * the one-exercise deck, and it is deliberately spare: whichever number is
+   * hard to get right for THIS movement (load for a loaded implement, reps
+   * for bodyweight) is the ONLY thing with visual weight besides the log
+   * action. Its coarse step moves into a bottom bar flanking LOG; everything
+   * else this component would normally render inline for it (set type, RPE,
+   * the per-hand/plate toggles, fine adjustment) is left to the caller's own
+   * "more" surface — Session already owns those handlers, so nothing here
+   * needs a second copy of them to expose them from two places.
+   */
+  variant?: "overview" | "focus";
+  /** "8-15" — the current bracket's rep range, shown quietly beside reps in
+   *  focus mode instead of the accordion's separate TARGET line. Null when
+   *  the exercise carries no prescription (by-feel work). */
+  repsTargetLabel?: string | null;
+  /** The rest clock, when Session has one running — rendered just above the
+   *  bottom bar instead of Session's own fixed strip, so it reads as part of
+   *  this set rather than a document-level ticker with the log action below
+   *  it. Focus mode only; Session keeps its own strip for everything else. */
+  restSlot?: ReactNode;
   onDraftChange(next: Partial<SetDraft>): void;
   onLog(): void;
   onOpenPlates(): void;
@@ -44,6 +71,42 @@ export interface SetEditorProps {
 
 const SET_TYPES: BracketKind[] = ["warmup", "working"];
 const MAX_REPS = 100;
+const REPS_STEP_UP: StepDef = { label: "+", delta: 1 };
+const REPS_STEP_DOWN: StepDef = { label: "−", delta: -1 };
+
+/** A big flanking step button for the focus bottom bar — same arithmetic and
+ *  the same spoken label `Stepper`'s own row would use, so a caller cannot
+ *  drift from what its value control announces. */
+function BarStep({
+  def,
+  label,
+  value,
+  min,
+  max,
+  snap = false,
+  onChange,
+}: {
+  def: StepDef;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  snap?: boolean;
+  onChange: (next: number) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="focus-bar-step"
+      aria-label={`${def.delta > 0 ? "increase" : "decrease"} ${label} by ${
+        def.announce ?? Math.abs(def.delta)
+      }`}
+      onClick={() => onChange(stepTo(value, def.delta, min, max, snap))}
+    >
+      {def.label}
+    </button>
+  );
+}
 
 /**
  * The staged set controls shared by normal and tick-only exercises.
@@ -64,6 +127,9 @@ export function SetEditor({
   logClassName = "btn btn-primary btn-log",
   showLog = true,
   disabled,
+  variant = "overview",
+  repsTargetLabel = null,
+  restSlot,
   onDraftChange,
   onLog,
   onOpenPlates,
@@ -71,126 +137,242 @@ export function SetEditor({
   onToggleLoadEntry,
   onRevealRpe,
 }: SetEditorProps) {
-  const { perSide, totalKg, plateSplit, barKg, hint, canToggleEntry } =
+  const { perSide, totalKg, plateSplit, barKg, hint, canToggleEntry, noLoad } =
     loadPresentation;
   const loadSub = perSide
     ? `${toDisplay(totalKg, unit)} ${unit} total`
     : formatStoredTwin(draft.entryKg, unit);
 
-  return (
-    <div className="set-editor">
-      <div className="seg seg-types">
-        {SET_TYPES.map((setType) => (
-          <button
-            key={setType}
-            type="button"
-            className={`seg-btn ${draft.setType === setType ? "seg-on" : ""}`}
-            onClick={() => onDraftChange({ setType })}
-          >
-            {setType}
-          </button>
-        ))}
-      </div>
+  const focus = variant === "focus";
+  // Bodyweight has nothing to load — reps is the only number, and the hero.
+  const heroIsLoad = focus && tracking === "reps" && !noLoad;
+  const heroIsReps = focus && tracking === "reps" && Boolean(noLoad);
+  const coarseDown = loadSteps[0];
+  const coarseUp = loadSteps[loadSteps.length - 1];
 
-      {tracking === "done" ? (
-        <section className="rule-section">
-          <p className="microcopy">
-            No numbers for this one — tap below each time you finish a set.
-          </p>
-        </section>
+  const repsTarget = repsTargetLabel !== null && (
+    <span className="focus-target">target {repsTargetLabel}</span>
+  );
+
+  const repsSection = (
+    <section
+      className={`rule-section ${heroIsReps ? "focus-hero-section" : ""}`}
+    >
+      {!focus && (
+        <div className="section-head">
+          <span className="field-label">REPS</span>
+        </div>
+      )}
+      <Stepper
+        label="reps"
+        inline={!heroIsReps}
+        accent={heroIsReps}
+        display={String(draft.reps)}
+        subText={heroIsReps ? "REPS" : undefined}
+        onTapValue={
+          onOpenPad === undefined ? undefined : () => onOpenPad("reps")
+        }
+        value={draft.reps}
+        min={0}
+        max={MAX_REPS}
+        onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
+        steps={focus ? [] : [REPS_STEP_DOWN, REPS_STEP_UP]}
+      />
+      {focus && repsTarget}
+      {focus && noLoad && (
+        <p className="microcopy focus-no-load">no load — bodyweight</p>
+      )}
+    </section>
+  );
+
+  const loadSection = (
+    <section
+      className={`rule-section ${heroIsLoad ? "focus-hero-section" : ""}`}
+    >
+      {!focus && (
+        <div className="section-head">
+          <span className="field-label">LOAD · {unit.toUpperCase()}</span>
+          {canToggleEntry && (
+            <button
+              type="button"
+              className="plate-hint"
+              aria-label={
+                perSide
+                  ? "one dumbbell in each hand; switch to one total weight"
+                  : "one total weight; switch to one dumbbell in each hand"
+              }
+              onClick={onToggleLoadEntry}
+            >
+              {perSide ? "EACH HAND ×2" : "ONE TOTAL WEIGHT"}
+            </button>
+          )}
+          {hint !== null && (
+            <button type="button" className="plate-hint" onClick={onOpenPlates}>
+              {hint} ›
+            </button>
+          )}
+          {!rpeShown && (
+            <button
+              type="button"
+              className="rpe-reveal"
+              aria-label={`add an RPE rating to ${entry.name}`}
+              onClick={onRevealRpe}
+            >
+              + RPE
+            </button>
+          )}
+        </div>
+      )}
+      {!focus && canToggleEntry && (
+        <div className="microcopy">
+          {perSide
+            ? "Enter the weight on each dumbbell. The app counts both together."
+            : "Enter one total weight. Use this for one dumbbell or single-side work."}
+        </div>
+      )}
+      {perSide && (
+        <span className="sr-only">
+          {toDisplay(draft.entryKg, unit)} {unit} per hand
+        </span>
+      )}
+      <Stepper
+        label="load"
+        accent
+        display={String(toDisplay(draft.entryKg, unit))}
+        subText={heroIsLoad ? unit.toUpperCase() : loadSub}
+        onTapValue={
+          onOpenPad === undefined ? undefined : () => onOpenPad("load")
+        }
+        snap
+        value={draft.entryKg}
+        min={0}
+        max={maxEntryKg}
+        onChange={(entryKg) => onDraftChange({ entryKg })}
+        steps={focus ? [] : loadSteps}
+      />
+      {/* Per-hand count only — never the lb/kg twin conversion the accordion
+          shows (loadSub): that's a fine detail for the "more" sheet, not the
+          hero. "15 × 2" is this app's own convention for a stored total
+          entered as two matching implements (see CLAUDE.md's load_kg note). */}
+      {heroIsLoad && perSide && (
+        <div className="microcopy focus-load-detail">
+          {toDisplay(draft.entryKg, unit)} × 2
+        </div>
+      )}
+      {plateSplit && <PlateBar split={plateSplit} barKg={barKg} unit={unit} />}
+    </section>
+  );
+
+  // The bottom bar is the focus deck's one big action: the hero's coarse
+  // step flanking LOG. A superset member (`showLog={false}`) still needs its
+  // own hero adjusted, so the bar renders without a middle log button then —
+  // `SupersetRoundEditor` supplies the shared Log round / Log A1/A2 actions
+  // below both members instead.
+  const bottomBar = focus && tracking !== "done" && (
+    <div className="focus-bar">
+      {heroIsLoad && coarseDown && (
+        <BarStep
+          def={coarseDown}
+          label="load"
+          value={draft.entryKg}
+          min={0}
+          max={maxEntryKg}
+          snap
+          onChange={(entryKg) => onDraftChange({ entryKg })}
+        />
+      )}
+      {heroIsReps && (
+        <BarStep
+          def={REPS_STEP_DOWN}
+          label="reps"
+          value={draft.reps}
+          min={0}
+          max={MAX_REPS}
+          onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
+        />
+      )}
+      {showLog ? (
+        <button
+          type="button"
+          className={`${logClassName} focus-bar-log`}
+          disabled={disabled}
+          onClick={onLog}
+        >
+          {logLabel}
+        </button>
+      ) : (
+        <span className="focus-bar-spacer" />
+      )}
+      {heroIsLoad && coarseUp && (
+        <BarStep
+          def={coarseUp}
+          label="load"
+          value={draft.entryKg}
+          min={0}
+          max={maxEntryKg}
+          snap
+          onChange={(entryKg) => onDraftChange({ entryKg })}
+        />
+      )}
+      {heroIsReps && (
+        <BarStep
+          def={REPS_STEP_UP}
+          label="reps"
+          value={draft.reps}
+          min={0}
+          max={MAX_REPS}
+          onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
+        />
+      )}
+    </div>
+  );
+
+  const heroContent =
+    tracking === "done" ? (
+      <section className="rule-section">
+        <p className="microcopy">
+          No numbers for this one — tap below each time you finish a set.
+        </p>
+      </section>
+    ) : heroIsLoad ? (
+      <>
+        {loadSection}
+        {repsSection}
+      </>
+    ) : (
+      <>
+        {repsSection}
+        {(!focus || !noLoad) && loadSection}
+      </>
+    );
+
+  return (
+    <div className={`set-editor ${focus ? "set-editor-focus" : ""}`}>
+      {!focus && (
+        <div className="seg seg-types">
+          {SET_TYPES.map((setType) => (
+            <button
+              key={setType}
+              type="button"
+              className={`seg-btn ${draft.setType === setType ? "seg-on" : ""}`}
+              onClick={() => onDraftChange({ setType })}
+            >
+              {setType}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Focus wraps the hero in one group so the whole thing (not each
+          piece separately) can be given equal auto margins above and below,
+          leaving the name/position pinned at the top and the bottom bar
+          pinned at the bottom. Overview keeps the plain, ungrouped markup it
+          always had — .set-editor's own gap already sets its rhythm. */}
+      {focus ? (
+        <div className="focus-hero-group">{heroContent}</div>
       ) : (
         <>
-          <section className="rule-section">
-            <div className="section-head">
-              <span className="field-label">REPS</span>
-            </div>
-            <Stepper
-              label="reps"
-              inline
-              display={String(draft.reps)}
-              onTapValue={
-                onOpenPad === undefined ? undefined : () => onOpenPad("reps")
-              }
-              value={draft.reps}
-              min={0}
-              max={MAX_REPS}
-              onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
-              steps={[
-                { label: "−", delta: -1 },
-                { label: "+", delta: 1 },
-              ]}
-            />
-          </section>
-
-          <section className="rule-section">
-            <div className="section-head">
-              <span className="field-label">LOAD · {unit.toUpperCase()}</span>
-              {canToggleEntry && (
-                <button
-                  type="button"
-                  className="plate-hint"
-                  aria-label={
-                    perSide
-                      ? "one dumbbell in each hand; switch to one total weight"
-                      : "one total weight; switch to one dumbbell in each hand"
-                  }
-                  onClick={onToggleLoadEntry}
-                >
-                  {perSide ? "EACH HAND ×2" : "ONE TOTAL WEIGHT"}
-                </button>
-              )}
-              {hint !== null && (
-                <button
-                  type="button"
-                  className="plate-hint"
-                  onClick={onOpenPlates}
-                >
-                  {hint} ›
-                </button>
-              )}
-              {!rpeShown && (
-                <button
-                  type="button"
-                  className="rpe-reveal"
-                  aria-label={`add an RPE rating to ${entry.name}`}
-                  onClick={onRevealRpe}
-                >
-                  + RPE
-                </button>
-              )}
-            </div>
-            {canToggleEntry && (
-              <div className="microcopy">
-                {perSide
-                  ? "Enter the weight on each dumbbell. The app counts both together."
-                  : "Enter one total weight. Use this for one dumbbell or single-side work."}
-              </div>
-            )}
-            {perSide && (
-              <span className="sr-only">
-                {toDisplay(draft.entryKg, unit)} {unit} per hand
-              </span>
-            )}
-            <Stepper
-              label="load"
-              accent
-              display={String(toDisplay(draft.entryKg, unit))}
-              subText={loadSub}
-              onTapValue={
-                onOpenPad === undefined ? undefined : () => onOpenPad("load")
-              }
-              snap
-              value={draft.entryKg}
-              min={0}
-              max={maxEntryKg}
-              onChange={(entryKg) => onDraftChange({ entryKg })}
-              steps={loadSteps}
-            />
-            {plateSplit && (
-              <PlateBar split={plateSplit} barKg={barKg} unit={unit} />
-            )}
-          </section>
-
+          {heroContent}
           <RpeChips
             shown={rpeShown}
             value={draft.rpe}
@@ -199,10 +381,23 @@ export function SetEditor({
         </>
       )}
 
-      {showLog && (
+      {focus && restSlot}
+      {bottomBar}
+
+      {!focus && showLog && (
         <button
           type="button"
           className={logClassName}
+          disabled={disabled}
+          onClick={onLog}
+        >
+          {logLabel}
+        </button>
+      )}
+      {focus && tracking === "done" && showLog && (
+        <button
+          type="button"
+          className={`${logClassName} focus-bar-log focus-tick-log`}
           disabled={disabled}
           onClick={onLog}
         >

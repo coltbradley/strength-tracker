@@ -56,6 +56,36 @@ interface StepperProps {
   snap?: boolean;
 }
 
+/**
+ * Land ON the step grid, not `delta` away from wherever we happen to be.
+ *
+ * Loads are stored in kg and stepped by the display unit's own increment, so
+ * in lb mode the step is 5 lb expressed as 2.26796 kg. Adding that to a
+ * kg-authored 100 kg gave 220.5 -> 225.5 -> 230.5 lb: the value kept the
+ * half-pound of its kilogram origin forever and never reached a number anyone
+ * loads on a bar. Snapping to a multiple of the step makes the first press
+ * land on 225 and every one after it stay round. In kg mode the value is
+ * already on the grid, so this is a no-op there.
+ *
+ * Exported so a caller that needs to step a value WITHOUT `Stepper`'s own
+ * button row (the focus-deck bottom bar) computes the identical result
+ * instead of a second, driftable copy of this arithmetic.
+ */
+export function stepTo(
+  value: number,
+  delta: number,
+  min: number,
+  max: number,
+  snap: boolean,
+): number {
+  const next =
+    snap && delta !== 0
+      ? Math.round((value + delta) / Math.abs(delta)) * Math.abs(delta)
+      : value + delta;
+  const raw = Math.round(next * 1000) / 1000;
+  return Math.min(max, Math.max(min, raw));
+}
+
 export function Stepper({
   display,
   subText,
@@ -72,21 +102,7 @@ export function Stepper({
   snap = false,
 }: StepperProps) {
   const bump = (delta: number) => {
-    // Land ON the step grid, not `delta` away from wherever we happen to be.
-    //
-    // Loads are stored in kg and stepped by the display unit's own increment,
-    // so in lb mode the step is 5 lb expressed as 2.26796 kg. Adding that to a
-    // kg-authored 100 kg gave 220.5 -> 225.5 -> 230.5 lb: the value kept the
-    // half-pound of its kilogram origin forever and never reached a number
-    // anyone loads on a bar. Snapping to a multiple of the step makes the
-    // first press land on 225 and every one after it stay round. In kg mode
-    // the value is already on the grid, so this is a no-op there.
-    const next =
-      snap && delta !== 0
-        ? Math.round((value + delta) / Math.abs(delta)) * Math.abs(delta)
-        : value + delta;
-    const raw = Math.round(next * 1000) / 1000;
-    onChange(Math.min(max, Math.max(min, raw)));
+    onChange(stepTo(value, delta, min, max, snap));
   };
 
   // Without onTapValue there is nothing to tap, and a permanently disabled

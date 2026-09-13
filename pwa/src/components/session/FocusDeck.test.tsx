@@ -51,30 +51,23 @@ function props(overrides: Partial<FocusDeckProps> = {}): FocusDeckProps {
 }
 
 describe("FocusDeck", () => {
-  it("shows the current set plus remaining set and exercise counts", () => {
+  it("shows only the exercise name and its set position by default", () => {
     render(<FocusDeck {...props()} />);
 
-    expect(screen.getByText("EXERCISE 2 OF 3")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Deadlift" })).toBeTruthy();
     expect(screen.getByText("SET 1 OF 3")).toBeTruthy();
-    expect(screen.getByText("SETS REMAINING 4")).toBeTruthy();
-    expect(screen.getByText("EXERCISES REMAINING 2")).toBeTruthy();
+    // The exercise/set counts across the whole workout moved behind "more".
+    expect(screen.queryByText(/EXERCISE .* OF/)).toBeNull();
+    expect(screen.queryByText(/REMAINING/)).toBeNull();
   });
 
   it("keeps the supplied tick-only editor and offers the quiet overview action", () => {
     render(<FocusDeck {...props()} />);
 
     expect(screen.getByRole("button", { name: "DONE 1 OF 3" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "View full workout" })).toBeTruthy();
-  });
-
-  it("subtracts logged progress from the remaining set count", () => {
-    render(
-      <FocusDeck
-        {...props({ entryProgress: (candidate) => candidate.key === "deadlift" ? 1 : 0 })}
-      />,
-    );
-
-    expect(screen.getByText("SETS REMAINING 3")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "View full workout" }),
+    ).toBeTruthy();
   });
 
   it("keeps the live region to changing focus status, not controls", () => {
@@ -114,5 +107,38 @@ describe("FocusDeck", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next exercise" }));
 
     expect(onChooseNext).toHaveBeenCalledWith(entries[2]);
+  });
+
+  it("names the next exercise's own scheme in the quiet next line, when given a formatter", () => {
+    render(
+      <FocusDeck
+        {...props({
+          entryDone: (candidate) => candidate.key !== "press",
+          formatScheme: (candidate) =>
+            `4×5 @ ${candidate.name === "Press" ? 85 : 0}`,
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Next exercise" }).textContent,
+    ).toBe("next · Press · 4×5 @ 85");
+  });
+
+  it("offers one quiet control for everything else, when Session supplies it", () => {
+    const onOpenMore = vi.fn();
+    render(<FocusDeck {...props({ onOpenMore })} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "more options for Deadlift" }),
+    );
+
+    expect(onOpenMore).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits the more control when Session does not supply one", () => {
+    render(<FocusDeck {...props({ onOpenMore: undefined })} />);
+
+    expect(screen.queryByRole("button", { name: /more options/ })).toBeNull();
   });
 });
