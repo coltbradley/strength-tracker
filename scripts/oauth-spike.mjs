@@ -120,13 +120,19 @@ console.log("claims:", {
 });
 console.log("refresh_token issued:", Boolean(tokens.refresh_token));
 
-const user = await fetch(`${base}/auth/v1/user`, {
-  headers: {
-    authorization: `Bearer ${tokens.access_token}`,
-    apikey: process.env.SUPABASE_ANON_KEY ?? "",
-  },
-});
-console.log("GET /auth/v1/user with the OAuth token:", user.status);
+// The auth gateway refuses any request without the project's publishable key,
+// so without it this check reports 401 for a perfectly good token.
+if (process.env.SUPABASE_ANON_KEY) {
+  const user = await fetch(`${base}/auth/v1/user`, {
+    headers: {
+      authorization: `Bearer ${tokens.access_token}`,
+      apikey: process.env.SUPABASE_ANON_KEY,
+    },
+  });
+  console.log("GET /auth/v1/user with the OAuth token:", user.status);
+} else {
+  console.log("GET /auth/v1/user: skipped (set SUPABASE_ANON_KEY to run it)");
+}
 
 if (callMcp) {
   const mcp = await fetch(`${base}/functions/v1/mcp-server`, {
