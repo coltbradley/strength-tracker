@@ -193,6 +193,30 @@ function phaseStatus(
 }
 
 /** The live plan, or null. One per user by the partial unique index. */
+/**
+ * Refuse to supersede a CONFIRMED plan without confirm_change. Writing a new
+ * plan retires the live one at once, before the new one is confirmed, so on a
+ * confirmed plan it changes the strategy the user is following the moment it
+ * lands: the same class of change as editing a confirmed program's day, and
+ * the same gate. An unconfirmed draft is nobody's plan yet and is replaced
+ * freely, as it always was.
+ */
+export function assertMaySupersede(
+  previous: Pick<PlanRow, "id" | "objective" | "confirmed_at"> | null,
+  confirmChange: boolean,
+): void {
+  if (previous === null || previous.confirmed_at === null || confirmChange) {
+    return;
+  }
+  throw new ToolError(
+    `The current training plan ('${previous.objective}', ${previous.id}) is ` +
+      "CONFIRMED: the strategy the user is following. Writing a new plan " +
+      "supersedes it immediately, and the app shows no plan until the new one " +
+      "is confirmed. Show them the plan you intend to write, get their " +
+      "approval in chat, then retry with confirm_change=true.",
+  );
+}
+
 async function livePlan(db: Db): Promise<PlanRow | null> {
   const { data, error } = await db.client
     .from("training_plans")
@@ -409,7 +433,10 @@ export function registerSetTrainingPlan(
         "and steers nothing until confirm_training_plan is called after the " +
         "user approves it in chat; because the old plan is superseded at " +
         "once, the app shows no plan between this call and that one, so " +
-        "confirm in the same conversation. Phases are listed in order, may " +
+        "confirm in the same conversation. Replacing a CONFIRMED plan is a " +
+        "change to the strategy the user is following, so it needs " +
+        "confirm_change=true and their approval in chat first; an " +
+        "unconfirmed draft is replaced without it. Phases are listed in order, may " +
         "not share a day, and every primary_exercise_id must exist (use " +
         "search_exercises).",
       annotations: {
@@ -457,6 +484,14 @@ export function registerSetTrainingPlan(
           .describe(
             "The phases in chronological order. Position follows the array.",
           ),
+        confirm_change: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Must be true to replace a CONFIRMED plan. Set it only after the " +
+              "user approved this specific new plan in chat, in their own " +
+              "words, in a message you can point to.",
+          ),
       },
     },
     (args) =>
@@ -485,6 +520,8 @@ export function registerSetTrainingPlan(
         }
 
         const previous = await livePlan(db);
+        // Before the supersede below, which is the first write.
+        assertMaySupersede(previous, args.confirm_change);
 
         // One live plan per user is a partial unique index, so the old plan
         // has to be superseded BEFORE the new row can exist. That opens a
