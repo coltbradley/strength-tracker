@@ -1,0 +1,867 @@
+# AGENTS.md
+
+This is the single shared source of truth for every coding agent working in
+this repo — Codex, Claude Code, GitHub Copilot CLI, and the GitHub Copilot
+cloud agent. Tool-specific files (`CLAUDE.md`, `.github/copilot-instructions.md`)
+import this file and add only tool-specific notes; they must not restate
+project rules. If you are one of those tools and were routed here by an
+import, read the whole file before editing — the "Hard rules" section below
+encodes invariants that have already caused real production bugs when
+violated once.
+
+Strength log + Claude programming layer. Multi-user, public repo.
+
+A coached lifter logs sets on their phone (PWA). Claude reads the log via MCP to
+analyze progress and writes programming parsed from coach screenshots. The coach
+programs. Claude parses, analyzes, and proposes. The app captures.
+
+## Layout
+
+- `supabase/migrations/`: schema, RLS, views. Numbered SQL, never edit an
+  applied migration, add a new one.
+- `supabase/functions/mcp-server/`: MCP server as a Supabase Edge Function
+  (Deno, streamable HTTP). Tools in `tools/`, shared code in `lib/`.
+- `pwa/`: React + Vite PWA. Offline-first, IndexedDB write queue.
+- `scripts/`: seed generation and dev utilities (Node).
+- `docs/`: plan, architecture, decisions, setup, deploy. `docs/decisions.md`
+  is the log of every deviation from the original spec and why.
+  `docs/deploy.md` is the per-release runbook — follow it instead of
+  rediscovering the deploy steps. `docs/endurance-research.md` is the evidence
+  base for the endurance layer, including the list of metrics this system
+  refuses to compute and why; `docs/endurance-plan.md` is its phased build plan,
+  whose every gate re-checks that the strength app still works untouched.
+
+## Hard rules
+
+- `sets`, `sessions`, `set_voids`, and `set_notes` are written ONLY by the
+  PWA. MCP tools never write them.
+- `sets` is append-only. No update/delete paths anywhere (RLS enforces this).
+  Corrections are voids: an insert into `set_voids` (itself append-only)
+  hides a set from every view. Never add an update or delete policy.
+  "Editing" a logged set in the PWA is a void PLUS a new row at the same
+  `set_index` with the same `performed_at`, rest and prescription
+  (`pwa/src/lib/corrections.ts`); only load, reps, type and rpe change. Never
+  give it the next index: that is how a corrected set 2 became set 5.
+  `isNoopCorrection` normalises undefined to null before comparing, because a
+  row cached before a column exists reads back undefined and `undefined ===
+  null` is false: without it, saving an unrated set unrated writes a void and a
+  duplicate row.
+  `set_notes` is the one editable set-adjacent row (a user annotation,
+  last-write-wins) — the sessions.notes mutability class, never a way to
+  edit the set itself.
+- `sessions` are soft-deleted only (`discarded_at`); no delete policy exists.
+  A discarded session leaves every view but stays in Postgres. So are
+  `programs` and, since 20260901030000, `planned_workouts` — one soft-delete
+  idiom, one column name, three tables. A HARD delete of a planned day
+  cascaded to its prescriptions and, through `on delete set null`, severed the
+  link from every set ever logged against them: the sets survived but what the
+  plan ASKED for did not, and `sets` being append-only, nothing could restore
+  it. Prescriptions deliberately have NO discarded_at of their own — a
+  prescription has no life outside its day, and a second nullable timestamp
+  would mean every read filtering on two. A `before delete` trigger refuses to
+  delete a prescription that has sets against it instead; one nothing has been
+  logged against still deletes freely, which is the ordinary edit case.
+  Soft-deleting in the CODE was not enough. Both migrations left the DELETE
+  policies standing, so anyone holding a session token could still perform that
+  cascade straight through PostgREST — the PWA is not the boundary, RLS is.
+  Since 20260905010000 `programs_delete` and `exercise_owners_delete` are gone
+  outright (deleting your own ownership row does not unshare a custom exercise,
+  it makes the row readable by NOBODY), and `pw_delete` is NARROWED to
+  `pw_delete_template` rather than dropped: the PWA hard-deletes templates
+  today, a template is dateless by constraint so nothing can ever have been
+  logged against its own prescriptions, and RLS refuses by returning ZERO ROWS
+  rather than an error, so a bare drop would have made that button silently do
+  nothing. The danger was never "delete" as a verb, it was deleting a DATED
+  day. `rx_delete` stays for the same reason the trigger exists.
+- Planned tables (`programs`/`planned_workouts`/`prescriptions`) are written
+  by BOTH the MCP server (service role, program parsing) and the PWA (RLS
+  owner policies, plan editor). The PWA can now CREATE a day too, not just
+  edit one: `createPlannedWorkout` always sets `scheduled_date` (an undated
+  day leaves the calendar entirely) and makes a confirmed program when none
+  exists. A user-authored program is confirmed on creation; only what CLAUDE
+  writes needs the separate confirm step. `planned_workouts.notes` is coach notes from
+  the parse (the coach's OWN words, brief — parse caveats go in chat);
+  `plan_note` is the user's own and the parse must not touch it.
+  `prescriptions.superset_group` (1=A…) marks supersets; consecutive
+  same-exercise prescriptions are a ramp and render as one grouped entry.
+  `prescriptions.section` names a PART of the day. MAIN WORK is the null
+  section and is rendered as a LABEL on each run of unsectioned blocks, never
+  as a block of its own: `moveEntry` relies on an unsectioned exercise BEING
+  its own block, which is what lets the arrows walk it through the whole day,
+  and gathering main work into one block would confine it and silently change
+  what those arrows do. The label appears only once the day has a named part —
+  a day with one part needs no heading — and the plan editor and the session
+  screen must apply the same rule, or the two describe different days.
+  delete_program removes a plan (confirmed ones only with the explicit flag
+  after user approval); logged sessions/sets always survive it.
+- Programs written by Claude land unconfirmed (`confirmed_at IS NULL`) and
+  require a separate `confirm_program` call after user approval in chat.
+- A PostgREST BULK insert fills a row's missing key with NULL, not with the
+  column default: the array is inserted with the union of every row's keys.
+  So a row builder must emit every defaulted column on EVERY row
+  (`prescriptionRows` writes `set_type` and `tracking` explicitly), or one row
+  that says 'warmup' turns eight rows that said nothing into eight NULLs in a
+  NOT NULL column. That was three 500s on a real "Lower + Activation" day.
+  Omitting a key to "let the default apply" is only true for a single row.
+- `exercises.images` and `exercises.instructions` (20260905040000) are the
+  seed's demo photos and how-to steps. `images` holds PATHS under the upstream
+  repo, never URLs, and a CHECK pins that shape: the library is shared, so an
+  image URL a person could type into a shared row would be a tracking pixel in
+  every other account's session screen. The host is one constant in
+  `pwa/src/lib/exerciseMedia.ts`. Photos are cross-origin and deliberately not
+  cached by the service worker; the steps ride on the row and are cached like
+  every other read.
+- `update_planned_workout` edits ONE day of an existing program in place, and
+  it is the correct tool for ANY change to a program that already exists:
+  filling in an empty day, swapping an exercise, adding a superset, changing
+  sets or loads. `upsert_program` writes a WHOLE program and refuses to touch a
+  confirmed one, so it cannot edit at all — a model reaching for it to add a
+  day can only write a SECOND program with the same name, which is exactly what
+  left a real user with two live plans and four days on her calendar she never
+  trained. Reserve `upsert_program` for a genuinely new program. The unit is
+  the DAY, and its prescriptions are replaced entirely: order, supersets,
+  sections and ramps are all adjacency between rows, so a per-row patch would
+  let a caller tear a superset in half without ever naming it. An empty list is
+  legal, because the wholesale rewrite could not restate a day with no
+  prescriptions and silently dropped every empty day it touched. New rows are
+  parked above the old ones and land after the delete — PostgREST has no
+  transactions, and a failure mid-write should leave a visible duplicate rather
+  than an emptied day. A day with logged sets against it is refused, matching
+  the trigger that guards the same thing in Postgres. Editing a day of a
+  CONFIRMED program takes `confirm_change=true` after approval in chat and is
+  live the moment it lands; there is no confirm step after it.
+- A `load_pct_tm` prescription with NO current training max is WRITTEN, not
+  refused (since 2026-09-05; `resolveTrainingMaxes` returns
+  `{tms, unresolved_pct, note}` and every plan-writing tool reports
+  `unresolved_pct`). The refusal was right for a %TM program someone trains
+  tomorrow and wrong for a FIRST session, which is the calibration the TM would
+  come from: a real coach wrote "60-75% of 1RM", the tool said no, and the model
+  put the percentage in `prescriptions.notes` as prose with the load empty, so
+  the 130 lb x 5 the session then produced had nothing to become.
+  `v_resolved_prescriptions` yields a null load for these and both Today and
+  the session screen already say "no TM set" beside the percentage. The
+  post-session review proposes the TM; nothing invents one. `prescriptions.notes`
+  is the coach's cue and only that — never parse commentary, a name, a date or
+  an unresolved percentage. The third plan-writing door is
+  `repeat_planned_workout`: same program, `day_index` max+1, last time's
+  working loads by the ramp-preserving rule the app's saved-workout apply uses,
+  entries in the order actually performed with ramps and sections kept whole,
+  instruction-like set notes RETURNED as `notes_to_consider` and never copied.
+  `find_similar_days` (Jaccard >= 0.6 over exercise ids) is called before
+  `upsert_program` so the same screenshot does not become a second program.
+- Derived metrics (e1RM, volume, adherence, rest) live in SQL views only,
+  never stored. Views are `security_invoker` so RLS applies, and every
+  set-derived view reads `v_live_sets` (voids and discards excluded) — never
+  `sets` directly.
+- Exercise library sources: 'free-exercise-db' (generated seed), 'curated'
+  (hand-maintained seed), 'edited' (a seeded row a human changed), 'custom'
+  (MCP add_exercise / PWA). The column carries TWO facts and the vocabulary
+  keeps them apart: which seed may overwrite the row, and whether it is
+  shared. Only 'custom' is private. Every policy and every MCP guard branches
+  on `= 'custom'` vs `<> 'custom'`, so the other three land on the shared side
+  without any of them needing to know the difference, and a CHECK closes the
+  set because a typo here ('Custom') would publish a private row.
+  Each seed only updates its own source's rows; update_exercise re-tags an
+  edited SEEDED row 'edited' so re-seeds can't revert it, and it stays shared.
+  (It re-tagged to 'custom' until 20260901010000: that made the row private,
+  and private to NOBODY, because the claim trigger fires on insert and the MCP
+  path is the service role with no auth.uid(). The row became readable by no
+  one, and v_resolved_prescriptions inner-joins exercises, so every
+  prescription naming it silently left the plan.) delete_exercise removes ONLY
+  custom exercises that nothing references (FKs enforce it); seeded or
+  referenced exercises are never deleted — history is never orphaned.
+  `exercises` never grows a column whose value differs per VIEWER, and never a
+  column the generated seed cannot populate: 873 rows would sit null forever
+  and each re-seed would write it back. Ownership therefore lives in
+  `exercise_owners`: SEEDED rows have no entry and are shared by everyone, a
+  'custom' row belongs to one person. An `after insert` trigger claims it for
+  `auth.uid()`; the service-role (MCP) path has no auth.uid() and writes the
+  owner row itself.
+  The service role bypasses RLS, so every MCP read of `exercises` must scope
+  by owner in code — `requireExercise` is the gate. Another user's custom
+  exercise reports as UNKNOWN, never as forbidden. Movement hints (unilateral,
+  bar type) are derived client-side from `equipment` and the name; overrides
+  live in device-local per-exercise settings.
+  The per-user-column rule has exactly one carve-out, `updated_at` /
+  `updated_by` (20260905020000), and it rests on the distinction the rule is
+  really about. Those two are a single GLOBAL fact about the row rather than a
+  different answer per reader; null there IS the answer ("unmodified since it
+  was seeded"), not a placeholder; and neither seed's ON CONFLICT clause names
+  them, so no re-seed writes them back. A `before update` trigger stamps them,
+  an explicitly supplied `updated_by` beats `auth.uid()` so the service-role
+  path can name the token's user, and an update that changes nothing stamps
+  nothing. They are an AUDIT TRAIL and nothing else: no policy, no view and no
+  MCP guard may branch on `updated_by`. It answers "who touched this", never
+  "whose is this" — ownership remains `exercise_owners` and only
+  `exercise_owners`, which is exactly the distinction `source` failed to make.
+  `exercises.name` is bounded (20260905020000) to 80 characters of single-line
+  printable text: no C0/C1 controls, no U+2028/U+2029, no invisible formatting
+  characters. It is the one field a user writes that every OTHER user's coach
+  reads — through `search_exercises`, `get_program` and the per-turn context
+  block — which makes it untrusted cross-user input rather than a label. The
+  constraint names what is dangerous instead of whitelisting what is allowed,
+  so it cannot refuse a script nobody here happens to read.
+- All client writes carry client-generated UUIDs; replay is idempotent
+  (`on conflict do nothing`). Do not break this.
+- A planned day is DONE only when its session has `ended_at`. An open session
+  must never mark its day done — that showed RESUME and "Start again" at
+  once and let an abandoned start count as training.
+- `v_plan_workouts` carries `exercise_count`, and a planned day with zero is a
+  DRAFT, not a MISSED workout. "Plan a workout" creates the dated day and then
+  opens its editor, so abandoning it there leaves a real, dated, empty day that
+  accused someone of skipping a session nobody ever programmed. DRAFT sits
+  ahead of every date check and behind DONE and SKIPPED: what actually happened
+  outranks emptiness, but nothing that never existed should read as something
+  you failed to do. The count rides on the row because Today loads prescriptions
+  lazily and otherwise has no idea what any other cell in the week strip holds.
+- "Empty session" is a SERVER-confirmed zero. A local set count of zero can
+  simply mean this device never had the cache; never lead with a destructive
+  default on an unconfirmed count. So the overnight sweep may COMPLETE any open
+  session from anywhere — sets that arrive later still belong to it, and
+  `ended_at` only says the day is over — but may DISCARD only the session this
+  device holds the active pointer for. Both emptiness signals are local truths
+  (`queuedSetCount` reads THIS outbox, `lastSetAt` reads a server the other
+  phone has not reached), and a foreign session that looks empty is left OPEN
+  for Today's orphan card: an open session is a card someone dismisses, a
+  wrongly discarded one is training only SQL can find. The same rule one level
+  down — a session bootstrap that THREW is not an empty log, so `setsFailed`
+  disables LOG and says why rather than computing `set_index` 0 on top of sets
+  it could not read.
+- Units are kg in the database everywhere. Display conversion is client-side.
+- Identity: the MCP server has NO auth.uid() (it authenticates with a bearer
+  token, not a session) and runs as the service role, which bypasses RLS. The
+  token IS the identity: `mcp_tokens` maps its SHA-256 to a user, and every
+  tool must filter and stamp `db.ownerId` itself. A client that signed in
+  instead sends a Supabase OAuth access token; `lib/oauth.ts` accepts it ONLY
+  when it carries `client_id` (a plain session JWT is refused, because this
+  server bypasses RLS) and verifies it with `auth.getUser`, yielding the same
+  `Caller`. Dynamic client registration is open; the gate is the lifter's
+  sign-in plus Allow on `/oauth/consent`. Build the `Db` handle per
+  request (`dbFor`); NEVER cache it or anything derived from a user id at
+  module scope — edge isolates are reused across callers, and that is how one
+  person's data reaches another. The connection may be cached; the identity
+  may not.
+- Calendar days are per user: `app_tz(user_id)`, defaulting to `app_config.tz`
+  then UTC. Views pass the user_id OF THE ROW they bucket, not `auth.uid()`,
+  so the answer is the same on the PWA and service-role paths. The PWA keeps
+  using the device clock — the phone travels with the lifter — but that day has
+  to be a value that KEEPS UP with the clock, never one read during render. An
+  installed PWA is not a page load: iOS suspends and resumes it with the same
+  heap, so a screen left open on Monday evening still offered MONDAY's Start
+  button on Tuesday and filed the whole workout against Monday's planned day.
+  `useLocalToday` watches a midnight timer, `visibilitychange` and `online`,
+  none of which is sufficient alone, and computes the boundary from the
+  calendar date so DST lands on the real one. The day-change re-run of
+  reconciliation must stand down while this device holds a LIVE session, or a
+  23:50 start is auto-completed at its last logged set out from under someone
+  still lifting.
+- Every queued write carries the id of the user who made it. The flusher HOLDS
+  another user's items rather than replaying them (payloads leave `user_id` to
+  the DB default, so replaying as the wrong user would misattribute a set
+  permanently — `sets` is append-only). Held, never dropped. An UNKNOWN
+  identity holds too: `getCurrentUserId()` returns null for "signed out" and
+  for "not known yet" alike, and "not known yet" is the state the app BOOTS
+  in — start() flushes after two IndexedDB round trips while identity is a
+  network token refresh. Treating null as permission is how one person's set
+  reaches another's log. Because holding is only safe if something un-holds
+  it, `start()` also re-runs the queue when identity arrives.
+- A 401 whose refresh THREW is not a 401 whose refresh returned false. Only
+  the second is an answer; the first means we never found out, and must stay
+  retryable. The refresh is attempted once per flush, so treating a timeout as
+  a verdict dead-letters the whole queue for a transient condition.
+- For the same reason, a null session carrying a RETRYABLE error is not a
+  sign-out. `getSession()` tries to refresh an expired token and, when it
+  cannot reach the server, returns `session: null` with an error — the same
+  shape as a real sign-out, which put a lifter in a basement gym on the Login
+  screen and HELD every write she queued. `pwa/src/lib/persistedSession.ts`
+  reads the session auth-js has on disk so `useAuth`, `currentUser` and the
+  outbox transport can tell "no" from "we could not ask". That fallback is
+  IDENTITY, NEVER AUTHORIZATION: it answers whose data this device is holding
+  so the shell renders and the outbox stamps an owner, and every request still
+  carries the real token and is still refused by the server if that token is no
+  good. It reads the auth library's private storage key, which is a coupling,
+  so it is deliberately loose about it — any unexpected shape, any unreadable
+  store, any missing refresh token returns null and puts the app back on the
+  old behaviour.
+- A cached read tells "the server never answered" apart from "the server said
+  no". `fetchWithCache` serves the device cache in BOTH cases, because a stale
+  plan beats a blank screen in a gym, but only the first is offline. postgrest-js
+  marks a fetch that got no response with an EMPTY error code; anything carrying
+  a SQLSTATE or PGRST code is an answer, and an answer of no is REPORTED (once
+  per message per 30 s, so seven views over one broken column are one toast)
+  and shown as "couldn’t refresh", never as "offline". `throwIf` throws
+  `QueryError` with the code intact for exactly this reason: collapsing it to
+  `Error(message)` is how a missing view column would have read as a basement
+  on every device with a cache, while Report-a-problem said RECENT ERRORS: none.
+- The device cache belongs to one user, tracked by a localStorage marker, and
+  is cleared when that changes. Cache keys are NOT namespaced by user on
+  purpose: one marker has one place to be wrong, forty key builders do not.
+- `load_kg` is ALWAYS the TOTAL system load — the whole weight moved in one
+  rep. A pair of 30 kg dumbbells is stored as 60. Never store a per-hand
+  value in `load_kg`; every view, chart and MCP read assumes totals and would
+  be silently wrong. `sets.load_entry` / `prescriptions.load_entry`
+  (`'total'` | `'per_side'` | NULL) record how the number was ENTERED, so the
+  UI can show "30 × 2" and Claude can quote it back honestly. NULL means
+  UNKNOWN, never "confirmed total": those rows predate the convention and
+  `sets` is append-only, so they can never be corrected. Single-arm work is
+  `'total'` (one dumbbell IS the whole system for that rep); what is per side
+  there is the reps, which are deliberately not modelled. BOTH write paths
+  resolve the convention identically now — the session screen and the plan
+  editor (the scheme sheet on the way in, the row editor for rows that already
+  exist) derive per-hand from the exercise's `equipment` and name and show the
+  same control with the same words, so a prescription typed as "20 per hand" is
+  stored as 40 with `load_entry` 'per_side' and reads back as entered. The plan
+  editor wrote neither until it learned this, which is why a real user's whole
+  plan is stored at half; it is also why the editor loads the exercise library
+  on mount rather than when the picker opens, since a row editor that cannot
+  tell dumbbells from a barbell is how that happened.
+- Settings are DEVICE-LOCAL, not per-user: two people sharing one phone share
+  its plate inventory and per-exercise prefs. They are in a typed registry
+  (`pwa/src/lib/settings.ts`)
+  behind a versioned envelope; migrations there are additive too. There is no
+  `user_settings` or `exercise_prefs` table and adding one needs a decision
+  entry: it would create a third write-ownership class for data no view and
+  no MCP tool reads. Accepted: settings do not sync across devices.
+- App updates must never lose device data: the IndexedDB database
+  ("strength-log") holds unsynced sets in the outbox. Version bumps must be
+  strictly additive (see the comment in `pwa/src/lib/db.ts`); never rename
+  the database, delete stores, or clear storage in an update path. Postgres
+  migrations are equally append-only once deployed. The same rule governs the
+  SERVICE WORKER: `registerType` is "prompt", never "autoUpdate", because
+  autoUpdate plus `registerSW({immediate:true})` reloads the open page the
+  moment a build lands — mid-set that takes the staged reps, the load and any
+  half-typed note. But a waiting worker also has to be NOTICED: the browser
+  only looks on registration, so main.tsx checks on every return to the
+  foreground and hourly, and applies immediately when no session is open,
+  deferring to the next hidden only when one is. Deferring without checking
+  is how a shipped build sits unnoticed for days; that has happened once.
+- The outbox is the only copy of an unsynced set, and WebKit clears IndexedDB
+  after about a week idle, so `navigator.storage.persist()` is requested at
+  startup. Best-effort and never awaited on the boot path.
+- Because it is the only copy, the queue is VISIBLE (`OutboxSheet`): every
+  waiting write, its state, its age, and the reason a held one is held. Two
+  functions answer two different questions and must not be merged. `classify()`
+  decides what the flusher does with a failure in the moment; `deadKind()`
+  decides what a Retry button may PROMISE, from the recorded code and status
+  rather than from the message text. Auth, a policy refusal and a missing
+  ancestor row are retryable (the ancestor is usually the session insert
+  sitting ahead in the same queue); a constraint violation is not, because the
+  same bytes get the same answer, and a button that cannot work is worse than
+  no button. Retry looks only at DEAD items, which is what structurally keeps
+  it from replaying a HELD one under the wrong identity.
+- Sign-out copy must match what sign-out actually does. It claimed for a while
+  that signing out discarded the queue and that this was its only copy; nothing
+  in that path touches the outbox (`cacheClearAll` drops the kv cache and the
+  coach thread), while the half that IS destructive, the cached log, went
+  unmentioned. An over-warning about the safe half and silence about the
+  dangerous one is worse than no copy at all.
+
+- Planned days have STRUCTURE beyond a flat list, and all of it is expressed
+  as adjacency rather than as new tables. Consecutive prescriptions naming the
+  same exercise are a RAMP; `superset_group` (1=A…4=D) pairs exercises to
+  alternate; `section` is a heading ("Activations", "Abs") that consecutive
+  rows share. A fourth way to say "these rows belong together" needs a
+  decision entry, not a table. The unit of grouping and of reordering is the
+  ENTRY (a ramp, a superset), never one row — moving or sectioning a single
+  row tears those apart, which is a bug class this repo has already had.
+- `prescriptions.tracking` is 'reps' (weight and reps), 'done' (a tick, for
+  activations and mobility) or 'time' (a hold or a carry). All three write a
+  REAL row in `sets`: a tick is reps 0 at load 0, both already legal, and a
+  timed set is reps 0 with the seconds in `sets.duration_seconds` and
+  `load_kg` still the total system load, so a weighted carry records both what
+  was carried and for how long. Never invent a second completion record — no
+  view, chart or MCP tool would know how to read it. Volume and e1RM exclude
+  all of it through the filters they already have; do NOT add a `tracking`
+  filter to those views, which would couple the analysis to the plan the way
+  `v_adherence` deliberately does not.
+  Seconds are NOT stored in `reps`, and the reason is worth keeping: `reps` is
+  checked `between 0 and 100`, so a three minute carry is not representable at
+  all, and a 45 second carry at 64 kg would otherwise fall inside `v_e1rm`'s
+  `reps between 1 and 8` window and inside `v_weekly_volume`'s tonnage as
+  64 x 45. A nullable column makes nothing branch; a reinterpreted one prices
+  seconds as repetitions in the two views the whole analysis rests on.
+- `sets.rpe` is how hard a set felt, 5 to 10 in half points, and NULL is the
+  ordinary case. Rating is one optional tap, and because `sets` is append-only
+  an unrated set can only be rated by voiding and relogging, so the nulls are
+  permanent: nothing derived may require an RPE, no average may run over the
+  nulls, and absence is never evidence a set was easy. The scale lives in
+  `pwa/src/lib/rpe.ts`, derived from the column's bounds rather than retyped;
+  the UI floor (6.5) sits deliberately above the column floor (5), because the
+  column decides what is LEGAL and the chip row decides what is worth a tap.
+- Bodyweight has two homes and one read. `sessions.bodyweight_kg` is the
+  weigh-in attached to a session; `bodyweight_log` is a measurement on a day
+  with no training, queued through the outbox with a client id like every
+  other write. Read `v_bodyweight`, never one source alone — a caller that
+  reads one silently answers the wrong question about the weeks the other
+  covers. `bodyweight_log` is the one table carrying update and delete
+  policies, and that is the append-only rule applied rather than relaxed: a set
+  has dependents, views derived from it and a void mechanism, and a weigh-in
+  has none of the three, so a mistyped 700 would otherwise sit in the trend
+  forever with no way to say so.
+- `v_weekly_summary` reports `planned_days` and `planned_days_done` as two
+  counts and must never be divided into an adherence percentage, in SQL, in a
+  tool, or in the UI. A week nobody planned has no adherence, and a ratio
+  renders that as zero, which reads as total failure rather than as nothing
+  having been asked. Draft days are not counted as owed at all.
+- A TEMPLATE is a planned day with no date (`is_template`), not a table. It
+  can never carry a `scheduled_date` (checked), and every plan read goes
+  through `v_plan_workouts`, which drops templates AND days whose program is
+  discarded. Filter there, never at the call site: a filter you have to
+  remember is one someone will forget.
+- `programs` are soft-deleted (`discarded_at`), like sessions. Nothing an LLM
+  can write is hard-deleted. The one exception is `upsert_program`'s
+  compensating rollback, which removes a fragment of a failed write that
+  nobody ever saw.
+- Notes have four homes and they are not interchangeable: `planned_workouts.notes`
+  is the COACH's words from a parse and `plan_note` is the user's own (a parse
+  must never touch it); `prescriptions.notes` is per-exercise-per-day;
+  `set_notes` is one logged set; `exercise_notes` is a standing cue for a
+  MOVEMENT, keyed (user_id, exercise_id) because `exercises` is a shared
+  seeded library that never grows a per-user column.
+- The per-turn CONTEXT BLOCK carries today in full and THIS WEEK a line at a
+  time: state, label, exercise names and the day's id. Names only, no sets or
+  loads, because a whole week of prescriptions costs several times as much on
+  every turn to answer a question asked once. The id rides along because it is
+  unguessable and was the last remaining reason to call `get_program` before
+  editing a day. A DRAFT is rendered ahead of every date check so a day nobody
+  wrote never reads as one they failed to do, and where completion cannot be
+  checked a past day reads PAST rather than MISSED: not knowing is not failing.
+  The separator is a field separator, not an envelope, which is what stops an
+  exercise name closing anything.
+- `resolve_exercises` resolves MANY names in one call and `search_exercises`
+  explores. One real turn spent 37 seconds on six sequential searches for names
+  the model already knew. The batch tool is a wrapper over the search tool's
+  matching and ranking, never a second matcher: two tools disagreeing about
+  which "incline press" is meant would be worse than the latency. Its one extra
+  tier is exact-name-before-alphabet, because naming ONE match is its job.
+- `coach_memory` holds standing facts about the person (injury, constraint,
+  preference, context) — not goals, which `goals` measures against real sets.
+  It reaches the coach through the per-turn CONTEXT BLOCK, never a tool call:
+  memory that must be fetched is memory that gets forgotten. It is deletable,
+  unlike the training record, because a fact that stopped being true makes
+  every future answer worse.
+  It is also WRITTEN off the response path. `remember` still exists, but the
+  coach never called it once in a real 13-turn conversation that stated two
+  standing facts, and the eval reproduced that with two different models: an
+  in-band tool call competing with answering someone at a rack always loses.
+  A Haiku pass after the turn does it instead
+  (`supabase/functions/coach/memory-extract.ts`), reading the LIFTER's message
+  only — never the assistant's words, never an attachment, and never the
+  `<current_context>` block, which opens with the memory this pass wrote.
+  `source` says which path a row came from and `source_turn_id` which message,
+  so the app can show a fact nobody mentioned in chat and offer to delete it;
+  `source` carries that one fact and nothing may branch on it for ownership.
+- `activities` (20260907030000) are endurance actuals and a THIRD
+  write-ownership class. `sets` are written by the PWA and nothing else; planned
+  tables by the PWA and the MCP server; an activity by NEITHER, because it
+  arrives from a sync against a third party the user does not control. The rule
+  that falls out and that every endurance phase re-checks: the endurance half
+  may never become a dependency of the strength half. Strength data is the only
+  copy of itself and is written by a phone in a basement; endurance data can be
+  re-fetched. No delete policy (soft delete is `discarded_at`, the idiom of
+  `sessions`/`programs`/`planned_workouts`), and every endurance-derived read
+  goes through `v_live_activities` -- never `activities` -- for the same reason
+  set-derived views read `v_live_sets`.
+  `ascent_m` and `descent_m` are SEPARATE and nullable, and that is the point of
+  the table: no platform surveyed stores elevation LOSS, descent is what
+  produces ~40% knee-extensor strength loss at the finish of a mountain ultra,
+  and it is what the eccentric block is dosed against. NULL means unknown, never
+  flat: a treadmill has no vert rather than zero vert, and zero on a track
+  session is a real measurement. Strava's activity list carries gain only, so a
+  Strava-only deployment has null descent and cannot dose that block; the sync
+  reports `inserted_with_descent` so this is found at E0 rather than at E5.
+  Two sources may be connected at once, and one Garmin upload reaching both is
+  TWO rows for one effort. A `before insert` trigger marks the later arrival
+  `duplicate_of` the earlier and `v_live_activities` drops it; both rows stay,
+  because each holds its own source's detail. The matcher is deliberately
+  conservative (different source, same sport case-insensitively, within two
+  minutes, durations within 60 s or 5%) because the failure modes are not
+  symmetrical: a missed duplicate double-counts a week and is visible, a wrong
+  match hides a real training day and is not. The rule lives in SQL, not in the
+  sync, so a third provider cannot forget it.
+  Measurements belong to the sync and annotations to the owner. Postgres has no
+  per-column update policy, so a trigger pins it: a user may set
+  `perceived_rpe`, `rpe_recorded_at`, `name`, `planned_workout_id` and
+  `discarded_at`, and nothing else. `perceived_rpe` without `rpe_recorded_at` is
+  an RPE that cannot be trusted -- session-RPE's validity depends on being
+  collected about 30 minutes post, so the timestamp is part of the measurement.
+  `integration_credentials` is service-role only (RLS on, NO policies, the
+  `push_config` pattern), and a missing row means that provider is simply not
+  connected: both, either or neither is supported and the app works in all four
+  cases.
+
+- `training_plans` / `plan_phases` (20260905060000) are the STRATEGY above
+  programs: an objective over months in dated, ordered phases, each with a
+  focus and a progression rule. Not goals (measured against sets), not memory
+  (facts about the body); a decision about time. One live plan per user is a
+  partial unique index on `superseded_at is null`; a revision is a NEW row and
+  the old one is superseded, never deleted — neither table has a delete
+  policy. Lands unconfirmed like programs. Phases may not share a day, enforced
+  by an AFTER ROW trigger rather than the exclusion constraint it stands in for,
+  because PGlite (the validation path) has no `btree_gist`. `programs.phase_id`
+  files a program under a phase, and `upsert_program` with a `phase_id` ADDS
+  days to that phase's live program instead of minting one per screenshot (a
+  confirmed one takes `confirm_change=true`, like editing a day). Written from
+  Claude Desktop only: `set_training_plan` and `confirm_training_plan` are OFF
+  for the in-app coach at the connector. The coach READS the plan every turn
+  through the context block's PLAN line (objective, current phase's focus,
+  progression and id, next phase) and must fit each day it writes to the
+  current phase, questioning a request that contradicts it. Strategy is set at
+  a desk with time to think; tactics are set between sets.
+
+- Who gets the in-app coach is TWO gates and both must pass.
+  `COACH_ALLOWED_USERS` is the door: an env var, checked before any database
+  read, unset means everyone, and it exists so an open sign-up cannot mint
+  accounts that spend the deployment owner's Anthropic key. `coach_access`
+  (20260907020000) is the switch: one row per person, NO ROW MEANS ON so it
+  changed nothing when it landed, with a `reason` written for the person to
+  read. It is not a column on `user_config` because that table has an owner
+  UPDATE policy and a switch its subject can flip is not an administrative
+  control; it has a select policy for the owner and NO insert/update/delete
+  policies, the `push_config` pattern. `coach_enabled(uuid)` is SECURITY
+  INVOKER on purpose, so asking about somebody else reads nothing through RLS
+  and returns the default rather than their real answer. The PWA reads it only
+  to hide the chat entrance and treats every uncertain answer as ON, because
+  the edge function is the boundary; a read that FAILS there is a 503, never a
+  403, since "we could not find out" is not "no". The MCP server is untouched
+  by this: a switched-off person still reads and writes their own log from
+  Claude Desktop.
+
+- Subjective capture (20260907040000) is THREE CADENCES IN THREE TABLES, and
+  they are deliberately not one table with a `kind` column: they measure
+  different things on different clocks and merging them gives a pleasant UI over
+  uninterpretable data. `daily_readiness` is ONE ANCHORED ROW PER LOCAL DATE and
+  is the row that trends; `checkins` is unlimited per day and is never averaged
+  into that trend, or the baseline would depend on how often somebody happened
+  to tap; `symptom_reports` is weekly and threaded onto a `symptom_episodes` row,
+  because the only question worth asking about an achilles is whether it is
+  better or worse than three weeks ago and unlinked rows cannot answer it.
+  EVERY ITEM IS OPTIONAL and a half-filled row is a real row. That forces the
+  views: `avg()` skips nulls, so every rolling mean carries its own COUNT
+  (`fatigue_7d_n`, not `days_of_history`) and `answered_items` separates a panel
+  somebody opened and skipped from a day they never opened. There is NO
+  composite readiness score anywhere, ever: subjective and objective recovery
+  measures do not correlate, so a composite merges signals that move
+  independently and hides which one moved.
+  The three-question panel (sleep, fatigue, soreness) used to be the whole
+  sheet; it is now a collapsed "Sleep, fatigue, soreness" disclosure inside
+  `CheckInSheet`, closed by default, behind a SPONTANEOUS check-in that leads
+  instead — one text box ("How are you feeling?"), five mood chips (Sore,
+  Hurt, Tired, Stressed, Great) that append their word into the box and
+  remove it on a second tap, and an optional 1-5 energy. "Check in" writes one
+  `checkins` row (kind 'spontaneous') through the outbox the moment any of
+  text/chip/energy is present; the readiness scales, once opened, still
+  autosave with no Save button exactly as before, still merge onto today's
+  row, and are still one tap away behind "Anything else?". A once-a-day thing
+  should not be what somebody meets every time they want to say something,
+  which is also why the daily readiness PROMPT (prompts.ts, unchanged
+  otherwise) now ships with `dailyEnabled: false`: the always-visible "Check
+  in" button replaced the reason to nag for it, and "not today" is still
+  RECORDED (`report_prompts`, the adherence denominator) for anyone who
+  re-enables it. `checkins.memory_extracted_at` (20260908000000) tracks which
+  notes the coach function's out-of-band checkin-memory route has already
+  read for standing facts, and `coach_memory.source` admits 'checkin'
+  alongside 'coach' and 'extracted' for what it finds.
+  OSTRC severity is derived in a view and scored PER `instrument` version, so a
+  scoring correction is a CREATE OR REPLACE and never a backfill over data
+  nobody can re-collect. Escalation is on PERSISTENCE, not intensity: for one
+  athlete the smallest detectable change (~35) exceeds the minimal important
+  change (18.5), so a week-to-week delta is mostly noise and three consecutive
+  weeks in one region is the signal. Red flags are separate BOOLEANS and any
+  single one refers, because a score invites a threshold the clinical literature
+  does not provide. The next-morning pain check is its own row with its own
+  timestamp; it is a 24-hour delayed signal and cannot be a column on the run.
+  `cycle_context` / `cycle_events` are OPT-IN and nothing anywhere infers a
+  cycle from anything else. Phase is never computed and may not gate a rule (its
+  performance effects are small and contested); absent menstruation screens and
+  REFERS, because that is a primary IOC REDs indicator and the red-flag path was
+  otherwise referring on a criterion nobody could record. `status` exists so
+  screening can tell "no period because continuous contraception" from "no
+  period, and that is new", which are clinically opposite and identical without
+  it. Both tables are DELETABLE, unlike the training record.
+  `readiness_fields` lets somebody add their own items, and the line is drawn at
+  what a value may DO rather than whether it may exist: a custom item is
+  context and a chart, and may NEVER gate a rule, because an unvalidated item
+  cannot carry a decision. Same discipline as the research doc's tags.
+
+- A migration that needs an extension PGlite does not have is GUARDED, not
+  forked. `scripts/validate-db.mjs` replays the whole chain in PGlite, so a bare
+  `create extension pg_cron` fails the gate. `20260907060000` asks
+  `pg_available_extensions` first, which is a catalog view PGlite does have, so
+  one body of SQL is a no-op there and a real install on Supabase and the two
+  cannot drift. Prompt delivery is `pg_cron` every five minutes calling
+  `run_alert_sweep()`, which uses `pg_net` to POST `push-alerts/sweep` with
+  credentials read from VAULT at run time -- never a migration literal, because
+  this repository is public. Missing Vault rows make it do nothing and say so,
+  rather than firing unauthenticated requests forever. `rest_alerts.kind`
+  separates a rest (delivered by `POST /schedule`, which holds a worker open and
+  refuses anything longer than it can survive) from a prompt (`POST /arm` writes
+  the row, the sweep delivers it); the one-live-alert rule and the service
+  worker's notification `tag` are both PER KIND, or a check-in prompt cancels a
+  rest timer and replaces its notification. The sweep is idempotent and drops
+  anything more than six hours stale. If the cron is removed nothing breaks:
+  `pwa/src/lib/prompts.ts` decides WHEN to ask and is pure, so the app still
+  asks in-app on foreground; only asking while the app is CLOSED is lost.
+
+## The coach (supabase/functions/coach)
+
+- An edge function calling the Anthropic API with `claude-sonnet-5` at effort
+  `medium`, giving it
+  the EXISTING MCP server as its tool surface via the MCP connector. One
+  authorization boundary, not two. The API key is a Supabase secret and never
+  reaches the browser; the caller authenticates with their Supabase session.
+- The MCP connector needs a plaintext bearer and `mcp_tokens` stores only
+  digests, so the function mints one per turn with a short `expires_at` and
+  revokes it in the `finally` rather than leaving a live credential to time
+  out; the TTL is the backstop for a function that dies mid-turn. Permanent
+  tokens (anything a person pastes into a client) have `expires_at` NULL and
+  must keep working untouched.
+- `delete_program`, `delete_exercise` and `update_exercise` are disabled for
+  the coach at the connector layer. Claude Desktop keeps them. The first two
+  are destructive; the third writes OTHER PEOPLE's data, because the library is
+  SHARED and renaming a seeded row puts that name in every other account's
+  model context — and a screenshot the coach is asked to parse is exactly the
+  untrusted input that would ask for it. Turning a tool off converts "the
+  prompt says ask first" into something an injected instruction cannot reach.
+  `upsert_program` stays, because drafting a plan is the job and unconfirmed is
+  a real gate, if a softer one.
+- Uploaded files are JSON-encoded with their provenance, never wrapped in a
+  concatenated delimiter a CSV could close from the inside. Model output is
+  rendered to ELEMENTS, never `dangerouslySetInnerHTML` — that path would turn
+  prompt injection into script injection.
+- A turn is completed and RECORDED whether or not the client is still
+  listening, against a client-chosen `turn_id`, so closing the app mid-answer
+  loses nothing. Usage is written in a `finally`, or an aborted turn is billed
+  and invisible to the quota. A turn whose usage cannot be RECORDED must not
+  run: supabase-js returns a PostgREST error rather than throwing, so a failed
+  usage write was invisible and left `overLimit()` counting zero, which
+  disabled both caps. The error is read now, a malformed `turn_id` is a 400
+  before any tokens are spent, a reused one is a 409, and a write that fails
+  anyway retries once without the id so the turn still counts. Nothing the
+  client sends is trusted by the checks that depend on its shape — `unit` is
+  whitelisted to kg or lb before it reaches the SYSTEM prompt, attachment
+  shapes are validated before their sizes are measured, and an over-length turn
+  is a 413 rather than being dropped from the array.
+- `coach_usage` records tokens, cost, latency, tools AND the prompt and
+  response text. That last part is a product decision, not a technical detail:
+  whoever runs the deployment can read the conversation. `COACH_LOG_CONTENT=off`
+  disables it.
+- A second, cheap pass follows every turn: memory extraction on
+  `claude-haiku-4-5-20251001` (`memory-extract.ts`). It runs in the same
+  `finally`, AFTER `record()` and BEFORE `controller.close()` — after, because
+  the turn's row is the quota and the client's way of recovering an answer and
+  neither may wait behind another model call; before, because once the response
+  body ends the platform may freeze the isolate and work started then may
+  simply not happen. The UI clears on the `done` event, not on the close, so
+  none of it is visible to the lifter. Every failure inside is caught, logged
+  and sent to Sentry: an extraction that throws must never turn a good answer
+  into an error, and must never fail invisibly to the operator either.
+  Its tokens get their OWN `coach_usage` row, `kind = 'extraction'`. They count
+  against the monthly TOKEN cap, which is right, and must not count against the
+  daily MESSAGE cap, which is why `overLimit` filters the day window on
+  `kind = 'turn'` — without that, shipping the pass halves everyone's
+  allowance. `turn_id` stays null there (the unique index and the 409 check
+  both belong to the turn's row). `COACH_MEMORY_EXTRACT=off` switches the pass
+  off; `COACH_LOG_CONTENT=off` nulls its stored `response` exactly as it does a
+  turn's, while the facts themselves still reach `coach_memory` — that switch
+  is about what the OPERATOR can read, not about whether the lifter gets a
+  memory.
+
+## Development commands
+
+```bash
+# db: start local stack, apply migrations + seed (needs Docker)
+supabase start && supabase db reset
+
+# db without Docker: run the whole migration chain + views + RLS in PGlite.
+# This is the validation path this project actually uses — see decisions.md.
+node scripts/build-exercise-seed.mjs
+npm --prefix scripts install && node scripts/validate-db.mjs
+
+# every column any code SELECTs must exist against that same schema
+node scripts/check-selects.mjs
+
+# mcp server: serve locally
+supabase functions serve mcp-server --env-file supabase/functions/.env
+
+# pwa
+cd pwa && npm install && npm run dev
+cd pwa && npm run typecheck  # tsc -b --force — see the note in package.json;
+                             # `tsc --noEmit` silently checks nothing here
+cd pwa && npm test -- --run  # vitest
+cd pwa && npm run build      # tsc -b && vite build
+
+# regenerate exercise seed from free-exercise-db
+node scripts/build-exercise-seed.mjs
+
+# mint an MCP bearer token for one user (prints it once + the SQL to activate)
+node scripts/issue-mcp-token.mjs --user <uuid> --label "Who · which client"
+```
+
+### Tests, by area (these are exactly what CI runs — `.github/workflows/ci.yml`)
+
+```bash
+# database / migrations / RLS / views (PGlite, no Docker needed)
+node scripts/build-exercise-seed.mjs
+npm --prefix scripts ci
+node scripts/validate-db.mjs
+node scripts/check-selects.mjs
+node --test scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs
+
+# edge functions (Deno — install via denoland/setup-deno or the Deno CLI)
+cd supabase/functions/mcp-server && deno check index.ts && deno test --allow-env --allow-net
+cd supabase/functions/coach && deno check index.ts
+cd supabase/functions/push-alerts && deno check index.ts && deno test lib/
+cd supabase/functions/endurance-sync && deno check index.ts && deno test normalize.test.ts
+
+# pwa
+cd pwa && npm ci && npm run build && npm test -- --run
+```
+
+Run only the tests that cover what you touched; run the full matrix above
+before treating a cross-cutting change (schema, shared `lib/`, CI itself) as
+done.
+
+## Coding conventions
+
+- TypeScript strict everywhere. Edge function code is Deno (npm: specifiers);
+  PWA and scripts are Node.
+- Errors: never swallow. PWA reports through `pwa/src/lib/errors.ts`
+  (console + optional Sentry via env). Edge function logs structured JSON.
+- Keep modules small and swappable; the spec expects the set-entry UX to be
+  rebuilt at least once.
+- One stylesheet (`pwa/src/styles.css`), layered tokens → base → components →
+  utilities. The theme boundary is the token layer, not a second file: a
+  colour must be changeable in exactly one place. Do not re-inline colour
+  literals, and do not reintroduce a theme.css.
+- Text colours must clear WCAG AA. The accent (#bd5410) is 4.08:1, which is
+  AA for large text and UI, not for small prose — never set body copy in it.
+- Fonts are self-hosted in `pwa/public/fonts` and precached. The service
+  worker caches nothing cross-origin, so a webfont `@import` silently breaks
+  the offline promise.
+
+## Security boundaries
+
+- The MCP server runs as the Supabase **service role** and bypasses RLS. It
+  has NO `auth.uid()` — the bearer token IS the identity (`mcp_tokens` maps a
+  SHA-256 digest to a user). Every tool must filter and stamp `db.ownerId`
+  itself; see "Identity" in the Hard rules above. A bug here is a
+  cross-user data leak, not a crash.
+- The PWA is not a trust boundary; Postgres RLS is. Any invariant that
+  matters ("this table is append-only", "a user can only see their own
+  rows") must be enforced by an RLS policy or a trigger, never by client code
+  alone — see `docs/security.md` for the full threat model and the "Hard
+  rules" section above for the append-only/soft-delete invariants that
+  depend on this.
+- `exercises.name` and other fields another user's coach or session reads
+  are untrusted cross-user input, not just a label — see the `exercises.name`
+  entry in Hard rules before relaxing any constraint on user-writable text
+  that flows into another person's context.
+- Secrets (Supabase service role key, Anthropic key, Sentry auth token,
+  push/VAPID keys, tunnel bearer tokens) live in GitHub Actions secrets,
+  Supabase Vault, or local `.env` files that are gitignored — never in a
+  migration, a committed config file, or example scripts. `strength-tunnel-*`
+  and `mcp-server` tests intentionally point at closed ports / fixtures
+  rather than real credentials; keep it that way.
+
+## Areas that should not be modified casually
+
+- **Applied migrations** (`supabase/migrations/*.sql`): never edit one that
+  has already shipped. Add a new, numbered migration instead, even to fix a
+  mistake in a previous one.
+- **RLS policies**, especially any `DELETE` policy: several were removed on
+  purpose (see Hard rules — `programs_delete`, `exercise_owners_delete`, the
+  `sets`/`sessions`/`programs`/`planned_workouts` append-only/soft-delete
+  design). Do not add a delete or update policy to an append-only table.
+  Do not re-add a removed delete policy without reading why it was removed.
+- **The MCP tool surface exposed to the in-app coach** (disabled tools in
+  `supabase/functions/coach`): `delete_program`, `delete_exercise`, and
+  `update_exercise` are deliberately off for the coach. Re-enabling them for
+  the coach is a security-relevant product decision, not a bug fix.
+- **`sets`, `sessions`, `set_voids`, `set_notes`**: written only by the PWA.
+  MCP tools must never gain a write path to these.
+- **Derived-metric views** (e1RM, volume, adherence, rest): must stay
+  `security_invoker` SQL views over `v_live_sets`/`v_live_activities`, never
+  stored/materialized columns, and must never read `sets`/`activities`
+  directly.
+- **Service worker registration** (`registerType` in `pwa`'s Vite PWA config)
+  and IndexedDB schema versioning in `pwa/src/lib/db.ts`: must stay additive.
+  Renaming the database, dropping a store, or switching to `autoUpdate` can
+  destroy or silently discard a lifter's unsynced data.
+- **CI and deploy workflows** (`.github/workflows/*.yml`): the ordering
+  (`supabase` before `pages`), the `--no-verify-jwt` flags, and the
+  changed-paths gating each encode a reason documented inline — read the
+  comments before changing the order or removing a gate.
+
+## Scope control, testing, secrets, dependencies, migrations, generated files
+
+- **Scope**: fix or build what was asked. Do not refactor unrelated code,
+  rename unrelated things, or "clean up" adjacent files in the same change.
+  If you notice something else worth fixing, see "Delegating incidental
+  work" below instead of doing it inline.
+- **Testing**: every change must be covered by the test command(s) for the
+  area it touches (see "Tests, by area" above) before you consider it done.
+  Add or update tests alongside behavior changes; do not leave a red test
+  or reduce coverage to make a change land.
+- **Secrets**: never read, print, commit, or hardcode a real secret value
+  (API keys, service role keys, bearer tokens, `.env` contents). Use
+  placeholders in examples and docs. If a command needs a secret you don't
+  have, say so instead of fabricating one.
+- **Dependencies**: prefer the existing tooling (npm for `pwa`/`scripts`,
+  Deno's standard library and `npm:`/`jsr:` specifiers for edge functions).
+  Don't add a new dependency for something the standard library or an
+  existing dependency already does. Update the lockfile when you change a
+  manifest.
+- **Migrations**: always additive — a new numbered file in
+  `supabase/migrations/`, never an edit to one already merged. Run
+  `node scripts/validate-db.mjs` and `node scripts/check-selects.mjs` after
+  any schema change.
+- **Generated files**: `supabase/seed/*` (from `build-exercise-seed.mjs`) and
+  `pwa/dist` are generated — don't hand-edit them; change the generator or
+  source instead and regenerate.
+- **Destructive operations**: no hard deletes of user data, no dropped
+  columns/tables that anything still reads, no force-pushes, no rewriting
+  shared branch history, no clearing of `git` history or CI artifacts,
+  without the user explicitly asking for that specific action.
+
+## Delegating incidental work
+
+Stay focused on the task you were given. If, while working, you find a
+separate, unrelated problem — a bug, a missing test, tech debt, a doc gap —
+that isn't required to complete the current task, do not silently expand
+scope to fix it. Instead:
+
+1. **If it blocks completing the current task**, fix the minimum necessary
+   and mention it in your summary.
+2. **Otherwise, open a GitHub issue** for it rather than implementing it.
+   The issue must include:
+   - **Problem**: what's wrong, with file paths / line references.
+   - **Desired behavior**: what "fixed" looks like.
+   - **Relevant context**: the files, functions, or invariants involved
+     (link to the relevant part of this file or `docs/decisions.md` when
+     applicable).
+   - **Acceptance criteria**: objective, checkable conditions.
+   - **Constraints**: anything the fix must not break (e.g., an invariant
+     from "Hard rules" above).
+   - **Verification steps**: the exact command(s) from "Tests, by area"
+     that must pass.
+3. **Label it `copilot-ready`** only if it qualifies (see below). Otherwise
+   label it normally and leave it for a human to triage.
+
+**`copilot-ready` means all of the following:**
+- Unambiguous: one reasonable interpretation of "done".
+- Bounded: touches a small, identifiable set of files/areas.
+- Objectively verifiable: a test, typecheck, or lint command can confirm it
+  without human judgment.
+- Low blast radius: cannot affect other users' data, security boundaries, or
+  production behavior in a way that's hard to reverse.
+- Does not require a product or architecture decision.
+
+**Never label (or delegate) as `copilot-ready`:**
+- Security-sensitive changes (RLS policies, MCP auth, token handling,
+  identity resolution).
+- Schema redesigns or new migrations that change existing data shapes.
+- Major refactors spanning many files or modules.
+- Ambiguous product/UX behavior that needs a human decision.
+- Any destructive operation (deletes, drops, history rewrites, revoking
+  access).
