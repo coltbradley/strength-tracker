@@ -501,8 +501,12 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   because PGlite (the validation path) has no `btree_gist`. `programs.phase_id`
   files a program under a phase, and `upsert_program` with a `phase_id` ADDS
   days to that phase's live program instead of minting one per screenshot (a
-  confirmed one takes `confirm_change=true`, like editing a day). Written from
-  Claude Desktop only: `set_training_plan` and `confirm_training_plan` are OFF
+  confirmed one takes `confirm_change=true`, like editing a day). Replacing a
+  CONFIRMED plan takes `confirm_change=true` too: `set_training_plan`
+  supersedes the live plan the moment it is called, before the new one is
+  confirmed, so without the gate one speculative call could take a lifter's strategy
+  off the app. Written from MCP clients other than the coach (Claude Desktop,
+  claude.ai, ChatGPT): `set_training_plan` and `confirm_training_plan` are OFF
   for the in-app coach at the connector. The coach READS the plan every turn
   through the context block's PLAN line (objective, current phase's focus,
   progression and id, next phase) and must fit each day it writes to the

@@ -2,6 +2,42 @@
 
 Deviations from the original spec, with reasons. Newest last.
 
+## 2026-09-13 MCP clients sign in with Supabase OAuth; tokens and the tunnel stay as fallbacks
+
+Supersedes the "OAuth documented as the upgrade path, not built" consequence of
+2026-08-25. ChatGPT developer mode and claude.ai connectors only offer OAuth or
+no auth, so every non-Desktop client needed a pasted token plus a relay
+(2026-09-12). Supabase Auth now ships an OAuth 2.1 server (beta) with
+discovery, dynamic client registration and PKCE, so the edge function only has
+to be a resource server.
+
+Spike against the hosted project, 2026-09-13 (`scripts/oauth-spike.mjs --mcp`):
+- Enabling the OAuth server and enabling dynamic registration are two separate
+  dashboard toggles. With only the first, discovery omits
+  `registration_endpoint` and `POST /oauth/clients/register` answers 403.
+- The authorize endpoint 302s to
+  `https://coltbradley.github.io/strength-tracker/oauth/consent?authorization_id=…`,
+  so supabase/auth#2408 (consent path dropping the Site URL's subpath) does not
+  affect this project. GitHub Pages serves that path through `404.html` with
+  HTTP 404 and the app renders normally.
+- Access token: ES256, claims include `client_id`, `sub`, `role:
+  authenticated`, `aud: authenticated`, `session_id`; lifetime 3600 s; a refresh
+  token is issued.
+- The deployed MCP server answered `tools/list` with 200 and 33 tools for that
+  token, which is only reachable through `auth.getUser` accepting it.
+- Revocation timing: not yet measured (Settings, CONNECTED APPS, Disconnect,
+  then call again). Until it is, the app says access stops "within the hour",
+  which is true either way.
+
+Decision: `resolveCaller` accepts a JWT only when it carries `client_id`, and
+verifies it with `auth.getUser`, one round trip in the same cost class as the
+`mcp_tokens` lookup. A plain session JWT is refused: the server runs as the
+service role, so a browser session token must not double as an MCP credential.
+Dynamic registration is open by design; the gate is the lifter's own sign-in
+plus an explicit Allow on a consent page that names the client and its
+redirect host. Static tokens, the coach's short-lived tokens and the tunnel
+keep working.
+
 ## 2026-09-12 ChatGPT private access uses a supervised Secure MCP Tunnel
 
 ChatGPT developer mode offers OAuth or no authentication for a custom MCP
