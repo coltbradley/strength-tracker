@@ -175,6 +175,13 @@
     --focus-set-completed-mark: var(--cream);
     --focus-set-future: var(--control-outline);
 
+    /* State vocabulary roles (StateGlyph.tsx) — reuse the same three focus-set
+     * roles above wherever the meaning matches (done ~ completed, current ~
+     * current, upcoming ~ future) rather than mint parallel tokens for the
+     * same colours. "next" and "skipped" have no existing counterpart. */
+    --state-next: var(--text);
+    --state-skipped: var(--text-dim);
+
     /* -- type ------------------------------------------------------------- */
     --font-sans: Chivo, system-ui, -apple-system, sans-serif;
     --font-mono: "Chivo Mono", ui-monospace, monospace;
@@ -265,6 +272,14 @@
     --ease-sheet: cubic-bezier(0.22, 1, 0.36, 1);
     --dur-tick: 400ms;
     --dur-blink: 1.6s;
+    /* Named motions for live-session feedback (set logged, next set enters,
+     * mode switch) — transform/opacity only, so they cost nothing on the
+     * rest timer's 400ms re-render. Reduced-motion zeroes every animation
+     * and transition duration globally (see the @media block later in this
+     * file), which already covers anything built from these tokens. */
+    --motion-fast: 120ms;
+    --motion-med: 200ms;
+    --ease-out: var(--ease-sheet);
   }
 
   /* Tablet: a wider column and a looser gutter. Type is left alone — the
@@ -403,6 +418,20 @@
     }
     50% {
       opacity: 0.3;
+    }
+  }
+
+  /* One flash for a tap that lands on the 200 ms duplicate-LOG lock
+   * (Decision 6): the tap was real, it just wasn't a second insert. */
+  @keyframes log-held {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.55;
+      transform: scale(0.97);
     }
   }
 
@@ -764,6 +793,13 @@
     width: 100%;
     min-height: var(--tap-log);
     font-size: var(--fs-body);
+  }
+
+  /* `var(..., 120ms)` / `var(..., ease-out)` fall back to literals matching
+   * `--motion-fast`/`--ease-out` (Task 3) so this rule works whether or not
+   * that task's token-layer edit has landed yet. */
+  .btn-log.is-held {
+    animation: log-held var(--motion-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .btn-danger {
@@ -1535,6 +1571,14 @@
     color: var(--accent-dim);
   }
 
+  /* The load-mode glyph shares .plate-hint's sizing, colour and hit-bleed
+     * (it is already in that shared selector list above in section 2); this
+     * only centres the inline svg on the text baseline. */
+  .load-style-icon {
+    display: inline-flex;
+    align-items: center;
+  }
+
   /* The reveal is the LAST item in the load head and the only one that can
    * sit beside two others (PER SIDE ×2 and the plate hint both appear when a
    * parse calls a barbell per-side). The head's gap is --s-5 = 10px and the
@@ -1994,6 +2038,20 @@
     letter-spacing: var(--track-1);
     color: var(--text-dim);
     margin-top: var(--s-3);
+  }
+
+  /* Wraps RpeChips under the rest strip. RpeChips renders its own
+   * .rule-section (border-top, padding-top, the .rpe-grid/.rpe-btn pair
+   * that already clears the 44px floor) -- this wrapper adds only the
+   * margin that section needs to sit below .rest-foot's text instead of
+   * touching it. .rest-timer's own `gap` does not reach a child appended
+   * after .rest-foot, since .rest-timer is never actually a flex/grid
+   * container (the property is inert there); every OTHER gap in the strip
+   * comes from a child's own margin, and this follows the same rule rather
+   * than fixing that unrelated declaration. No color literal (the section's
+   * own tokens already clear AA) and no motion: that is task 17's remit. */
+  .rest-rate {
+    margin-top: var(--s-6);
   }
 
   /* ---- sync pill: squared, hairline ---- */
@@ -3246,17 +3304,6 @@
     gap: var(--s-5);
   }
 
-  .focus-deck-overview {
-    align-self: flex-start;
-    padding: 0;
-    min-height: var(--tap-min);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    letter-spacing: var(--track-1);
-    text-transform: uppercase;
-  }
-
   /* Uppercased here, not in the string: a superset's "round 1 of 3" comes
    * from Session.tsx in sentence case and sat beside "SET 1 OF 5" looking
    * like a different component. */
@@ -3323,6 +3370,114 @@
   .focus-set-segment--current {
     border-color: var(--focus-set-current, var(--text));
     color: var(--focus-set-current, var(--text));
+  }
+
+  /* ---- state vocabulary (StateGlyph.tsx) ----
+   * One shape family, reused by the progress rail, FocusSetProgress and
+   * WorkoutOverview rows. Circular by default; warmups get a squared-off
+   * variant so a warmup-only day's dots are never mistaken for working sets
+   * at a glance — shape, not colour, is the tell. */
+  .state-glyph {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    font-size: 10px;
+    line-height: 1;
+    border: var(--bw) solid transparent;
+  }
+
+  .state-glyph-warmup {
+    border-radius: 3px;
+  }
+
+  .state-glyph-done {
+    background: var(--focus-set-completed);
+    border-color: var(--focus-set-completed);
+    color: var(--focus-set-completed-mark);
+  }
+
+  .state-glyph-current {
+    border-width: var(--bw-thick);
+    border-color: var(--focus-set-current);
+    color: var(--focus-set-current);
+    /* the state table's "outline ring": a second ring outside the border,
+     * on the page background, so it reads on both --bg and --bg-raised. */
+    box-shadow:
+      0 0 0 2px var(--bg),
+      0 0 0 3px var(--focus-set-current);
+  }
+
+  .state-glyph-next {
+    border-color: var(--state-next);
+    color: var(--state-next);
+  }
+
+  .state-glyph-skipped {
+    border-color: var(--state-skipped);
+    color: var(--state-skipped);
+  }
+
+  .state-glyph-upcoming {
+    border-color: var(--focus-set-future);
+    color: var(--focus-set-future);
+  }
+
+  /* ---- motion (transform/opacity only — see the design's Clarity and
+   * motion section). Named per the spec's own motion table, zeroed by the
+   * existing prefers-reduced-motion block at the top of this file, which
+   * already forces every animation-duration to 0.01ms. */
+  @keyframes set-logged-leave {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
+
+  @keyframes set-entering-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes mode-cross-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .motion-set-logged {
+    animation: set-logged-leave var(--motion-fast) var(--ease-out);
+    animation-fill-mode: backwards;
+  }
+
+  .motion-set-entering {
+    animation: set-entering-enter var(--motion-med) var(--ease-out);
+    animation-delay: 40ms;
+    animation-fill-mode: backwards;
+  }
+
+  /* Mode switch (focus <-> overview): each root mounts when the mode
+     changes, so an enter-only animation plays once per switch. FocusDeck is
+     not keyed per entry, so moving between exercises does not replay it. */
+  .focus-deck,
+  .wk-overview {
+    animation: mode-cross-fade var(--motion-med) var(--ease-out);
   }
 
   /* The plain hero editor stretches to fill .focus-deck-editor so its own
@@ -3491,8 +3646,105 @@
     justify-content: space-between;
   }
 
-  .focus-deck-overview {
-    font-size: var(--fs-lg);
+  /* Swap and Skip: visible secondary actions on the hero, not buried in
+   * the ••• sheet — the lifter chooses exercise identity and skips at log
+   * time (AGENTS.md), so both live where the tap actually happens. */
+  .focus-deck-secondary-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-5);
+  }
+
+  .focus-deck-secondary {
+    padding: var(--s-3) var(--s-5);
+    min-height: var(--tap-min);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+    border: var(--rule-hair);
+    border-radius: var(--radius);
+  }
+
+  .skip-reason-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+
+  .skip-reason-input {
+    width: 100%;
+  }
+
+  .skip-reason-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s-5);
+  }
+
+  /* The hero's own warmup/working toggle — shown only for an entry that
+   * actually prescribes a warmup, so an exercise with none never offers a
+   * choice it doesn't have. */
+  .focus-hero-warmup {
+    display: flex;
+    align-items: center;
+    gap: var(--s-5);
+  }
+
+  .focus-already-warm {
+    padding: var(--s-3) var(--s-5);
+    min-height: var(--tap-min);
+    font-size: var(--fs-label);
+  }
+
+  /* "Last: 145 kg × 5 working" — the newest logged set, tappable onto its
+   * correction, styled like the last-performance line it sits beside. */
+  .focus-last-set {
+    text-align: left;
+    margin: 0;
+    padding: 0;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--track-1);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* One faint line: the progress rail (tap a dot to jump, tap the current
+   * one for the full workout) on the left, ••• on the right. A real <ul> in
+   * the markup, reset here — list-style/margin/padding never carry meaning,
+   * so stripping them costs nothing semantic (role="list" in the markup
+   * keeps the list role explicit for Safari/VoiceOver regardless). */
+  .focus-progress-rail {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    overflow-x: auto;
+    /* the row can outgrow the screen on a long day; the dots stay a fixed
+     * size (see .state-glyph) so it degrades to a scroll, never a squeeze */
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .focus-progress-dot-item {
+    flex: none;
+    display: inline-flex;
+  }
+
+  .focus-progress-dot {
+    flex: none;
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
   }
 
   .focus-deck-more {
@@ -3956,6 +4208,20 @@
     font-weight: 700;
   }
 
+  /* A finished day's own line — sets and duration, ahead of whatever
+       dayDetail offers next ("Start again", "Review with the coach"). Same
+       muted ink the state vocabulary already gives DONE (.week-label-done),
+       not --accent: the fact of what happened outranks anything you might
+       do about it, but it isn't a call to action. */
+  .done-summary {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 600;
+    letter-spacing: var(--track-2);
+    color: var(--text-dim);
+    margin: var(--s-2) 0;
+  }
+
   /* ---- per-set notes ---- */
 
   .logged-set-wrap {
@@ -4275,9 +4541,10 @@
     text-transform: uppercase;
   }
 
-  .header-action-coach {
-    color: var(--text);
-  }
+  /* No .header-action-coach full-ink override: that one bright icon
+     beside Report and the gear, both already --text-dim, was the header
+     reading as two menus rather than one quiet cluster. All three header
+     actions share the one dim ink .header-action already sets. */
 
   /* Offline is shown, not discovered on tap: the coach is an API call and
    * genuinely cannot work, unlike the rest of this app. */

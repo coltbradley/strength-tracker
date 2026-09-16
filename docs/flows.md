@@ -129,25 +129,39 @@ Supabase sends the stock link email and the paste path is the working one.
   configured fallback). Tapping the open header collapses it.
 - **Focus deck** — the default presentation for an eligible session, from
   Start or restore. The app header and tab bar hide while it is shown, and
-  the screen is deliberately spare: exercise name, `SET n OF m`, one hero
-  value (load for a loaded implement, reps for bodyweight — whichever is
-  hard to get right for the movement), the plate bar or per-hand breakdown
-  when it applies, the secondary field with its target quietly beside it,
-  and a bottom row of `−step / LOG SET / +step`. Everything else the
-  accordion shows inline — warmup/working, RPE, the plate calculator, the
-  per-hand/total toggle, skip, swap, last time, and the full logged-set
-  history (void, note, correct) — lives one tap away behind the quiet "•••"
+  the screen is deliberately spare: a tap-to-jump progress rail across the
+  top (a real `<ul role="list">` of real `<button>`s, one dot per exercise in
+  the shared state vocabulary — done, current, next, skipped, upcoming —
+  where tapping the current entry's own dot opens the overview and tapping
+  any other jumps focus straight there, replacing the old standalone "View
+  full workout" button), exercise name, `SET n OF m`, one hero value (load
+  for a loaded implement, reps for bodyweight — whichever is hard to get
+  right for the movement), the plate bar or per-hand breakdown when it
+  applies (plates vs stack, per exercise and device-local — a stack/cable
+  exercise gets no calculator at all, since a weight pin has no plates to
+  show), the secondary field with its target quietly beside it, a "Last: 145
+  kg × 5 working" line once something is logged (tapping it opens the same
+  correction flow as ✕ in the full history), and a bottom row of
+  `−step / LOG SET / +step`. WARMUP | WORKING sits on the hero itself next to
+  LOG whenever the entry has a prescribed warmup, with "Already warm" beside
+  it to stage working and log nothing; swap and skip are visible secondary
+  actions on the hero rather than a level down, and skip offers an optional
+  reason chip row (Equipment taken, Already warm, Out of time, Didn't feel
+  right) or free text. Everything else the accordion shows inline — the same
+  warmup/working toggle kept for parity, RPE, the plate calculator, the
+  per-hand/total toggle, skip, last time, and the full logged-set history
+  (void, note, correct) — still lives one tap away behind the quiet "•••"
   control, in a sheet scoped to the current entry (or both members of an
   open superset round). Starting a correction from that sheet closes it and
   reveals the full inline editor (type, RPE, fine adjustment) on the main
-  screen, exempt from the minimalism for as long as the correction is open.
-  The full-workout overview remains available through "View full workout".
-  In overview, selecting an exercise name chooses the next focus
-  destination without opening its editor. "Focus mode" returns to that
-  selection, or to the entry that was focused before overview if nothing was
-  selected. Selection and expansion stay separate, and switching views
-  preserves staged values and the running rest clock. Selecting either
-  member of an unfinished superset returns to its canonical A1/A2 round.
+  screen, exempt from the minimalism — and from LOG's 200ms duplicate-tap
+  lock — for as long as the correction is open. In overview, selecting an
+  exercise name chooses the next focus destination without opening its
+  editor. "Focus mode" returns to that selection, or to the entry that was
+  focused before overview if nothing was selected. Selection and expansion
+  stay separate, and switching views preserves staged values and the running
+  rest clock. Selecting either member of an unfinished superset returns to
+  its canonical A1/A2 round.
 - **Focus-mode limitation** — duration-tracked workouts stay in overview and
   explain that duration tracking is unavailable in focus mode. The focus deck
   currently supports reps and tick-only exercises; it does not approximate a
@@ -164,7 +178,10 @@ Supabase sends the stock link email and the paste path is the working one.
   targets. Append-only, offline-first, rest clock starts, auto-unskips.
   When the plan is met the log button demotes to LOG EXTRA SET (outline) and
   "Next · [exercise]" becomes the primary — a deliberate tap, never an
-  auto-advance.
+  auto-advance. LOG (and Log round) locks for 200ms after each tap, so a
+  double-tap or a tap that lands twice through a slow frame inserts one set,
+  not two; a correction's Save is never gated, since it is a deliberate,
+  one-off edit rather than a rapid repeat.
 - **Note a set** — "+ NOTE" under any logged set expands a small editor;
   notes save to the database (editable, last-write-wins) and read back in
   History under the exact set.
@@ -177,10 +194,13 @@ Supabase sends the stock link email and the paste path is the working one.
   only for an extra added this session with nothing logged into it. A
   prescribed exercise, or one with sets, can only be skipped.
 - **Add an exercise** — bottom of the list → search sheet.
-- **Rest** — strip counts down then over; adjust, type, or dismiss; the
-  clock keeps running for rest stamping. Survives leaving the screen. Rest
-  alerts opt in via Settings (notification permission). The strip hides
-  while a sheet or the number pad is open.
+- **Rest** — strip counts down then over, naming the NEXT set ("Next: Squat
+  145 × 5, set 3 of 4") rather than the one just finished, with optional RPE
+  chips underneath for the set that WAS just logged — tapping one rates it,
+  leaving it alone keeps it unrated, which is the ordinary case. Adjust,
+  type, or dismiss the clock; it keeps running for rest stamping either way.
+  Survives leaving the screen. Rest alerts opt in via Settings (notification
+  permission). The strip hides while a sheet or the number pad is open.
 - **Log a superset round** — "Log round" queues both ordinary set inserts in
   one IndexedDB transaction. The session marks neither member logged unless
   that local batch is durable; a local failure leaves both drafts available
@@ -225,6 +245,14 @@ Supabase sends the stock link email and the paste path is the working one.
   in-progress session is never offered either control.
 - **Un-void / un-discard** — not in-app by design (append-only; relog is the
   correction). Recoverable in the database.
+- **Log weight** — the same `BodyweightRow` Today shows, rendered here too
+  regardless of which exercise is picked: a standing fact about the person,
+  not about any one exercise's history.
+- **What the coach is watching** — the coach's own open conclusions
+  (`coach_observations`), one entry per topic with its check-back date and a
+  two-tap DELETE. Read-only otherwise: the coach writes and resolves these
+  from a turn, never the lifter, who can only remove one that stopped being
+  useful.
 
 ## Settings and data
 
@@ -357,9 +385,11 @@ innerHTML, so there is nothing to sanitise.
 
 It sees the log and the plan through the same MCP tools every other client
 uses, plus a live context block the app builds from its own cache each turn
-(today's plan, whether a session is running, what has been logged in it). That
-block is why it can answer without a tool round trip first, which mid-set is
-the whole latency budget.
+(today's plan, whether a session is running, what has been logged in it, a
+TRENDS line of bodyweight, energy and top-lift e1RM/volume computed fresh
+from `v_trend_digest`, and an OBSERVATIONS line naming its own open
+conclusions that are due for a look). That block is why it can answer
+without a tool round trip first, which mid-set is the whole latency budget.
 
 It can change what is scheduled, and it maintains the exercise library: if you
 name a movement it looks it up, and adds it when it genuinely is not there

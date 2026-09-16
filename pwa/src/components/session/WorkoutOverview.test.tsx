@@ -174,4 +174,31 @@ describe("WorkoutOverview", () => {
     expect(screen.getByText("Logged: 0")).toBeTruthy();
     expect(screen.getByText("Selected: squat")).toBeTruthy();
   });
+
+  it("shows a state glyph and folds the state into the row's own accessible name, when given one", () => {
+    render(
+      <WorkoutOverview
+        {...props({
+          entries,
+          selectedEntryKey: null,
+          expandedEntryKey: null,
+          entryState: () => "done",
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Bench Press — done/ }),
+    ).toBeTruthy();
+  });
+
+  it("omits the glyph and leaves the row's name unchanged when no entryState is given", () => {
+    render(
+      <WorkoutOverview
+        {...props({ entries, selectedEntryKey: null, expandedEntryKey: null })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Bench Press" })).toBeTruthy();
+  });
 });

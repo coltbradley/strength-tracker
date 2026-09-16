@@ -103,6 +103,12 @@ export function describeOp(
       const name = exerciseNames[op.payload.exercise_id];
       return name === undefined ? "Set logged" : `Set · ${name}`;
     }
+    case "feedback":
+      return "Problem report";
+    case "session_skips":
+      return op.payload.scope === "warmups"
+        ? "Warmups skipped"
+        : "Exercise skipped";
   }
 }
 

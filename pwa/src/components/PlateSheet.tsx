@@ -19,6 +19,10 @@ interface PlateSheetProps {
   equipment: string | null;
   /** open the number pad for a new target (returns here after) */
   onTypeTarget: () => void;
+  /** open the number pad for a new base/bar weight (returns here after).
+   *  Writes `barKg` directly via `setExerciseBarKg` — never the shared bar
+   *  catalog, which is a barbell-only inventory. */
+  onTypeBase: () => void;
   onClose: () => void;
 }
 
@@ -29,11 +33,19 @@ export function PlateSheet({
   unit,
   equipment,
   onTypeTarget,
+  onTypeBase,
   onClose,
 }: PlateSheetProps) {
   const inventory = usePlatesOnHand(unit);
   const barKg = useExerciseBarKg(exerciseId, unit, equipment);
   const result = split(targetKg, barKg, inventory);
+
+  // A barbell picks its base from the shared bar catalog; every other
+  // plate-loaded implement (leg press, hack squat, smith machine) has its
+  // own sled or carriage, which is never a "bar" and never joins that
+  // catalog — see lib/loadStyle.ts.
+  const isMachine = equipment !== "barbell";
+  const baseWord = isMachine ? "base" : "bar";
 
   const maxPlate = Math.max(...inventory, 1);
   const disp = (kg: number) => toDisplay(kg, unit);
@@ -42,8 +54,8 @@ export function PlateSheet({
 
   const note = result.exact
     ? barKg === 0
-      ? "Plate-loaded — no bar weight counted."
-      : `Exact on a ${iron(barKg)} ${unit} bar with your plates.`
+      ? `Plate-loaded — no ${baseWord} weight counted.`
+      : `Exact on a ${iron(barKg)} ${unit} ${baseWord} with your plates.`
     : `Closest build is ${disp(result.achievedKg)} ${unit}. Rounded down.`;
 
   return (
@@ -63,18 +75,24 @@ export function PlateSheet({
             className={`chip ${barKg === 0 ? "chip-on" : ""}`}
             onClick={() => setExerciseBarKg(exerciseId, 0)}
           >
-            NO BAR
+            {isMachine ? "NO BASE" : "NO BAR"}
           </button>
-          {BAR_CATALOG[unit].map((b) => (
-            <button
-              key={b}
-              type="button"
-              className={`chip ${Math.abs(b - barKg) < 1e-6 ? "chip-on" : ""}`}
-              onClick={() => setExerciseBarKg(exerciseId, b)}
-            >
-              BAR {iron(b)}
+          {isMachine ? (
+            <button type="button" className="chip chip-on" onClick={onTypeBase}>
+              BASE {iron(barKg)} {unit.toUpperCase()} ›
             </button>
-          ))}
+          ) : (
+            BAR_CATALOG[unit].map((b) => (
+              <button
+                key={b}
+                type="button"
+                className={`chip ${Math.abs(b - barKg) < 1e-6 ? "chip-on" : ""}`}
+                onClick={() => setExerciseBarKg(exerciseId, b)}
+              >
+                BAR {iron(b)}
+              </button>
+            ))
+          )}
         </span>
       </div>
 

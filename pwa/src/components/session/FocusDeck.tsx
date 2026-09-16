@@ -1,12 +1,22 @@
-import type { ReactNode } from "react";
-import { targetSets, type ExerciseEntry } from "../../lib/entries";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  targetSets,
+  warmupSets,
+  workingSets,
+  type ExerciseEntry,
+} from "../../lib/entries";
 import { twoMemberSuperset } from "../../lib/sessionFocus";
+import { StateGlyph, type ProgressState } from "./StateGlyph";
 
 export interface FocusDeckProps {
   entries: readonly ExerciseEntry[];
   entry: ExerciseEntry;
   entryProgress(entry: ExerciseEntry): number;
   entryDone(entry: ExerciseEntry): boolean;
+  /** One state per entry, from the shared vocabulary — see StateGlyph.tsx
+   *  and lib/sessionFocus.ts's `railState`. Drives both the progress rail
+   *  below and, from the identical source, WorkoutOverview's rows. */
+  entryState(entry: ExerciseEntry): ProgressState;
   onViewFullWorkout(): void;
   onChooseNext(entry: ExerciseEntry): void;
   canAdvance: boolean;
@@ -31,7 +41,25 @@ export interface FocusDeckProps {
    * keeps the ordinary single-exercise header.
    */
   supersetHeading?: { title: string; subtitle: string } | null;
+  /** Visible only when a swap is offered right now (not mid-correction, not
+   *  frozen by a logged set against it — Session decides and omits both
+   *  props otherwise). Scoped to the canonical first member for a live
+   *  superset round, matching `onOpenMore`'s existing scope. */
+  onSwap?(): void;
+  swapLabel?: string | null;
+  /** Skip, with an optional reason collected inline. `onSkip` fires once,
+   *  with the chosen chip text or free-typed reason (or null for none). */
+  onSkip?(reason: string | null): void;
+  skipped?: boolean;
+  onUnskip?(): void;
 }
+
+const SKIP_REASON_CHIPS = [
+  "Equipment taken",
+  "Already warm",
+  "Out of time",
+  "Didn't feel right",
+];
 
 function focusSetPosition(
   entry: ExerciseEntry,
@@ -61,32 +89,71 @@ function focusSetPosition(
   return { progress, target };
 }
 
+const SEGMENT_STATE: Record<"completed" | "current" | "future", ProgressState> =
+  {
+    completed: "done",
+    current: "current",
+    future: "upcoming",
+  };
+
 function FocusSetProgress({
   progress,
   target,
+  warmup = false,
 }: {
   progress: number;
   target: number;
+  /** Every dot in THIS run is a warmup — the run itself is always one kind
+   *  or the other (see lib/entries.ts's `targetSets`), never mixed, so one
+   *  flag for the whole strip is enough. */
+  warmup?: boolean;
 }) {
+  // The previous render's completed count, so a log (progress going up) can
+  // be told apart from a fresh mount (previous is null) or an unrelated
+  // re-render (previous equals current) — only the first plays a motion.
+  const previousCompletedRef = useRef<number | null>(null);
+  const previousCompleted = previousCompletedRef.current;
+  useEffect(() => {
+    previousCompletedRef.current = Math.min(Math.max(0, progress), target);
+  });
+
   if (target <= 0) return null;
 
   const completed = Math.min(Math.max(0, progress), target);
+  const justLogged =
+    previousCompleted !== null && completed === previousCompleted + 1
+      ? previousCompleted
+      : null;
+
   return (
     <div className="focus-set-progress" aria-hidden="true">
       {Array.from({ length: target }, (_, index) => {
-        const state =
+        const localState: "completed" | "current" | "future" =
           index < completed
             ? "completed"
             : index === completed
               ? "current"
               : "future";
+        const state = SEGMENT_STATE[localState];
+        const motion =
+          justLogged === null
+            ? ""
+            : index === justLogged
+              ? " motion-set-logged"
+              : index === justLogged + 1
+                ? " motion-set-entering"
+                : "";
         return (
           <span
             key={index}
-            className={`focus-set-segment focus-set-segment--${state}`}
+            className={`focus-set-segment focus-set-segment--${localState}${motion}`}
             data-state={state}
           >
-            {state === "completed" ? "✓" : state === "current" ? "●" : ""}
+            <StateGlyph
+              state={state}
+              warmup={warmup}
+              label={`${warmup ? "warmup" : "set"} ${index + 1} — ${state}`}
+            />
           </span>
         );
       })}
@@ -108,6 +175,7 @@ export function FocusDeck({
   entry,
   entryProgress,
   entryDone,
+  entryState,
   onViewFullWorkout,
   onChooseNext,
   canAdvance,
@@ -115,7 +183,14 @@ export function FocusDeck({
   onOpenMore,
   formatScheme,
   supersetHeading = null,
+  onSwap,
+  swapLabel = null,
+  onSkip,
+  skipped = false,
+  onUnskip,
 }: FocusDeckProps) {
+  const [skipPromptOpen, setSkipPromptOpen] = useState(false);
+  const [skipReasonDraft, setSkipReasonDraft] = useState("");
   const entryIndex = entries.findIndex(
     (candidate) => candidate.key === entry.key,
   );
@@ -139,14 +214,51 @@ export function FocusDeck({
   return (
     <section className="focus-deck">
       <div className="focus-deck-top">
-        <button
-          type="button"
-          className="focus-deck-overview"
-          aria-label="View full workout"
-          onClick={onViewFullWorkout}
+        {/* A real <ul>, not a <div role="list">: the dots inside stay real
+         * <button>s (role="listitem" on the button itself would REPLACE its
+         * native button role, not add to it, so a screen reader would
+         * announce a plain list item with no indication it is activatable —
+         * that was shipped once and is exactly the regression this markup
+         * avoids). role="list" is still explicit here because this list's
+         * `list-style: none` strips the <ul>'s implicit list role in
+         * Safari/VoiceOver (a known WebKit quirk) — do not remove it as
+         * "redundant". */}
+        <ul
+          className="focus-progress-rail"
+          role="list"
+          aria-label="workout progress"
         >
-          ≡
-        </button>
+          {entries.map((candidate) => {
+            const state = entryState(candidate);
+            const label = `${candidate.name} — ${state}`;
+            return (
+              <li key={candidate.key} className="focus-progress-dot-item">
+                <button
+                  type="button"
+                  className="focus-progress-dot"
+                  aria-label={
+                    state === "current"
+                      ? `${label} — view full workout`
+                      : `${label} — jump here`
+                  }
+                  onClick={() =>
+                    state === "current"
+                      ? onViewFullWorkout()
+                      : onChooseNext(candidate)
+                  }
+                >
+                  <StateGlyph
+                    state={state}
+                    warmup={
+                      warmupSets(candidate) > 0 && workingSets(candidate) === 0
+                    }
+                    label={label}
+                  />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
         {onOpenMore && (
           <button
             type="button"
@@ -168,8 +280,96 @@ export function FocusDeck({
         </div>
       </div>
 
+      {(swapLabel !== null || onSkip || (skipped && onUnskip)) && (
+        <div className="focus-deck-secondary-row">
+          {onSwap && swapLabel !== null && (
+            <button
+              type="button"
+              className="focus-deck-secondary"
+              onClick={onSwap}
+            >
+              {swapLabel}
+            </button>
+          )}
+          {onSkip && !skipped && !skipPromptOpen && (
+            <button
+              type="button"
+              className="focus-deck-secondary"
+              onClick={() => setSkipPromptOpen(true)}
+            >
+              Skip
+            </button>
+          )}
+          {skipped && onUnskip && (
+            <button
+              type="button"
+              className="focus-deck-secondary"
+              onClick={onUnskip}
+            >
+              Unskip
+            </button>
+          )}
+        </div>
+      )}
+
+      {onSkip && !skipped && skipPromptOpen && (
+        <div className="skip-reason-prompt">
+          <div className="chip-row">
+            {SKIP_REASON_CHIPS.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                className="chip"
+                onClick={() => {
+                  onSkip(chip);
+                  setSkipPromptOpen(false);
+                  setSkipReasonDraft("");
+                }}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+          <input
+            className="input skip-reason-input"
+            placeholder="Reason (optional)"
+            value={skipReasonDraft}
+            onChange={(e) => setSkipReasonDraft(e.target.value)}
+          />
+          <div className="skip-reason-actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                setSkipPromptOpen(false);
+                setSkipReasonDraft("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                onSkip(
+                  skipReasonDraft.trim() === "" ? null : skipReasonDraft.trim(),
+                );
+                setSkipPromptOpen(false);
+                setSkipReasonDraft("");
+              }}
+            >
+              Skip exercise
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="focus-deck-editor">
-        <FocusSetProgress progress={progress} target={target} />
+        <FocusSetProgress
+          progress={progress}
+          target={target}
+          warmup={warmupSets(entry) > 0 && workingSets(entry) === 0}
+        />
         {renderEditor(entry)}
       </div>
 

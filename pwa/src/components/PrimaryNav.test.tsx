@@ -148,7 +148,9 @@ describe("primary navigation", () => {
     expect(
       screen.getByRole("button", { name: "review 1 failed writes" }),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "1 STUCK · RETRY" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "1 RETRYING · RETRY" }),
+    ).toBeTruthy();
   });
 
   it("keeps Coach, problem reporting, and Settings in the header with their sheets", async () => {
@@ -195,7 +197,7 @@ describe("primary navigation", () => {
       within(tools).getByRole("button", { name: "review 1 failed writes" }),
     ).toBeTruthy();
     expect(
-      within(tools).getByRole("button", { name: "1 STUCK · RETRY" }),
+      within(tools).getByRole("button", { name: "1 RETRYING · RETRY" }),
     ).toBeTruthy();
   });
 });

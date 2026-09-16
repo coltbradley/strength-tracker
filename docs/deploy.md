@@ -22,6 +22,86 @@ Still open from the 2026-09-07 checklist below:
 - **Push on a real phone** has still never been verified end to end (see
   "What needs a phone").
 
+Not yet live at all: the 22-task "live session adaptation" work (four new
+migrations, six new MCP tools, a coach prompt rewrite, the reworked session
+screen). See the 2026-09-17 round below before running anything from that
+plan against production.
+
+## 2026-09-17 round — release checklist
+
+Not yet deployed. Twenty-two tasks: set type and skips chosen at log time
+rather than defaulted from the slot (`session_skips`), equipment-aware load
+entry with correct plate math, a focus-hero session screen with a
+tap-to-jump progress rail, calmer sync, and coach trends and observations
+that read live instead of being recomputed or forgotten (`coach_observations`,
+`v_trend_digest`). Spec:
+`docs/superpowers/specs/2026-09-16-live-session-adaptation-design.md`;
+deviations: `docs/decisions.md`'s "Live session adaptation" section.
+
+### What CI will do on merge to main
+
+`deploy.yml` runs `supabase db push`, then deploys the functions, then
+publishes the PWA — in that order, so the client can never ship ahead of its
+schema.
+
+- **4 migrations**: `20260917000000` session_skips · `20260917010000`
+  coach_observations (adds `v_trend_digest`) · `20260917020000` note_memory ·
+  `20260917030000` fk_indexes.
+- **2 functions**: mcp-server (six new tools — `get_bodyweight`,
+  `get_trends`, `get_observations`, `record_observation`,
+  `resolve_observation`, `get_session_diff`) and coach (prompt rewrite, the
+  TRENDS/OBSERVATIONS lines in the per-turn context block, and the
+  note-memory extension to `POST /coach/checkin-memory` — the per-turn
+  `extractMemory` pass itself is untouched). `push-alerts` and
+  `endurance-sync` are unchanged by this round and need no redeploy.
+- **PWA**: ships the whole session-screen change — set type and "Already
+  warm" on the focus hero, the tap-to-jump progress rail, the 200ms log lock
+  (corrections exempt), plates-vs-stack load presentation with a
+  per-exercise device-local override, the forward-looking rest strip with
+  RPE chips for the set just logged, and History's Log weight row and "What
+  the coach is watching" section.
+
+### Deploy order
+
+Same rule as every round, plus one more: deploy `mcp-server` before `coach`.
+The coach's rewritten prompt names all six new tools, and a coach that knows
+about a tool the deployed server does not have yet gets a tool-not-found
+mid-turn — the reverse order is merely a tool nobody calls yet.
+
+### Before merging
+
+```bash
+node scripts/validate-db.mjs
+node scripts/check-selects.mjs
+cd supabase/functions/mcp-server && deno check index.ts && deno test --allow-env --allow-net && cd -
+cd supabase/functions/coach && deno check index.ts && deno test && cd -
+cd pwa && npm run build && npm test -- --run && cd -
+```
+
+`push-alerts` and `endurance-sync` need no re-check: this round does not
+touch either.
+
+### After it ships — none of this has been run yet
+
+1. `curl .../mcp-server/health` — should answer ok.
+2. Ask Claude (MCP) `get_trends` for a user with no bodyweight log, no
+   check-ins and no logged working sets: should come back `trends: null`
+   with a note, never a row of zeros.
+3. Start a session against a day with a warmup-bracketed exercise: the
+   WARMUP | WORKING control and "Already warm" should appear on the focus
+   hero.
+4. Log a set: the rest strip should name the NEXT set, not the one just
+   finished, and offer RPE chips for the one just logged; leaving it
+   untapped should keep the set unrated.
+5. Finish a session with a skipped exercise: a `session_skips` row should
+   land, and History should show both the Log weight row and "What the
+   coach is watching".
+
+This section stays a checklist, not a record, until the release has actually
+gone out. Once it has, fold what changed into "Where production stands"
+above the way the 2026-09-07 round's items were folded in, rather than
+carrying two descriptions of the same release.
+
 ## 2026-09-07 round — release checklist
 
 Thirteen commits: the coach moves back to Sonnet 5, a per-person coach switch,

@@ -14,6 +14,13 @@ interface SessionRow {
   planned_workouts: { label: string | null } | null;
 }
 
+interface SkipRow {
+  session_id: string;
+  exercise_id: string;
+  scope: string;
+  reason: string | null;
+}
+
 export function registerGetRecentSessions(
   server: McpServer,
   db: Db,
@@ -26,7 +33,11 @@ export function registerGetRecentSessions(
       description:
         "Most recent training sessions, newest first, with session RPE (0-10), " +
         "bodyweight (kg), notes, the planned workout label when the session " +
-        "followed a program, and set counts (total and working). Pass " +
+        "followed a program, set counts (total and working), and every " +
+        "exercise the lifter skipped that day with the reason they gave " +
+        "(equipment taken, already warm, out of time, didn't feel right, or " +
+        "free text) — context for adapting the next session, never a " +
+        "completion score. Pass " +
         "include_sets to get the sets themselves — exercise, warmup vs " +
         "working, load, reps and the lifter's per-set note — which is what " +
         "reviewing a workout actually needs. Loads are kg and are always the " +
@@ -94,6 +105,37 @@ export function registerGetRecentSessions(
               total: row.total_sets,
               working: row.working_sets,
             });
+          }
+        }
+
+        // Skips, beside the sets: what the lifter decided not to do, with
+        // its reason. Always included (cheap, and one row per skip), unlike
+        // sets which are gated behind include_sets.
+        const skipsBySession = new Map<
+          string,
+          { exercise_id: string; scope: string; reason: string | null }[]
+        >();
+        if (sessions.length > 0) {
+          const skipRows = must(
+            await db.client
+              .from("session_skips")
+              .select("session_id, exercise_id, scope, reason")
+              .eq("user_id", db.ownerId)
+              .in(
+                "session_id",
+                sessions.map((s) => s.id),
+              ),
+            "session skips",
+          ) as unknown as SkipRow[];
+          for (const row of skipRows) {
+            const list = skipsBySession.get(row.session_id);
+            const entry = {
+              exercise_id: row.exercise_id,
+              scope: row.scope,
+              reason: row.reason,
+            };
+            if (list === undefined) skipsBySession.set(row.session_id, [entry]);
+            else list.push(entry);
           }
         }
 
@@ -182,6 +224,7 @@ export function registerGetRecentSessions(
             planned_workout_label: s.planned_workouts?.label ?? null,
             total_sets: counts.get(s.id)?.total ?? 0,
             working_sets: counts.get(s.id)?.working ?? 0,
+            skips: skipsBySession.get(s.id) ?? [],
             ...(args.include_sets
               ? { sets: setsBySession.get(s.id) ?? [] }
               : {}),

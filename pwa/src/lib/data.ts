@@ -2020,6 +2020,72 @@ export async function recordBodyweight(
   return point;
 }
 
+// ---- coach observations (History's "What the coach is watching") -------
+// A read-mostly view onto the coach's own conclusions. Not through
+// `cacheKeys` in db.ts: this key belongs to no invalidation family
+// (nothing a set or a session does can make it stale), so a literal key
+// string here is one file this task touches instead of two.
+
+const OBSERVATIONS_CACHE_KEY = "coachObservations";
+
+export interface CoachObservationRow {
+  id: string;
+  topic: string;
+  observation: string;
+  check_back_on: string | null;
+}
+
+/** Every OPEN observation, soonest check-back first, nulls last — the same
+ *  ordering the coach's own context-block read uses. */
+export async function getObservations(): Promise<
+  CacheRead<CoachObservationRow[]>
+> {
+  return fetchWithCache(OBSERVATIONS_CACHE_KEY, async () => {
+    const { data, error } = await supabase
+      .from("coach_observations")
+      .select("id, topic, observation, check_back_on")
+      .eq("status", "open")
+      .order("check_back_on", { ascending: true, nullsFirst: false });
+    throwIf(error);
+    return (data ?? []) as CoachObservationRow[];
+  });
+}
+
+/** The cached list with one row removed, or undefined when there was
+ *  nothing cached to patch — the same write-through-not-invalidate shape
+ *  `cacheBodyweightPoint` uses: dropping the cache instead is a no-op
+ *  offline, so a delete made without a signal would leave the row on
+ *  screen until the next successful fetch. */
+export function applyObservationDelete(
+  cached: CoachObservationRow[] | undefined,
+  id: string,
+): CoachObservationRow[] | undefined {
+  if (cached === undefined) return undefined;
+  return cached.filter((o) => o.id !== id);
+}
+
+/**
+ * Delete one observation. `coach_observations` has an owner DELETE policy
+ * and no soft-delete column — it is the coach's own opinion, deletable
+ * like `coach_memory` — so this is a real delete, not a queued outbox op:
+ * deleting twice is still deleted, and the row has no dependents for an
+ * offline write to race against.
+ */
+export async function deleteObservation(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("coach_observations")
+    .delete()
+    .eq("id", id);
+  throwIf(error);
+  const cached = await cacheGet<CoachObservationRow[]>(
+    OBSERVATIONS_CACHE_KEY,
+  );
+  const patched = applyObservationDelete(cached, id);
+  if (patched !== undefined) {
+    await cacheSet(OBSERVATIONS_CACHE_KEY, patched);
+  }
+}
+
 // ---- rating a session after the fact ---------------------------------------
 
 export interface UnratedSessionRow {

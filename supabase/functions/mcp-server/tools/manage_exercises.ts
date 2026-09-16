@@ -117,7 +117,38 @@ const fieldSchemas = {
   force: z.enum(["push", "pull", "static"]).optional(),
   category: z.enum(CATEGORIES).default("strength"),
   level: z.enum(["beginner", "intermediate", "expert"]).default("intermediate"),
+  instructions: z
+    .array(z.string().min(1))
+    .max(20)
+    .optional()
+    .describe(
+      "Numbered how-to steps, in order. On update_exercise this is only " +
+        "accepted for a row this caller owns with source='custom' — the " +
+        "seeded and 'edited' rows are a SHARED library every other " +
+        "account's coach reads through search_exercises and the plan; use " +
+        "set_exercise_note for a private cue on any exercise instead.",
+    ),
 };
+
+/**
+ * Only a caller-owned 'custom' row may have its instructions rewritten here.
+ * The seeded library ('free-exercise-db', 'curated') and an 'edited' row
+ * (still shared, per CLAUDE.md) are read by every other account's coach
+ * through search_exercises, get_program and the per-turn context block, so
+ * rewriting their how-to steps is a write nobody else can see happening,
+ * flowing straight into other people's model context — the same reasoning
+ * that keeps renaming a shared exercise off the table. A private cue on ANY
+ * exercise, shared or custom, belongs in set_exercise_note instead. Pure, and
+ * exported for the test.
+ */
+export function assertInstructionsAllowed(source: string): void {
+  if (source === "custom") return;
+  throw new ToolError(
+    `instructions can only be set on a custom exercise you own (this one is ` +
+      `'${source}', a shared library row). Use set_exercise_note for a ` +
+      "private cue instead.",
+  );
+}
 
 export function registerManageExercises(
   server: McpServer,
@@ -167,6 +198,7 @@ export function registerManageExercises(
           force: args.force ?? null,
           category: args.category,
           level: args.level,
+          instructions: args.instructions ?? [],
           source: "custom",
         });
         if (error) {
@@ -205,7 +237,10 @@ export function registerManageExercises(
         "'curated') re-tags it source='edited' so re-seeds never revert the " +
         "edit; it stays a shared library row. The id " +
         "itself cannot change (history references it), and exercises cannot " +
-        "be deleted (logged sets reference them) — rename or repurpose instead.",
+        "be deleted (logged sets reference them) — rename or repurpose instead. " +
+        "instructions is refused on anything but a custom exercise you own " +
+        "(see its own description) — use set_exercise_note for a private cue " +
+        "on a shared row instead.",
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -224,6 +259,7 @@ export function registerManageExercises(
         force: z.enum(["push", "pull", "static"]).nullable().optional(),
         category: z.enum(CATEGORIES).optional(),
         level: z.enum(["beginner", "intermediate", "expert"]).optional(),
+        instructions: fieldSchemas.instructions,
       },
     },
     (args) =>
@@ -255,6 +291,10 @@ export function registerManageExercises(
           "level",
         ] as const) {
           if (args[key] !== undefined) patch[key] = args[key];
+        }
+        if (args.instructions !== undefined) {
+          assertInstructionsAllowed(existing[0].source);
+          patch.instructions = args.instructions;
         }
         if (Object.keys(patch).length === 0) {
           throw new ToolError("Pass at least one field to change.");

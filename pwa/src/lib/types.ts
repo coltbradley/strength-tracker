@@ -175,6 +175,22 @@ export interface SetVoidInsert {
   set_id: string;
 }
 
+/**
+ * One skipped exercise or skipped warmups, written when the workout is
+ * finished (End.tsx), one row per still-skipped entry. `user_id` and
+ * `created_at` are left to the DB default, like every other insert here.
+ * `exercises.id` is `text` (a free-exercise-db slug, e.g. "back-squat"), not
+ * a uuid — matches `SetInsert.exercise_id`.
+ */
+export interface SessionSkipInsert {
+  id: string;
+  session_id: string;
+  prescription_id: string | null;
+  exercise_id: string;
+  scope: "exercise" | "warmups";
+  reason: string | null;
+}
+
 /** User annotation on one logged set; editable (last write wins). */
 export interface SetNoteUpsert {
   set_id: string;
@@ -235,6 +251,23 @@ export interface BodyweightInsert {
   id: string;
   measured_at: string;
   weight_kg: number;
+}
+
+/**
+ * A bug report from ReportBugSheet, queued like a set — client-generated
+ * id, so a replay after a partial flush is the SAME report rather than a
+ * second one. `kind` is always 'bug' here: `feedback` also carries
+ * Claude's own 'feature' / 'data_gap' / 'question' rows, written directly
+ * by the MCP server (submit_feedback), which never goes through this
+ * queue.
+ */
+export interface FeedbackInsert {
+  id: string;
+  kind: "bug";
+  title: string;
+  detail: string;
+  context: string;
+  source: "user";
 }
 
 /**

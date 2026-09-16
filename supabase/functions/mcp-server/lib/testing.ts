@@ -13,6 +13,10 @@ export interface Recorded {
   filters: string[];
   order: { column: string; ascending: boolean }[];
   limit: number | null;
+  /** The payload passed to .insert(), if this call chain used it. */
+  insert?: unknown;
+  /** The patch passed to .update(), if this call chain used it. */
+  update?: unknown;
 }
 
 export interface ToolResult {
@@ -29,6 +33,18 @@ class FakeQuery {
     this.rec.columns = columns;
     return this;
   }
+  /** Records the payload; resolves with the table's fixture rows, exactly as
+   *  a real `.insert(row).select(cols)` returns the inserted row(s) — the
+   *  fixture is what the test controls the "returned" row to look like. */
+  insert(row: unknown) {
+    this.rec.insert = row;
+    return this;
+  }
+  /** Same shape as insert(): records the patch, resolves with fixture rows. */
+  update(patch: unknown) {
+    this.rec.update = patch;
+    return this;
+  }
   private f(op: string, column: string, value: unknown) {
     this.rec.filters.push(
       `${op}:${column}=${Array.isArray(value) ? value.join(",") : value}`,
@@ -37,6 +53,9 @@ class FakeQuery {
   }
   eq(c: string, v: unknown) {
     return this.f("eq", c, v);
+  }
+  is(c: string, v: unknown) {
+    return this.f("is", c, v);
   }
   gte(c: string, v: unknown) {
     return this.f("gte", c, v);

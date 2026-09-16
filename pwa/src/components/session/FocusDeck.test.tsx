@@ -42,6 +42,12 @@ function props(overrides: Partial<FocusDeckProps> = {}): FocusDeckProps {
     entry: entries[1]!,
     entryProgress: () => 0,
     entryDone: (candidate) => candidate.key === "squat",
+    entryState: (candidate) =>
+      candidate.key === "squat"
+        ? "done"
+        : candidate.key === entries[1]!.key
+          ? "current"
+          : "upcoming",
     onViewFullWorkout: vi.fn(),
     onChooseNext: vi.fn(),
     canAdvance: true,
@@ -78,12 +84,31 @@ describe("FocusDeck", () => {
         ],
       ),
     ).toEqual([
-      ["completed", "✓"],
+      ["done", "✓"],
       ["current", "●"],
-      ["future", ""],
+      ["upcoming", "○"],
     ]);
     expect(screen.getByText("SET 2 OF 3")).toBeTruthy();
     expect(container.querySelectorAll(".focus-deck-position")).toHaveLength(1);
+  });
+
+  it("marks the just-completed segment leaving and the new current one entering", () => {
+    const { container, rerender } = render(
+      <FocusDeck {...props({ entryProgress: () => 0 })} />,
+    );
+
+    rerender(<FocusDeck {...props({ entryProgress: () => 1 })} />);
+
+    const segments = [
+      ...container.querySelectorAll(".focus-set-progress [data-state]"),
+    ];
+    // index 0 just went current -> done: it plays the leaving motion.
+    expect(segments[0]!.className).toContain("motion-set-logged");
+    // index 1 just went upcoming -> current: it plays the entering motion.
+    expect(segments[1]!.className).toContain("motion-set-entering");
+    // index 2 was untouched.
+    expect(segments[2]!.className).not.toContain("motion-set-logged");
+    expect(segments[2]!.className).not.toContain("motion-set-entering");
   });
 
   it("omits the segmented line for by-feel work", () => {
@@ -130,7 +155,7 @@ describe("FocusDeck", () => {
       [...container.querySelectorAll(".focus-set-progress [data-state]")].map(
         (segment) => segment.getAttribute("data-state"),
       ),
-    ).toEqual(["completed", "current", "future"]);
+    ).toEqual(["done", "current", "upcoming"]);
   });
 
   it("uses the focused consecutive pair when another pair reuses its group number", () => {
@@ -164,16 +189,44 @@ describe("FocusDeck", () => {
       [...container.querySelectorAll(".focus-set-progress [data-state]")].map(
         (segment) => segment.getAttribute("data-state"),
       ),
-    ).toEqual(["current", "future", "future"]);
+    ).toEqual(["current", "upcoming", "upcoming"]);
   });
 
-  it("keeps the supplied tick-only editor and offers the quiet overview action", () => {
+  it("keeps the supplied tick-only editor and shows a progress rail dot per entry", () => {
     render(<FocusDeck {...props()} />);
 
     expect(screen.getByRole("button", { name: "DONE 1 OF 3" })).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "View full workout" }),
-    ).toBeTruthy();
+    expect(screen.getAllByRole("listitem")).toHaveLength(entries.length);
+  });
+
+  it("opens overview from the dot for the entry already showing", () => {
+    const onViewFullWorkout = vi.fn();
+    render(<FocusDeck {...props({ onViewFullWorkout })} />);
+
+    // entries[1] (Deadlift) is "current" per the props() helper above. Each
+    // dot is a real <button> inside a plain <li> (see FocusDeck.tsx's
+    // comment on why role="listitem" never lands on the button itself), so
+    // it is queried here as a button, same as any other control.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^Deadlift — current — view full workout$/i,
+      }),
+    );
+
+    expect(onViewFullWorkout).toHaveBeenCalledTimes(1);
+  });
+
+  it("jumps focus from any other dot instead of opening overview", () => {
+    const onChooseNext = vi.fn();
+    const onViewFullWorkout = vi.fn();
+    render(<FocusDeck {...props({ onChooseNext, onViewFullWorkout })} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Squat — done — jump here$/i }),
+    );
+
+    expect(onChooseNext).toHaveBeenCalledWith(entries[0]);
+    expect(onViewFullWorkout).not.toHaveBeenCalled();
   });
 
   it("keeps the live region to changing focus status, not controls", () => {

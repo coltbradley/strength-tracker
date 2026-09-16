@@ -2,6 +2,7 @@ import {
   targetSets,
   type ExerciseEntry,
 } from "./entries";
+import type { ProgressState } from "../components/session/StateGlyph";
 
 export type SessionPresentation = "focus" | "overview";
 
@@ -89,4 +90,35 @@ export function transitionPresentation(
     return { presentation: "focus", focusKey: overviewSelection ?? priorFocusKey };
   }
   return { presentation: next, focusKey: priorFocusKey };
+}
+
+/**
+ * One entry's place in the shared state vocabulary (StateGlyph.tsx),
+ * consumed by the progress rail, FocusSetProgress's caller and
+ * WorkoutOverview alike, so the three surfaces can never describe the same
+ * entry three different ways.
+ *
+ * Order matters: a skipped entry is never "done" even if `isDone` (which
+ * folds skips in for its own purposes — see Session's `entryDone`) says so,
+ * and "current" always wins over both, since a superset pair mid-round is
+ * simultaneously "current" and, by the exhaustion math, sometimes technically
+ * "done" on one member.
+ */
+export function railState(
+  entries: readonly ExerciseEntry[],
+  entry: ExerciseEntry,
+  currentKeys: ReadonlySet<string>,
+  isSkipped: (entry: ExerciseEntry) => boolean,
+  isDone: (entry: ExerciseEntry) => boolean,
+): ProgressState {
+  if (isSkipped(entry)) return "skipped";
+  if (currentKeys.has(entry.key)) return "current";
+  if (isDone(entry)) return "done";
+  const nextKey = entries.find(
+    (candidate) =>
+      !isSkipped(candidate) &&
+      !isDone(candidate) &&
+      !currentKeys.has(candidate.key),
+  )?.key;
+  return entry.key === nextKey ? "next" : "upcoming";
 }

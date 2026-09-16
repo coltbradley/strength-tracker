@@ -65,7 +65,9 @@ export interface OutboxTransport {
       | "checkins"
       | "symptom_episodes"
       | "pain_checks"
-      | "report_prompts",
+      | "report_prompts"
+      | "feedback"
+      | "session_skips",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(
@@ -696,6 +698,20 @@ export function createOutbox({
 
     start() {
       window.addEventListener("online", () => void flush());
+      // A phone that comes back from being locked or backgrounded does not
+      // always fire `online` — the connection was never lost, the tab was
+      // just asleep — so a write queued right before it locked could sit
+      // there until the next unrelated write nudged the queue. Foreground
+      // is exactly when someone is looking at the sync pill wondering why
+      // it still says QUEUED. `document` does not exist in every test
+      // environment this file runs under (outbox.test.ts is node, not
+      // jsdom), so the listener is skippable there rather than a hard
+      // dependency.
+      if (typeof document !== "undefined") {
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") void flush();
+        });
+      }
       // Identity arrives asynchronously and usually AFTER this first flush.
       // Items stamped with an owner are held until it does (see `replayable`),
       // so the queue has to be walked again once we know who we are — without

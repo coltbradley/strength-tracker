@@ -118,7 +118,7 @@ describe("Session focus presentation", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: "View full workout" }),
+      await screen.findByRole("button", { name: /— current — view full workout$/ }),
     ).toBeTruthy();
     expect(screen.queryByText(/target 8/i)).toBeNull();
     expect(document.body.classList.contains("focus-chrome-hidden")).toBe(true);
@@ -167,11 +167,11 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "View full workout" }),
+      await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
-    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
+    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
 
     expect(
       screen.getByRole("button", { name: "reps value — tap to type" })
@@ -199,14 +199,14 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "increase load by 2.5 kg" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
-    fireEvent.click(screen.getByRole("button", { name: "Back Squat" }));
+    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
     expect(
       await screen.findByRole("heading", { name: "Back Squat" }),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
-    fireEvent.click(screen.getByRole("button", { name: "Bench Press" }));
+    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
     expect(
       await screen.findByRole("heading", { name: "Bench Press" }),
@@ -237,7 +237,7 @@ describe("Session focus presentation", () => {
       ),
     ).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: "View full workout" }),
+      screen.queryByRole("button", { name: /— current — view full workout$/ }),
     ).toBeNull();
   });
 
@@ -655,10 +655,17 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
+    // Both round members are "current" while the round is live, so either
+    // dot opens overview (see FocusDeck's rail: onViewFullWorkout fires for
+    // any dot whose state is "current", not one particular member).
     fireEvent.click(
-      await screen.findByRole("button", { name: "View full workout" }),
+      (
+        await screen.findAllByRole("button", {
+          name: /— current — view full workout$/,
+        })
+      )[0]!,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Barbell Row" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
 
     expect(await screen.findByText("round 1 of 2")).toBeTruthy();
@@ -680,7 +687,7 @@ describe("Session focus presentation", () => {
       await Promise.resolve();
     });
     expect(screen.getByRole("timer", { name: "rest timer" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
+    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
     act(() => vi.advanceTimersByTime(30_000));
 
@@ -768,9 +775,9 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "View full workout" }),
+      await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Bench Press" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
     expect(
       await screen.findByRole("button", { name: "Next exercise" }),
@@ -818,7 +825,7 @@ describe("Session focus presentation", () => {
     // Bench is already done, so the session opens in focus on Squat. Switch
     // to overview, open Bench, and start correcting its logged set.
     fireEvent.click(
-      await screen.findByRole("button", { name: "View full workout" }),
+      await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     fireEvent.click(
       await screen.findByRole("button", { name: "expand details" }),
@@ -835,7 +842,7 @@ describe("Session focus presentation", () => {
     // Select Squat (a future focus destination, not a navigation) and enter
     // Focus mode. The correction in progress must win: Bench stays open with
     // its staged edit, not Squat with a fresh prefill.
-    fireEvent.click(screen.getByRole("button", { name: "Back Squat" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
 
     expect(
@@ -895,7 +902,7 @@ describe("Session focus presentation", () => {
         .textContent,
     ).toBe("9");
 
-    fireEvent.click(screen.getByRole("button", { name: "View full workout" }));
+    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
 
     // The correction on Back Squat must still be the one on screen, staged.
     expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
@@ -1081,9 +1088,12 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
     );
-    expect(await cacheGet<string[]>(cacheKeys.sessionSkips(active.id))).toEqual(
-      [],
-    );
+    // `skips` is a SkipRecord map as of Task 8 (was a plain key array); the
+    // legacy array this test seeds is read back through `readSkipsCache`,
+    // and what gets WRITTEN once nothing is skipped is the (now empty) map.
+    expect(
+      await cacheGet<Record<string, unknown>>(cacheKeys.sessionSkips(active.id)),
+    ).toEqual({});
   });
 
   it("labels the tail of an unequal superset correctly and offers only the remaining member", async () => {

@@ -7,9 +7,11 @@ import type {
   BodyweightInsert,
   CheckinInsert,
   DailyReadinessUpsert,
+  FeedbackInsert,
   PainCheckInsert,
   SessionInsert,
   SessionPatch,
+  SessionSkipInsert,
   SetInsert,
   SetNoteUpsert,
   SetVoidInsert,
@@ -92,7 +94,15 @@ export type OutboxOp =
         channel: string;
         skipped: boolean;
       };
-    };
+    }
+  // A problem report from ReportBugSheet. Same queue as everything else,
+  // so it survives a dead spot in the gym instead of needing a live
+  // connection at the exact moment someone hits send.
+  | { kind: "insert"; table: "feedback"; payload: FeedbackInsert }
+  // A skipped exercise or skipped warmups, written once at Finish
+  // (End.tsx). "on conflict do nothing" like every other append-only insert
+  // here — an un-skip earlier in the session never reaches the network.
+  | { kind: "insert"; table: "session_skips"; payload: SessionSkipInsert };
 
 export interface OutboxItem {
   op: OutboxOp;

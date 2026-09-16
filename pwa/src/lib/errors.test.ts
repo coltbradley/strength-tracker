@@ -8,8 +8,11 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { feedbackInsert } = vi.hoisted(() => ({
-  feedbackInsert: vi.fn(),
+// sendBugReport now queues through the outbox rather than writing directly,
+// so what is under test is the enqueue call, not a supabase insert — see the
+// "sendBugReport" describe block below and the 2026-09-16 sync-noise fix.
+const { enqueueMock } = vi.hoisted(() => ({
+  enqueueMock: vi.fn(),
 }));
 
 const scope = {
@@ -27,10 +30,11 @@ vi.mock("@sentry/react", () => ({
   captureException: vi.fn(),
 }));
 
-vi.mock("./supabase", () => ({
-  supabase: {
-    from: vi.fn(() => ({ insert: feedbackInsert })),
-  },
+// Mocked rather than left real: sync.ts's real module pulls in currentUser.ts,
+// which calls supabase.auth.getSession() at module-eval time, and this file
+// has no reason to exercise that whole chain just to test a bug report queue.
+vi.mock("./sync", () => ({
+  outbox: { enqueue: enqueueMock },
 }));
 
 import * as Sentry from "@sentry/react";
@@ -155,7 +159,7 @@ describe("buildBugDiagnostics", () => {
 describe("sendBugReport", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    feedbackInsert.mockResolvedValue({ error: null });
+    enqueueMock.mockResolvedValue(undefined);
   });
 
   it("saves the report even when Sentry is not configured", async () => {
@@ -165,12 +169,17 @@ describe("sendBugReport", () => {
     });
 
     expect(result).toEqual({ ok: true });
-    expect(feedbackInsert).toHaveBeenCalledWith({
-      kind: "bug",
-      title: "it broke",
-      detail: "it broke",
-      context: "",
-      source: "user",
+    expect(enqueueMock).toHaveBeenCalledWith({
+      kind: "insert",
+      table: "feedback",
+      payload: {
+        id: expect.any(String),
+        kind: "bug",
+        title: "it broke",
+        detail: "it broke",
+        context: "",
+        source: "user",
+      },
     });
     expect(Sentry.captureFeedback).not.toHaveBeenCalled();
   });
@@ -186,12 +195,17 @@ describe("sendBugReport", () => {
     });
 
     expect(result).toEqual({ ok: true });
-    expect(feedbackInsert).toHaveBeenCalledWith({
-      kind: "bug",
-      title: "it did something weird",
-      detail: "it did something weird",
-      context: diagnostics.map((d) => `${d.label}: ${d.value}`).join("\n"),
-      source: "user",
+    expect(enqueueMock).toHaveBeenCalledWith({
+      kind: "insert",
+      table: "feedback",
+      payload: {
+        id: expect.any(String),
+        kind: "bug",
+        title: "it did something weird",
+        detail: "it did something weird",
+        context: diagnostics.map((d) => `${d.label}: ${d.value}`).join("\n"),
+        source: "user",
+      },
     });
 
     expect(Sentry.captureFeedback).toHaveBeenCalledWith({
@@ -211,10 +225,11 @@ describe("sendBugReport", () => {
     );
   });
 
-  it("keeps the failure visible when the durable write is rejected", async () => {
-    feedbackInsert.mockResolvedValue({
-      error: { message: "permission denied" },
-    });
+  // enqueue() only rejects when IndexedDB itself failed — there is no longer
+  // a separate "the network request failed" shape to distinguish, because
+  // the outbox absorbs that on its own and retries later.
+  it("keeps the failure visible when the local write itself fails", async () => {
+    enqueueMock.mockRejectedValue(new Error("indexeddb unavailable"));
 
     const result = await sendBugReport({
       message: "the plan would not save",
@@ -223,7 +238,7 @@ describe("sendBugReport", () => {
 
     expect(result).toEqual({
       ok: false,
-      message: "Report not saved. Check your connection and try again.",
+      message: "Couldn't save the report on this device. Try again.",
     });
     expect(Sentry.captureFeedback).not.toHaveBeenCalled();
   });
@@ -233,28 +248,12 @@ describe("sendBugReport", () => {
   // failure. The failure still has to be reported (console + Sentry via
   // reportError) — it just must not toast a second time on top of the
   // caller's.
-  it("does not toast on failure — the caller shows the one toast", async () => {
-    feedbackInsert.mockResolvedValue({
-      error: { message: "permission denied" },
-    });
+  it("does not toast when the local write fails — the caller shows the one toast", async () => {
+    enqueueMock.mockRejectedValue(new Error("indexeddb unavailable"));
     const seen: Toast[] = [];
     const stop = onToast((t) => seen.push(t));
 
     await sendBugReport({ message: "it broke again", diagnostics: [] });
-
-    stop();
-    expect(seen).toEqual([]);
-  });
-
-  it("does not toast when the write throws — same single-toast rule", async () => {
-    feedbackInsert.mockRejectedValue(new Error("network down"));
-    const seen: Toast[] = [];
-    const stop = onToast((t) => seen.push(t));
-
-    await sendBugReport({
-      message: "it broke a different way",
-      diagnostics: [],
-    });
 
     stop();
     expect(seen).toEqual([]);

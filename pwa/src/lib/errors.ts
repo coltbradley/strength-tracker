@@ -1,7 +1,8 @@
 // Single error funnel: console + optional Sentry (VITE_SENTRY_DSN) + in-app
 // toast. Never swallow; everything caught anywhere routes through reportError.
 import { buildStamp } from "./build";
-import { supabase } from "./supabase";
+import { outbox } from "./sync";
+import { uuid } from "./uuid";
 
 type ToastKind = "error" | "info";
 export interface Toast {
@@ -235,8 +236,11 @@ export interface BugReport {
 
 export type BugReportResult = { ok: true } | { ok: false; message: string };
 
+// It no longer means "the network request failed" — the outbox absorbs
+// that. It now means the local IndexedDB write itself failed, which is
+// rare and not a connectivity problem, so the old wording would mislead.
 const BUG_REPORT_RETRY_MESSAGE =
-  "Report not saved. Check your connection and try again.";
+  "Couldn't save the report on this device. Try again.";
 
 /**
  * Persist a user-written bug report before giving success UI. Sentry is still
@@ -261,25 +265,30 @@ export async function sendBugReport(
     .join("\n");
 
   try {
-    const { error } = await supabase.from("feedback").insert({
-      kind: "bug",
-      title,
-      detail: message,
-      context,
-      source: "user",
+    // Queued like a set, not inserted directly: sync noise reading as
+    // data loss was exactly the bug (2026-09-16 spec) — a report typed
+    // in a dead spot used to need a live connection at the instant
+    // someone hit send. The `feedback` table's `id` accepts an explicit
+    // client UUID (its `default gen_random_uuid()` only fires when the
+    // column is omitted), so replay after a partial flush is the SAME
+    // report, not a second one.
+    await outbox.enqueue({
+      kind: "insert",
+      table: "feedback",
+      payload: {
+        id: uuid(),
+        kind: "bug",
+        title,
+        detail: message,
+        context,
+        source: "user",
+      },
     });
-
-    if (error) {
-      // Silent: the caller (ReportBugSheet) toasts BUG_REPORT_RETRY_MESSAGE
-      // itself. Console + Sentry + recentErrors still happen; only the
-      // second toast is skipped.
-      reportError(new Error(`bug report write: ${error.message}`), undefined, {
-        toast: false,
-      });
-      return { ok: false, message: BUG_REPORT_RETRY_MESSAGE };
-    }
   } catch (error) {
-    reportError(error, "write bug report", { toast: false });
+    // enqueue() only throws if IndexedDB itself failed — genuinely
+    // nowhere to put it, unlike an ordinary network failure, which the
+    // outbox now absorbs on its own.
+    reportError(error, "queue bug report", { toast: false });
     return { ok: false, message: BUG_REPORT_RETRY_MESSAGE };
   }
 
