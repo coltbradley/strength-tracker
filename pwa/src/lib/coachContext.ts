@@ -49,6 +49,42 @@ interface CachedPlan {
 /** How many of a day's exercises a week line names before it stops counting. */
 const WEEK_NAME_CAP = 10;
 
+/** Coach conclusions due for a look, capped so the context block cannot
+ *  grow without bound as they accumulate. */
+export const OBSERVATIONS_CAP = 5;
+
+/** One main lift's movement inside the trend digest. */
+export interface TrendLift {
+  exercise_id: string;
+  name: string;
+  e1rm_latest_kg: number | null;
+  e1rm_4w_ago_kg: number | null;
+  working_sets_this_week: number;
+  working_sets_last_week: number;
+}
+
+/** `v_trend_digest`, one row per user, computed at read time. */
+export interface TrendDigest {
+  bw_latest_kg: number | null;
+  bw_latest_at: string | null;
+  bw_7d_mean_kg: number | null;
+  bw_7d_n: number;
+  bw_28d_mean_kg: number | null;
+  bw_28d_n: number;
+  bw_28d_slope_kg_per_week: number | null;
+  energy_14d_mean: number | null;
+  energy_14d_n: number;
+  lifts: TrendLift[];
+}
+
+/** One open `coach_observations` row due for a look. */
+export interface DueObservation {
+  id: string;
+  topic: string;
+  observation: string;
+  check_back_on: string | null;
+}
+
 /** "Mon", for the week lines. A date alone makes the reader do arithmetic. */
 function weekdayShort(iso: string): string {
   return parseLocalDate(iso).toLocaleDateString("en-GB", { weekday: "short" });
@@ -258,6 +294,45 @@ async function standingFacts(): Promise<{ kind: string; fact: string }[]> {
 }
 
 /**
+ * `v_trend_digest`: bodyweight, energy and the top lifts, computed at read
+ * time. Null on any failure — TRENDS then says "not enough data yet" rather
+ * than blocking the rest of the context block on a view with no offline
+ * cache of its own.
+ */
+async function trendsDigest(): Promise<TrendDigest | null> {
+  try {
+    const { data, error } = await supabase.from("v_trend_digest").select("*");
+    if (error) throw new Error(error.message);
+    const row = (data ?? [])[0] as TrendDigest | undefined;
+    return row ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Open `coach_observations` due today or earlier, plus open items with no
+ * check-back date at all — the rule the design doc gives the context
+ * block. Empty rather than throwing: this section is a nicety, not
+ * something worth losing the rest of the block over.
+ */
+async function dueObservations(today: string): Promise<DueObservation[]> {
+  try {
+    const { data, error } = await supabase
+      .from("coach_observations")
+      .select("id, topic, observation, check_back_on")
+      .eq("status", "open")
+      .or(`check_back_on.lte.${today},check_back_on.is.null`)
+      .order("check_back_on", { ascending: true, nullsFirst: false })
+      .limit(OBSERVATIONS_CAP);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as DueObservation[];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * The plan paragraph: the strategy above programs, in about 80 words, ALWAYS
  * present. This is what makes the plan something the coach builds AGAINST
  * rather than a document it could look up — the design doc's phrase, and the
@@ -332,6 +407,74 @@ export function formatPlanLine(
 }
 
 /**
+ * TRENDS, in one line. `v_trend_digest` is read at call time and nothing
+ * here recomputes it — this only decides which of its (possibly absent)
+ * numbers earn a clause, and in which unit. Every mean carries its own
+ * count, because a 7-day average from one weigh-in reads as more certain
+ * than it is if the count is left off.
+ */
+export function formatTrendsLine(d: TrendDigest | null, unit: Unit): string {
+  if (d === null) return "\nTRENDS: not enough data yet.";
+  const parts: string[] = [];
+  if (d.bw_latest_kg !== null) {
+    let bw = `bodyweight ${toDisplay(d.bw_latest_kg, unit)} ${unit}`;
+    if (d.bw_7d_n > 0 && d.bw_7d_mean_kg !== null) {
+      bw += ` (7d avg ${toDisplay(d.bw_7d_mean_kg, unit)} ${unit}, n=${d.bw_7d_n}`;
+      if (d.bw_28d_n > 0 && d.bw_28d_mean_kg !== null) {
+        const slope = d.bw_28d_slope_kg_per_week ?? 0;
+        const sign = slope >= 0 ? "+" : "";
+        bw +=
+          `; 28d avg ${toDisplay(d.bw_28d_mean_kg, unit)} ${unit}, ` +
+          `n=${d.bw_28d_n}, ${sign}${toDisplay(slope, unit)} ${unit}/wk`;
+      }
+      bw += ")";
+    }
+    parts.push(bw);
+  }
+  if (d.energy_14d_n > 0 && d.energy_14d_mean !== null) {
+    parts.push(
+      `energy 14d avg ${d.energy_14d_mean.toFixed(1)}/5 (n=${d.energy_14d_n})`,
+    );
+  }
+  for (const l of d.lifts) {
+    const latest =
+      l.e1rm_latest_kg !== null
+        ? `${toDisplay(l.e1rm_latest_kg, unit)} ${unit}`
+        : "no e1RM yet";
+    const was =
+      l.e1rm_4w_ago_kg !== null
+        ? ` (was ${toDisplay(l.e1rm_4w_ago_kg, unit)} ${unit} 4w ago)`
+        : "";
+    parts.push(
+      `${l.name} e1RM ${latest}${was}, ${l.working_sets_this_week} sets ` +
+        `this wk vs ${l.working_sets_last_week} last`,
+    );
+  }
+  if (parts.length === 0) return "\nTRENDS: not enough data yet.";
+  return `\nTRENDS: ${parts.join("; ")}`;
+}
+
+/**
+ * OBSERVATIONS: the coach's own open conclusions due for a look, one line
+ * each with the id `resolve_observation` takes. Capped at
+ * `OBSERVATIONS_CAP`; the query feeding this already orders soonest-due
+ * first, so slicing here is a backstop, not the real limit.
+ */
+export function formatObservations(items: DueObservation[]): string[] {
+  if (items.length === 0) return [];
+  const capped = items.slice(0, OBSERVATIONS_CAP);
+  const lines = ["\nOBSERVATIONS (yours, due for a look):"];
+  for (const o of capped) {
+    const when =
+      o.check_back_on !== null
+        ? `check back ${o.check_back_on}`
+        : "no check-back date";
+    lines.push(`  - id ${o.id} [${o.topic}] ${o.observation} (${when})`);
+  }
+  return lines;
+}
+
+/**
  * A compact, human-readable snapshot. Deliberately prose-ish rather than JSON:
  * it is read by a model, and the tool results it will fetch are already JSON,
  * so this reads as "what the screen says" instead of a second data format.
@@ -352,6 +495,12 @@ export async function buildCoachContext(): Promise<string> {
   // queries overlap it rather than queueing behind it. Nothing in this block
   // depends on another part of it, and the person is waiting.
   const memory = standingFacts();
+
+  // Trends and due observations, kicked off alongside memory for the same
+  // reason: neither depends on anything else in this function, and the
+  // person is waiting.
+  const trends = trendsDigest();
+  const observations = dueObservations(today);
 
   // The plan comes from the device cache (instant, and correct offline); the
   // week's names and completions are reads, kicked off here for the same
@@ -430,6 +579,9 @@ export async function buildCoachContext(): Promise<string> {
   } catch {
     // Offline: answering with less beats not answering.
   }
+
+  lines.push(formatTrendsLine(await trends, unit));
+  for (const line of formatObservations(await observations)) lines.push(line);
 
   // The plan, before today: it is the frame every day is written inside.
   // Cached, so a basement still knows which phase this is; a read that has

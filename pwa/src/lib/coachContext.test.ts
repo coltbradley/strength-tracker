@@ -22,7 +22,7 @@ vi.mock("./supabase", () => {
   // this module does.
   const builder = (table: string) => {
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "in", "is", "not", "order", "eq"]) {
+    for (const m of ["select", "in", "is", "not", "order", "eq", "or", "limit"]) {
       b[m] = () => b;
     }
     b.then = (
@@ -287,5 +287,42 @@ describe("buildCoachContext", () => {
     // The names query returned nothing for it, so the week line falls back to
     // the count rather than claiming the day is empty.
     expect(ctx).toContain("Wed 2026-09-09 | TODAY | LEGS | 3 exercises");
+  });
+
+  it("carries TRENDS and due OBSERVATIONS", async () => {
+    rows.sessions = [];
+    rows.v_resolved_prescriptions = [];
+    rows.v_trend_digest = [
+      {
+        bw_latest_kg: 82.3,
+        bw_latest_at: "2026-09-08T07:00:00Z",
+        bw_7d_mean_kg: 82.1,
+        bw_7d_n: 5,
+        bw_28d_mean_kg: 81.8,
+        bw_28d_n: 18,
+        bw_28d_slope_kg_per_week: 0.3,
+        energy_14d_mean: 3.6,
+        energy_14d_n: 9,
+        lifts: [],
+      },
+    ];
+    rows.coach_observations = [
+      {
+        id: "obs-1",
+        topic: "bodyweight",
+        observation: "Trending down for three weeks.",
+        check_back_on: "2026-09-09",
+      },
+    ];
+    await cacheSet(cacheKeys.plannedWorkouts, { programs: [], workouts: [] });
+
+    const ctx = await buildCoachContext();
+
+    expect(ctx).toContain("TRENDS: bodyweight 82.3 kg");
+    expect(ctx).toContain("OBSERVATIONS (yours, due for a look):");
+    expect(ctx).toContain(
+      "id obs-1 [bodyweight] Trending down for three weeks. " +
+        "(check back 2026-09-09)",
+    );
   });
 });
