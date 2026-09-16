@@ -1,37 +1,27 @@
 // Reads for check-ins and injuries, online first with a device cache.
 //
-// Same conventions as sessionHistory.ts, for the same reason: literal cache
-// keys in no invalidation family. `fetchWithCache` is online-first, so a stale
-// entry is only read when the network is unreachable, and at that moment the
-// writes that would stale it are still in the outbox, which the callers merge
-// in (checkins.ts `mergeCheckins`, `withPending`).
+// Uses data.ts's cache helper so a real server error served from cache is still
+// reported via reportError, telling the banner when to say "couldn't refresh"
+// rather than "offline". Same conventions as sessionHistory.ts: literal cache
+// keys in no invalidation family, stale entries read only when the network is
+// unreachable at that moment, and writes that would stale them are in the outbox
+// (checkins.ts `mergeCheckins`, `withPending`).
 import { supabase } from "./supabase";
 import { cacheGet, cacheSet } from "./db";
 import { parseLocalDate, todayLocalIso } from "./format";
 import type { CheckinRow, InjuryState } from "./types";
+import { makeFetchWithCache, throwIf, type CacheRead } from "./data";
+import { reportError } from "./errors";
 
 const KEY_INJURIES = "injuries";
 const keyWeekCheckins = (weekStart: string) => `checkinWeek:${weekStart}`;
 const keyWeekBuckets = (weekStart: string) => `checkinBuckets:${weekStart}`;
 
-async function fetchWithCache<T>(
-  key: string,
-  fetcher: () => Promise<T>,
-): Promise<{ data: T; fromCache: boolean }> {
-  try {
-    const data = await fetcher();
-    await cacheSet(key, data);
-    return { data, fromCache: false };
-  } catch (e) {
-    const cached = await cacheGet<T>(key);
-    if (cached !== undefined) return { data: cached, fromCache: true };
-    throw e;
-  }
-}
-
-function throwIf(error: { message: string } | null): void {
-  if (error) throw new Error(error.message);
-}
+const fetchWithCache = makeFetchWithCache({
+  cacheGet,
+  cacheSet,
+  report: reportError,
+});
 
 export function addDaysIso(iso: string, n: number): string {
   const d = parseLocalDate(iso);
@@ -46,10 +36,7 @@ export function localDateOf(iso: string): string {
 }
 
 /** Every injury episode with its check-in history summary, all states. */
-export async function getInjuries(): Promise<{
-  data: InjuryState[];
-  fromCache: boolean;
-}> {
+export async function getInjuries(): Promise<CacheRead<InjuryState[]>> {
   return fetchWithCache(KEY_INJURIES, async () => {
     const { data, error } = await supabase
       .from("v_injury_state")
@@ -68,7 +55,7 @@ export async function getInjuries(): Promise<{
 /** Check-ins from device-local Monday 00:00 to the next Monday, oldest first. */
 export async function getWeekCheckins(
   weekStart: string,
-): Promise<{ data: CheckinRow[]; fromCache: boolean }> {
+): Promise<CacheRead<CheckinRow[]>> {
   return fetchWithCache(keyWeekCheckins(weekStart), async () => {
     const from = parseLocalDate(weekStart).toISOString();
     const to = parseLocalDate(addDaysIso(weekStart, 7)).toISOString();
@@ -96,7 +83,7 @@ export interface BucketRow {
 /** v_checkin_buckets for the seven days from weekStart. */
 export async function getWeekBuckets(
   weekStart: string,
-): Promise<{ data: BucketRow[]; fromCache: boolean }> {
+): Promise<CacheRead<BucketRow[]>> {
   return fetchWithCache(keyWeekBuckets(weekStart), async () => {
     const { data, error } = await supabase
       .from("v_checkin_buckets")
