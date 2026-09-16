@@ -32,6 +32,7 @@ import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
 import { registerExerciseNotes } from "../tools/exercise_notes.ts";
 import { registerFeedback } from "../tools/feedback.ts";
+import { registerGetBodyweight } from "../tools/get_bodyweight.ts";
 import { registerGetCheckinBuckets } from "../tools/get_checkin_buckets.ts";
 import { registerGetCheckins } from "../tools/get_checkins.ts";
 import { registerGetGoalProgress } from "../tools/get_goal_progress.ts";
@@ -76,6 +77,9 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerGetRecentSessions(server, db, ctx);
   registerGetCheckins(server, db, ctx);
   registerGetCheckinBuckets(server, db, ctx);
+  // Registered next to the check-in tools, as the spec asks: another
+  // read over the lifter's own log, same shape of tool.
+  registerGetBodyweight(server, db, ctx);
   registerGetInjuries(server, db, ctx);
   registerGetGoalProgress(server, db, ctx);
   registerGetVolume(server, db, ctx);

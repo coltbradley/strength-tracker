@@ -80,6 +80,9 @@ Deno.test("tools/list advertises every tool with a usable schema", async () => {
     // Check-ins: the lifter's own words from the always-available "Check in"
     // button and the readiness panel. Events, not a trend.
     "get_checkins",
+    // Both sources v_bodyweight unions: the standalone log and the figure
+    // captured at Finish.
+    "get_bodyweight",
     "get_goal_progress",
     // The week as one row. It exists so "how was last week" stops being dozens
     // of set rows added up in a model's head, which was slow and gave a
@@ -333,6 +336,7 @@ const EXPECTED_ANNOTATIONS: Record<
   get_recent_sessions: { readOnly: true, destructive: false },
   get_checkins: { readOnly: true, destructive: false },
   get_checkin_buckets: { readOnly: true, destructive: false },
+  get_bodyweight: { readOnly: true, destructive: false },
   get_injuries: { readOnly: true, destructive: false },
   get_goal_progress: { readOnly: true, destructive: false },
   get_volume: { readOnly: true, destructive: false },
