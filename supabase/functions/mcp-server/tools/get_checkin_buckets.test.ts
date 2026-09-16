@@ -40,11 +40,21 @@ Deno.test("defaults to the last 28 days", async () => {
     .split("=")[1];
   const days = (Date.parse(to) - Date.parse(from)) / 86_400_000;
   assertEquals(days, 27);
+  // Default `to` should be tomorrow in UTC to capture the latest local date.
+  const expectedTo = new Date(Date.now() + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  assertEquals(to, expectedTo);
 });
 
 Deno.test("refuses a malformed date and a range over a year", async () => {
   await assertRejects(() => h().run({ from: "Sept 1", to: "2026-09-14" }));
   const res = await h().run({ from: "2024-01-01", to: "2026-09-14" });
+  assertEquals(res.isError, true);
+});
+
+Deno.test("refuses from after to", async () => {
+  const res = await h().run({ from: "2026-09-20", to: "2026-09-15" });
   assertEquals(res.isError, true);
 });
 

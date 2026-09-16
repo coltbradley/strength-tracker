@@ -44,7 +44,9 @@ export function registerGetCheckinBuckets(
           .string()
           .regex(ISO_DATE)
           .optional()
-          .describe("Last local date, YYYY-MM-DD. Default today."),
+          .describe(
+            "Last local date, YYYY-MM-DD. Default: the latest possible local date today (tomorrow in UTC).",
+          ),
       },
       annotations: {
         readOnlyHint: true,
@@ -54,7 +56,9 @@ export function registerGetCheckinBuckets(
     },
     (args) =>
       guard(ctx, "get_checkin_buckets", async () => {
-        const to = args.to ?? isoDaysAgo(0);
+        // Default `to` to tomorrow in UTC to capture the latest local date for any timezone.
+        // No timezone is more than +14h from UTC, so tomorrow UTC is always >= today everywhere.
+        const to = args.to ?? isoDaysAgo(-1);
         const from =
           args.from ??
           new Date(Date.parse(to) - 27 * 86_400_000).toISOString().slice(0, 10);
