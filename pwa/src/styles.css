@@ -641,6 +641,7 @@
   .selected-day-head > *,
   .history-date > *,
   .date-row > *,
+  .date-heading-row > *,
   .detail-actions > *,
   .banner-row > *,
   .rest-row > *,
@@ -837,7 +838,8 @@
   .plate-hint,
   .rpe-reveal,
   .sync-pill,
-  .rest-timer-time {
+  .rest-timer-time,
+  .checkin-link {
     position: relative;
   }
 
@@ -852,7 +854,8 @@
   .plate-hint::after,
   .rpe-reveal::after,
   .sync-pill::after,
-  .rest-timer-time::after {
+  .rest-timer-time::after,
+  .checkin-link::after {
     content: "";
     position: absolute;
     top: 50%;
@@ -1080,16 +1083,23 @@
 
   /* The check-in link rides the date line in the same micro type, so it
      costs no row and never competes with Start. The 44px tap area comes
-     from the hit extension, not from growing the line. */
-  .date-row {
+     from the hit extension, not from growing the line. Named apart from
+     .date-row (the date-input row in Plan.tsx / TrainingMaxSheet.tsx) so the
+     two never collide in the cascade. */
+  .date-heading-row {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: var(--s-6);
   }
 
+  /* 44px tap target comes from the hit-extension family (~line 818), not
+     from growing this box. It is the last thing in the row, so bleed only
+     has to clear the gap to .train-date / .today-heading on its left: the
+     row's gap is --s-6 (12px), so --s-4 (8px) reaches the floor without
+     overlapping. */
   .checkin-link {
-    position: relative;
+    --hit-bleed: var(--s-4);
     border: 0;
     background: none;
     padding: 0;
@@ -1100,12 +1110,6 @@
     text-transform: uppercase;
     color: var(--text-dim);
     white-space: nowrap;
-  }
-
-  .checkin-link::before {
-    content: "";
-    position: absolute;
-    inset: calc(var(--s-6) * -1) calc(var(--s-4) * -1);
   }
 
   /* the program name belongs to the heading above it, not to the next section:

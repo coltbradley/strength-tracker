@@ -1366,7 +1366,7 @@ export function Today({
           It renders nothing at all when there is nothing to ask. */}
       {!active && <RateSessionCard />}
 
-      <div className="date-row">
+      <div className="date-heading-row">
         <h1 className="today-heading">{formatTodayHeading()}</h1>
         {userId && (
           <button

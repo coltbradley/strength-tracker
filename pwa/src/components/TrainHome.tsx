@@ -82,7 +82,7 @@ export function TrainHome({
 
   return (
     <section className="train-home" aria-label="Train">
-      <div className="date-row">
+      <div className="date-heading-row">
         <div className="train-date">{dateContext}</div>
         {onCheckIn && (
           <button type="button" className="checkin-link" onClick={onCheckIn}>
