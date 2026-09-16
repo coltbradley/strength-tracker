@@ -13,6 +13,7 @@ import type {
   SetInsert,
   SetNoteUpsert,
   SetVoidInsert,
+  SymptomEpisodeInsert,
 } from "./types";
 
 /**
@@ -62,10 +63,20 @@ export type OutboxOp =
   // cannot hold up somebody's sets. The dependency points endurance -> shared
   // infrastructure, never the reverse.
   //
-  // daily_readiness MERGES like set_notes, because a morning panel is
-  // correctable within the day and the id is stable per (user, local_date).
+  // LEGACY: the table is gone (20260916000000). Kept so an op queued before
+  // that release still type-checks; it replays, is refused, and shows as dead.
   | { kind: "insert"; table: "daily_readiness"; payload: DailyReadinessUpsert }
   | { kind: "insert"; table: "checkins"; payload: CheckinInsert }
+  // A pain check-in with no matching open injury opens one. Queued AHEAD of
+  // the check-in that links to it, so the foreign key resolves in replay order.
+  | { kind: "insert"; table: "symptom_episodes"; payload: SymptomEpisodeInsert }
+  // "Cleared up": the lifter closes an injury. Only closed_on is ever patched.
+  | {
+      kind: "update";
+      table: "symptom_episodes";
+      id: string;
+      patch: { closed_on: string };
+    }
   | { kind: "insert"; table: "pain_checks"; payload: PainCheckInsert }
   // A recorded skip. Same queue, same idempotent replay: "not today" is a fact
   // worth keeping, because report_prompts is the denominator that says whether
