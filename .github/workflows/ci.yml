@@ -54,6 +54,14 @@ jobs:
       # discovered by a person waiting on an answer that never comes.
       - run: deno check index.ts
         working-directory: supabase/functions/coach
+      # prompt.test.ts and memory-extract.test.ts existed and grew during the
+      # live-session-adaptation work while nothing ran them: 31 tests pinning
+      # the observation prompt rules and the memory-extraction heuristics sat
+      # in the diff of a green CI. Bare `deno test` passes locally with no
+      # flags -- none of the three files touch the network or the filesystem
+      # outside what Deno permits by default -- so none are added here.
+      - run: deno test
+        working-directory: supabase/functions/coach
       # push-alerts and its web-push implementation. webpush_test.ts existed and
       # nothing ran it: the crypto that signs every notification was covered by
       # a test file CI never opened. No flags -- it is pure computation over
