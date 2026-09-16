@@ -186,7 +186,12 @@ export async function askCoach(
  */
 function reportSilently(err: unknown, context: string): void {
   try {
-    reportError(err, context);
+    // `reportError` toasts by default. CoachSheet already shows its own
+    // calm, inline copy for a failed turn, so a toast on top of that was
+    // the same news twice — the bug this fixes (`reportSilently` toasted
+    // despite its name, at all three call sites above, because none of
+    // them passed `{ toast: false }` through).
+    reportError(err, context, { toast: false });
   } catch {
     // reporting must never be the thing that breaks the chat
   }

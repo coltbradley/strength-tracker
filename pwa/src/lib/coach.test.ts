@@ -18,6 +18,7 @@ vi.mock("./coachContext", () => ({
 vi.mock("./errors", () => ({ reportError: vi.fn() }));
 
 import { askCoach, readAttachment } from "./coach";
+import { reportError } from "./errors";
 
 /** A Response whose body streams the given SSE text in arbitrary chunks. */
 function sseResponse(text: string, chunkSize = 7): Response {
@@ -144,6 +145,54 @@ describe("askCoach SSE handling", () => {
     const c = collector();
     await askCoach([{ role: "user", text: "hi" }], c.events);
     expect(c.errors[0]).toMatch(/sign in/i);
+  });
+
+  // The previous test replaces getSession with a spy resolving to a null
+  // session and never restores it (no afterEach in this file clears
+  // mocks), which would otherwise leak into every test declared after it.
+  // Reset it back to a valid session here so these reportSilently tests
+  // reach the fetch/stream code paths they are actually testing.
+  beforeEach(async () => {
+    const { supabase } = await import("./supabase");
+    vi.spyOn(supabase.auth, "getSession").mockResolvedValue({
+      data: { session: { access_token: "test-jwt" } },
+    } as never);
+  });
+
+  it("logs a network failure quietly — CoachSheet already shows its own inline error", async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error("network down"));
+    const c = collector();
+    await askCoach([{ role: "user", text: "hi" }], c.events);
+    expect(reportError).toHaveBeenCalledWith(
+      expect.any(Error),
+      "coach request",
+      { toast: false },
+    );
+  });
+
+  it("logs a non-OK response quietly, same reason", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response("boom", { status: 500 }));
+    const c = collector();
+    await askCoach([{ role: "user", text: "hi" }], c.events);
+    expect(reportError).toHaveBeenCalledWith(expect.any(Error), "coach", {
+      toast: false,
+    });
+  });
+
+  it("logs a stream read failure quietly, same reason", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("stream broke"));
+      },
+    });
+    vi.mocked(fetch).mockResolvedValue(new Response(body, { status: 200 }));
+    const c = collector();
+    await askCoach([{ role: "user", text: "hi" }], c.events);
+    expect(reportError).toHaveBeenCalledWith(
+      expect.any(Error),
+      "coach stream",
+      { toast: false },
+    );
   });
 });
 

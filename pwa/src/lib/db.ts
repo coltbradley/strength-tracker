@@ -7,6 +7,7 @@ import type {
   BodyweightInsert,
   CheckinInsert,
   DailyReadinessUpsert,
+  FeedbackInsert,
   PainCheckInsert,
   SessionInsert,
   SessionPatch,
@@ -92,7 +93,11 @@ export type OutboxOp =
         channel: string;
         skipped: boolean;
       };
-    };
+    }
+  // A problem report from ReportBugSheet. Same queue as everything else,
+  // so it survives a dead spot in the gym instead of needing a live
+  // connection at the exact moment someone hits send.
+  | { kind: "insert"; table: "feedback"; payload: FeedbackInsert };
 
 export interface OutboxItem {
   op: OutboxOp;

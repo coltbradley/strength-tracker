@@ -238,6 +238,23 @@ export interface BodyweightInsert {
 }
 
 /**
+ * A bug report from ReportBugSheet, queued like a set — client-generated
+ * id, so a replay after a partial flush is the SAME report rather than a
+ * second one. `kind` is always 'bug' here: `feedback` also carries
+ * Claude's own 'feature' / 'data_gap' / 'question' rows, written directly
+ * by the MCP server (submit_feedback), which never goes through this
+ * queue.
+ */
+export interface FeedbackInsert {
+  id: string;
+  kind: "bug";
+  title: string;
+  detail: string;
+  context: string;
+  source: "user";
+}
+
+/**
  * One dated training-max value. The table is HISTORY-carrying:
  * `(user_id, exercise_id, effective_date)` is unique and the row with the
  * latest `effective_date <= today` is the one that resolves a % TM
