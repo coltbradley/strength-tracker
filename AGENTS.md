@@ -49,6 +49,20 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   `set_notes` is the one editable set-adjacent row (a user annotation,
   last-write-wins) — the sessions.notes mutability class, never a way to
   edit the set itself.
+- `session_skips` (20260917000000) is the record of an exercise the
+  lifter skipped mid-session, WHY they skipped it (an optional
+  200-character reason), and whether the whole slot was skipped or only
+  its warmups. It is append-only like `sets` — no update or delete policy
+  — because a skip is a historical fact about that session, not a state
+  to be corrected in place. It is written by the PWA ONLY, through the
+  outbox, one row per skipped entry, at Finish (`End.tsx`): un-skipping
+  mid-session therefore never touches the network, and a session that is
+  never finished loses its skips, which `docs/decisions.md` accepts
+  rather than writing skips as they happen. `get_recent_sessions` and
+  `get_session_diff` read it back beside a session's sets so the coach
+  can say what changed and why, never to compute a ratio — the same rule
+  `v_weekly_summary`'s two counts already enforce for planned days: a
+  skip is context for the NEXT session, not a score on this one.
 - `sessions` are soft-deleted only (`discarded_at`); no delete policy exists.
   A discarded session leaves every view but stays in Postgres. So are
   `programs` and, since 20260901030000, `planned_workouts` — one soft-delete
@@ -153,6 +167,22 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   never stored. Views are `security_invoker` so RLS applies, and every
   set-derived view reads `v_live_sets` (voids and discards excluded) — never
   `sets` directly.
+  `coach_observations` (20260917010000) is the one exception, and a narrow
+  one: `evidence` is a JSONB snapshot of the numbers the coach saw when it
+  wrote the observation, frozen so a later check-back can compare THEN
+  against NOW. No view, chart or MCP tool may read `evidence` as a current
+  metric — it is a memory of a metric, not one — and `v_trend_digest`
+  (`security_invoker`, over `v_bodyweight`/`v_e1rm`/`v_weekly_volume`/
+  `checkins`) stays the only live read, computed at read time like every
+  other derived view, so `get_trends` and the context block's TRENDS line
+  never disagree with what the log actually says right now. Writes to
+  `coach_observations` come only from the MCP service role
+  (`record_observation`/`resolve_observation`); RLS is owner SELECT and
+  DELETE only, no update — resolving one supersedes or closes it with a new
+  row's `outcome`/`status`, it never rewrites the old one's `observation` in
+  place. It is deletable, unlike the training record, for the same reason
+  `coach_memory` is: an opinion that stopped applying makes every future
+  answer worse.
 - Exercise library sources: 'free-exercise-db' (generated seed), 'curated'
   (hand-maintained seed), 'edited' (a seeded row a human changed), 'custom'
   (MCP add_exercise / PWA). The column carries TWO facts and the vocabulary
@@ -322,6 +352,19 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   `user_settings` or `exercise_prefs` table and adding one needs a decision
   entry: it would create a third write-ownership class for data no view and
   no MCP tool reads. Accepted: settings do not sync across devices.
+- Load presentation is a closed set of six modes
+  (`pwa/src/lib/loadStyle.ts`: `LoadStyle = 'plates' | 'stack'`, crossed
+  with the existing unilateral ×1/×2 and bodyweight cases already in
+  `loadEntry.ts`), device-local per exercise like every other
+  `ExercisePref`, and it changes ONLY how a load is entered and what the
+  plate calculator shows — never `load_kg`, which stays the total system
+  load regardless of mode. `ExercisePref.barKg` now means 'base weight'
+  (a bar OR a machine's sled/pin start), and there is no `base_kg` column
+  and never will be: the base is presentation, resolved the same
+  three-step order `loadEntry` already uses (device override, then
+  prescription, then a guess from `equipment` and name), and a value that
+  only affects how a number is SHOWN has no business on a row that is
+  supposed to be the total someone actually moved.
 - App updates must never lose device data: the IndexedDB database
   ("strength-log") holds unsynced sets in the outbox. Version bumps must be
   strictly additive (see the comment in `pwa/src/lib/db.ts`); never rename
