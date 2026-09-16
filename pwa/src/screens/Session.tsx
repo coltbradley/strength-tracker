@@ -119,10 +119,12 @@ import {
   focusEntryKey,
   isFocusEligible,
   pinnedOverviewEntryKey,
+  railState,
   transitionPresentation,
   twoMemberSuperset,
   type SessionPresentation,
 } from "../lib/sessionFocus";
+import type { ProgressState } from "../components/session/StateGlyph";
 import { cancelRestAlert, scheduleRestAlert } from "../lib/push";
 import {
   enteredKg,
@@ -711,6 +713,32 @@ export function Session() {
   // Selecting A2 in overview still opens the pair from its canonical first
   // member. A round is one unit of work, not two independently focused cards.
   const focusEntry = focusSupersetPair?.[0] ?? selectedFocusEntry;
+
+  // One state per entry, from the shared vocabulary (StateGlyph.tsx),
+  // feeding both the focus rail and the overview rows so the two surfaces
+  // can never describe the same entry two different ways.
+  const currentKeys = useMemo(
+    () =>
+      new Set(
+        focusSupersetPair
+          ? [focusSupersetPair[0].key, focusSupersetPair[1].key]
+          : focusEntry
+            ? [focusEntry.key]
+            : [],
+      ),
+    [focusSupersetPair, focusEntry],
+  );
+  const entryState = useCallback(
+    (e: ExerciseEntry): ProgressState =>
+      railState(
+        entries,
+        e,
+        currentKeys,
+        (x) => Boolean(skips[x.key]),
+        entryDone,
+      ),
+    [entries, currentKeys, skips, entryDone],
+  );
 
   // default open: first incomplete entry, once, AFTER sets have merged —
   // otherwise a mid-workout reload opens exercise 1 instead of where the
@@ -3108,6 +3136,7 @@ export function Session() {
               entry={focusEntry}
               entryProgress={entryProgress}
               entryDone={entryDone}
+              entryState={entryState}
               onViewFullWorkout={showOverview}
               onChooseNext={(entry) => {
                 setFocusKey(entry.key);
@@ -3160,6 +3189,7 @@ export function Session() {
                 focusModeAvailable={focusEligible}
                 entryProgress={entryProgress}
                 isSkipped={(entry) => Boolean(skips[entry.key])}
+                entryState={entryState}
                 hasSections={hasSections}
                 supersetInfo={supersetInfo}
                 formatScheme={scheme}

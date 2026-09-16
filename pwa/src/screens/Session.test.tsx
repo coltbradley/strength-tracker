@@ -118,7 +118,7 @@ describe("Session corrections", () => {
     // start — go to the workout overview first, since "expand details" is
     // the accordion's own control.
     fireEvent.click(
-      await screen.findByRole("button", { name: "View full workout" }),
+      await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     fireEvent.click(
       await screen.findByRole("button", { name: "expand details" }),
@@ -438,7 +438,7 @@ describe("Session hero capture", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "View full workout" }),
+      await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     expect(screen.getByRole("button", { name: "UNSKIP" })).toBeTruthy();
   });

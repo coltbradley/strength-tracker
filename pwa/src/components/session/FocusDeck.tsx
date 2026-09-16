@@ -1,12 +1,22 @@
 import { useState, type ReactNode } from "react";
-import { targetSets, type ExerciseEntry } from "../../lib/entries";
+import {
+  targetSets,
+  warmupSets,
+  workingSets,
+  type ExerciseEntry,
+} from "../../lib/entries";
 import { twoMemberSuperset } from "../../lib/sessionFocus";
+import { StateGlyph, type ProgressState } from "./StateGlyph";
 
 export interface FocusDeckProps {
   entries: readonly ExerciseEntry[];
   entry: ExerciseEntry;
   entryProgress(entry: ExerciseEntry): number;
   entryDone(entry: ExerciseEntry): boolean;
+  /** One state per entry, from the shared vocabulary — see StateGlyph.tsx
+   *  and lib/sessionFocus.ts's `railState`. Drives both the progress rail
+   *  below and, from the identical source, WorkoutOverview's rows. */
+  entryState(entry: ExerciseEntry): ProgressState;
   onViewFullWorkout(): void;
   onChooseNext(entry: ExerciseEntry): void;
   canAdvance: boolean;
@@ -79,12 +89,24 @@ function focusSetPosition(
   return { progress, target };
 }
 
+const SEGMENT_STATE: Record<"completed" | "current" | "future", ProgressState> =
+  {
+    completed: "done",
+    current: "current",
+    future: "upcoming",
+  };
+
 function FocusSetProgress({
   progress,
   target,
+  warmup = false,
 }: {
   progress: number;
   target: number;
+  /** Every dot in THIS run is a warmup — the run itself is always one kind
+   *  or the other (see lib/entries.ts's `targetSets`), never mixed, so one
+   *  flag for the whole strip is enough. */
+  warmup?: boolean;
 }) {
   if (target <= 0) return null;
 
@@ -92,19 +114,24 @@ function FocusSetProgress({
   return (
     <div className="focus-set-progress" aria-hidden="true">
       {Array.from({ length: target }, (_, index) => {
-        const state =
+        const localState: "completed" | "current" | "future" =
           index < completed
             ? "completed"
             : index === completed
               ? "current"
               : "future";
+        const state = SEGMENT_STATE[localState];
         return (
           <span
             key={index}
-            className={`focus-set-segment focus-set-segment--${state}`}
+            className={`focus-set-segment focus-set-segment--${localState}`}
             data-state={state}
           >
-            {state === "completed" ? "✓" : state === "current" ? "●" : ""}
+            <StateGlyph
+              state={state}
+              warmup={warmup}
+              label={`${warmup ? "warmup" : "set"} ${index + 1} — ${state}`}
+            />
           </span>
         );
       })}
@@ -126,6 +153,7 @@ export function FocusDeck({
   entry,
   entryProgress,
   entryDone,
+  entryState,
   onViewFullWorkout,
   onChooseNext,
   canAdvance,
@@ -164,14 +192,51 @@ export function FocusDeck({
   return (
     <section className="focus-deck">
       <div className="focus-deck-top">
-        <button
-          type="button"
-          className="focus-deck-overview"
-          aria-label="View full workout"
-          onClick={onViewFullWorkout}
+        {/* A real <ul>, not a <div role="list">: the dots inside stay real
+         * <button>s (role="listitem" on the button itself would REPLACE its
+         * native button role, not add to it, so a screen reader would
+         * announce a plain list item with no indication it is activatable —
+         * that was shipped once and is exactly the regression this markup
+         * avoids). role="list" is still explicit here because this list's
+         * `list-style: none` strips the <ul>'s implicit list role in
+         * Safari/VoiceOver (a known WebKit quirk) — do not remove it as
+         * "redundant". */}
+        <ul
+          className="focus-progress-rail"
+          role="list"
+          aria-label="workout progress"
         >
-          ≡
-        </button>
+          {entries.map((candidate) => {
+            const state = entryState(candidate);
+            const label = `${candidate.name} — ${state}`;
+            return (
+              <li key={candidate.key} className="focus-progress-dot-item">
+                <button
+                  type="button"
+                  className="focus-progress-dot"
+                  aria-label={
+                    state === "current"
+                      ? `${label} — view full workout`
+                      : `${label} — jump here`
+                  }
+                  onClick={() =>
+                    state === "current"
+                      ? onViewFullWorkout()
+                      : onChooseNext(candidate)
+                  }
+                >
+                  <StateGlyph
+                    state={state}
+                    warmup={
+                      warmupSets(candidate) > 0 && workingSets(candidate) === 0
+                    }
+                    label={label}
+                  />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
         {onOpenMore && (
           <button
             type="button"
@@ -278,7 +343,11 @@ export function FocusDeck({
       )}
 
       <div className="focus-deck-editor">
-        <FocusSetProgress progress={progress} target={target} />
+        <FocusSetProgress
+          progress={progress}
+          target={target}
+          warmup={warmupSets(entry) > 0 && workingSets(entry) === 0}
+        />
         {renderEditor(entry)}
       </div>
 
