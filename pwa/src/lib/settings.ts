@@ -35,6 +35,7 @@
 
 import { reportError } from "./errors";
 import type { LoadEntry } from "./types";
+import type { LoadStyle } from "./loadStyle";
 import { lbToKg, type Unit } from "./units";
 
 // ---- shape -----------------------------------------------------------------
@@ -71,6 +72,11 @@ export interface ExercisePref {
    *  absent = fall back to the prescription, then to the equipment guess
    *  (lib/loadEntry.ts). Storage stays kg TOTAL either way. */
   loadEntry?: LoadEntry;
+  /** which load-mode presentation this movement uses: a bar-and-plates
+   *  calculator or a pin stack; absent = fall back to the equipment/name
+   *  guess (lib/loadStyle.ts). Orthogonal to `loadEntry` above — that is
+   *  per-side vs total, this is what the calculator draws. */
+  loadStyle?: LoadStyle;
 }
 
 export type ExercisePrefs = Record<string, ExercisePref>;
@@ -210,6 +216,8 @@ function parseExercisePrefs(raw: unknown): ExercisePrefs | null {
     if (step !== null) pref.loadStepKg = step;
     if (value.loadEntry === "total" || value.loadEntry === "per_side")
       pref.loadEntry = value.loadEntry;
+    if (value.loadStyle === "plates" || value.loadStyle === "stack")
+      pref.loadStyle = value.loadStyle;
     if (Object.keys(pref).length === 0) continue;
     out[id] = pref;
     n += 1;
@@ -1046,6 +1054,25 @@ export function setExerciseLoadEntry(
   entry: LoadEntry | null,
 ): void {
   setExercisePref(exerciseId, { loadEntry: entry ?? undefined });
+}
+
+/**
+ * How this movement's load is PRESENTED: a bar-and-plates calculator or a
+ * pin stack. Only the user's own choice lives here; the equipment/name
+ * default is resolved in lib/loadStyle.ts, the one place that chain exists.
+ */
+export function getExerciseLoadStyle(
+  exerciseId: string,
+): LoadStyle | undefined {
+  return getExercisePref(exerciseId).loadStyle;
+}
+
+/** undefined clears the override. */
+export function setExerciseLoadStyle(
+  exerciseId: string,
+  style: LoadStyle | undefined,
+): void {
+  setExercisePref(exerciseId, { loadStyle: style });
 }
 
 // ---- display ---------------------------------------------------------------
