@@ -56,6 +56,8 @@ vi.mock("../lib/data", async () => {
     worstStale: vi.fn(),
     getBodyweight: () => getBodyweight(),
     recordBodyweight: (...a: unknown[]) => recordBodyweight(...a),
+    getObservations: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
+    deleteObservation: vi.fn().mockResolvedValue(undefined),
   };
 });
 

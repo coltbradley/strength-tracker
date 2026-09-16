@@ -4,6 +4,7 @@ import {
   LAST_RUN_CAP,
   QueryError,
   REPORT_WINDOW_MS,
+  applyObservationDelete,
   makeFetchWithCache,
   staleReason,
   worstStale,
@@ -15,6 +16,7 @@ import {
   scanLoggedExercises,
   summariseAdherence,
   type ActualsRow,
+  type CoachObservationRow,
 } from "./data";
 import type { AdherenceRow, TrainingMaxRow } from "./types";
 
@@ -641,5 +643,24 @@ describe("fetchWithCache", () => {
       }),
     ).rejects.toBeInstanceOf(QueryError);
     expect(h.report).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyObservationDelete", () => {
+  const rows: CoachObservationRow[] = [
+    { id: "a", topic: "bodyweight", observation: "x", check_back_on: null },
+    { id: "b", topic: "fueling", observation: "y", check_back_on: null },
+  ];
+
+  it("removes the matching row from a cached list", () => {
+    expect(applyObservationDelete(rows, "a")).toEqual([rows[1]]);
+  });
+
+  it("is a no-op when the id is not present", () => {
+    expect(applyObservationDelete(rows, "z")).toEqual(rows);
+  });
+
+  it("leaves nothing to patch when there was no cache", () => {
+    expect(applyObservationDelete(undefined, "a")).toBeUndefined();
   });
 });
