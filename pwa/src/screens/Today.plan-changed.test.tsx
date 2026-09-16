@@ -60,6 +60,16 @@ vi.mock("../lib/data", () => ({
   deleteTemplate: vi.fn(),
   weekOrder: (a: { day_index: number }, b: { day_index: number }) =>
     a.day_index - b.day_index,
+  // Not exercised here (the sheet this test renders Today around is never
+  // opened), but CheckInSheet -> checkinHistory.ts calls this at module load,
+  // so a mock missing it throws before any test body runs.
+  makeFetchWithCache:
+    () => async (_key: string, fetcher: () => Promise<unknown>) => ({
+      data: await fetcher(),
+      fromCache: false,
+      stale: null,
+    }),
+  throwIf: () => {},
 }));
 
 vi.mock("../lib/sync", () => ({
@@ -175,11 +185,11 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     render(<Today presentation="train" />);
 
     await screen.findByText("Day 1");
-    expect(
-      await screen.findByText("1 movement · 3 sets"),
-    ).toBeTruthy();
+    expect(await screen.findByText("1 movement · 3 sets")).toBeTruthy();
     expect(screen.getByText("Squat")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "View program" }).getAttribute("href")).toBe("/program");
+    expect(
+      screen.getByRole("link", { name: "View program" }).getAttribute("href"),
+    ).toBe("/program");
     expect(screen.queryByText("THIS WEEK")).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(screen.queryByText("3×5")).toBeNull();
@@ -190,7 +200,9 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
 
     render(<Today presentation="train" />);
 
-    await screen.findByText("Couldn’t load workout details. Refresh your plan to retry.");
+    await screen.findByText(
+      "Couldn’t load workout details. Refresh your plan to retry.",
+    );
 
     getResolvedPrescriptions.mockResolvedValue({
       data: [rxRow("Deadlift")],
@@ -218,9 +230,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
 
       render(<Today presentation="train" />);
 
-      expect(
-        await screen.findByText("1 movement · 3 sets"),
-      ).toBeTruthy();
+      expect(await screen.findByText("1 movement · 3 sets")).toBeTruthy();
       expect(screen.getByText(note)).toBeTruthy();
     },
   );
@@ -244,7 +254,9 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     notifyPlanChanged();
 
     expect(await screen.findByText("Deadlift")).toBeTruthy();
-    expect(screen.queryByText("Offline, showing saved workout details.")).toBeNull();
+    expect(
+      screen.queryByText("Offline, showing saved workout details."),
+    ).toBeNull();
     expect(getResolvedPrescriptions).toHaveBeenCalledTimes(2);
   });
 
@@ -263,7 +275,9 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
 
     render(<Today presentation="train" />);
 
-    await waitFor(() => expect(getResolvedPrescriptions).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(getResolvedPrescriptions).toHaveBeenCalledTimes(1),
+    );
     resolveRead!({ data: [rxRow("Squat")], fromCache: false, stale: null });
   });
 });
