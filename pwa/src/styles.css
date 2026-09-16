@@ -2040,6 +2040,20 @@
     margin-top: var(--s-3);
   }
 
+  /* Wraps RpeChips under the rest strip. RpeChips renders its own
+   * .rule-section (border-top, padding-top, the .rpe-grid/.rpe-btn pair
+   * that already clears the 44px floor) -- this wrapper adds only the
+   * margin that section needs to sit below .rest-foot's text instead of
+   * touching it. .rest-timer's own `gap` does not reach a child appended
+   * after .rest-foot, since .rest-timer is never actually a flex/grid
+   * container (the property is inert there); every OTHER gap in the strip
+   * comes from a child's own margin, and this follows the same rule rather
+   * than fixing that unrelated declaration. No color literal (the section's
+   * own tokens already clear AA) and no motion: that is task 17's remit. */
+  .rest-rate {
+    margin-top: var(--s-6);
+  }
+
   /* ---- sync pill: squared, hairline ---- */
 
   .sync-group {

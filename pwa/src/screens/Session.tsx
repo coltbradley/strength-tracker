@@ -351,6 +351,15 @@ export function Session() {
 
   // corrections: voided set ids (append-only voiding) and skipped entry keys
   const [voids, setVoids] = useState<Set<string>>(new Set());
+
+  // The set the rest strip's RPE row rates. Set at the moment of logging
+  // (logSet / logRound below) and updated, never cleared, by `rateLastSet`
+  // itself -- a rating is a correction, and a correction changes the set's
+  // id, so this must follow it or the second tap would try to correct a row
+  // that `set_voids` already hides. Going stale after the rest strip is
+  // dismissed is harmless: the row that reads it (`restTimerEl` below) is
+  // gated on `rest`, which becomes null at the same time.
+  const [lastLoggedSet, setLastLoggedSet] = useState<SetInsert | null>(null);
   const [skips, setSkips] = useState<Record<string, SkipRecord>>({});
   const [voidArm, setVoidArm] = useArmed();
   // The set being CORRECTED, with the stepper values it displaced so Cancel
@@ -1314,6 +1323,7 @@ export function Session() {
       recordableRest(),
     );
     const next = applySets((prev) => [...prev, set]);
+    setLastLoggedSet(set);
     cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
       reportError(e, "cache session sets"),
     );
@@ -1503,6 +1513,9 @@ export function Session() {
         entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
       const now = Date.now();
       restRef.current = { startedAt: now };
+      // The round names its rest after A2 (see forLabel just below); the
+      // RPE row rates the same set for the same reason.
+      setLastLoggedSet(inserts[1]);
       const forLabel = `${members[1].name} set ${inserts[1].set_index + 1}`;
       const showStrip =
         autoStartRest &&
@@ -1691,6 +1704,67 @@ export function Session() {
     setRpe(editing.staged.rpe);
     setEditing(null);
     toast(`Set ${old.set_index + 1} corrected`);
+  };
+
+  /** Rate the set the rest strip is currently resting after, without
+   *  entering the full correction UI -- tapping an RPE chip mid-rest should
+   *  not flip the hero into "SAVE SET N" the way tapping a LOGGED row does.
+   *  Still a correction underneath (void + new row at the same set_index),
+   *  because `sets` is append-only and this IS a correction: only `rpe`
+   *  changes. */
+  const rateLastSet = (nextRpe: number | null) => {
+    const old = lastLoggedSet;
+    if (!old || !sessionId) return;
+    const correction = {
+      load_kg: old.load_kg,
+      reps: old.reps,
+      set_type: old.set_type,
+      load_entry: old.load_entry ?? null,
+      rpe: nextRpe,
+    };
+    if (isNoopCorrection(old, correction)) return;
+    const next = correctedSet(old, correction);
+
+    const nextVoids = new Set(voids);
+    nextVoids.add(old.id);
+    setVoids(nextVoids);
+    cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
+      (e: unknown) => reportError(e, "cache voids"),
+    );
+    const nextSets = applySets((prev) =>
+      prev.map((x) => (x.id === old.id ? next : x)),
+    );
+    cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
+      reportError(e, "cache session sets"),
+    );
+    outbox
+      .enqueue({ kind: "insert", table: "sets", payload: next })
+      .then(() =>
+        outbox.enqueue({
+          kind: "insert",
+          table: "set_voids",
+          payload: { set_id: old.id },
+        }),
+      )
+      .catch((e: unknown) => reportError(e, "rate set"));
+    // the note is about the set, and the set now has a new id -- same carry
+    // saveCorrection already does, for the same reason.
+    const note = setNotes[old.id];
+    if (note) {
+      const nextNotes = { ...setNotes, [next.id]: note };
+      setSetNotes(nextNotes);
+      cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
+        (e: unknown) => reportError(e, "cache set notes"),
+      );
+      outbox
+        .enqueue({
+          kind: "insert",
+          table: "set_notes",
+          payload: { set_id: next.id, note },
+        })
+        .catch((e: unknown) => reportError(e, "carry set note"));
+    }
+    setLastLoggedSet(next);
   };
 
   /** Void a logged set: hide it from every view via an append-only
@@ -3069,27 +3143,61 @@ export function Session() {
   // it reverts to the strip, since neither of those paths has a bottom bar
   // of its own to sit above.
   const restInline = inFocusDeck && !editing && focusSupersetPair === null;
+
+  /** "Next: Squat 145 x 5, set 3 of 4" -- the same set the focus hero's own
+   *  "next dot" line and the state rail's "next" dot point at. If the open
+   *  entry itself is not done yet, the very next set is just its own next
+   *  rep of the same exercise; only once it IS done does this look at
+   *  advanceTo (partnerEntry ?? nextEntry, see above). Null once there is
+   *  nothing left -- RestTimer falls back to naming what the rest was
+   *  recorded against. */
+  const nextSetLabel = (): string | null => {
+    const target = openEntry && !entryDone(openEntry) ? openEntry : advanceTo;
+    if (!target) return null;
+    const total = targetSets(target);
+    const schemeText = scheme(target);
+    const position =
+      total === 0
+        ? "by feel"
+        : `set ${Math.min(entryProgress(target) + 1, total)} of ${total}`;
+    return schemeText
+      ? `Next: ${target.name} ${schemeText}, ${position}`
+      : `Next: ${target.name}, ${position}`;
+  };
+
   const restTimerEl = (
-    <RestTimer
-      rest={rest}
-      onAdjust={(d) => {
-        if (!rest) return;
-        const targetSeconds = Math.max(0, rest.targetSeconds + d);
-        setRest({ ...rest, targetSeconds });
-        mirrorRest(targetSeconds, rest.forLabel);
-        // the closed-app alert follows the target
-        armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
-      }}
-      onEdit={() => openPad("rest")}
-      /* dismissing hides the strip only: the clock keeps measuring, so
-         the mirror keeps its startedAt with a null target — and a strip
-         nobody wants to see is a buzz nobody wants either */
-      onDone={() => {
-        setRest(null);
-        mirrorRest(null, null);
-        disarmRestAlert();
-      }}
-    />
+    <>
+      <RestTimer
+        rest={rest}
+        onAdjust={(d) => {
+          if (!rest) return;
+          const targetSeconds = Math.max(0, rest.targetSeconds + d);
+          setRest({ ...rest, targetSeconds });
+          mirrorRest(targetSeconds, rest.forLabel);
+          // the closed-app alert follows the target
+          armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
+        }}
+        onEdit={() => openPad("rest")}
+        /* dismissing hides the strip only: the clock keeps measuring, so
+           the mirror keeps its startedAt with a null target — and a strip
+           nobody wants to see is a buzz nobody wants either */
+        onDone={() => {
+          setRest(null);
+          mirrorRest(null, null);
+          disarmRestAlert();
+        }}
+        nextSetLabel={nextSetLabel()}
+      />
+      {rest && !editing && lastLoggedSet && (
+        <div className="rest-rate">
+          <RpeChips
+            shown
+            value={lastLoggedSet.rpe ?? null}
+            onChange={(rpe) => rateLastSet(rpe)}
+          />
+        </div>
+      )}
+    </>
   );
 
   return (

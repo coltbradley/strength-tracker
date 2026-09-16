@@ -11,7 +11,7 @@
 // again on the next tap. Both are invisible in normal use and both are
 // exactly the sort of thing that goes off in a quiet gym.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { RestTimer, type ActiveRest } from "./RestTimer";
 
 const noop = () => {};
@@ -163,5 +163,53 @@ describe("RestTimer", () => {
     );
     act(() => unmount());
     expect(clear).toHaveBeenCalled();
+  });
+
+  it("names what the rest was recorded against when there is nothing to look forward to", () => {
+    render(
+      <RestTimer
+        rest={{
+          startedAt: Date.now(),
+          targetSeconds: 90,
+          forLabel: "Squat set 2",
+        }}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+        nextSetLabel={null}
+      />,
+    );
+    expect(screen.getByText(/Recorded against Squat set 2\./)).toBeTruthy();
+  });
+
+  it("looks forward to the next set instead, when one is given", () => {
+    render(
+      <RestTimer
+        rest={{
+          startedAt: Date.now(),
+          targetSeconds: 90,
+          forLabel: "Squat set 2",
+        }}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+        nextSetLabel="Next: Squat 145 × 5, set 3 of 4"
+      />,
+    );
+    expect(screen.getByText("Next: Squat 145 × 5, set 3 of 4")).toBeTruthy();
+    expect(screen.queryByText(/Recorded against/)).toBeNull();
+  });
+
+  it("still shows the OVER copy once the rest is past target, forward label or not", () => {
+    render(
+      <RestTimer
+        rest={overdue()}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+        nextSetLabel="Next: Squat 145 × 5, set 3 of 4"
+      />,
+    );
+    expect(screen.getByText(/Past the prescribed/)).toBeTruthy();
   });
 });
