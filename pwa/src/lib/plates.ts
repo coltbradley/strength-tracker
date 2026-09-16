@@ -23,7 +23,16 @@ export interface PlateSplit {
 
 // Inventory values may be exact-kg lb equivalents (45 lb = 20.41185665 kg),
 // so all comparisons carry a small tolerance.
-const EPS = 1e-6;
+// Widened from 1e-6 (2026-09-16 postmortem): the caller rounds a typed
+// value to 2 decimal PLACES OF KG before it ever reaches split()
+// (Session.tsx's pad commit handlers), so a target here already carries up
+// to +/-0.005 kg of rounding slop. 1e-6 was tighter than that slop, so the
+// greedy loop below refused a plate that the rounded target could not
+// quite reach byte-for-byte, and 135 lb (61.235089 kg, rounded to 61.24)
+// came back as 130 lb. 0.01 kg absorbs the rounding without ever calling a
+// genuinely unbuildable target "exact" — see the regression table in
+// plates.test.ts.
+const EPS = 0.01;
 
 /**
  * Hard ceiling on plates loaded per side, so the greedy loop is bounded no
