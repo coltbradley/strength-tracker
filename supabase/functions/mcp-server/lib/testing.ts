@@ -54,6 +54,9 @@ class FakeQuery {
   eq(c: string, v: unknown) {
     return this.f("eq", c, v);
   }
+  is(c: string, v: unknown) {
+    return this.f("is", c, v);
+  }
   gte(c: string, v: unknown) {
     return this.f("gte", c, v);
   }

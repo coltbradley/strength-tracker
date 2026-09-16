@@ -84,6 +84,15 @@ Deno.test("tools/list advertises every tool with a usable schema", async () => {
     // captured at Finish.
     "get_bodyweight",
     "get_goal_progress",
+    // Trends without recomputation, and the session diff it is built beside:
+    // what changed between the plan and what actually happened, for
+    // adapting the next session.
+    "get_trends",
+    "get_session_diff",
+    // The coach's own conclusions, with a check-back date.
+    "record_observation",
+    "resolve_observation",
+    "get_observations",
     // The week as one row. It exists so "how was last week" stops being dozens
     // of set rows added up in a model's head, which was slow and gave a
     // slightly different answer every time it was asked.
@@ -339,6 +348,9 @@ const EXPECTED_ANNOTATIONS: Record<
   get_bodyweight: { readOnly: true, destructive: false },
   get_injuries: { readOnly: true, destructive: false },
   get_goal_progress: { readOnly: true, destructive: false },
+  get_trends: { readOnly: true, destructive: false },
+  get_session_diff: { readOnly: true, destructive: false },
+  get_observations: { readOnly: true, destructive: false },
   get_volume: { readOnly: true, destructive: false },
   get_training_maxes: { readOnly: true, destructive: false },
   get_week_summary: { readOnly: true, destructive: false },
@@ -356,6 +368,12 @@ const EXPECTED_ANNOTATIONS: Record<
   remember: { readOnly: false, destructive: false },
   submit_feedback: { readOnly: false, destructive: false },
   resolve_feedback: { readOnly: false, destructive: false },
+  // Additive: a new open observation, never overwriting or deleting one.
+  record_observation: { readOnly: false, destructive: false },
+  // Marks an existing observation resolved/superseded; it never deletes it
+  // or touches anything but the row named by id, so it is not destructive
+  // in this table's sense (compare resolve_feedback, the same shape).
+  resolve_observation: { readOnly: false, destructive: false },
   add_exercise: { readOnly: false, destructive: false },
   set_goal: { readOnly: false, destructive: true },
   set_training_plan: { readOnly: false, destructive: true },

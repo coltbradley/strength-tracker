@@ -28,6 +28,7 @@ import type { RequestContext } from "./errors.ts";
 import { log } from "./log.ts";
 import { protectedResourceMetadata } from "./oauth.ts";
 import { captureError } from "./sentry.ts";
+import { registerCoachObservations } from "../tools/coach_observations.ts";
 import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
 import { registerExerciseNotes } from "../tools/exercise_notes.ts";
@@ -43,6 +44,8 @@ import {
   registerListPrograms,
 } from "../tools/get_program.ts";
 import { registerGetRecentSessions } from "../tools/get_recent_sessions.ts";
+import { registerGetSessionDiff } from "../tools/get_session_diff.ts";
+import { registerGetTrends } from "../tools/get_trends.ts";
 import { registerGetVolume } from "../tools/get_volume.ts";
 import { registerGetWeekSummary } from "../tools/get_week_summary.ts";
 import { registerMemory } from "../tools/memory.ts";
@@ -86,6 +89,11 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerGetWeekSummary(server, db, ctx);
   registerMemory(server, db, ctx);
   registerListPrograms(server, db, ctx);
+  // Trends without recomputation, and the session diff the coach reviews
+  // against ("what changed, for adapting the next session" — never a
+  // completion score).
+  registerGetTrends(server, db, ctx);
+  registerGetSessionDiff(server, db, ctx);
   // Write tools. NEVER add tools that write sessions or sets: those tables
   // belong to the PWA (see CLAUDE.md hard rules).
   registerGetProgram(server, db, ctx);
@@ -98,6 +106,10 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerManageExercises(server, db, ctx);
   registerFeedback(server, db, ctx);
   registerExerciseNotes(server, db, ctx);
+  // The coach's own conclusions: record/resolve are writes, get_observations
+  // a read. All three enabled for the in-app coach — this is the mechanism
+  // the spec asks it to use, not a destructive or cross-account write.
+  registerCoachObservations(server, db, ctx);
   // C · the loop: recognise a day, repeat it forward. find_similar_days is a
   // read; repeat_planned_workout writes planned tables only, like the two
   // plan tools above it, and never sets or sessions.
