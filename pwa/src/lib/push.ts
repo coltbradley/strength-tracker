@@ -165,7 +165,8 @@ export async function subscribeToRestAlerts(): Promise<PushState> {
     reportError(e, "rest alert permission");
     return Notification.permission === "denied" ? "denied" : "off";
   }
-  if (permission !== "granted") return permission === "denied" ? "denied" : "off";
+  if (permission !== "granted")
+    return permission === "denied" ? "denied" : "off";
 
   const reg = await registration();
   if (!reg) return "unsupported";
@@ -174,7 +175,10 @@ export async function subscribeToRestAlerts(): Promise<PushState> {
   try {
     const res = await call("vapid-public-key", { method: "GET" });
     if (!res) {
-      toast("Can't reach the server to set up alerts — try again with signal.", "error");
+      toast(
+        "Can't reach the server to set up alerts — try again with signal.",
+        "error",
+      );
       return "off";
     }
     if (!res.ok) throw new Error(await errorOf(res));
@@ -262,7 +266,8 @@ export async function scheduleRestAlert(
         body: subscriptionBody(sub),
         signal,
       });
-      if (filed?.ok) res = await call("schedule", { method: "POST", body, signal });
+      if (filed?.ok)
+        res = await call("schedule", { method: "POST", body, signal });
     }
     if (!res) return null;
     if (res.status === 202) {
@@ -322,13 +327,15 @@ export async function sendRestAlertTest(): Promise<RestAlertTestResult> {
 export async function cancelRestAlert(alertId: string): Promise<void> {
   if (!online()) return;
   try {
-    const res = await call("cancel", { method: "POST", body: { alert_id: alertId } });
+    const res = await call("cancel", {
+      method: "POST",
+      body: { alert_id: alertId },
+    });
     if (res && !res.ok) throw new Error(await errorOf(res));
   } catch (e) {
     reportSilently(e, "rest alert cancel");
   }
 }
-
 
 /**
  * Arm a long-dated prompt (the morning panel, the weekly OSTRC, the pain check
@@ -345,7 +352,7 @@ export async function cancelRestAlert(alertId: string): Promise<void> {
  * any of this.
  */
 export async function armPrompt(
-  kind: "daily_readiness" | "ostrc_weekly" | "next_morning_pain",
+  kind: "ostrc_weekly" | "next_morning_pain",
   fireAt: Date,
   label?: string,
 ): Promise<{ armed: boolean; alertId?: string }> {

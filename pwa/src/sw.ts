@@ -83,7 +83,6 @@ interface AlertPayload {
  */
 const ALERT_KINDS = {
   rest: { title: "Rest over", body: "Next set." },
-  daily_readiness: { title: "Morning check-in", body: "How are you today?" },
   ostrc_weekly: { title: "Weekly check", body: "Anything bothering you?" },
   next_morning_pain: {
     title: "How does it feel this morning?",

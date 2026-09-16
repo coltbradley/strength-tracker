@@ -16,8 +16,6 @@ const MON_0900 = new Date(2026, 8, 7, 9, 0, 0);
 const MON_0600 = new Date(2026, 8, 7, 6, 0, 0);
 
 const state = (over: Partial<PromptState> = {}): PromptState => ({
-  lastReadinessDate: null,
-  skippedReadinessDate: null,
   lastOstrcRecallEnd: null,
   lastTrainedDate: null,
   hasOpenEpisode: false,
@@ -36,112 +34,6 @@ describe("localDate / atLocalTime", () => {
     expect(d.getHours()).toBe(7);
     expect(d.getMinutes()).toBe(30);
     expect(localDate(d)).toBe("2026-09-07");
-  });
-});
-
-// The daily readiness prompt ships DISABLED: the morning panel is no longer
-// the entry point (see CheckInSheet), and the check-in that replaced it is a
-// button that is always there rather than something to nag about. The
-// scheduling logic below still exists and is still tested -- weekly OSTRC
-// still uses it, and someone could opt back into a daily reminder -- so every
-// test in this block enables it explicitly rather than relying on the
-// shipped default.
-const DAILY_ON = { ...DEFAULT_PROMPT_PREFS, dailyEnabled: true };
-
-describe("daily readiness prefs", () => {
-  it("ships disabled by default", () => {
-    expect(DEFAULT_PROMPT_PREFS.dailyEnabled).toBe(false);
-  });
-
-  it("is absent when switched off, which is the shipped default", () => {
-    expect(
-      find(
-        duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state()),
-        "daily_readiness",
-      ),
-    ).toBeUndefined();
-  });
-});
-
-describe("daily readiness", () => {
-  it("is overdue once its time has passed and the panel is unanswered", () => {
-    const p = find(duePrompts(MON_0900, DAILY_ON, state()), "daily_readiness");
-    expect(p?.overdue).toBe(true);
-  });
-
-  it("is scheduled, not overdue, before its time", () => {
-    const p = find(duePrompts(MON_0600, DAILY_ON, state()), "daily_readiness");
-    expect(p?.overdue).toBe(false);
-    expect(p?.fireAt.getHours()).toBe(7);
-  });
-
-  // Low stakes is the requirement, and it beats the completeness of the
-  // series. A reminder still nagging at 10pm about 7:30am is what makes
-  // somebody turn the whole thing off, and losing the athlete costs every
-  // future answer rather than one.
-  it("goes quiet once its window closes rather than nagging all day", () => {
-    const late = new Date(2026, 8, 7, 22, 0, 0);
-    const p = find(duePrompts(late, DAILY_ON, state()), "daily_readiness");
-    expect(p?.overdue).toBe(false);
-    expect(localDate(p!.fireAt)).toBe("2026-09-08");
-  });
-
-  it("is still askable inside the window", () => {
-    const midMorning = new Date(2026, 8, 7, 10, 0, 0);
-    expect(
-      find(duePrompts(midMorning, DAILY_ON, state()), "daily_readiness")
-        ?.overdue,
-    ).toBe(true);
-  });
-
-  // Skipping is an answer to "shall I ask you this now", and honouring it is
-  // what makes the button honest. Distinct from an unanswered panel, which is
-  // silence: only one of them says "not today".
-  it("stops asking for the day once explicitly skipped", () => {
-    const p = find(
-      duePrompts(
-        MON_0900,
-        DAILY_ON,
-        state({ skippedReadinessDate: "2026-09-07" }),
-      ),
-      "daily_readiness",
-    );
-    expect(p?.overdue).toBe(false);
-    expect(localDate(p!.fireAt)).toBe("2026-09-08");
-  });
-
-  it("asks again the next day after a skip", () => {
-    const tomorrow = new Date(2026, 8, 8, 9, 0, 0);
-    expect(
-      find(
-        duePrompts(
-          tomorrow,
-          DAILY_ON,
-          state({ skippedReadinessDate: "2026-09-07" }),
-        ),
-        "daily_readiness",
-      )?.overdue,
-    ).toBe(true);
-  });
-
-  it("moves to tomorrow once today's panel is answered", () => {
-    const p = find(
-      duePrompts(
-        MON_0900,
-        DAILY_ON,
-        state({ lastReadinessDate: "2026-09-07" }),
-      ),
-      "daily_readiness",
-    );
-    expect(p?.overdue).toBe(false);
-    expect(localDate(p!.fireAt)).toBe("2026-09-08");
-  });
-
-  it("is absent when switched off", () => {
-    const prefs = { ...DAILY_ON, dailyEnabled: false };
-    expect(
-      find(duePrompts(MON_0900, prefs, state()), "daily_readiness"),
-    ).toBeUndefined();
   });
 });
 
@@ -256,22 +148,27 @@ describe("next-morning pain check", () => {
 
 describe("overduePrompts", () => {
   it("is the subset whose moment has passed", () => {
-    const all = duePrompts(MON_0900, DAILY_ON, state());
-    const over = overduePrompts(MON_0900, DAILY_ON, state());
+    const now = new Date(2026, 8, 13, 19, 0, 0); // Sunday, after the weekly time
+    const all = duePrompts(now, DEFAULT_PROMPT_PREFS, state());
+    const over = overduePrompts(now, DEFAULT_PROMPT_PREFS, state());
     expect(over.every((p) => p.overdue)).toBe(true);
+    expect(over.map((p) => p.kind)).toContain("ostrc_weekly");
     expect(over.length).toBeLessThanOrEqual(all.length);
-    expect(over.map((p) => p.kind)).toContain("daily_readiness");
   });
 
   it("is empty when everything is answered and nothing is scheduled yet", () => {
     const over = overduePrompts(
       MON_0600,
       DEFAULT_PROMPT_PREFS,
-      state({
-        lastReadinessDate: "2026-09-07",
-        lastOstrcRecallEnd: "2026-09-06",
-      }),
+      state({ lastOstrcRecallEnd: "2026-09-06" }),
     );
     expect(over).toEqual([]);
+  });
+
+  it("never offers a morning readiness prompt", () => {
+    const kinds = duePrompts(MON_0900, DEFAULT_PROMPT_PREFS, state()).map(
+      (p) => p.kind,
+    );
+    expect(kinds).not.toContain("daily_readiness");
   });
 });

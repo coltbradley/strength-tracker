@@ -12,27 +12,9 @@
 // decision useLocalToday makes and for the same reason: the phone travels with
 // the lifter, and a 7am prompt means 7am where they are.
 
-export type PromptKind =
-  "daily_readiness" | "ostrc_weekly" | "next_morning_pain";
+export type PromptKind = "ostrc_weekly" | "next_morning_pain";
 
 export interface PromptPrefs {
-  dailyEnabled: boolean;
-  /** "HH:MM", local. */
-  dailyAt: string;
-  /**
-   * How long the daily prompt stays askable after its time, in hours.
-   *
-   * This used to be "all day", on the reasoning that a missed morning is the
-   * gap the panel exists to close. That reasoning is right about the value of
-   * the answer and wrong about the cost of asking: a reminder still nagging at
-   * 10pm about 7:30am is exactly what makes somebody turn the whole thing off,
-   * and losing the athlete costs every future answer rather than one.
-   *
-   * So it goes quiet. Four hours is a morning; after that the day is simply
-   * unanswered, which is a legitimate row in the series (report_prompts records
-   * it) and not a failure anybody is chased about.
-   */
-  dailyWindowHours: number;
   weeklyEnabled: boolean;
   /** 0 = Sunday. The OSTRC recall period is seven days, so this is the day it
    *  closes on. */
@@ -43,15 +25,6 @@ export interface PromptPrefs {
 }
 
 export const DEFAULT_PROMPT_PREFS: PromptPrefs = {
-  // Off by default. The morning three-scale panel this was written for is no
-  // longer the entry point: check-in is a button that is always there
-  // (CheckInSheet), not something worth a scheduled nag for. The mechanism
-  // stays -- someone could opt back into a daily reminder, and weekly OSTRC
-  // below is a real, still-enabled use of the same machinery -- only the
-  // shipped default changes.
-  dailyEnabled: false,
-  dailyAt: "07:30",
-  dailyWindowHours: 4,
   weeklyEnabled: true,
   weeklyWeekday: 0,
   weeklyAt: "18:00",
@@ -60,17 +33,6 @@ export const DEFAULT_PROMPT_PREFS: PromptPrefs = {
 };
 
 export interface PromptState {
-  /** Local date of the most recently answered daily panel, or null. */
-  lastReadinessDate: string | null;
-  /**
-   * Local date the daily prompt was explicitly SKIPPED, or null.
-   *
-   * Skipping is an answer to the question "shall I ask you this now", and it
-   * has to be honoured or the button is a lie. Distinct from an unanswered
-   * panel, which is silence: one of these says "not today" and the other says
-   * nothing, and only the first should stop the asking.
-   */
-  skippedReadinessDate: string | null;
   /** recall_end of the most recent OSTRC response, or null. */
   lastOstrcRecallEnd: string | null;
   /** Local date of the last day a session or activity happened, or null. */
@@ -130,39 +92,6 @@ export function duePrompts(
 ): DuePrompt[] {
   const out: DuePrompt[] = [];
   const today = localDate(now);
-
-  // Daily panel. Due at the configured time on any day it has not been
-  // answered; once the time has passed and it is still unanswered it stays
-  // due rather than rolling to tomorrow, because the answer is still worth
-  // having and a missed morning is exactly the gap this is trying to close.
-  if (prefs.dailyEnabled) {
-    const answeredToday = state.lastReadinessDate === today;
-    const skippedToday = state.skippedReadinessDate === today;
-    if (!answeredToday && !skippedToday) {
-      const at = atLocalTime(now, prefs.dailyAt);
-      const closesAt = at.getTime() + prefs.dailyWindowHours * 3_600_000;
-      if (now.getTime() <= closesAt) {
-        out.push({
-          kind: "daily_readiness",
-          fireAt: at,
-          overdue: at.getTime() <= now.getTime(),
-        });
-      } else {
-        // The window has closed. Ask tomorrow; today is simply unanswered.
-        out.push({
-          kind: "daily_readiness",
-          fireAt: atLocalTime(addDays(now, 1), prefs.dailyAt),
-          overdue: false,
-        });
-      }
-    } else {
-      out.push({
-        kind: "daily_readiness",
-        fireAt: atLocalTime(addDays(now, 1), prefs.dailyAt),
-        overdue: false,
-      });
-    }
-  }
 
   // The OSTRC, weekly and only weekly. Its recall period IS the measurement --
   // seven days -- so prompting more often is off-label and prompting less often
