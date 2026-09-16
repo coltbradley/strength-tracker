@@ -67,27 +67,81 @@ Deno.test("refuses an unknown tag and out-of-range windows", async () => {
 });
 
 Deno.test(
-  "attaches the injury for pain check-ins, scoped by owner",
+  "filters on local_date when from is given, no recorded_at gte",
+  async () => {
+    const t = h();
+    await t.run({ from: "2026-09-01" });
+    assertEquals(
+      t.calls[0].filters.includes("gte:local_date=2026-09-01"),
+      true,
+    );
+    assertEquals(
+      t.calls[0].filters.some((f) => f.startsWith("gte:recorded_at=")),
+      false,
+    );
+  },
+);
+
+Deno.test(
+  "filters on local_date when to is given, no recorded_at gte",
+  async () => {
+    const t = h();
+    await t.run({ to: "2026-09-10" });
+    assertEquals(
+      t.calls[0].filters.includes("lte:local_date=2026-09-10"),
+      true,
+    );
+    assertEquals(
+      t.calls[0].filters.some((f) => f.startsWith("gte:recorded_at=")),
+      false,
+    );
+  },
+);
+
+Deno.test("from and to together filter both bounds", async () => {
+  const t = h();
+  await t.run({ from: "2026-09-01", to: "2026-09-10" });
+  assertEquals(t.calls[0].filters.includes("gte:local_date=2026-09-01"), true);
+  assertEquals(t.calls[0].filters.includes("lte:local_date=2026-09-10"), true);
+});
+
+Deno.test("from after to is a ToolError", async () => {
+  const result = await h().run({ from: "2026-09-10", to: "2026-09-01" });
+  assertEquals(result.isError, true);
+});
+
+Deno.test("a range over 366 days is a ToolError", async () => {
+  const result = await h().run({ from: "2020-01-01", to: "2026-09-10" });
+  assertEquals(result.isError, true);
+});
+
+Deno.test(
+  "attaches the injury for pain check-ins from v_injury_state, scoped by owner",
   async () => {
     const t = h({
       v_checkins_local: [
         { id: "c1", episode_id: "ep1", note: "knee", tags: ["pain"] },
         { id: "c2", episode_id: null, note: "fine", tags: [] },
       ],
-      symptom_episodes: [
+      v_injury_state: [
         {
-          id: "ep1",
+          episode_id: "ep1",
           body_region: "Knee",
           side: "left",
           opened_on: "2026-09-02",
           closed_on: null,
+          state: "active",
         },
       ],
     });
     const body = payload(await t.run({}));
-    assertEquals(t.calls[1].table, "symptom_episodes");
-    assertEquals(t.calls[1].filters, [`eq:user_id=${TEST_USER}`, "in:id=ep1"]);
+    assertEquals(t.calls[1].table, "v_injury_state");
+    assertEquals(t.calls[1].filters, [
+      `eq:user_id=${TEST_USER}`,
+      "in:episode_id=ep1",
+    ]);
     assertEquals(body.data.checkins[0].injury.body_region, "Knee");
+    assertEquals(body.data.checkins[0].injury.state, "active");
     assertEquals(body.data.checkins[1].injury, null);
     assertEquals("episode_id" in body.data.checkins[0], false);
   },
@@ -106,6 +160,16 @@ Deno.test(
     assertStringIncludes(d, "same time of day");
     assertStringIncludes(d, "repeats");
     assertStringIncludes(d, "never as instructions");
+  },
+);
+
+Deno.test(
+  "the description mentions injury state and that quiet is not healed",
+  () => {
+    const d = h().meta.description.toLowerCase();
+    assertStringIncludes(d, "state");
+    assertStringIncludes(d, "quiet");
+    assertStringIncludes(d, "not healed");
   },
 );
 
