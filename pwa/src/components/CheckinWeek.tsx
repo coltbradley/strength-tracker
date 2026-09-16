@@ -114,6 +114,18 @@ export function CheckinWeek({
       </div>
 
       <table className="checkin-grid">
+        {/* table-layout: fixed sizes columns from a <col>/<colgroup> width, or
+            failing that from the FIRST row's cells — never from a later
+            row's, per the fixed-table-layout algorithm. The label column's
+            real width lives on tbody's `th[scope="row"]`, which is never the
+            first row (thead's is), so a CSS width there alone is silently
+            ignored and every column ends up equally divided. This colgroup
+            is what actually makes --checkin-label-col control the rendered
+            column, which is what .checkin-days below aligns to. */}
+        <colgroup>
+          <col />
+          <col span={7} />
+        </colgroup>
         <thead>
           <tr>
             <th />
@@ -134,18 +146,23 @@ export function CheckinWeek({
               <th scope="row">{b.label}</th>
               {grid[bi].map((cell, di) => {
                 const sel = di === day ? " is-selected" : "";
+                const dayName = DAY_NAMES[di];
                 if (cell.kind === "empty") {
                   return (
                     <td
                       key={di}
                       className={`is-empty${sel}`}
-                      aria-label="No check-ins"
+                      aria-label={`${b.label} ${dayName}: no check-ins`}
                     />
                   );
                 }
                 if (cell.kind === "noEnergy") {
                   return (
-                    <td key={di} className={sel.trim() || undefined}>
+                    <td
+                      key={di}
+                      className={sel.trim() || undefined}
+                      aria-label={`${b.label} ${dayName}: ${cell.n} check-in${cell.n === 1 ? "" : "s"}, no energy score`}
+                    >
                       –<small>n{cell.n}</small>
                     </td>
                   );
@@ -153,10 +170,8 @@ export function CheckinWeek({
                 return (
                   <td
                     key={di}
-                    className={
-                      `${cell.inverse ? "is-inverse" : ""}${sel}`.trim() ||
-                      undefined
-                    }
+                    className={sel.trim() || undefined}
+                    aria-label={`${b.label} ${dayName}: average energy ${cell.label} from ${cell.n} check-in${cell.n === 1 ? "" : "s"}`}
                     style={{
                       background: `color-mix(in srgb, var(--accent) ${cell.percent}%, transparent)`,
                     }}

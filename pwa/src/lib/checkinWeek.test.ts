@@ -73,11 +73,84 @@ describe("formatMean", () => {
 });
 
 describe("energyShade", () => {
-  it("scales from faint at 1 to strong at 5 and flips text past the midpoint", () => {
-    expect(energyShade(1)).toEqual({ percent: 10, inverse: false });
-    expect(energyShade(5)).toEqual({ percent: 95, inverse: true });
-    expect(energyShade(3).inverse).toBe(false);
-    expect(energyShade(4).inverse).toBe(true);
+  it("scales from faint at 1 to a capped fill at 5, always dark text", () => {
+    expect(energyShade(1)).toEqual({ percent: 10 });
+    expect(energyShade(5)).toEqual({ percent: 57 });
+    expect(energyShade(3)).not.toHaveProperty("inverse");
+  });
+
+  it("the fill percent strictly increases with energy end to end", () => {
+    expect(energyShade(1).percent).toBeLessThan(energyShade(2).percent);
+    expect(energyShade(2).percent).toBeLessThan(energyShade(3).percent);
+    expect(energyShade(3).percent).toBeLessThan(energyShade(4).percent);
+    expect(energyShade(4).percent).toBeLessThan(energyShade(5).percent);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WCAG AA contrast, every energy mean from 1.0 to 5.0.
+//
+// A cell's background is color-mix(in srgb, var(--accent) P%, transparent)
+// painted over the page background (--paper). Because the second color-mix
+// component is fully transparent, this is equivalent to plain alpha
+// compositing of --accent (alpha = P%) over --paper — the standard src-over
+// formula below. Text is always --text (rgb(48 43 58)); energyShade no
+// longer ever asks for --text-inverse (see checkinWeek.ts), and this test is
+// what guarantees that choice stays safe: every mean in range must clear
+// 4.5:1 (WCAG AA for the 13px bold cell label) against the composited fill,
+// and the fill must still visibly increase with energy.
+const PAPER = [0xf7, 0xf6, 0xfa] as const; // --paper
+const ACCENT = [0x57, 0x41, 0x7f] as const; // --accent / --aubergine
+const TEXT = [48, 43, 58] as const; // --text, rgb(--ink-rgb)
+
+function compositeOverPaper(percent: number): [number, number, number] {
+  const a = percent / 100;
+  return ACCENT.map((c, i) => a * c + (1 - a) * PAPER[i]) as [
+    number,
+    number,
+    number,
+  ];
+}
+
+function srgbToLinear(c: number): number {
+  const cs = c / 255;
+  return cs <= 0.04045 ? cs / 12.92 : Math.pow((cs + 0.055) / 1.055, 2.4);
+}
+
+function relativeLuminance([r, g, b]: readonly [number, number, number]) {
+  return (
+    0.2126 * srgbToLinear(r) +
+    0.7152 * srgbToLinear(g) +
+    0.0722 * srgbToLinear(b)
+  );
+}
+
+function contrastRatio(
+  rgb1: readonly [number, number, number],
+  rgb2: readonly [number, number, number],
+): number {
+  const l1 = relativeLuminance(rgb1);
+  const l2 = relativeLuminance(rgb2);
+  const [lighter, darker] = l1 > l2 ? [l1, l2] : [l2, l1];
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+describe("energy cell contrast (WCAG AA, 4.5:1)", () => {
+  it("clears 4.5:1 against --text for every mean from 1.0 to 5.0, and the fill keeps increasing", () => {
+    let minRatio = Infinity;
+    let prevPercent = -Infinity;
+    for (let i = 0; i <= 40; i++) {
+      const mean = 1 + i * 0.1;
+      const { percent } = energyShade(mean);
+      const ratio = contrastRatio(compositeOverPaper(percent), TEXT);
+      minRatio = Math.min(minRatio, ratio);
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
+      expect(percent).toBeGreaterThanOrEqual(prevPercent);
+      prevPercent = percent;
+    }
+    // Sanity: this isn't passing by a hair — the current formula clears
+    // 4.5:1 with real margin (~4.57:1 at its worst point, mean=5.0).
+    expect(minRatio).toBeGreaterThan(4.5);
   });
 });
 

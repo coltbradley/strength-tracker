@@ -21,7 +21,6 @@ export type Cell =
       label: string;
       n: number;
       percent: number;
-      inverse: boolean;
     };
 
 export function formatMean(mean: number): string {
@@ -29,15 +28,27 @@ export function formatMean(mean: number): string {
   return Number.isInteger(r) ? String(r) : r.toFixed(1);
 }
 
-/** How strongly to fill a cell: 10% of the accent at 1, 95% at 5. Text
- *  switches to the inverse colour once the fill is past half, so it stays
- *  readable on both ends. */
-export function energyShade(mean: number): {
-  percent: number;
-  inverse: boolean;
-} {
-  const percent = Math.round(10 + ((mean - 1) / 4) * 85);
-  return { percent, inverse: percent > 55 };
+/** How strongly to fill a cell: 10% of the accent at 1, up to
+ *  MAX_ENERGY_FILL_PERCENT at 5. The cap (not 95, as an earlier version used)
+ *  exists so cell text can stay --text (dark) at every energy level: at
+ *  MAX_ENERGY_FILL_PERCENT the composited fill (--accent over --paper) still
+ *  clears 4.5:1 (WCAG AA) against --text, verified for every 0.1 step from
+ *  1.0-5.0 and against continuous mean values in
+ *  checkinWeek.test.ts. Past that percent the fill gets dark enough that
+ *  NEITHER --text nor --text-inverse clears 4.5:1 against it (see the
+ *  contrast script referenced in docs/decisions.md / task-6-report.md), so
+ *  there is no percent/text-colour combination above the cap that is both AA
+ *  and readable — capping the fill is the only way to keep dark text legal
+ *  at the top of the scale. The fill still strictly increases with energy
+ *  across the whole 1-5 range (10 -> MAX_ENERGY_FILL_PERCENT), it just rises
+ *  more gently than the old 10-95 range did. */
+const MIN_ENERGY_FILL_PERCENT = 10;
+const MAX_ENERGY_FILL_PERCENT = 57;
+
+export function energyShade(mean: number): { percent: number } {
+  const span = MAX_ENERGY_FILL_PERCENT - MIN_ENERGY_FILL_PERCENT;
+  const percent = Math.round(MIN_ENERGY_FILL_PERCENT + ((mean - 1) / 4) * span);
+  return { percent };
 }
 
 /** [bucket][day]: BUCKETS order, Monday first. */

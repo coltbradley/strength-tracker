@@ -2637,6 +2637,13 @@
   /* ---- check-ins in History ---- */
 
   .checkin-week {
+    /* One source for the width of the grid's row-header column, so the day
+     * columns below (.checkin-days) can line up under the grid's day
+     * columns instead of drifting to whatever font-size they happen to
+     * inherit. Derived from --fs-micro (not an em on this element) so it
+     * stays the same 4.5-characters-at-micro-size width regardless of the
+     * font-size in force wherever it's used. */
+    --checkin-label-col: calc(4.5 * var(--fs-micro));
     display: flex;
     flex-direction: column;
     gap: var(--s-6);
@@ -2682,8 +2689,15 @@
     letter-spacing: var(--track-1);
   }
 
+  /* The actual column-width source of truth: table-layout: fixed reads
+   * column widths from a <colgroup>'s <col>, or else the first row's cells
+   * — a later row's cell width (e.g. a plain width on th[scope="row"]) is
+   * not consulted and would be silently ignored. */
+  .checkin-grid col:first-child {
+    width: var(--checkin-label-col);
+  }
+
   .checkin-grid th[scope="row"] {
-    width: 4.5em;
     text-align: left;
   }
 
@@ -2700,10 +2714,6 @@
     display: block;
     font-size: var(--fs-micro);
     font-weight: 400;
-  }
-
-  .checkin-grid td.is-inverse {
-    color: var(--text-inverse);
   }
 
   .checkin-grid td.is-empty {
@@ -2724,7 +2734,15 @@
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     gap: var(--s-1);
-    padding-left: calc(4.5em + var(--s-1));
+    /* Same label-column width the grid's row header uses, plus TWO
+     * border-spacing gaps: with border-collapse: separate the grid's
+     * border-spacing (also --s-1) sits both before the label column and
+     * between it and day column 1, so the first day column starts two gaps
+     * in, not one. This offset is what actually lines the day buttons up
+     * under the grid's first day column, verified with a headless browser
+     * at 320/375px in task-6-report.md — one gap left the buttons 2px left
+     * of the grid. */
+    padding-left: calc(var(--checkin-label-col) + 2 * var(--s-1));
     font-family: var(--font-mono);
   }
 
@@ -2760,10 +2778,18 @@
   }
 
   /* 320px offers 284px of content for seven 44px targets after the label
-   * column, which doesn't fit — same bleed rationale as .week-strip above. */
+   * column, which doesn't fit — same bleed rationale as .week-strip above:
+   * bleed into the page gutter and drop the gap (320 / 7 = 45.7px per
+   * cell). This gives up alignment with the grid's day columns above (which
+   * keeps its label column and does not bleed) in favour of a real 44px
+   * target; the grid's cells aren't tap targets, so that trade only costs
+   * visual alignment, not usability. */
   @media (max-width: 359px) {
     .checkin-days {
       padding-left: 0;
+      margin-left: calc(var(--gutter) * -1);
+      margin-right: calc(var(--gutter) * -1);
+      gap: 0;
     }
   }
 
