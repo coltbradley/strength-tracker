@@ -287,6 +287,43 @@ describe("Session log lock", () => {
     // Neither edit was a LOG tap, so the lock never engaged twice.
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
   });
+
+  it("offers How to in the more sheet, opening the same exercise demo sheet the overview uses", async () => {
+    resetDbForTests();
+    const squat1 = prescription("squat", "back-squat", "Back Squat", 100);
+    await cacheSet(cacheKeys.activeSession, active);
+    await cacheSet(cacheKeys.sessionRx(active.id), [squat1]);
+    await cacheSet(cacheKeys.sessionSets(active.id), []);
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    const log = await screen.findByRole("button", { name: /log set/i });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    fireEvent.click(log);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "more options for Back Squat" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /how to/i }));
+
+    // ExerciseDemoSheet renders a heading/title using the exercise's own
+    // name — assert that it now shows that heading instead of the more sheet.
+    // The more sheet is now closed but still in the DOM. The demo sheet renders
+    // on top as a modal.
+    await vi.waitFor(() => {
+      expect(
+        screen.getByRole("heading", { level: 2, name: /back squat/i }),
+      ).toBeTruthy();
+    });
+  });
 });
 
 describe("Session hero capture", () => {

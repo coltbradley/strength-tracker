@@ -2738,8 +2738,26 @@ export function Session() {
         {skipped ? "UNSKIP" : "SKIP"}
       </button>
     );
+    const howToAction = (
+      <button
+        type="button"
+        className="btn btn-ghost"
+        aria-label={`how to do ${target.name}`}
+        onClick={() => {
+          setDemoFor({ id: target.exercise_id, name: target.name });
+          setMoreOpen(false);
+        }}
+      >
+        How to
+      </button>
+    );
     if (isTick(target)) {
-      return <div className="focus-more-actions">{skipAction}</div>;
+      return (
+        <div className="focus-more-actions">
+          {howToAction}
+          {skipAction}
+        </div>
+      );
     }
     const targetEquipment = equipMap[target.exercise_id] ?? null;
     const targetLoadStyleEligible =
@@ -2783,6 +2801,7 @@ export function Session() {
           ))}
         </div>
         <div className="focus-more-actions">
+          {howToAction}
           {targetPlateable && (
             <button
               type="button"
