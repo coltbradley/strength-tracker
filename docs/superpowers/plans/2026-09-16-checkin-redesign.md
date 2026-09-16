@@ -1224,7 +1224,7 @@ export function withPending(
 - [ ] **Step 7: Run the tests and confirm they pass**
 
 Run: `cd pwa && npx vitest run src/lib/checkins.test.ts`
-Expected: PASS. (`CheckInSheet.tsx` and its test still reference removed exports; they're rewritten in Task 4. Don't run the build yet.)
+Expected: PASS. (`CheckInSheet.tsx` and its test still reference removed exports; they're rewritten in Task 4. The build and the full suite fail between Tasks 2 and 4; run only named test files until then.)
 
 - [ ] **Step 8: Commit**
 
@@ -1623,8 +1623,9 @@ describe("CheckInSheet", () => {
     });
     open();
     const earlier = await screen.findByLabelText("Earlier today");
-    expect(earlier.textContent).toContain("3");
-    expect(earlier.textContent).not.toContain("1");
+    // Only the energy scores, not the times, which contain digits too.
+    const scores = [...earlier.querySelectorAll("b")].map((b) => b.textContent);
+    expect(scores).toEqual(["3"]);
   });
 });
 ```
@@ -2187,7 +2188,7 @@ and render the sheet inside the train branch's wrapper, after `</TrainHome>`'s s
 }
 ```
 
-(`today` is the same value the program branch already passes; if it's declared after the early return, move its declaration above `if (presentation === "train")`.)
+(`today` is `useLocalToday()`, declared near line 352, above the early return, so it's in scope.)
 
 Program branch: replace
 
@@ -2271,7 +2272,7 @@ git commit -m "Check in link beside the date on Train and Program" -- pwa/src/co
 
 - Create: `pwa/src/lib/checkinWeek.ts`, `pwa/src/lib/checkinWeek.test.ts`
 - Create: `pwa/src/components/CheckinWeek.tsx`
-- Modify: `pwa/src/screens/History.tsx` (after the `THIS WEEK` section near line 572)
+- Modify: `pwa/src/screens/History.tsx` (after the `THIS WEEK` section near line 572), `pwa/src/App.tsx` (the `/history` route, line 118)
 - Modify: `pwa/src/styles.css`
 
 **Interfaces:**
@@ -2742,7 +2743,7 @@ In `pwa/src/screens/History.tsx`, import `CheckinWeek` and add after the `THIS W
 </section>
 ```
 
-History doesn't receive `userId` today. Read it the way other screens do: `grep -rn "useCurrentUserId\|getCurrentUserId\|useAuth" pwa/src/screens pwa/src/lib | head`, and use the same hook. If History is rendered as `<History />` in `App.tsx` while `Today` gets `userId` as a prop, pass `userId` to `History` the same way and add `userId?: string` to its props.
+History doesn't receive `userId` today: `App.tsx` line 118 renders `<History />`, while `Today` gets `userId={userId}` from the same scope. Change that route to `<History userId={userId} />` and the signature to `export function History({ userId }: { userId: string | null })`, matching the type `App.tsx` declares for `userId`.
 
 - [ ] **Step 6: Add the grid CSS**
 
@@ -2932,7 +2933,7 @@ In the preview, check in twice (once with Pain on Knee, Left), open History, and
 
 ```bash
 git add pwa/src/lib/checkinWeek.ts pwa/src/lib/checkinWeek.test.ts pwa/src/components/CheckinWeek.tsx
-git commit -m "History shows check-ins by time of day with a day row" -- pwa/src/lib/checkinWeek.ts pwa/src/lib/checkinWeek.test.ts pwa/src/components/CheckinWeek.tsx pwa/src/screens/History.tsx pwa/src/styles.css
+git commit -m "History shows check-ins by time of day with a day row" -- pwa/src/lib/checkinWeek.ts pwa/src/lib/checkinWeek.test.ts pwa/src/components/CheckinWeek.tsx pwa/src/screens/History.tsx pwa/src/App.tsx pwa/src/styles.css
 ```
 
 ---
@@ -3605,7 +3606,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
-import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
+import {
+  guard,
+  jsonResult,
+  ToolError,
+  type RequestContext,
+} from "../lib/errors.ts";
 import { CHECKIN_READING_RULES } from "./get_checkins.ts";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -3658,7 +3664,8 @@ export function registerGetCheckinBuckets(
           new Date(Date.parse(to) - 27 * 86_400_000).toISOString().slice(0, 10);
         const span = (Date.parse(to) - Date.parse(from)) / 86_400_000;
         if (span < 0 || span > 366) {
-          throw new Error(
+          // ToolError: a validation message for the caller, not a Sentry report.
+          throw new ToolError(
             "from must be on or before to, and the range at most a year.",
           );
         }
@@ -3684,7 +3691,7 @@ export function registerGetCheckinBuckets(
 }
 ```
 
-Check how `guard` reports a thrown error: `grep -n "isError" supabase/functions/mcp-server/lib/errors.ts`. The buckets test expects `isError: true` for the over-a-year range; if `guard` rethrows instead of returning `isError`, change that assertion to `assertRejects`.
+`guard` turns a thrown `ToolError` into `errorResult(message)` without reporting it to Sentry. Confirm `ToolError` is exported from `lib/errors.ts` and `errorResult` sets `isError: true` (`grep -n "class ToolError\|function errorResult" -A6 supabase/functions/mcp-server/lib/errors.ts`); the buckets test relies on both.
 
 Create `supabase/functions/mcp-server/tools/get_injuries.ts`:
 
