@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { targetSets, type ExerciseEntry } from "../../lib/entries";
 import { twoMemberSuperset } from "../../lib/sessionFocus";
 
@@ -31,7 +31,25 @@ export interface FocusDeckProps {
    * keeps the ordinary single-exercise header.
    */
   supersetHeading?: { title: string; subtitle: string } | null;
+  /** Visible only when a swap is offered right now (not mid-correction, not
+   *  frozen by a logged set against it — Session decides and omits both
+   *  props otherwise). Scoped to the canonical first member for a live
+   *  superset round, matching `onOpenMore`'s existing scope. */
+  onSwap?(): void;
+  swapLabel?: string | null;
+  /** Skip, with an optional reason collected inline. `onSkip` fires once,
+   *  with the chosen chip text or free-typed reason (or null for none). */
+  onSkip?(reason: string | null): void;
+  skipped?: boolean;
+  onUnskip?(): void;
 }
+
+const SKIP_REASON_CHIPS = [
+  "Equipment taken",
+  "Already warm",
+  "Out of time",
+  "Didn't feel right",
+];
 
 function focusSetPosition(
   entry: ExerciseEntry,
@@ -115,7 +133,14 @@ export function FocusDeck({
   onOpenMore,
   formatScheme,
   supersetHeading = null,
+  onSwap,
+  swapLabel = null,
+  onSkip,
+  skipped = false,
+  onUnskip,
 }: FocusDeckProps) {
+  const [skipPromptOpen, setSkipPromptOpen] = useState(false);
+  const [skipReasonDraft, setSkipReasonDraft] = useState("");
   const entryIndex = entries.findIndex(
     (candidate) => candidate.key === entry.key,
   );
@@ -167,6 +192,90 @@ export function FocusDeck({
           {supersetHeading ? supersetHeading.subtitle : setPosition}
         </div>
       </div>
+
+      {(swapLabel !== null || onSkip || (skipped && onUnskip)) && (
+        <div className="focus-deck-secondary-row">
+          {onSwap && swapLabel !== null && (
+            <button
+              type="button"
+              className="focus-deck-secondary"
+              onClick={onSwap}
+            >
+              {swapLabel}
+            </button>
+          )}
+          {onSkip && !skipped && !skipPromptOpen && (
+            <button
+              type="button"
+              className="focus-deck-secondary"
+              onClick={() => setSkipPromptOpen(true)}
+            >
+              Skip
+            </button>
+          )}
+          {skipped && onUnskip && (
+            <button
+              type="button"
+              className="focus-deck-secondary"
+              onClick={onUnskip}
+            >
+              Unskip
+            </button>
+          )}
+        </div>
+      )}
+
+      {onSkip && !skipped && skipPromptOpen && (
+        <div className="skip-reason-prompt">
+          <div className="chip-row">
+            {SKIP_REASON_CHIPS.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                className="chip"
+                onClick={() => {
+                  onSkip(chip);
+                  setSkipPromptOpen(false);
+                  setSkipReasonDraft("");
+                }}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+          <input
+            className="input skip-reason-input"
+            placeholder="Reason (optional)"
+            value={skipReasonDraft}
+            onChange={(e) => setSkipReasonDraft(e.target.value)}
+          />
+          <div className="skip-reason-actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                setSkipPromptOpen(false);
+                setSkipReasonDraft("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                onSkip(
+                  skipReasonDraft.trim() === "" ? null : skipReasonDraft.trim(),
+                );
+                setSkipPromptOpen(false);
+                setSkipReasonDraft("");
+              }}
+            >
+              Skip exercise
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="focus-deck-editor">
         <FocusSetProgress progress={progress} target={target} />

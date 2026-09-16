@@ -1081,9 +1081,12 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
     );
-    expect(await cacheGet<string[]>(cacheKeys.sessionSkips(active.id))).toEqual(
-      [],
-    );
+    // `skips` is a SkipRecord map as of Task 8 (was a plain key array); the
+    // legacy array this test seeds is read back through `readSkipsCache`,
+    // and what gets WRITTEN once nothing is skipped is the (now empty) map.
+    expect(
+      await cacheGet<Record<string, unknown>>(cacheKeys.sessionSkips(active.id)),
+    ).toEqual({});
   });
 
   it("labels the tail of an unequal superset correctly and offers only the remaining member", async () => {

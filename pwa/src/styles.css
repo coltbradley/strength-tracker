@@ -3520,6 +3520,73 @@
     justify-content: space-between;
   }
 
+  /* Swap and Skip: visible secondary actions on the hero, not buried in
+   * the ••• sheet — the lifter chooses exercise identity and skips at log
+   * time (AGENTS.md), so both live where the tap actually happens. */
+  .focus-deck-secondary-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-5);
+  }
+
+  .focus-deck-secondary {
+    padding: var(--s-3) var(--s-5);
+    min-height: var(--tap-min);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+    border: var(--rule-hair);
+    border-radius: var(--radius);
+  }
+
+  .skip-reason-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+
+  .skip-reason-input {
+    width: 100%;
+  }
+
+  .skip-reason-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s-5);
+  }
+
+  /* The hero's own warmup/working toggle — shown only for an entry that
+   * actually prescribes a warmup, so an exercise with none never offers a
+   * choice it doesn't have. */
+  .focus-hero-warmup {
+    display: flex;
+    align-items: center;
+    gap: var(--s-5);
+  }
+
+  .focus-already-warm {
+    padding: var(--s-3) var(--s-5);
+    min-height: var(--tap-min);
+    font-size: var(--fs-label);
+  }
+
+  /* "Last: 145 kg × 5 working" — the newest logged set, tappable onto its
+   * correction, styled like the last-performance line it sits beside. */
+  .focus-last-set {
+    text-align: left;
+    margin: 0;
+    padding: 0;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--track-1);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
   .focus-deck-overview {
     font-size: var(--fs-lg);
   }

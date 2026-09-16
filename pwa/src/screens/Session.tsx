@@ -105,6 +105,7 @@ import {
   getExerciseRestSeconds,
   setExerciseLoadEntry,
 } from "../lib/settings";
+import { readSkipsCache, type SkipRecord } from "../lib/skips";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { unlockRestCue } from "../lib/restCue";
 import {
@@ -331,7 +332,7 @@ export function Session() {
 
   // corrections: voided set ids (append-only voiding) and skipped entry keys
   const [voids, setVoids] = useState<Set<string>>(new Set());
-  const [skips, setSkips] = useState<Set<string>>(new Set());
+  const [skips, setSkips] = useState<Record<string, SkipRecord>>({});
   const [voidArm, setVoidArm] = useArmed();
   // The set being CORRECTED, with the stepper values it displaced so Cancel
   // can put them back. A correction is a void plus a new row at the same
@@ -451,7 +452,9 @@ export function Session() {
           cacheGet<ResolvedPrescriptionRow[]>(cacheKeys.sessionRx(a.id)),
           cacheGet<ExtraExercise[]>(cacheKeys.sessionExtras(a.id)),
           cacheGet<string[]>(cacheKeys.sessionVoids(a.id)),
-          cacheGet<string[]>(cacheKeys.sessionSkips(a.id)),
+          cacheGet<string[] | Record<string, SkipRecord>>(
+            cacheKeys.sessionSkips(a.id),
+          ),
           cacheGet<Substitutions>(cacheKeys.sessionSwaps(a.id)),
           cacheGet<RestCache>(cacheKeys.sessionRest(a.id)),
           cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(a.id)),
@@ -496,7 +499,7 @@ export function Session() {
         setExtras(extrasCached ?? []);
         const voided = new Set(voidsCached ?? []);
         setVoids(voided);
-        setSkips(new Set(skipsCached ?? []));
+        setSkips(readSkipsCache(skipsCached));
         setSubs(subsCached ?? {});
         setSetNotes(notesCached ?? {});
         setLastActuals(actuals.data);
@@ -673,7 +676,7 @@ export function Session() {
 
   const entryDone = useCallback(
     (e: ExerciseEntry): boolean =>
-      skips.has(e.key) || entryMet(e, setsForEntry(e)),
+      e.key in skips || entryMet(e, setsForEntry(e)),
     [skips, setsForEntry],
   );
   const doneEntries = entries.filter(entryDone).length;
@@ -1188,9 +1191,9 @@ export function Session() {
     window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     setVoidArm(null);
     // logging on a skipped exercise means it's happening after all
-    if (skips.has(entryToLog.key)) {
-      const unskipped = new Set(skips);
-      unskipped.delete(entryToLog.key);
+    if (skips[entryToLog.key]) {
+      const unskipped = { ...skips };
+      delete unskipped[entryToLog.key];
       persistSkips(unskipped);
     }
 
@@ -1230,7 +1233,7 @@ export function Session() {
     const doneAfter = (e: ExerciseEntry): boolean =>
       // logging on a skipped exercise un-skips it (above), so the open entry
       // is never treated as skipped here
-      (skips.has(e.key) && e.key !== entryToLog.key) ||
+      (e.key in skips && e.key !== entryToLog.key) ||
       entryMet(e, setsForEntryOf(e, next, rx, knownRxIds));
     // Mid-superset the rest strip is a countdown to nothing: the next thing
     // to do is the partner, not a wait. Only the STRIP is held — the clock
@@ -1297,10 +1300,10 @@ export function Session() {
     setVoidArm(null);
     // logging on a skipped exercise means it's happening after all — same
     // rule as logSet, applied to whichever round member(s) were skipped.
-    if (skips.has(first.key) || skips.has(second.key)) {
-      const unskipped = new Set(skips);
-      unskipped.delete(first.key);
-      unskipped.delete(second.key);
+    if (skips[first.key] || skips[second.key]) {
+      const unskipped = { ...skips };
+      delete unskipped[first.key];
+      delete unskipped[second.key];
       persistSkips(unskipped);
     }
     const actualRest = recordableRest();
@@ -1402,7 +1405,7 @@ export function Session() {
       }
 
       const doneAfter = (entry: ExerciseEntry): boolean =>
-        skips.has(entry.key) ||
+        entry.key in skips ||
         entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
       const now = Date.now();
       restRef.current = { startedAt: now };
@@ -1638,19 +1641,46 @@ export function Session() {
     toast(`Set ${s.set_index + 1} removed`);
   };
 
-  const persistSkips = (next: Set<string>) => {
+  const persistSkips = (next: Record<string, SkipRecord>) => {
     setSkips(next);
     if (sessionId)
-      cacheSet(cacheKeys.sessionSkips(sessionId), [...next]).catch(
+      cacheSet(cacheKeys.sessionSkips(sessionId), next).catch(
         (e: unknown) => reportError(e, "cache skips"),
       );
   };
 
+  /** The planned id a skip is recorded against — the same one the swap
+   *  bookkeeping already uses (`plannedExerciseId`), so a skip written
+   *  before or after a swap both name the exercise the PLAN asked for. */
+  const skipRecordFor = (
+    entry: ExerciseEntry,
+    scope: SkipRecord["scope"],
+    reason: string | null,
+  ): SkipRecord => ({
+    entryKey: entry.key,
+    prescriptionId: isLocalBracket(entry.brackets[0]?.id)
+      ? null
+      : (entry.brackets[0]?.id ?? null),
+    exerciseId: plannedExerciseId(entry),
+    scope,
+    reason,
+  });
+
+  /** Plain SKIP/UNSKIP — the overview row action, and un-skip from anywhere.
+   *  No reason attached; the hero's own Skip collects one first, below. */
   const toggleSkip = (entry: ExerciseEntry) => {
-    const next = new Set(skips);
-    if (next.has(entry.key)) next.delete(entry.key);
-    else next.add(entry.key);
+    const next = { ...skips };
+    if (next[entry.key]) delete next[entry.key];
+    else next[entry.key] = skipRecordFor(entry, "exercise", null);
     persistSkips(next);
+  };
+
+  /** The hero's Skip action, after an optional reason chip or free text. */
+  const skipEntryWithReason = (entry: ExerciseEntry, reason: string | null) => {
+    persistSkips({
+      ...skips,
+      [entry.key]: skipRecordFor(entry, "exercise", reason),
+    });
   };
 
   /** Extras with no logged sets can be removed outright (session-local). */
@@ -1665,9 +1695,9 @@ export function Session() {
     setExtras(nextExtras);
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
     // drop any lingering skip so re-adding doesn't arrive pre-skipped
-    if (skips.has(entry.key)) {
-      const nextSkips = new Set(skips);
-      nextSkips.delete(entry.key);
+    if (skips[entry.key]) {
+      const nextSkips = { ...skips };
+      delete nextSkips[entry.key];
       persistSkips(nextSkips);
     }
     // and any lingering swap, for the same reason: the entry key is derived
@@ -2089,6 +2119,41 @@ export function Session() {
       </div>
     );
 
+    // Scoped to THIS entry, not the outer `entrySets` (which tracks
+    // `openEntry`): a superset's "detail" view calls this twice, once per
+    // member, and each one's own logged history must follow its own
+    // exercise — reading the outer, single-entry value here would show A1's
+    // sets under A2's heading whenever A2 is not the entry currently open.
+    // Hoisted above `editorBlock` (was below it) because the hero's own
+    // "Last: ..." line needs the newest set before the editor is built.
+    const entrySetsForThis = setsForEntry(entry);
+    const newestSetIdForThis =
+      entrySetsForThis.length === 0
+        ? null
+        : entrySetsForThis.reduce((a, b) =>
+            b.set_index > a.set_index ||
+            (b.set_index === a.set_index && b.performed_at > a.performed_at)
+              ? b
+              : a,
+          ).id;
+    const newestSetForThis =
+      entrySetsForThis.find((s) => s.id === newestSetIdForThis) ?? null;
+    /** "Last: 145 kg × 5 working" — the focus hero's tappable line onto
+     *  `startCorrection`. Ticks have nothing numeric to show or correct via
+     *  this route; `SetEditor` never renders it for `tracking === "done"`. */
+    const lastSetLine =
+      newestSetForThis === null
+        ? null
+        : `Last: ${toDisplay(
+            enteredKg(
+              newestSetForThis.load_kg,
+              newestSetForThis.load_entry ?? "total",
+            ),
+            unit,
+          )} ${unit}${
+            newestSetForThis.load_entry === "per_side" ? "/side" : ""
+          } × ${newestSetForThis.reps} ${newestSetForThis.set_type}`;
+
     const editorBlock = (
       <>
         {pairedRound && roundA1 && roundA2 ? (
@@ -2193,6 +2258,15 @@ export function Session() {
                 : null
             }
             restSlot={restInline && !sheetOpen ? restTimerEl : undefined}
+            hasWarmupBracket={warmupSets(entry) > 0}
+            onAlreadyWarm={() => {
+              rememberStagedDraft(entry, { setType: "working" });
+              setSetType("working");
+            }}
+            lastSetLine={presentation === "focus" ? lastSetLine : null}
+            onEditLastSet={
+              newestSetForThis ? () => startCorrection(newestSetForThis) : undefined
+            }
             disabled={!setsLoaded || setsFailed}
             onDraftChange={(next) => {
               if (!editing) rememberStagedDraft(entry, next);
@@ -2250,22 +2324,6 @@ export function Session() {
         )}
       </>
     );
-
-    // Scoped to THIS entry, not the outer `entrySets` (which tracks
-    // `openEntry`): a superset's "detail" view calls this twice, once per
-    // member, and each one's own logged history must follow its own
-    // exercise — reading the outer, single-entry value here would show A1's
-    // sets under A2's heading whenever A2 is not the entry currently open.
-    const entrySetsForThis = setsForEntry(entry);
-    const newestSetIdForThis =
-      entrySetsForThis.length === 0
-        ? null
-        : entrySetsForThis.reduce((a, b) =>
-            b.set_index > a.set_index ||
-            (b.set_index === a.set_index && b.performed_at > a.performed_at)
-              ? b
-              : a,
-          ).id;
 
     const loggedBlock = entrySetsForThis.length > 0 && (
       <section className="rule-section">
@@ -2466,7 +2524,7 @@ export function Session() {
    *  draft to fine-tune (see `SetEditor`'s own `tracking === "done"`
    *  branch), so only skip is offered for one. */
   const moreExtrasFor = (target: ExerciseEntry) => {
-    const skipped = skips.has(target.key);
+    const skipped = Boolean(skips[target.key]);
     const skipAction = (
       <button
         type="button"
@@ -2926,6 +2984,25 @@ export function Session() {
               onOpenMore={() => setMoreOpen(true)}
               formatScheme={scheme}
               supersetHeading={focusRoundHeading}
+              onSwap={
+                focusEntry && !editing && !swapFrozen(focusEntry)
+                  ? () => openSheet("swap")
+                  : undefined
+              }
+              swapLabel={
+                focusEntry
+                  ? focusEntry.substitutedFor
+                    ? "Swap again"
+                    : "Swap exercise"
+                  : null
+              }
+              onSkip={
+                focusEntry
+                  ? (reason) => skipEntryWithReason(focusEntry, reason)
+                  : undefined
+              }
+              skipped={focusEntry ? Boolean(skips[focusEntry.key]) : false}
+              onUnskip={focusEntry ? () => toggleSkip(focusEntry) : undefined}
             />
           ) : (
             <>
@@ -2944,7 +3021,7 @@ export function Session() {
                 onEnterFocus={enterFocus}
                 focusModeAvailable={focusEligible}
                 entryProgress={entryProgress}
-                isSkipped={(entry) => skips.has(entry.key)}
+                isSkipped={(entry) => Boolean(skips[entry.key])}
                 hasSections={hasSections}
                 supersetInfo={supersetInfo}
                 formatScheme={scheme}
@@ -2955,7 +3032,7 @@ export function Session() {
                   const removable =
                     entry.brackets.length === 0 &&
                     setsForEntry(entry).length === 0;
-                  const skipped = skips.has(entry.key);
+                  const skipped = Boolean(skips[entry.key]);
                   return (
                     <button
                       type="button"

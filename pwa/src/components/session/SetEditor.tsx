@@ -56,6 +56,18 @@ export interface SetEditorProps {
    *  Session derives this from the selected entry, so substitutions never
    *  quote history from the planned movement. */
   lastPerformance?: string | null;
+  /** Whether this entry has ANY prescribed warmup — gates the hero's own
+   *  warmup/working toggle and "Already warm". Focus mode only; overview
+   *  keeps its existing unconditional seg-types row. */
+  hasWarmupBracket?: boolean;
+  /** "Already warm": stage working and log nothing. Shown only alongside
+   *  the hero toggle, and only while the draft is staged as warmup. */
+  onAlreadyWarm?(): void;
+  /** "Last: 145 kg × 5 working" — the newest logged set for this entry,
+   *  tappable to open its correction. Null (or omitted) when nothing has
+   *  been logged yet, or for a tick exercise. */
+  lastSetLine?: string | null;
+  onEditLastSet?(): void;
   /** The rest clock, when Session has one running — rendered just above the
    *  bottom bar instead of Session's own fixed strip, so it reads as part of
    *  this set rather than a document-level ticker with the log action below
@@ -129,6 +141,10 @@ export function SetEditor({
   disabled,
   variant = "overview",
   lastPerformance = null,
+  hasWarmupBracket = false,
+  onAlreadyWarm,
+  lastSetLine = null,
+  onEditLastSet,
   restSlot,
   onDraftChange,
   onLog,
@@ -373,6 +389,38 @@ export function SetEditor({
             onChange={(rpe) => onDraftChange({ rpe })}
           />
         </>
+      )}
+
+      {focus && tracking !== "done" && hasWarmupBracket && (
+        <div className="focus-hero-warmup">
+          <div className="seg seg-types">
+            {SET_TYPES.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={`seg-btn ${draft.setType === t ? "seg-on" : ""}`}
+                onClick={() => onDraftChange({ setType: t })}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          {draft.setType === "warmup" && onAlreadyWarm && (
+            <button
+              type="button"
+              className="btn btn-ghost focus-already-warm"
+              onClick={onAlreadyWarm}
+            >
+              Already warm
+            </button>
+          )}
+        </div>
+      )}
+
+      {focus && tracking !== "done" && lastSetLine && onEditLastSet && (
+        <button type="button" className="focus-last-set" onClick={onEditLastSet}>
+          {lastSetLine}
+        </button>
       )}
 
       {focus && tracking !== "done" && lastPerformance !== null && (
