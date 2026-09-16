@@ -919,22 +919,6 @@
     color: var(--bg);
   }
 
-  .checkin-open {
-    /* Today's entry point into the sheet below. A quiet line, not a call to
-       action: the Start button is this screen's job and nothing here may
-       compete with it for the eye. */
-    display: block;
-    width: 100%;
-    text-align: left;
-    border: 0;
-    border-bottom: var(--rule-hair);
-    background: none;
-    padding: var(--s-4) 0;
-    font: inherit;
-    color: var(--text-dim);
-    min-height: var(--tap-min);
-  }
-
   /* ---- check in ----
      One sheet, three optional groups. The sheet's own gutter stays (no
      .pad-sheet), and the groups sit a full --s-8 apart so a note, a tag row
@@ -1092,6 +1076,36 @@
     font-weight: 600;
     letter-spacing: var(--track-3);
     color: var(--accent-dim);
+  }
+
+  /* The check-in link rides the date line in the same micro type, so it
+     costs no row and never competes with Start. The 44px tap area comes
+     from the hit extension, not from growing the line. */
+  .date-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-6);
+  }
+
+  .checkin-link {
+    position: relative;
+    border: 0;
+    background: none;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-3);
+    text-transform: uppercase;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .checkin-link::before {
+    content: "";
+    position: absolute;
+    inset: calc(var(--s-6) * -1) calc(var(--s-4) * -1);
   }
 
   /* the program name belongs to the heading above it, not to the next section:

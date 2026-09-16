@@ -97,10 +97,7 @@ export type WorkoutState =
   | "DRAFT";
 
 type PrescriptionLoadState =
-  | "loading"
-  | "loaded"
-  | StaleReason
-  | `cached-${StaleReason}`;
+  "loading" | "loaded" | StaleReason | `cached-${StaleReason}`;
 
 /** How long the swipe track must sit still before we call it settled. */
 const SETTLE_MS = 120;
@@ -185,10 +182,11 @@ export function trainWorkoutForToday(
       (workout) =>
         workout.scheduled_date === today && states.get(workout.id) === "TODAY",
     ) ?? workouts.find((workout) => workout.scheduled_date === today);
-  if (dated)
-    return { workout: dated, state: states.get(dated.id) ?? "TODAY" };
+  if (dated) return { workout: dated, state: states.get(dated.id) ?? "TODAY" };
 
-  const undated = workouts.find((workout) => states.get(workout.id) === "TODAY");
+  const undated = workouts.find(
+    (workout) => states.get(workout.id) === "TODAY",
+  );
   return undated ? { workout: undated, state: "TODAY" } : null;
 }
 
@@ -1140,7 +1138,15 @@ export function Today({
           startEnabled={canStart}
           onStart={(workout) => void start(workout)}
           onOpenCoach={() => openCoach()}
+          onCheckIn={userId ? () => setCheckInOpen(true) : undefined}
         />
+        {checkInOpen && userId && (
+          <CheckInSheet
+            userId={userId}
+            localDate={today}
+            onClose={() => setCheckInOpen(false)}
+          />
+        )}
       </div>
     );
   }
@@ -1360,20 +1366,21 @@ export function Today({
           It renders nothing at all when there is nothing to ask. */}
       {!active && <RateSessionCard />}
 
-      <h1 className="today-heading">{formatTodayHeading()}</h1>
+      <div className="date-row">
+        <h1 className="today-heading">{formatTodayHeading()}</h1>
+        {userId && (
+          <button
+            type="button"
+            className="checkin-link"
+            onClick={() => setCheckInOpen(true)}
+          >
+            Check in <span aria-hidden="true">→</span>
+          </button>
+        )}
+      </div>
       {/* provenance (source_note) deliberately not shown here — the week is
           the subject; where a program came from lives with Claude/the coach */}
       {program && <div className="today-context">{program.name}</div>}
-
-      {userId && (
-        <button
-          type="button"
-          className="checkin-open"
-          onClick={() => setCheckInOpen(true)}
-        >
-          Check in
-        </button>
-      )}
 
       {stale === "offline" && (
         <div className="cache-note">offline — showing cached plan</div>

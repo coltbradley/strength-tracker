@@ -8,13 +8,7 @@ import type {
 } from "../lib/types";
 
 export type TrainWorkoutState =
-  | "DONE"
-  | "SKIPPED"
-  | "TODAY"
-  | "MISSED"
-  | "UPCOMING"
-  | "NO DATE"
-  | "DRAFT";
+  "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE" | "DRAFT";
 
 export interface TrainWorkout {
   workout: PlannedWorkoutRow;
@@ -37,7 +31,10 @@ export function summarizeTrainWorkout(
   const groups = groupRamps(prescriptions);
   return {
     movementCount: groups.length,
-    prescribedSetCount: prescriptions.reduce((total, row) => total + row.sets, 0),
+    prescribedSetCount: prescriptions.reduce(
+      (total, row) => total + row.sets,
+      0,
+    ),
     firstUp: groups[0]?.[0]?.exercise_name ?? null,
   };
 }
@@ -56,6 +53,7 @@ export function TrainHome({
   startEnabled,
   onStart,
   onOpenCoach,
+  onCheckIn,
 }: {
   dateContext: string;
   programName: string | null;
@@ -77,12 +75,21 @@ export function TrainHome({
   startEnabled: boolean;
   onStart: (workout: PlannedWorkoutRow) => void;
   onOpenCoach: () => void;
+  onCheckIn?: () => void;
 }) {
-  const summary = prescriptions === null ? null : summarizeTrainWorkout(prescriptions);
+  const summary =
+    prescriptions === null ? null : summarizeTrainWorkout(prescriptions);
 
   return (
     <section className="train-home" aria-label="Train">
-      <div className="train-date">{dateContext}</div>
+      <div className="date-row">
+        <div className="train-date">{dateContext}</div>
+        {onCheckIn && (
+          <button type="button" className="checkin-link" onClick={onCheckIn}>
+            Check in <span aria-hidden="true">→</span>
+          </button>
+        )}
+      </div>
       {stale && (
         <p className="train-cache-note">
           {stale === "offline"
