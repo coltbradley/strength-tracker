@@ -1,6 +1,6 @@
 # Live session adaptation
 
-Date: 2026-09-16. Status: design agreed in chat, awaiting spec review.
+Date: 2026-09-16. Status: approved 2026-09-16.
 
 Base: `main` AFTER PR 2 (`checkin-redesign`) merges. Every branch for this
 work is cut from that main. Nothing here edits a file PR 2 touches until it
@@ -483,12 +483,11 @@ feedback item, and resolve each feedback item as its task ships.
   and unlock with the queue flushing and no red pill; Reduce Motion on kills
   every motion.
 
-## Open questions
+## Resolved questions
 
-1. Weigh-in entry point. The check-in sheet is capped at three inputs by
-   choice (PR 2). Options: a weigh-in on the End screen (`sessions.bodyweight_kg`
-   already exists), a small line in History, or a fourth input on the sheet.
-   Recommendation: End screen plus History, sheet untouched.
-2. Should editing a set lock after Finish? Today it doesn't, and that is safe
-   under void-plus-row. The lifter said locking is acceptable, not required.
-   Recommendation: leave it open.
+1. Weigh-in entry point. The check-in sheet stays at its three inputs. The End
+   screen already offers an optional weigh-in (`sessions.bodyweight_kg`). History
+   gains a "Log weight" line for days without training, writing `bodyweight_log`
+   through the outbox, and the latest trend value beside it.
+2. Editing after Finish stays open. Void plus a new row makes it safe, and
+   locking was acceptable to the lifter but not asked for.
