@@ -122,6 +122,8 @@ with the lifter. See [decisions.md](decisions.md).
 Read (`readOnlyHint: true`):
 
 - `search_exercises(query, equipment?, muscle?)`
+- `resolve_exercises(names[])`: resolves multiple exercise names in one
+  lookup while preserving the search tool's matching and ranking
 - `get_lift_history(exercise_id, since?)`: live sets, e1RM series,
   adherence, rest times (capped per section, with truncation flags); loads
   are totals and carry `load_entry` so per-side work is reported the way
@@ -140,6 +142,23 @@ Read (`readOnlyHint: true`):
   exercise swaps, sets taken as working vs warmup, load/rep deltas, unplanned
   sets, and skips with their reasons — framed as what changed for adapting
   the NEXT session, never a completion score
+- `get_checkins(from?, to?, kind?, tags?)`: the lifter's spontaneous notes,
+  energy, mood tags, and readiness check-ins
+- `get_checkin_buckets(from?, to?)`: daily readiness aggregates with response
+  counts, never a composite score
+- `get_injuries(state?)`: the user's injury records and current status
+- `get_volume(exercise_id?, weeks?)`: weekly working-set volume from live sets
+- `get_week_summary(week_start?)`: planned and completed day counts without
+  turning them into an adherence percentage
+- `get_training_maxes(exercise_id?)`: current and historical training maxes
+- `get_training_plan()`: the active long-term objective and phases
+- `get_exercise_notes(exercise_id?)`: private standing cues for movements
+- `get_memory()`: standing facts the coach has stored about the lifter
+- `list_feedback(n?)`: feedback already submitted by the user
+- `find_similar_days(program_id?, day_index?, exercise_ids?)`: matching days
+  used to prevent duplicate programs
+- `get_program(program_id?)` and `list_programs()`: full program details or
+  the user's available programs
 
 Write:
 
@@ -169,6 +188,19 @@ Write:
 - `resolve_observation(id, status, outcome?, superseded_by?)`: closes an
   observation as resolved (with an outcome) or superseded (by a newer
   observation's id)
+- `set_exercise_note(exercise_id, note?)`: writes or removes a private
+  movement cue
+- `set_training_plan(...)`: replaces the unconfirmed long-term plan, or
+  requires `confirm_change=true` after approval to replace a confirmed one
+- `confirm_training_plan(plan_id)`: confirms the user's reviewed training plan
+- `update_planned_workout(...)`: replaces one day's prescriptions in place;
+  confirmed changes require approval
+- `repeat_planned_workout(...)`: creates the next day from the last performed
+  day while preserving ramps, supersets, and sections
+- `remember(fact, category?)` / `forget(memory_id)`: adds or removes a
+  standing coach memory
+- `submit_feedback(category, message)`: records product feedback
+- `resolve_feedback(id, resolution)`: closes a feedback record
 
 Claude cannot write `sessions`, `sets`, `set_voids`, or `set_notes`. Only
 the PWA logs training.
