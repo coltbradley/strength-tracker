@@ -24,6 +24,10 @@ export interface DemoStore {
   /** weigh-ins with no session attached; unioned with sessions.bodyweight_kg
    *  by the v_bodyweight stand-in, the same as in SQL */
   bodyweight_log: Row[];
+  /** unlimited-per-day subjective check-ins (20260916000000_checkin_redesign) */
+  checkins: Row[];
+  /** injury episodes a pain check-in files against */
+  symptom_episodes: Row[];
 }
 
 export type DemoScenario =
@@ -668,6 +672,136 @@ function history(thisMonday: string): { sessions: Row[]; sets: Row[] } {
   return { sessions, sets };
 }
 
+// ---- check-ins + one open injury -------------------------------------------
+
+interface CheckinSpec {
+  daysAgo: number;
+  hour: number;
+  energy: number | null;
+  tags: string[];
+  note: string | null;
+  episodeId?: string;
+  trainingImpact?: "none" | "modified" | "stopped";
+}
+
+/** ~10 check-ins across the previous week and this week, spread over
+ *  morning/midday/evening, most with energy 2-5 and a couple tag-only or
+ *  note-only. One open "left knee" episode (opened 9 days ago) picks up two
+ *  linked pain reports, the latest yesterday, so Today's "still there?" ask
+ *  has something real to point at.
+ *
+ *  Dated by days-ago from today rather than by weekday, since the injury and
+ *  its reports are specified that way; on a Monday or Tuesday the oldest
+ *  couple can land a day or two before "the previous week" starts, the same
+ *  tolerance planWeek() takes for its own leftovers. */
+function checkinData(today: string): {
+  checkins: Row[];
+  symptomEpisodes: Row[];
+} {
+  const kneeId = "episode-knee";
+  const kneeOpenedOn = addDays(today, -9);
+
+  const specs: CheckinSpec[] = [
+    {
+      daysAgo: 13,
+      hour: 8,
+      energy: 4,
+      tags: [],
+      note: "Slept great, felt strong warming up.",
+    },
+    { daysAgo: 11, hour: 20, energy: null, tags: ["slept_badly"], note: null },
+    {
+      daysAgo: 9,
+      hour: 13,
+      energy: 3,
+      tags: ["pain"],
+      note: "Tweaked my left knee on the last squat set, backed off the last rep.",
+      episodeId: kneeId,
+      trainingImpact: "modified",
+    },
+    {
+      daysAgo: 8,
+      hour: 12,
+      energy: 5,
+      tags: ["great"],
+      note: "Hit a PR on bench, felt easy today.",
+    },
+    {
+      daysAgo: 6,
+      hour: 7,
+      energy: 2,
+      tags: ["stressed"],
+      note: "Rough morning, work stuff on my mind.",
+    },
+    {
+      daysAgo: 4,
+      hour: 21,
+      energy: null,
+      tags: [],
+      note: "Long day, nothing major to report.",
+    },
+    {
+      daysAgo: 3,
+      hour: 14,
+      energy: 3,
+      tags: ["unusually_sore"],
+      note: "Legs still sore from Monday's squats.",
+    },
+    {
+      daysAgo: 2,
+      hour: 8,
+      energy: 4,
+      tags: [],
+      note: "Good sleep, ready to lift.",
+    },
+    {
+      daysAgo: 1,
+      hour: 19,
+      energy: 3,
+      tags: ["pain"],
+      note: "Knee's still a little cranky but it didn't affect anything today.",
+      episodeId: kneeId,
+      trainingImpact: "none",
+    },
+    {
+      daysAgo: 0,
+      hour: 12,
+      energy: 4,
+      tags: [],
+      note: "Feeling solid heading into today's session.",
+    },
+  ];
+
+  const checkins: Row[] = specs.map((s, i) => ({
+    id: id("ci", i),
+    user_id: DEMO_USER_ID,
+    kind: "spontaneous",
+    session_id: null,
+    activity_id: null,
+    recorded_at: at(addDays(today, -s.daysAgo), s.hour),
+    note: s.note,
+    energy: s.energy,
+    feeling: null,
+    tags: s.tags,
+    episode_id: s.episodeId ?? null,
+    training_impact: s.trainingImpact ?? null,
+  }));
+
+  const symptomEpisodes: Row[] = [
+    {
+      id: kneeId,
+      user_id: DEMO_USER_ID,
+      body_region: "Knee",
+      side: "left",
+      opened_on: kneeOpenedOn,
+      closed_on: null,
+      created_at: at(kneeOpenedOn, 13),
+    },
+  ];
+
+  return { checkins, symptomEpisodes };
+}
+
 // ---- scenario assembly -----------------------------------------------------
 
 export interface ScenarioResult {
@@ -693,6 +827,8 @@ function emptyStore(): DemoStore {
     set_notes: [],
     coach_access: [],
     bodyweight_log: [],
+    checkins: [],
+    symptom_episodes: [],
   };
 }
 
@@ -1018,6 +1154,10 @@ function defaultStore(opts: { dated: boolean }): DemoStore {
       updated_at: at(plan.doneDate, 19, 20),
     },
   ];
+
+  const { checkins, symptomEpisodes } = checkinData(today);
+  store.checkins = checkins;
+  store.symptom_episodes = symptomEpisodes;
 
   return store;
 }
