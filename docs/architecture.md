@@ -50,8 +50,17 @@ the analytical core: prescribed vs achieved, measured not self-reported.
 measurable. `load_kg` is always the TOTAL system load on both sides of that
 join (a pair of 30 kg dumbbells is 60); `load_entry` on `sets` and
 `prescriptions` records whether the number was entered per side or as a
-total, with NULL meaning "not asserted" rather than "total". Settings are
-device-local and have no table. User-flow detail lives in
+total, with NULL meaning "not asserted" rather than "total". `session_skips`
+is what the lifter decided not to do in a session, one row per skipped entry,
+append-only and written ONLY by the PWA through the outbox at Finish — no
+update or delete policy, the same shape as `sets`, so an un-skip mid-session
+never reaches the network. `coach_observations` is the one narrow exception
+to "derived metrics live in views": it stores the coach's own written
+conclusions, with a frozen `evidence` record that is never re-read as a
+current metric, only compared then-vs-now; RLS is owner select and delete
+only (no insert or update — a lifter cannot author or edit the coach's own
+opinion by hand), and every write comes from the MCP service role. Settings
+are device-local and have no table. User-flow detail lives in
 [flows.md](flows.md).
 
 ## The endurance half
@@ -89,7 +98,13 @@ including the metrics this system refuses to compute, in
 SQL views only, all `security_invoker`: `v_live_sets` (the one definition
 of "sets that count"), `v_current_tm`, `v_resolved_prescriptions`, `v_e1rm`
 (Epley, working sets, 1-8 reps), `v_session_best_e1rm`, `v_weekly_volume`,
-`v_adherence`, `v_rest`, `v_goal_progress`. Nothing derived is ever stored.
+`v_adherence`, `v_rest`, `v_goal_progress`, `v_trend_digest`. Nothing
+derived is ever stored. `v_trend_digest` reads the views already built on
+`v_live_sets` (`v_weekly_volume`, `v_session_best_e1rm`) rather than `sets`
+directly, buckets its weekly figures by `app_tz(user_id)` of the row it is
+computing for, carries every rolling mean with its own count, and returns
+NO ROW at all for a user with no bodyweight log, no check-ins and no logged
+working sets — absence, not a trend of zero.
 
 Every calendar bucket (dates, ISO weeks, "today") goes through
 `app_tz(user_id)` — the lifter's home timezone, not the database's UTC. It
@@ -102,7 +117,7 @@ service-role (MCP) path. The MCP server calls the same function for its own
 trained. The PWA uses the device clock instead, on purpose: the phone travels
 with the lifter. See [decisions.md](decisions.md).
 
-## MCP tool surface (12 tools)
+## MCP tool surface (41 tools)
 
 Read (`readOnlyHint: true`):
 
@@ -113,6 +128,18 @@ Read (`readOnlyHint: true`):
   the lifter entered it
 - `get_recent_sessions(n?)`: sessions with sRPE, notes, and set counts
 - `get_goal_progress(exercise_id?)`
+- `get_bodyweight(from?, to?)`: bodyweight from both sources `v_bodyweight`
+  unions — the standalone log and `sessions.bodyweight_kg` — newest first,
+  plus 7- and 28-day means each carrying its own count
+- `get_trends()`: one read of `v_trend_digest` — bodyweight, energy and the
+  top 5 lifts by working sets, computed fresh every call, nothing stored;
+  a user with no data gets `trends: null` with a note, never a row of zeros
+- `get_observations(status?)`: the coach's own conclusions from the numbers,
+  newest first, filterable by open/resolved/superseded
+- `get_session_diff(session_id)`: planned vs performed for one session —
+  exercise swaps, sets taken as working vs warmup, load/rep deltas, unplanned
+  sets, and skips with their reasons — framed as what changed for adapting
+  the NEXT session, never a completion score
 
 Write:
 
@@ -135,6 +162,13 @@ Write:
   the MCP path is the service role with no auth.uid(). The row became readable
   by no one and every prescription naming it left the plan.)
 - `delete_exercise(id)`: custom + unreferenced only (FKs enforce it)
+- `record_observation(topic, observation, recommendation?, evidence?,
+  check_back_on?)`: the coach's own conclusion reached from the numbers,
+  with `evidence` frozen at write time for a later then-vs-now comparison,
+  never read back as a live metric
+- `resolve_observation(id, status, outcome?, superseded_by?)`: closes an
+  observation as resolved (with an outcome) or superseded (by a newer
+  observation's id)
 
 Claude cannot write `sessions`, `sets`, `set_voids`, or `set_notes`. Only
 the PWA logs training.
