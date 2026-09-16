@@ -414,6 +414,20 @@
     }
   }
 
+  /* One flash for a tap that lands on the 200 ms duplicate-LOG lock
+   * (Decision 6): the tap was real, it just wasn't a second insert. */
+  @keyframes log-held {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.55;
+      transform: scale(0.97);
+    }
+  }
+
   /* WCAG 2.2.2: .rest-label's blink runs for the whole rest interval, which is
    * indefinite by any practical measure. Kill all four motion sources at once. */
   @media (prefers-reduced-motion: reduce) {
@@ -772,6 +786,13 @@
     width: 100%;
     min-height: var(--tap-log);
     font-size: var(--fs-body);
+  }
+
+  /* `var(..., 120ms)` / `var(..., ease-out)` fall back to literals matching
+   * `--motion-fast`/`--ease-out` (Task 3) so this rule works whether or not
+   * that task's token-layer edit has landed yet. */
+  .btn-log.is-held {
+    animation: log-held var(--motion-fast, 120ms) var(--ease-out, ease-out);
   }
 
   .btn-danger {

@@ -148,7 +148,7 @@ interface PadSpec {
   fromPlates?: boolean;
 }
 
-const LOG_LOCK_MS = 400;
+const LOG_LOCK_MS = 200;
 // DB checks: reps between 0 and 100; rest_seconds_actual <= 3600
 const MAX_REPS = 100;
 const MAX_LOAD_KG = 999;
@@ -265,6 +265,11 @@ export function Session() {
   };
   const [rpeAsked, setRpeAsked] = useState<Set<string>>(new Set());
   const [logLocked, setLogLocked] = useState(false);
+  /** True for one `--motion-fast` pulse after a tap lands on the 200 ms
+   *  duplicate-LOG lock. The tap did something — it just wasn't a second
+   *  insert — and `.is-held` (styles.css) says so instead of the button
+   *  silently eating it. */
+  const [logHeld, setLogHeld] = useState(false);
   const [roundDrafts, setRoundDrafts] = useState<Record<string, SetDraft>>({});
   const [roundError, setRoundError] = useState<string | null>(null);
   /** Which paired editor owns the ephemeral pad or plate sheet, if either. */
@@ -1103,6 +1108,23 @@ export function Session() {
 
   // ---- actions -------------------------------------------------------------
 
+  /** A tap on LOG (or Log round / Log A1 only / Log A2 only) that lands on
+   *  the 200 ms duplicate-tap lock must not read as nothing happening: it
+   *  flashes the button once (`.is-held`, `--motion-fast`) and drops the
+   *  tap. Never wraps a correction — Decision 6 is that corrections and
+   *  every other control are never locked, and `saveCorrection` no longer
+   *  checks `logLocked` at all (see below). 120 ms mirrors the
+   *  `--motion-fast` token Task 3 adds to styles.css; kept as a literal here
+   *  so this does not depend on that task's edit landing first. */
+  const tapLog = (action: () => void) => {
+    if (logLocked) {
+      setLogHeld(true);
+      window.setTimeout(() => setLogHeld(false), 120);
+      return;
+    }
+    action();
+  };
+
   /** Build every ordinary set shape before it reaches the durable outbox. */
   const buildSetInsert = (
     entry: ExerciseEntry,
@@ -1504,7 +1526,12 @@ export function Session() {
    *  Nothing about WHEN the set happened changes: performed_at, the rest
    *  before it and the rest clock after it all stand. */
   const saveCorrection = () => {
-    if (!editing || !sessionId || logLocked) return;
+    // Corrections are never gated by the log lock (Decision 6): the lock
+    // exists only to stop a double LOG tap inserting the same set twice, and
+    // a correction is a deliberate edit to a set that already exists. It
+    // must not engage the lock either — before this, correcting a set right
+    // after logging one silently blocked the NEXT log for up to 400 ms.
+    if (!editing || !sessionId) return;
     const old = editing.set;
     const correction = {
       load_kg: Math.round(totalLoadKg * 100) / 100,
@@ -1517,8 +1544,6 @@ export function Session() {
       cancelCorrection();
       return;
     }
-    setLogLocked(true);
-    window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     const next = correctedSet(old, correction);
 
     const nextVoids = new Set(voids);
@@ -2077,36 +2102,43 @@ export function Session() {
               tag: roundTagA2,
               editor: roundEditorFor(focusSupersetPair[1], roundA2),
             }}
-            disabled={logLocked || !setsLoaded || setsFailed}
+            disabled={!setsLoaded || setsFailed}
+            heldPulse={logHeld}
             error={roundError}
             singleLogLabel={`Log ${roundTagA1} only`}
             pendingMember={pendingRoundMember}
             onLogRound={(drafts) =>
-              void logRound({
-                keys: [focusSupersetPair[0].key, focusSupersetPair[1].key],
-                roundIndex,
-                a1: drafts.a1,
-                a2: drafts.a2,
+              tapLog(() =>
+                void logRound({
+                  keys: [focusSupersetPair[0].key, focusSupersetPair[1].key],
+                  roundIndex,
+                  a1: drafts.a1,
+                  a2: drafts.a2,
+                }),
+              )
+            }
+            onLogA1Only={() =>
+              tapLog(() => {
+                if (!sessionId || !setsLoaded || setsFailed) return;
+                logSet(roundA1, focusSupersetPair[0]);
+                setRoundDrafts((prior) => {
+                  const next = { ...prior };
+                  delete next[focusSupersetPair[0].key];
+                  return next;
+                });
               })
             }
-            onLogA1Only={() => {
-              if (!sessionId || logLocked || !setsLoaded || setsFailed) return;
-              logSet(roundA1, focusSupersetPair[0]);
-              setRoundDrafts((prior) => {
-                const next = { ...prior };
-                delete next[focusSupersetPair[0].key];
-                return next;
-              });
-            }}
-            onLogA2Only={() => {
-              if (!sessionId || logLocked || !setsLoaded || setsFailed) return;
-              logSet(roundA2, focusSupersetPair[1]);
-              setRoundDrafts((prior) => {
-                const next = { ...prior };
-                delete next[focusSupersetPair[1].key];
-                return next;
-              });
-            }}
+            onLogA2Only={() =>
+              tapLog(() => {
+                if (!sessionId || !setsLoaded || setsFailed) return;
+                logSet(roundA2, focusSupersetPair[1]);
+                setRoundDrafts((prior) => {
+                  const next = { ...prior };
+                  delete next[focusSupersetPair[1].key];
+                  return next;
+                });
+              })
+            }
           />
         ) : (
           <SetEditor
@@ -2146,7 +2178,7 @@ export function Session() {
                       : "LOG SET"
                     : logLabel(entry)
             }
-            logClassName={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log`}
+            logClassName={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log${logHeld && !editing ? " is-held" : ""}`}
             // A correction is a deliberate, one-off edit to history, exempt
             // from focus mode's default minimalism: every field (type, RPE,
             // fine adjustment) stays inline and reachable rather than behind
@@ -2161,7 +2193,7 @@ export function Session() {
                 : null
             }
             restSlot={restInline && !sheetOpen ? restTimerEl : undefined}
-            disabled={logLocked || !setsLoaded || setsFailed}
+            disabled={!setsLoaded || setsFailed}
             onDraftChange={(next) => {
               if (!editing) rememberStagedDraft(entry, next);
               if (next.entryKg !== undefined) setEntryKg(next.entryKg);
@@ -2174,7 +2206,7 @@ export function Session() {
                 ? saveCorrection
                 : presentation === "focus" && workoutDone
                   ? finishWorkout
-                  : () => logSet()
+                  : () => tapLog(() => logSet())
             }
             onOpenPlates={() => openSheet("plates")}
             onOpenPad={openPad}
