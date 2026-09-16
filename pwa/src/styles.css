@@ -1564,6 +1564,14 @@
     color: var(--accent-dim);
   }
 
+  /* The load-mode glyph shares .plate-hint's sizing, colour and hit-bleed
+     * (it is already in that shared selector list above in section 2); this
+     * only centres the inline svg on the text baseline. */
+  .load-style-icon {
+    display: inline-flex;
+    align-items: center;
+  }
+
   /* The reveal is the LAST item in the load head and the only one that can
    * sit beside two others (PER SIDE ×2 and the plate hint both appear when a
    * parse calls a barbell per-side). The head's gap is --s-5 = 10px and the

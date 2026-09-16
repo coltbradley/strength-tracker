@@ -161,6 +161,58 @@ describe("SetEditor", () => {
   });
 });
 
+describe("SetEditor load-style icon", () => {
+  it("shows a fixed, unlabelled-as-button icon for a barbell (no toggle)", () => {
+    const base = props();
+    render(
+      <SetEditor
+        {...props({
+          loadPresentation: {
+            ...base.loadPresentation,
+            styleIcon: {
+              Icon: () => <svg data-testid="bar-icon" />,
+              label: "barbell — loaded with plates",
+            },
+          },
+        })}
+      />,
+    );
+    expect(
+      screen.getByLabelText("barbell — loaded with plates"),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", {
+        name: "barbell — loaded with plates",
+      }),
+    ).toBeNull();
+  });
+
+  it("toggles plates <-> stack through the machine/cable icon", () => {
+    const onToggle = vi.fn();
+    const base = props();
+    render(
+      <SetEditor
+        {...props({
+          loadPresentation: {
+            ...base.loadPresentation,
+            styleIcon: {
+              Icon: () => <svg data-testid="stack-icon" />,
+              label: "weight stack — switch to plate-loaded",
+              onToggle,
+            },
+          },
+        })}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "weight stack — switch to plate-loaded",
+      }),
+    );
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("SetEditor focus variant", () => {
   const loadSteps = [
     { label: "− 2.5", delta: -2.5, announce: "2.5 kg" },

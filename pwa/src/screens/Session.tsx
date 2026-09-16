@@ -39,7 +39,11 @@ import { RestTimer, type ActiveRest } from "../components/RestTimer";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
-import { SetEditor, type SetDraft } from "../components/session/SetEditor";
+import {
+  SetEditor,
+  type SetDraft,
+  type SetEditorProps,
+} from "../components/session/SetEditor";
 import { SupersetRoundEditor } from "../components/session/SupersetRoundEditor";
 import { FocusDeck } from "../components/session/FocusDeck";
 import { FocusMoreSheet } from "../components/session/FocusMoreSheet";
@@ -103,7 +107,10 @@ import {
   getExerciseBarKg,
   getExercisePref,
   getExerciseRestSeconds,
+  MAX_BAR_KG,
+  setExerciseBarKg,
   setExerciseLoadEntry,
+  setExerciseLoadStyle,
 } from "../lib/settings";
 import { readSkipsCache, type SkipRecord } from "../lib/skips";
 import { useWakeLock } from "../hooks/useWakeLock";
@@ -125,6 +132,16 @@ import {
   resolveLoadEntry,
   totalKg,
 } from "../lib/loadEntry";
+import {
+  offersLoadStyle,
+  resolveLoadStyle,
+  type LoadStyle,
+} from "../lib/loadStyle";
+import {
+  BarbellIcon,
+  PlateMachineIcon,
+  StackIcon,
+} from "../components/icons/LoadIcons";
 import { fromDisplay, stepKgFor, toDisplay, type Unit } from "../lib/units";
 import type {
   ActiveSession,
@@ -143,7 +160,7 @@ interface RestCache {
   forLabel: string | null;
 }
 
-type PadKind = "load" | "reps" | "rest";
+type PadKind = "load" | "reps" | "rest" | "base";
 interface PadSpec {
   kind: PadKind;
   fromPlates?: boolean;
@@ -847,7 +864,6 @@ export function Session() {
   const equipment = openEntry
     ? (equipMap[openEntry.exercise_id] ?? null)
     : null;
-  const plateable = equipment === "barbell" || equipment === "machine";
   // Focus's hero is load or reps depending on whether there is an implement
   // at all. Gated to focus mode only (see SetEditor's `noLoad`) — the
   // accordion's long-standing load field is unchanged here.
@@ -866,6 +882,20 @@ export function Session() {
     equipment,
   );
   const exercisePref = useExercisePref(openEntry?.exercise_id ?? null);
+
+  // Load style: which of the six load modes this exercise uses. Barbell and
+  // any machine/cable-like equipment are eligible for the plate calculator
+  // (fixed for a barbell, toggleable for machine/cable); everything else
+  // (dumbbell, kettlebell, bodyweight) has no bar/pin concept at all and
+  // `loadStyle` below is never consulted for it.
+  const loadStyleEligible =
+    equipment === "barbell" ||
+    offersLoadStyle(equipment, openEntry?.name ?? "");
+  const loadStyle: LoadStyle | null = loadStyleEligible
+    ? resolveLoadStyle(exercisePref.loadStyle, equipment, openEntry?.name ?? "")
+    : null;
+  const plateable = loadStyle === "plates";
+  const canToggleLoadStyle = offersLoadStyle(equipment, openEntry?.name ?? "");
 
   // ---- accordion -----------------------------------------------------------
 
@@ -986,6 +1016,42 @@ export function Session() {
     if (!openEntry) return;
     setExerciseLoadEntry(openEntry.exercise_id, perSide ? "total" : "per_side");
   };
+
+  /** Flip plates<->stack for this exercise, persisted device-locally. Only
+   *  meaningful for machine/cable work — a barbell's icon has no
+   *  `onToggle` at all (see `styleIcon` below), so this is never reachable
+   *  for one. */
+  const toggleLoadStyle = () => {
+    if (!openEntry) return;
+    setExerciseLoadStyle(
+      openEntry.exercise_id,
+      loadStyle === "plates" ? "stack" : "plates",
+    );
+  };
+
+  /** Which load-mode icon the hero shows: a fixed barbell, a plates<->stack
+   *  toggle for machine/cable work, or nothing for hand-held implements
+   *  and bodyweight (those keep the existing per-hand chip, with its own
+   *  icon named by `perSideIcon`). */
+  const styleIcon: SetEditorProps["loadPresentation"]["styleIcon"] =
+    !loadStyleEligible || !openEntry
+      ? null
+      : equipment === "barbell"
+        ? { Icon: BarbellIcon, label: "barbell — loaded with plates" }
+        : {
+            Icon: loadStyle === "plates" ? PlateMachineIcon : StackIcon,
+            label:
+              loadStyle === "plates"
+                ? "plate-loaded machine — switch to a weight stack"
+                : "weight stack — switch to plate-loaded",
+            onToggle: canToggleLoadStyle ? toggleLoadStyle : undefined,
+          };
+  const perSideIcon: "dumbbell" | "kettlebell" | null =
+    equipment?.toLowerCase() === "dumbbell"
+      ? "dumbbell"
+      : (equipment?.toLowerCase().startsWith("kettlebell") ?? false)
+        ? "kettlebell"
+        : null;
 
   const prefilledFor = useRef<string | null>(null);
   const openedFor = useRef<string | null>(null);
@@ -1820,6 +1886,40 @@ export function Session() {
       roundInputKey === null
         ? null
         : (entries.find((entry) => entry.key === roundInputKey) ?? null);
+    // Base/bar weight is a device-local per-exercise setting, not part of
+    // any draft — it does not go through the round-vs-open-entry draft
+    // split below, which exists only for entryKg/reps.
+    if (pad.kind === "base") {
+      const baseTarget = roundEntry ?? openEntry;
+      const baseEquipment = equipMap[baseTarget.exercise_id] ?? null;
+      const isMachineBase = baseEquipment !== "barbell";
+      const currentBaseKg = getExerciseBarKg(
+        baseTarget.exercise_id,
+        unit,
+        baseEquipment,
+      );
+      return {
+        label: `${baseTarget.name.toUpperCase()} · ${
+          isMachineBase ? "BASE WEIGHT" : "BAR WEIGHT"
+        } IN ${unit.toUpperCase()}`,
+        action: "BACK TO PLATES",
+        initial: String(toDisplay(currentBaseKg, unit)),
+        allowDecimal: true,
+        onCommit: (value) => {
+          const kg = Math.min(
+            MAX_BAR_KG,
+            Math.max(0, fromDisplay(value, unit)),
+          );
+          setExerciseBarKg(baseTarget.exercise_id, Math.round(kg * 100) / 100);
+          setPad(null);
+          setSheet("plates");
+        },
+        onCancel: () => {
+          setPad(null);
+          setSheet("plates");
+        },
+      };
+    }
     if (roundEntry && pad.kind !== "rest") {
       const draft = roundDraftFor(roundEntry);
       const bracket = bracketFor(
@@ -2227,6 +2327,8 @@ export function Session() {
               hint,
               canToggleEntry: offersLoadEntry(loadEntryInput),
               noLoad: noLoadEditor,
+              styleIcon,
+              perSideIcon,
             }}
             unit={unit}
             maxEntryKg={maxEntryKg}
@@ -2538,8 +2640,21 @@ export function Session() {
       return <div className="focus-more-actions">{skipAction}</div>;
     }
     const targetEquipment = equipMap[target.exercise_id] ?? null;
-    const targetPlateable =
-      targetEquipment === "barbell" || targetEquipment === "machine";
+    const targetLoadStyleEligible =
+      targetEquipment === "barbell" ||
+      offersLoadStyle(targetEquipment, target.name);
+    const targetLoadStyle: LoadStyle | null = targetLoadStyleEligible
+      ? resolveLoadStyle(
+          getExercisePref(target.exercise_id).loadStyle,
+          targetEquipment,
+          target.name,
+        )
+      : null;
+    const targetPlateable = targetLoadStyle === "plates";
+    const targetCanToggleStyle = offersLoadStyle(
+      targetEquipment,
+      target.name,
+    );
     const targetLoadEntryInput = {
       override: getExercisePref(target.exercise_id).loadEntry,
       prescribed: target.substitutedFor
@@ -2589,6 +2704,22 @@ export function Session() {
               {targetLoadEntry === "per_side"
                 ? "each hand"
                 : "one total weight"}
+            </button>
+          )}
+          {targetLoadStyleEligible && targetCanToggleStyle && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() =>
+                setExerciseLoadStyle(
+                  target.exercise_id,
+                  targetLoadStyle === "plates" ? "stack" : "plates",
+                )
+              }
+            >
+              {targetLoadStyle === "plates"
+                ? "switch to weight stack"
+                : "switch to plates"}
             </button>
           )}
           {skipAction}
@@ -2780,10 +2911,17 @@ export function Session() {
     const storedLoad = totalKg(draft.entryKg, entryMode);
     const perSide = entryMode === "per_side";
     const barKg = getExerciseBarKg(entry.exercise_id, unit, equipment);
+    const roundLoadStyleEligible =
+      equipment === "barbell" || offersLoadStyle(equipment, entry.name);
+    const roundLoadStyle: LoadStyle | null = roundLoadStyleEligible
+      ? resolveLoadStyle(
+          getExercisePref(entry.exercise_id).loadStyle,
+          equipment,
+          entry.name,
+        )
+      : null;
     const plateSplit =
-      equipment === "barbell" || equipment === "machine"
-        ? split(storedLoad, barKg, inventory)
-        : null;
+      roundLoadStyle === "plates" ? split(storedLoad, barKg, inventory) : null;
     const hint = plateSplit
       ? plateSplit.plates.length > 0
         ? plateSplit.plates
@@ -3190,6 +3328,9 @@ export function Session() {
           equipment={equipMap[plateEntry.exercise_id] ?? null}
           onTypeTarget={() =>
             openPad("load", true, roundInputEntry?.key ?? null)
+          }
+          onTypeBase={() =>
+            openPad("base", true, roundInputEntry?.key ?? null)
           }
           onClose={() => {
             setSheet(null);
