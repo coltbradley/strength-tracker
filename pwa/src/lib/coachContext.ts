@@ -428,7 +428,7 @@ export async function buildCoachContext(): Promise<string> {
       }
     }
   } catch {
-    // As above.
+    // Offline: answering with less beats not answering.
   }
 
   // The plan, before today: it is the frame every day is written inside.

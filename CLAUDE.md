@@ -554,7 +554,12 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   timestamp; it is a 24-hour delayed signal and cannot be a column on the run.
   `cycle_context` / `cycle_events` are OPT-IN, have no UI yet, and nothing
   anywhere infers a cycle from anything else. Phase is never computed and may
-  not gate a rule. Both tables are DELETABLE, unlike the training record. A
+  not gate a rule (its performance effects are small and contested); absent
+  menstruation screens and REFERS, because that is a primary IOC REDs
+  indicator. `status` exists so screening can tell "no period because
+  continuous contraception" from "no period, and that is new", which are
+  clinically opposite and identical without it. Both tables are DELETABLE,
+  unlike the training record. A
   future cycle UI needs its own spec first: contraception method, a status
   history table, and stricter privacy handling than the rest of this section.
 
