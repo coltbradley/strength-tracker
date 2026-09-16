@@ -44,6 +44,7 @@ import {
   type StaleReason,
   type WorkoutList,
 } from "../lib/data";
+import { doneSummaryKey, formatDuration, type DoneSummary } from "./End";
 import { groupRamps } from "../lib/entries";
 import { openCoach } from "../lib/coachOpen";
 import { onPlanChanged } from "../lib/planChanges";
@@ -320,6 +321,14 @@ export function Today({
   const [list, setList] = useState<WorkoutList | null>(null);
   const [stale, setStale] = useState<StaleReason | null>(null);
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
+  // Lazily loaded per row, same idea as `rx`/`loadRx` below: a whole
+  // week's worth of these costs real reads for a number most days never
+  // show. Keyed by workout id; a day with no cached entry (an older DONE
+  // day, or one finished on another device) just renders without this
+  // line — the app records what it can confirm, never what it guesses.
+  const [doneSummary, setDoneSummary] = useState<Record<string, DoneSummary>>(
+    {},
+  );
   const [active, setActive] = useState<ActiveSession | null>(null);
   const [rx, setRx] = useState<Record<string, ResolvedPrescriptionRow[]>>({});
   // A missing row alone is ambiguous: it can mean a request is still in
@@ -686,6 +695,18 @@ export function Today({
     [workouts, weekDates, byDate],
   );
   const selectedWorkout = anyDates ? (byDate.get(selectedDate) ?? null) : null;
+
+  // The one DONE day open at a time — the dated week-strip's
+  // `selectedWorkout`, or the undated DAY 1..N list's `expanded` row —
+  // reads its own summary once we know it's DONE. `dayDetail` is the
+  // single function both presentations call, so this covers both.
+  useEffect(() => {
+    const id = anyDates ? (selectedWorkout?.id ?? null) : expanded;
+    if (!id || states.get(id) !== "DONE" || id in doneSummary) return;
+    void cacheGet<DoneSummary>(doneSummaryKey(id)).then((s) => {
+      if (s) setDoneSummary((prev) => ({ ...prev, [id]: s }));
+    });
+  }, [anyDates, selectedWorkout, expanded, states, doneSummary]);
   // Mirrors selectedWorkout's id for the same reason expandedRef mirrors
   // expanded: onPlanChanged below needs the currently-visible dated day
   // without resubscribing every time the selection changes.
@@ -1171,6 +1192,13 @@ export function Today({
     const doNowLine = doNowMicrocopy(state, canDoNow, canReschedule);
     return (
       <>
+        {state === "DONE" && doneSummary[w.id] && (
+          <div className="done-summary">
+            {doneSummary[w.id].setCount}{" "}
+            {doneSummary[w.id].setCount === 1 ? "set" : "sets"} ·{" "}
+            {formatDuration(doneSummary[w.id].durationSeconds)}
+          </div>
+        )}
         {canStart && state === "TODAY" && (
           <button
             type="button"

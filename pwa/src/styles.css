@@ -3985,6 +3985,20 @@
     font-weight: 700;
   }
 
+  /* A finished day's own line — sets and duration, ahead of whatever
+       dayDetail offers next ("Start again", "Review with the coach"). Same
+       muted ink the state vocabulary already gives DONE (.week-label-done),
+       not --accent: the fact of what happened outranks anything you might
+       do about it, but it isn't a call to action. */
+  .done-summary {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 600;
+    letter-spacing: var(--track-2);
+    color: var(--text-dim);
+    margin: var(--s-2) 0;
+  }
+
   /* ---- per-set notes ---- */
 
   .logged-set-wrap {

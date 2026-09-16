@@ -41,6 +41,26 @@ import type {
 // Mirror of the DB check: sessions.session_rpe between 0 and 10
 // (supabase/migrations/20260825120001_schema.sql) — keep in sync.
 const LAST_BW_KEY = "lastBodyweightKg";
+/**
+ * Raw cache key (see LAST_BW_KEY above — not a `cacheKeys` entry), keyed
+ * by the PLANNED DAY rather than the session: Today reads this after
+ * `activeSession` is already gone, and it never knew the session's id in
+ * the first place, only the day's. Exported so Today.tsx imports this
+ * exact function rather than keeping its own copy of the template
+ * string, which is how the two would drift.
+ */
+export const doneSummaryKey = (plannedWorkoutId: string): string =>
+  `doneSummary:${plannedWorkoutId}`;
+
+/** What Today's DONE card shows for a day it has no other way to
+ *  summarise once the session that finished it is gone. Deliberately NOT
+ *  working volume/tonnage — that is a derived metric owned by
+ *  `v_weekly_volume`'s filtering rules, and re-deriving it here would be a
+ *  second, driftable definition of the same number. */
+export interface DoneSummary {
+  setCount: number;
+  durationSeconds: number;
+}
 const NOTE_CHIPS = [
   "Felt strong",
   "Sleep was short",
@@ -253,6 +273,10 @@ export function End() {
     if (endingRef.current) return;
     endingRef.current = true;
     try {
+      const endedAtMs = Math.max(
+        Date.now(),
+        Date.parse(active.started_at) || 0,
+      );
       await outbox.enqueue({
         kind: "update",
         table: "sessions",
@@ -265,14 +289,29 @@ export function End() {
           // outbox classifies as dead: the close would sit in the queue
           // failing forever, with the session still open. syncOpenSessions
           // already clamps for exactly this reason; so does this now.
-          ended_at: new Date(
-            Math.max(Date.now(), Date.parse(active.started_at) || 0),
-          ).toISOString(),
+          ended_at: new Date(endedAtMs).toISOString(),
           session_rpe: rpe,
           bodyweight_kg: bwOpen ? Math.round(bwKg * 10) / 10 : null,
           notes: note.trim() === "" ? null : note.trim(),
         },
       });
+      // Today remounts fresh the instant we navigate and reads DONE
+      // online-first (fetchWithCache tries the server before the cache).
+      // enqueue() above only FIRES a flush, it doesn't wait for one — so
+      // without this, Today's read could win the race against our own
+      // write and come back "not done" for a session that just ended.
+      // Same fix History.tsx's voidPastSet/discardSession already use:
+      // wait for the queue to be walked so this is on the server before
+      // anything asks the server what is live. Offline it's a no-op
+      // (doFlush leaves everything queued), which is exactly why
+      // markPlannedDayDone below still runs regardless. Bounded: on gym
+      // wifi that hangs, a flush can take the full request timeout, and
+      // Finish must never sit waiting on the network. After 1.5 s Today
+      // falls back to the local done state written below.
+      await Promise.race([
+        outbox.flush(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1500)),
+      ]);
       closedRef.current = true;
       if (bwOpen) await cacheSet(LAST_BW_KEY, bwKg);
       await cacheDelete(cacheKeys.activeSession);
@@ -281,6 +320,18 @@ export function End() {
       // different, and the planned day is done
       await invalidateForSetChange();
       await markPlannedDayDone(active.planned_workout_id);
+      // What Today's DONE card shows for this day. Keyed by the planned
+      // day, not the session, because Today reads it after
+      // `activeSession` above is already gone.
+      if (active.planned_workout_id) {
+        await cacheSet(doneSummaryKey(active.planned_workout_id), {
+          setCount,
+          durationSeconds: Math.max(
+            0,
+            (endedAtMs - Date.parse(active.started_at)) / 1000,
+          ),
+        });
+      }
       toast(
         `Session done — ${setCount} set${setCount === 1 ? "" : "s"} logged${
           rpe !== null ? `, sRPE ${rpe}` : ""
