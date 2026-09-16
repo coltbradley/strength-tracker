@@ -92,6 +92,25 @@ describe("FocusDeck", () => {
     expect(container.querySelectorAll(".focus-deck-position")).toHaveLength(1);
   });
 
+  it("marks the just-completed segment leaving and the new current one entering", () => {
+    const { container, rerender } = render(
+      <FocusDeck {...props({ entryProgress: () => 0 })} />,
+    );
+
+    rerender(<FocusDeck {...props({ entryProgress: () => 1 })} />);
+
+    const segments = [
+      ...container.querySelectorAll(".focus-set-progress [data-state]"),
+    ];
+    // index 0 just went current -> done: it plays the leaving motion.
+    expect(segments[0]!.className).toContain("motion-set-logged");
+    // index 1 just went upcoming -> current: it plays the entering motion.
+    expect(segments[1]!.className).toContain("motion-set-entering");
+    // index 2 was untouched.
+    expect(segments[2]!.className).not.toContain("motion-set-logged");
+    expect(segments[2]!.className).not.toContain("motion-set-entering");
+  });
+
   it("omits the segmented line for by-feel work", () => {
     const byFeel = entry("by-feel", "Carry", 0);
     byFeel.brackets = [];

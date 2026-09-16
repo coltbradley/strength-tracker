@@ -3426,6 +3426,60 @@
     color: var(--focus-set-future);
   }
 
+  /* ---- motion (transform/opacity only — see the design's Clarity and
+   * motion section). Named per the spec's own motion table, zeroed by the
+   * existing prefers-reduced-motion block at the top of this file, which
+   * already forces every animation-duration to 0.01ms. */
+  @keyframes set-logged-leave {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
+
+  @keyframes set-entering-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes mode-cross-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .motion-set-logged {
+    animation: set-logged-leave var(--motion-fast) var(--ease-out);
+    animation-fill-mode: backwards;
+  }
+
+  .motion-set-entering {
+    animation: set-entering-enter var(--motion-med) var(--ease-out);
+    animation-delay: 40ms;
+    animation-fill-mode: backwards;
+  }
+
+  /* Mode switch (focus <-> overview): each root mounts when the mode
+     changes, so an enter-only animation plays once per switch. FocusDeck is
+     not keyed per entry, so moving between exercises does not replay it. */
+  .focus-deck,
+  .wk-overview {
+    animation: mode-cross-fade var(--motion-med) var(--ease-out);
+  }
+
   /* The plain hero editor stretches to fill .focus-deck-editor so its own
    * bottom bar (margin-top: auto) can anchor to the true bottom of the
    * screen rather than to the end of however little content it has. A

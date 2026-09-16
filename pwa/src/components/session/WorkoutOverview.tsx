@@ -63,7 +63,7 @@ export function WorkoutOverview({
   }, [expandedEntryKey]);
 
   return (
-    <>
+    <div className="wk-overview">
       {focusModeAvailable && (
         <button
           type="button"
@@ -196,6 +196,6 @@ export function WorkoutOverview({
           </Fragment>
         );
       })}
-    </>
+    </div>
   );
 }

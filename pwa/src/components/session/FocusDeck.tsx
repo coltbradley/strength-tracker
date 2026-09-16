@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   targetSets,
   warmupSets,
@@ -108,9 +108,23 @@ function FocusSetProgress({
    *  flag for the whole strip is enough. */
   warmup?: boolean;
 }) {
+  // The previous render's completed count, so a log (progress going up) can
+  // be told apart from a fresh mount (previous is null) or an unrelated
+  // re-render (previous equals current) — only the first plays a motion.
+  const previousCompletedRef = useRef<number | null>(null);
+  const previousCompleted = previousCompletedRef.current;
+  useEffect(() => {
+    previousCompletedRef.current = Math.min(Math.max(0, progress), target);
+  });
+
   if (target <= 0) return null;
 
   const completed = Math.min(Math.max(0, progress), target);
+  const justLogged =
+    previousCompleted !== null && completed === previousCompleted + 1
+      ? previousCompleted
+      : null;
+
   return (
     <div className="focus-set-progress" aria-hidden="true">
       {Array.from({ length: target }, (_, index) => {
@@ -121,10 +135,18 @@ function FocusSetProgress({
               ? "current"
               : "future";
         const state = SEGMENT_STATE[localState];
+        const motion =
+          justLogged === null
+            ? ""
+            : index === justLogged
+              ? " motion-set-logged"
+              : index === justLogged + 1
+                ? " motion-set-entering"
+                : "";
         return (
           <span
             key={index}
-            className={`focus-set-segment focus-set-segment--${localState}`}
+            className={`focus-set-segment focus-set-segment--${localState}${motion}`}
             data-state={state}
           >
             <StateGlyph
