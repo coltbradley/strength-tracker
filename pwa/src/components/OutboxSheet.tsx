@@ -105,6 +105,10 @@ export function describeOp(
     }
     case "feedback":
       return "Problem report";
+    case "session_skips":
+      return op.payload.scope === "warmups"
+        ? "Warmups skipped"
+        : "Exercise skipped";
   }
 }
 

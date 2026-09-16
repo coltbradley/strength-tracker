@@ -5,6 +5,9 @@
 // reaches the network; only what is STILL skipped at Finish is written, as
 // session_skips (see screens/End.tsx and lib/sync.ts).
 
+import type { SessionSkipInsert } from "./types";
+import { uuid } from "./uuid";
+
 export interface SkipRecord {
   entryKey: string;
   prescriptionId: string | null;
@@ -39,4 +42,22 @@ export function readSkipsCache(
     return out;
   }
   return raw;
+}
+
+/** One `session_skips` insert per still-skipped entry, every column present
+ *  on every row (AGENTS.md: a bulk insert fills a missing key with NULL, not
+ *  the column default — never rely on "let the default apply" for anything
+ *  but a single row). */
+export function sessionSkipRows(
+  sessionId: string,
+  skips: SkipRecord[],
+): SessionSkipInsert[] {
+  return skips.map((skip) => ({
+    id: uuid(),
+    session_id: sessionId,
+    prescription_id: skip.prescriptionId,
+    exercise_id: skip.exerciseId,
+    scope: skip.scope,
+    reason: skip.reason,
+  }));
 }

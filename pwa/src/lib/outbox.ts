@@ -66,7 +66,8 @@ export interface OutboxTransport {
       | "symptom_episodes"
       | "pain_checks"
       | "report_prompts"
-      | "feedback",
+      | "feedback"
+      | "session_skips",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(

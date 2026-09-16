@@ -32,6 +32,7 @@ import {
   toDisplay,
 } from "../lib/units";
 import { formatStoredTwin } from "../lib/format";
+import { readSkipsCache, sessionSkipRows, type SkipRecord } from "../lib/skips";
 import type {
   ActiveSession,
   ResolvedPrescriptionRow,
@@ -176,9 +177,12 @@ export function End() {
           (await cacheGet<Array<{ exercise_id: string }>>(
             cacheKeys.sessionExtras(a.id),
           )) ?? [];
-        const skipped = new Set(
-          (await cacheGet<string[]>(cacheKeys.sessionSkips(a.id))) ?? [],
+        const skipMap = readSkipsCache(
+          (await cacheGet<string[] | Record<string, SkipRecord>>(
+            cacheKeys.sessionSkips(a.id),
+          )) ?? {},
         );
+        const skipped = new Set(Object.keys(skipMap));
         // skip keys are the exercise's FIRST bracket id (grouped entries),
         // so resolve skips to exercise ids before counting
         const skippedExercises = new Set(
@@ -265,6 +269,59 @@ export function End() {
     }
   };
 
+  /** One `session_skips` row per entry STILL skipped when Finish is tapped
+   *  (spec: "session_skips"). An un-skip earlier in the session never
+   *  reaches the network — only this snapshot does — and a session that is
+   *  never finished loses its skips (accepted, see docs/decisions.md). A
+   *  legacy (pre-reason) cache entry carries no exercise; resolve it from
+   *  `rx`/`extras` the same way the summary above already does, or drop it
+   *  rather than violate the `exercises` FK with an empty string. */
+  const writeSessionSkips = async (sessionId: string) => {
+    const skipMap = readSkipsCache(
+      (await cacheGet<string[] | Record<string, SkipRecord>>(
+        cacheKeys.sessionSkips(sessionId),
+      )) ?? {},
+    );
+    const raw = Object.values(skipMap);
+    if (raw.length === 0) return;
+    const rxCached =
+      (await cacheGet<ResolvedPrescriptionRow[]>(
+        cacheKeys.sessionRx(sessionId),
+      )) ?? [];
+    const extras =
+      (await cacheGet<Array<{ exercise_id: string }>>(
+        cacheKeys.sessionExtras(sessionId),
+      )) ?? [];
+    const resolved = raw
+      .map((skip) => {
+        if (skip.exerciseId !== "") return skip;
+        const rx = rxCached.find((r) => r.id === skip.entryKey);
+        // A legacy skip's entryKey IS the prescription id (the same
+        // assumption the summary block above makes matching skipped
+        // entries against rxCached by `r.id`), so resolving the exercise
+        // from rx also resolves the prescription it was recorded against.
+        if (rx)
+          return { ...skip, exerciseId: rx.exercise_id, prescriptionId: rx.id };
+        const extraId = skip.entryKey.startsWith("extra:")
+          ? skip.entryKey.slice("extra:".length)
+          : null;
+        const extra = extraId
+          ? extras.find((e) => e.exercise_id === extraId)
+          : undefined;
+        return extra ? { ...skip, exerciseId: extra.exercise_id } : null;
+      })
+      .filter((skip): skip is SkipRecord => skip !== null);
+    if (resolved.length === 0) return;
+    const rows = sessionSkipRows(sessionId, resolved);
+    await outbox.enqueueBatch(
+      rows.map((payload) => ({
+        kind: "insert" as const,
+        table: "session_skips" as const,
+        payload,
+      })),
+    );
+  };
+
   const end = async () => {
     // A ref, not state: React batches a state update, so a genuine double-tap
     // (or a tap that lands twice through a slow frame) reads the old value and
@@ -295,6 +352,7 @@ export function End() {
           notes: note.trim() === "" ? null : note.trim(),
         },
       });
+      await writeSessionSkips(active.id);
       // Today remounts fresh the instant we navigate and reads DONE
       // online-first (fetchWithCache tries the server before the cache).
       // enqueue() above only FIRES a flush, it doesn't wait for one — so
