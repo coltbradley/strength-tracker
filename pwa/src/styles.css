@@ -265,6 +265,14 @@
     --ease-sheet: cubic-bezier(0.22, 1, 0.36, 1);
     --dur-tick: 400ms;
     --dur-blink: 1.6s;
+    /* Named motions for live-session feedback (set logged, next set enters,
+     * mode switch) — transform/opacity only, so they cost nothing on the
+     * rest timer's 400ms re-render. Reduced-motion zeroes every animation
+     * and transition duration globally (see the @media block later in this
+     * file), which already covers anything built from these tokens. */
+    --motion-fast: 120ms;
+    --motion-med: 200ms;
+    --ease-out: var(--ease-sheet);
   }
 
   /* Tablet: a wider column and a looser gutter. Type is left alone — the
