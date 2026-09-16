@@ -2260,120 +2260,128 @@ await db.exec(`
 `);
 const uuid = (n) => `00000000-1111-4000-8000-${String(n).padStart(12, "0")}`;
 
-// THE REQUIREMENT: leave part of it blank and everything still works.
-await check("a panel with one item answered is a real row", async () => {
-  const r = await asUser(
-    SA,
-    `insert into daily_readiness (id, user_id, local_date, sleep_hours)
-     values ('${uuid(1)}', '${SA}', date '2026-09-01', 7.5)`,
-  );
-  assertEq(r.affectedRows ?? 0, 1, "no item is required");
-});
+// --- check-in redesign (20260916000000) --------------------------------------
+const at = (uid, hhmm) =>
+  `(timestamp '2026-09-10 ${hhmm}' at time zone app_tz('${uid}'))`;
 
-await check("a panel with NOTHING answered is also legal, and visibly empty", async () => {
+await check("check-ins are unlimited per day and carry tags", async () => {
   await asUser(
     SA,
-    `insert into daily_readiness (id, user_id, local_date)
-     values ('${uuid(2)}', '${SA}', date '2026-09-02')`,
+    `insert into checkins (id, user_id, kind, energy, tags, recorded_at) values
+       ('${uuid(10)}', '${SA}', 'spontaneous', 3, '{slept_badly}', ${at(SA, "07:10")}),
+       ('${uuid(11)}', '${SA}', 'spontaneous', 5, '{great}', ${at(SA, "08:40")}),
+       ('${uuid(12)}', '${SA}', 'spontaneous', null, '{stressed}', ${at(SA, "12:00")}),
+       ('${uuid(13)}', '${SA}', 'spontaneous', 2, '{}', ${at(SA, "19:30")})`,
   );
-  const r = await db.query(
-    `select answered_items from v_readiness_trend
-      where user_id = '${SA}' and local_date = date '2026-09-02'`,
-  );
-  // Opening the sheet and skipping it is not the same as never opening it, and
-  // only one of those is a gap in the series.
-  assertEq(r.rows[0].answered_items, 0, "an empty answer is an answer");
-});
-
-await check("a rolling mean carries the count of real answers behind it", async () => {
-  await asUser(
-    SA,
-    `insert into daily_readiness (id, user_id, local_date, sleep_hours, fatigue)
-     values ('${uuid(3)}', '${SA}', date '2026-09-03', 6.5, 3)`,
-  );
-  const r = await db.query(
-    `select sleep_hours_7d::float as sleep, sleep_hours_7d_n::int as sleep_n,
-            fatigue_7d::float as fat, fatigue_7d_n::int as fat_n,
-            days_of_history
-       from v_readiness_trend
-      where user_id = '${SA}' and local_date = date '2026-09-03'`,
-  );
-  assertEq(r.rows[0].sleep_n, 2, "two sleep answers across three days");
-  assertEq(r.rows[0].sleep, 7, "(7.5 + 6.5) / 2, not / 3");
-  // The distinction the counts exist for: one item answered once, another
-  // twice, over the same three rows.
-  assertEq(r.rows[0].fat_n, 1, "one fatigue answer");
-  assertEq(r.rows[0].days_of_history, 3, "three rows, which is a different number");
-});
-
-await check("one panel per local date", async () => {
-  let rejected = false;
-  try {
-    await asUser(
-      SA,
-      `insert into daily_readiness (id, user_id, local_date, mood)
-       values ('${uuid(4)}', '${SA}', date '2026-09-01', 4)`,
-    );
-  } catch {
-    rejected = true;
-  }
-  assert(rejected, "unique (user_id, local_date)");
-});
-
-await check("the panel is correctable within the day, unlike a set", async () => {
-  const upd = await asUser(
-    SA,
-    `update daily_readiness set mood = 4 where id = '${uuid(1)}'`,
-  );
-  assertEq(upd.affectedRows ?? 0, 1, "a self-report may be corrected");
-});
-
-await check("custom fields are the athlete's, and never gate anything", async () => {
-  await asUser(
-    SA,
-    `insert into readiness_fields (id, user_id, key, label, kind)
-     values ('${uuid(5)}', '${SA}', 'knee_niggle', 'Left knee', 'scale_1_5')`,
-  );
-  await asUser(
-    SA,
-    `update daily_readiness set custom = '{"knee_niggle": 2}'::jsonb
-      where id = '${uuid(1)}'`,
-  );
-  const r = await db.query(
-    `select custom->>'knee_niggle' as v from v_readiness_trend
-      where user_id = '${SA}' and local_date = date '2026-09-01'`,
-  );
-  assertEq(r.rows[0].v, "2", "recorded and readable");
-  let rejected = false;
-  try {
-    await asUser(
-      SA,
-      `insert into readiness_fields (id, user_id, key, label, kind)
-       values ('${uuid(6)}', '${SA}', 'Bad Key!', 'x', 'number')`,
-    );
-  } catch {
-    rejected = true;
-  }
-  assert(rejected, "a key must survive being a JSON key and a chart label");
-});
-
-await check("checkins are unlimited per day and never touch the daily trend", async () => {
-  for (let i = 0; i < 3; i++) {
-    await asUser(
-      SA,
-      `insert into checkins (id, user_id, kind, energy, note)
-       values ('${uuid(10 + i)}', '${SA}', 'spontaneous', ${i + 1}, 'tap ${i}')`,
-    );
-  }
   const c = await asUser(SA, `select count(*)::int as n from checkins`);
-  assertEq(c.rows[0].n, 3, "three taps");
-  const d = await db.query(
-    `select days_of_history from v_readiness_trend
-      where user_id = '${SA}' and local_date = date '2026-09-03'`,
+  assertEq(c.rows[0].n, 4, "four in one day, none overwritten");
+});
+
+await check(
+  "v_checkin_buckets splits the day and carries a count behind every mean",
+  async () => {
+    const r = await asUser(
+      SA,
+      `select bucket, checkins, energy_n, energy_mean::float as mean,
+            array_to_string(tags, ',') as tags
+       from v_checkin_buckets
+      where local_date = date '2026-09-10'
+      order by bucket`,
+    );
+    assertEq(
+      r.rows.map((x) => [x.bucket, x.checkins, x.energy_n, x.mean, x.tags]),
+      [
+        ["evening", 1, 1, 2, ""],
+        ["midday", 1, 0, null, "stressed"],
+        ["morning", 2, 2, 4, "great,slept_badly"],
+      ],
+      "fixed clock buckets in the owner's timezone",
+    );
+  },
+);
+
+await check("an unknown tag is refused", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into checkins (id, user_id, kind, tags)
+       values ('${uuid(14)}', '${SA}', 'spontaneous', '{tired}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "tags are a closed vocabulary");
+});
+
+await check("an injury link needs the pain tag", async () => {
+  await asUser(
+    SA,
+    `insert into symptom_episodes (id, user_id, body_region, side, opened_on)
+     values ('${uuid(15)}', '${SA}', 'Knee', 'left', current_date)`,
   );
-  // If these fed the baseline it would depend on how often somebody happened
-  // to tap, which is not a fact about their training.
-  assertEq(d.rows[0].days_of_history, 3, "still three days, not six");
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into checkins (id, user_id, kind, tags, episode_id, training_impact)
+       values ('${uuid(16)}', '${SA}', 'spontaneous', '{}', '${uuid(15)}', 'modified')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "episode_id without pain");
+  const ok = await asUser(
+    SA,
+    `insert into checkins (id, user_id, kind, tags, episode_id, training_impact)
+     values ('${uuid(17)}', '${SA}', 'spontaneous', '{pain}', '${uuid(15)}', 'modified')`,
+  );
+  assertEq(ok.affectedRows ?? 0, 1, "with pain it lands");
+});
+
+await check("v_injury_state reports active, quiet and closed", async () => {
+  await asUser(
+    SA,
+    `insert into symptom_episodes (id, user_id, body_region, side, opened_on)
+     values ('${uuid(18)}', '${SA}', 'Shoulder', 'right', current_date - 60)`,
+  );
+  const before = await asUser(
+    SA,
+    `select episode_id, state, reports, impact_modified
+       from v_injury_state where episode_id in ('${uuid(15)}', '${uuid(18)}')
+      order by body_region`,
+  );
+  assertEq(
+    before.rows.map((x) => [x.state, x.reports, x.impact_modified]),
+    [
+      ["active", 1, 1],
+      ["quiet", 0, 0],
+    ],
+    "Knee reported today is active; Shoulder silent for 60 days is quiet",
+  );
+  await asUser(
+    SA,
+    `update symptom_episodes set closed_on = current_date where id = '${uuid(18)}'`,
+  );
+  const after = await asUser(
+    SA,
+    `select state from v_injury_state where episode_id = '${uuid(18)}'`,
+  );
+  assertEq(after.rows[0].state, "closed", "closed only when someone says so");
+});
+
+await check("the morning panel is gone", async () => {
+  const t = await db.query(
+    `select count(*)::int as n from information_schema.tables
+      where table_schema = 'public'
+        and table_name in ('daily_readiness', 'readiness_fields', 'v_readiness_trend')`,
+  );
+  assertEq(t.rows[0].n, 0, "dropped");
+  const k = await db.query(
+    `select pg_get_constraintdef(oid) as d from pg_constraint
+      where conname = 'rest_alerts_kind_check'`,
+  );
+  assert(!k.rows[0].d.includes("daily_readiness"), "no morning push kind");
 });
 
 // --- OSTRC ------------------------------------------------------------------
@@ -2575,7 +2583,7 @@ await check("cycle data is deletable, unlike the training record", async () => {
 });
 
 await check("nobody reads anyone else's subjective data", async () => {
-  const a = await asUser(SB, `select count(*)::int as n from daily_readiness`);
+  const a = await asUser(SB, `select count(*)::int as n from checkins`);
   const b = await asUser(SB, `select count(*)::int as n from symptom_reports where user_id = '${SA}'`);
   const c = await asUser(SB, `select count(*)::int as n from pain_checks`);
   assertEq([a.rows[0].n, b.rows[0].n, c.rows[0].n], [0, 0, 0], "scoped to the owner");
@@ -2584,14 +2592,12 @@ await check("nobody reads anyone else's subjective data", async () => {
 await check("deleting a user takes every subjective row with them", async () => {
   await db.exec(`delete from auth.users where id = '${SA}'`);
   const n = await db.query(`
-    select (select count(*) from daily_readiness where user_id = '${SA}')
-         + (select count(*) from checkins where user_id = '${SA}')
+    select (select count(*) from checkins where user_id = '${SA}')
          + (select count(*) from symptom_reports where user_id = '${SA}')
          + (select count(*) from symptom_episodes where user_id = '${SA}')
          + (select count(*) from pain_checks where user_id = '${SA}')
          + (select count(*) from red_flags where user_id = '${SA}')
-         + (select count(*) from report_prompts where user_id = '${SA}')
-         + (select count(*) from readiness_fields where user_id = '${SA}') as n`);
+         + (select count(*) from report_prompts where user_id = '${SA}') as n`);
   assertEq(Number(n.rows[0].n), 0, "cascaded");
 });
 
