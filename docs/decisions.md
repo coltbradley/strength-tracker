@@ -2936,3 +2936,53 @@ error — never for one that stays pending, held or dead. `sync.ts` wires it to
 Firing on enqueue instead was rejected outright: offline, that would ask the
 server about a note the server does not have yet, and the fire-and-forget
 call would have nothing to read.
+
+## Check-ins become the one subjective capture
+
+Spec: `docs/superpowers/specs/2026-09-16-checkin-redesign-design.md`.
+Migration: 20260916000000.
+
+The sheet had become two forms with two save models: a spontaneous check-in
+and a folded morning panel with thirteen inputs behind it, two note boxes, and
+"Energy" and "Fatigue" asking the same thing. Nobody used the panel (production
+held one `daily_readiness` row), and the Train screen, the one people open, had
+no way in at all, because `Today` returns `TrainHome` before the sheet mounts.
+
+**Dropped, not hidden.** `daily_readiness`, `readiness_fields` and
+`v_readiness_trend` are gone, with the morning prompt, its push copy and the
+coach context read. Hiding them would have left a table no screen writes and
+a view the coach reads as "no check-in today" forever. A queued
+`daily_readiness` op on a phone still type-checks, replays, is refused as a
+404, and shows as a dead item rather than blocking the queue.
+
+**Every check-in is an event.** Unlimited per day, three optional inputs, note
+first. The goal is seeing change hour to hour, so nothing overwrites.
+
+**Tags are a column.** Mood words appended into the note could not be counted.
+The vocabulary is closed by a CHECK. `great` exists because a list that can
+only name bad things cannot show a good week; `unusually_sore` rather than
+`sore` because normal soreness after lifting would mark good training days as
+bad ones.
+
+**Buckets, not averages.** Energy has a daily rhythm, so `v_checkin_buckets`
+compares a morning with mornings and carries a count behind every mean. The
+split is fixed clock time (11:00, 16:00) because a personal split needs weeks
+of data nobody has on day one.
+
+**Pain files against an episode, and only the lifter closes it.** A Pain tap
+with a region matches an open `symptom_episodes` row on region and side or
+opens one. It does not write `symptom_reports` (OSTRC is a seven-day recall
+instrument) or `pain_checks` (its phases belong to a run and its score is
+required). The next day the sheet asks "still feeling your left knee?". Quiet
+for 14 days is a label in `v_injury_state`, never a write, because not
+mentioning a knee and not checking in look the same.
+
+**All of it is readable over MCP.** The notes are why this data is worth
+collecting, so `get_checkins` returns every field, and `get_checkin_buckets`
+and `get_injuries` exist for patterns and episodes.
+
+**Cached reads reuse data.ts's helper.** `checkinHistory.ts` builds its reads with `makeFetchWithCache` and `throwIf` from `data.ts` rather than copying `sessionHistory.ts`'s older local versions, so a real server error served from cache is still reported instead of passing for offline.
+
+**The grid's fill is capped for contrast.** A cell's accent tint runs from 10% at energy 1 to 57% at 5, always with dark text. An earlier version switched to white text past the midpoint and failed WCAG AA for means between about 3.2 and 4.1; a test now checks contrast at every tenth from 1.0 to 5.0.
+
+**`get_checkin_buckets` defaults to tomorrow in UTC.** Its default window ends at tomorrow's UTC date, because no time zone is more than one calendar day ahead of UTC and today's UTC date would drop the newest local day for anyone east of it.

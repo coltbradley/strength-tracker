@@ -522,41 +522,27 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   by this: a switched-off person still reads and writes their own log from
   Claude Desktop.
 
-- Subjective capture (20260907040000) is THREE CADENCES IN THREE TABLES, and
-  they are deliberately not one table with a `kind` column: they measure
-  different things on different clocks and merging them gives a pleasant UI over
-  uninterpretable data. `daily_readiness` is ONE ANCHORED ROW PER LOCAL DATE and
-  is the row that trends; `checkins` is unlimited per day and is never averaged
-  into that trend, or the baseline would depend on how often somebody happened
-  to tap; `symptom_reports` is weekly and threaded onto a `symptom_episodes` row,
-  because the only question worth asking about an achilles is whether it is
-  better or worse than three weeks ago and unlinked rows cannot answer it.
-  EVERY ITEM IS OPTIONAL and a half-filled row is a real row. That forces the
-  views: `avg()` skips nulls, so every rolling mean carries its own COUNT
-  (`fatigue_7d_n`, not `days_of_history`) and `answered_items` separates a panel
-  somebody opened and skipped from a day they never opened. There is NO
-  composite readiness score anywhere, ever: subjective and objective recovery
-  measures do not correlate, so a composite merges signals that move
-  independently and hides which one moved.
-  The three-question panel (sleep, fatigue, soreness) used to be the whole
-  sheet; it is now a collapsed "Sleep, fatigue, soreness" disclosure inside
-  `CheckInSheet`, closed by default, behind a SPONTANEOUS check-in that leads
-  instead — one text box ("How are you feeling?"), five mood chips (Sore,
-  Hurt, Tired, Stressed, Great) that append their word into the box and
-  remove it on a second tap, and an optional 1-5 energy. "Check in" writes one
-  `checkins` row (kind 'spontaneous') through the outbox the moment any of
-  text/chip/energy is present; the readiness scales, once opened, still
-  autosave with no Save button exactly as before, still merge onto today's
-  row, and are still one tap away behind "Anything else?". A once-a-day thing
-  should not be what somebody meets every time they want to say something,
-  which is also why the daily readiness PROMPT (prompts.ts, unchanged
-  otherwise) now ships with `dailyEnabled: false`: the always-visible "Check
-  in" button replaced the reason to nag for it, and "not today" is still
-  RECORDED (`report_prompts`, the adherence denominator) for anyone who
-  re-enables it. `checkins.memory_extracted_at` (20260908000000) tracks which
-  notes the coach function's out-of-band checkin-memory route has already
-  read for standing facts, and `coach_memory.source` admits 'checkin'
-  alongside 'coach' and 'extracted' for what it finds.
+- Subjective capture is CHECK-INS plus the weekly OSTRC tables. The once-a-day
+  readiness panel (`daily_readiness`, `readiness_fields`, `v_readiness_trend`)
+  was dropped in 20260916000000 because nobody used it; don't bring it back
+  without a decision entry. A check-in is one timestamped `checkins` row,
+  unlimited per day, with three optional inputs: `note`, `tags` (a CHECK-closed
+  vocabulary: great, slept_badly, unusually_sore, stressed, sick, pain) and
+  `energy` 1-5. Check in is disabled only when all three are empty. Nothing
+  overwrites. Read energy through `v_checkins_local` / `v_checkin_buckets`
+  (morning before 11:00, midday to 15:59, evening after, in `app_tz` of the
+  row's user) and compare a reading only with the same bucket; every mean
+  carries its count, and there is NO composite readiness score anywhere, ever.
+  A Pain check-in with a region files against `symptom_episodes` through
+  `checkins.episode_id` and records `training_impact`; a CHECK refuses either
+  without the pain tag. Episodes are matched on region and side, opened by the
+  outbox ahead of the check-in, and closed ONLY when the lifter taps Cleared up
+  (`closed_on`). `v_injury_state.state = 'quiet'` after 14 silent days is a
+  label, never a write: silence is not recovery. The sheet never writes
+  `symptom_reports` (OSTRC is a seven-day recall instrument) or `pain_checks`.
+  The entry point is a quiet "Check in →" on the date line of both Today
+  presentations. MCP exposes all of it read-only: `get_checkins`,
+  `get_checkin_buckets`, `get_injuries`. The History grid tints cells with the accent at 10-57% and always dark text; widening that range breaks AA contrast, and `checkinWeek.test.ts` checks it.
   OSTRC severity is derived in a view and scored PER `instrument` version, so a
   scoring correction is a CREATE OR REPLACE and never a backfill over data
   nobody can re-collect. Escalation is on PERSISTENCE, not intensity: for one
@@ -566,18 +552,11 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   single one refers, because a score invites a threshold the clinical literature
   does not provide. The next-morning pain check is its own row with its own
   timestamp; it is a 24-hour delayed signal and cannot be a column on the run.
-  `cycle_context` / `cycle_events` are OPT-IN and nothing anywhere infers a
-  cycle from anything else. Phase is never computed and may not gate a rule (its
-  performance effects are small and contested); absent menstruation screens and
-  REFERS, because that is a primary IOC REDs indicator and the red-flag path was
-  otherwise referring on a criterion nobody could record. `status` exists so
-  screening can tell "no period because continuous contraception" from "no
-  period, and that is new", which are clinically opposite and identical without
-  it. Both tables are DELETABLE, unlike the training record.
-  `readiness_fields` lets somebody add their own items, and the line is drawn at
-  what a value may DO rather than whether it may exist: a custom item is
-  context and a chart, and may NEVER gate a rule, because an unvalidated item
-  cannot carry a decision. Same discipline as the research doc's tags.
+  `cycle_context` / `cycle_events` are OPT-IN, have no UI yet, and nothing
+  anywhere infers a cycle from anything else. Phase is never computed and may
+  not gate a rule. Both tables are DELETABLE, unlike the training record. A
+  future cycle UI needs its own spec first: contraception method, a status
+  history table, and stricter privacy handling than the rest of this section.
 
 - A migration that needs an extension PGlite does not have is GUARDED, not
   forked. `scripts/validate-db.mjs` replays the whole chain in PGlite, so a bare
