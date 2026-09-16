@@ -238,3 +238,17 @@ describe("TrainHome", () => {
     expect(onOpenCoach).toHaveBeenCalledOnce();
   });
 });
+
+describe("check in link", () => {
+  it("sits beside the date and opens the check-in", () => {
+    const onCheckIn = vi.fn();
+    renderHome({ onCheckIn });
+    fireEvent.click(screen.getByRole("button", { name: /check in/i }));
+    expect(onCheckIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("is absent when there is no one to check in", () => {
+    renderHome();
+    expect(screen.queryByRole("button", { name: /check in/i })).toBeNull();
+  });
+});

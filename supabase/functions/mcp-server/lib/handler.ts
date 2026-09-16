@@ -32,8 +32,10 @@ import { registerConfirmProgram } from "../tools/confirm_program.ts";
 import { registerDeleteProgram } from "../tools/delete_program.ts";
 import { registerExerciseNotes } from "../tools/exercise_notes.ts";
 import { registerFeedback } from "../tools/feedback.ts";
+import { registerGetCheckinBuckets } from "../tools/get_checkin_buckets.ts";
 import { registerGetCheckins } from "../tools/get_checkins.ts";
 import { registerGetGoalProgress } from "../tools/get_goal_progress.ts";
+import { registerGetInjuries } from "../tools/get_injuries.ts";
 import { registerGetLiftHistory } from "../tools/get_lift_history.ts";
 import {
   registerGetProgram,
@@ -73,6 +75,8 @@ function buildServer(ctx: RequestContext, userId: string): McpServer {
   registerGetLiftHistory(server, db, ctx);
   registerGetRecentSessions(server, db, ctx);
   registerGetCheckins(server, db, ctx);
+  registerGetCheckinBuckets(server, db, ctx);
+  registerGetInjuries(server, db, ctx);
   registerGetGoalProgress(server, db, ctx);
   registerGetVolume(server, db, ctx);
   registerGetWeekSummary(server, db, ctx);

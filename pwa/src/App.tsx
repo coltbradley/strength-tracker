@@ -115,7 +115,7 @@ function Shell({ userId }: { userId: string }) {
             element={<Today userId={userId} presentation="program" />}
           />
           <Route path="/session" element={<Session />} />
-          <Route path="/history" element={<History />} />
+          <Route path="/history" element={<History userId={userId} />} />
           <Route path="/end" element={<End />} />
           <Route path="/plan/:id" element={<Plan />} />
           <Route

@@ -63,12 +63,13 @@ export interface OutboxTransport {
       | "bodyweight_log"
       | "daily_readiness"
       | "checkins"
+      | "symptom_episodes"
       | "pain_checks"
       | "report_prompts",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(
-    table: "sessions",
+    table: "sessions" | "symptom_episodes",
     id: string,
     patch: unknown,
   ): Promise<TransportError | null>;

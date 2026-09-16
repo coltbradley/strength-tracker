@@ -2,13 +2,15 @@
 
 MCP server for the strength tracker, running as a Supabase Edge Function.
 Streamable HTTP, stateless (every POST is independent, no session ids). Claude
-connects through `mcp-remote` with a static bearer token and gets 12 tools.
+connects through `mcp-remote` with a static bearer token and gets 14 tools.
 
 Read (`readOnlyHint`): `search_exercises`, `resolve_exercises` (the same
 lookup for many names at once, in one round trip), `get_lift_history`,
-`get_recent_sessions`, `get_checkins` (the lifter's own words from the
-always-available Check in button and the readiness panel — events, not a
-trend), `get_goal_progress`.
+`get_recent_sessions`, `get_checkins` (every check-in in full: note, energy,
+tags, time of day, and the injury a pain check-in was filed against),
+`get_checkin_buckets` (energy and tags per day and time of day, with counts),
+`get_injuries` (injury episodes with their check-ins; quiet is not healed),
+`get_goal_progress`.
 
 Write: `upsert_program` (always unconfirmed), `confirm_program`,
 `delete_program`, `set_training_max`, `set_goal`, `add_exercise`,

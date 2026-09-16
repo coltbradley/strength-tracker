@@ -1,257 +1,323 @@
-// Reading and writing the subjective layer (E1).
+// Check-ins: what someone says about how they feel, whenever they want to.
 //
-// Everything here is OPTIONAL by construction. `saveReadiness` accepts a panel
-// with one field answered or none, because a panel somebody must complete is a
-// panel somebody stops opening -- and the views carry per-item counts so a
-// half-filled row is never mistaken for a full one.
+// Pure. No network, no IndexedDB, no clock: the caller passes `now`, `today`
+// and the outbox entries, so every rule here is testable on its own. Reads
+// with a cache live in checkinHistory.ts; the sheet wires the two together.
 //
-// Writes go through the outbox, like sets: a morning panel answered on a train
-// should not be lost. They ride the same queue, which is safe in the one
-// direction that matters -- the flusher dead-letters a failing item and keeps
-// going, so a broken check-in cannot hold up somebody's sets.
-import { supabase } from "./supabase";
-import { throwIf } from "./data";
+// Three inputs, all optional: a note, tags, energy 1-5. Every check-in is its
+// own timestamped row and nothing overwrites. A pain check-in files against an
+// injury episode so "the same knee, three weeks running" is answerable.
+import type { OutboxEntry } from "./outbox";
+import type { OutboxOp } from "./db";
 import type {
   CheckinInsert,
-  DailyReadinessUpsert,
-  PainCheckInsert,
+  CheckinRow,
+  CheckinTag,
+  EpisodeSide,
+  InjuryState,
+  SymptomEpisodeInsert,
+  TrainingImpact,
 } from "./types";
 
-/** The six items the daily panel trends. All optional. */
-export interface ReadinessPanel {
-  sleep_hours?: number | null;
-  sleep_quality?: number | null;
-  fatigue?: number | null;
-  soreness?: number | null;
-  stress?: number | null;
-  mood?: number | null;
-  bodyweight_kg?: number | null;
-  resting_hr?: number | null;
-  illness?: boolean | null;
-  alcohol_units?: number | null;
-  travel?: boolean | null;
-  note?: string | null;
-  custom?: Record<string, unknown>;
-}
+/** The database CHECK decides what is legal; this list decides the order and
+ *  the words. "Great" exists so a good day is visible, not only a bad one.
+ *  "Unusually sore" so normal soreness after lifting doesn't mark a good
+ *  training day as a bad one. */
+export const CHECKIN_TAGS: readonly { value: CheckinTag; label: string }[] = [
+  { value: "great", label: "Great" },
+  { value: "slept_badly", label: "Slept badly" },
+  { value: "unusually_sore", label: "Unusually sore" },
+  { value: "stressed", label: "Stressed" },
+  { value: "sick", label: "Sick" },
+  { value: "pain", label: "Pain" },
+];
 
-export interface ReadinessRow extends ReadinessPanel {
-  id: string;
-  local_date: string;
-  recorded_at: string;
-}
-
-/**
- * How many of the six core items this panel answered.
- *
- * Zero is a legal and meaningful answer: somebody opened the sheet and had
- * nothing to say, which is not the same as never opening it, and only one of
- * those is a gap in the series.
- */
-export function answeredItems(p: ReadinessPanel): number {
-  const core: (keyof ReadinessPanel)[] = [
-    "sleep_hours",
-    "sleep_quality",
-    "fatigue",
-    "soreness",
-    "stress",
-    "mood",
-  ];
-  return core.filter((k) => p[k] !== null && p[k] !== undefined).length;
-}
-
-/**
- * Today's panel, if one exists.
- *
- * Read FIRST so a correction reuses the row's id and merges onto it rather
- * than colliding with `unique (user_id, local_date)`. Returns null when there
- * is none and when the read fails: the sheet opens blank either way, and an
- * unanswered panel is the safe thing to show. A failed read that silently
- * became "no panel today" would at worst re-ask a question, which is a much
- * smaller cost than refusing to open.
- */
-export async function getReadinessFor(
-  userId: string,
-  localDate: string,
-): Promise<ReadinessRow | null> {
-  const { data, error } = await supabase
-    .from("daily_readiness")
-    .select(
-      "id, local_date, recorded_at, sleep_hours, sleep_quality, fatigue, soreness, stress, mood, bodyweight_kg, resting_hr, illness, alcohol_units, travel, note, custom",
-    )
-    .eq("user_id", userId)
-    .eq("local_date", localDate)
-    .maybeSingle();
-  if (error) return null;
-  return (data as ReadinessRow | null) ?? null;
-}
-
-/**
- * Build the row to queue for a panel.
- *
- * Split out from the enqueue so it can be tested without a database: the part
- * worth pinning is that an absent field stays absent rather than becoming 0,
- * and that `id` is whatever the caller found, so a correction merges.
- */
-export function readinessRow(
-  id: string,
-  userId: string,
-  localDate: string,
-  panel: ReadinessPanel,
-  now: string,
-): DailyReadinessUpsert {
-  const row: DailyReadinessUpsert = {
-    id,
-    user_id: userId,
-    local_date: localDate,
-    recorded_at: now,
-  };
-  // Only what was actually answered. Writing `sleep_hours: 0` for an unanswered
-  // question is the exact confusion the schema draws a line through: null is
-  // unknown and zero is a measurement.
-  for (const [k, v] of Object.entries(panel)) {
-    if (v === undefined) continue;
-    (row as unknown as Record<string, unknown>)[k] = v;
-  }
-  return row;
-}
-
-/**
- * A recorded SKIP.
- *
- * "Not today" has to leave a trace or the button is decoration: duePrompts
- * honours a skip and stops asking, and report_prompts is the denominator that
- * says whether prompting is working at all. Written as an in_app prompt that
- * was offered and declined, which is exactly what happened.
- *
- * Distinct from an unanswered panel. That is silence; this is an answer to the
- * question "shall I ask you this now", and only one of them should stop the
- * asking.
- */
-export function skipRow(
-  id: string,
-  userId: string,
-  kind: "daily_readiness" | "ostrc_weekly" | "next_morning_pain",
-  now: string,
-): {
-  id: string;
-  user_id: string;
-  kind: string;
-  scheduled_for: string;
-  channel: string;
-  skipped: boolean;
-} {
-  return {
-    id,
-    user_id: userId,
-    kind,
-    scheduled_for: now,
-    channel: "in_app",
-    skipped: true,
-  };
-}
-
-/**
- * The five mood words the check-in sheet offers as one-tap chips.
- *
- * Deliberately a flat list of words, not a scale: a spontaneous check-in is
- * "what's going on", not a 1-5 rating, and the free text field is where
- * anything more specific goes.
- */
-export const MOOD_CHIPS = [
-  "Sore",
-  "Hurt",
-  "Tired",
-  "Stressed",
-  "Great",
+/** A short fixed list so an episode can be MATCHED: free text would turn
+ *  "left knee" and "L knee" into two injuries. */
+export const BODY_REGIONS = [
+  "Knee",
+  "Ankle",
+  "Shin",
+  "Foot",
+  "Hip",
+  "Thigh",
+  "Lower back",
+  "Upper back",
+  "Shoulder",
+  "Elbow",
+  "Wrist/hand",
+  "Neck",
+  "Other",
 ] as const;
 
-/** The comma-separated words currently in the box, trimmed, empties dropped. */
-export function chipTokens(text: string): string[] {
-  return text
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0);
+export const SIDE_CHOICES: readonly {
+  value: Exclude<EpisodeSide, "n/a">;
+  label: string;
+}[] = [
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
+  { value: "bilateral", label: "Both" },
+];
+
+export const IMPACT_CHOICES: readonly {
+  value: TrainingImpact;
+  label: string;
+}[] = [
+  { value: "none", label: "No" },
+  { value: "modified", label: "Modified" },
+  { value: "stopped", label: "Stopped" },
+];
+
+export interface PainAnswer {
+  /** A BODY_REGIONS entry, or an older episode's own region text. */
+  region: string | null;
+  side: Exclude<EpisodeSide, "n/a"> | null;
+  impact: TrainingImpact | null;
 }
 
-/** Whether `word` is one of the box's own tokens, not just a substring. */
-export function chipActive(text: string, word: string): boolean {
-  return chipTokens(text).some((t) => t.toLowerCase() === word.toLowerCase());
+export const EMPTY_PAIN: PainAnswer = {
+  region: null,
+  side: null,
+  impact: null,
+};
+
+export interface CheckinDraft {
+  note: string;
+  tags: CheckinTag[];
+  energy: number | null;
+  pain: PainAnswer;
 }
 
-/**
- * Add or remove one chip word from the box.
- *
- * A chip only ever adds or removes its OWN token: it never rewrites
- * whatever else somebody typed, which is what makes a single shared text box
- * safe to hand both a keyboard and five buttons at once.
- */
-export function toggleChip(text: string, word: string): string {
-  const tokens = chipTokens(text);
-  const idx = tokens.findIndex((t) => t.toLowerCase() === word.toLowerCase());
-  if (idx === -1) tokens.push(word);
-  else tokens.splice(idx, 1);
-  return tokens.join(", ");
+export function tagLabel(tag: CheckinTag): string {
+  return CHECKIN_TAGS.find((t) => t.value === tag)?.label ?? tag;
 }
 
-/** CHECK IN is live once there is something to save: typed text (chips are
- *  just tokens inside it), or an energy rating with no text at all. */
-export function hasCheckinContent(
-  text: string,
-  energy: number | null,
-): boolean {
-  return text.trim().length > 0 || energy !== null;
+export function impactLabel(impact: TrainingImpact): string {
+  return IMPACT_CHOICES.find((c) => c.value === impact)?.label ?? impact;
 }
 
-export function checkinRow(
-  id: string,
-  userId: string,
-  kind: CheckinInsert["kind"],
-  fields: Omit<CheckinInsert, "id" | "user_id" | "kind">,
-  now: string,
-): CheckinInsert {
-  return { id, user_id: userId, kind, recorded_at: now, ...fields };
+/** Nothing is required; a check-in with nothing in it records nothing. */
+export function canSubmit(d: CheckinDraft): boolean {
+  return d.note.trim().length > 0 || d.tags.length > 0 || d.energy !== null;
 }
 
-export function painCheckRow(
-  id: string,
-  userId: string,
-  phase: PainCheckInsert["phase"],
-  nrs: number,
-  fields: Partial<
-    Pick<PainCheckInsert, "episode_id" | "session_id" | "activity_id">
-  >,
-  now: string,
-): PainCheckInsert {
+/** Toggle one tag, keeping CHECKIN_TAGS order so rows compare cleanly. */
+export function toggleTag(
+  tags: readonly CheckinTag[],
+  tag: CheckinTag,
+): CheckinTag[] {
+  const on = new Set(tags);
+  if (on.has(tag)) on.delete(tag);
+  else on.add(tag);
+  return CHECKIN_TAGS.map((t) => t.value).filter((v) => on.has(v));
+}
+
+export function episodeSide(side: PainAnswer["side"]): EpisodeSide {
+  return side ?? "n/a";
+}
+
+/** "left knee", "knee (both sides)", "knee". */
+export function injuryLabel(
+  e: Pick<InjuryState, "body_region" | "side">,
+): string {
+  const region = e.body_region.toLowerCase();
+  if (e.side === "left" || e.side === "right") return `${e.side} ${region}`;
+  if (e.side === "bilateral") return `${region} (both sides)`;
+  return region;
+}
+
+/** The open episode a pain answer belongs to: exact region and side, the most
+ *  recently opened when several match. */
+export function matchEpisode(
+  injuries: readonly InjuryState[],
+  region: string,
+  side: EpisodeSide,
+): InjuryState | null {
+  const hits = injuries
+    .filter(
+      (e) =>
+        e.closed_on === null &&
+        e.body_region === region &&
+        (e.side ?? "n/a") === side,
+    )
+    .sort((a, b) => b.opened_on.localeCompare(a.opened_on));
+  return hits[0] ?? null;
+}
+
+/** Open episodes worth asking "still there?" about today: last reported (or,
+ *  never reported, opened) on an earlier day. At most three, most recent
+ *  first. */
+export function stillThere(
+  injuries: readonly InjuryState[],
+  today: string,
+): InjuryState[] {
+  const lastDay = (e: InjuryState) => e.last_reported_on ?? e.opened_on;
+  return injuries
+    .filter((e) => e.closed_on === null && lastDay(e) < today)
+    .sort((a, b) => lastDay(b).localeCompare(lastDay(a)))
+    .slice(0, 3);
+}
+
+export interface CheckinContext {
+  userId: string;
+  /** ISO instant, the check-in's recorded_at */
+  now: string;
+  /** device-local YYYY-MM-DD, a new episode's opened_on */
+  today: string;
+  injuries: readonly InjuryState[];
+  newId: () => string;
+}
+
+/** The queued writes for one check-in, in replay order. */
+export function buildCheckinOps(
+  d: CheckinDraft,
+  ctx: CheckinContext,
+): OutboxOp[] {
+  const ops: OutboxOp[] = [];
+  const painOn = d.tags.includes("pain");
+  let episodeId: string | null = null;
+
+  if (painOn && d.pain.region !== null) {
+    const side = episodeSide(d.pain.side);
+    const match = matchEpisode(ctx.injuries, d.pain.region, side);
+    if (match) {
+      episodeId = match.episode_id;
+    } else {
+      const payload: SymptomEpisodeInsert = {
+        id: ctx.newId(),
+        user_id: ctx.userId,
+        body_region: d.pain.region,
+        side,
+        opened_on: ctx.today,
+      };
+      ops.push({ kind: "insert", table: "symptom_episodes", payload });
+      episodeId = payload.id;
+    }
+  }
+
+  const note = d.note.trim();
+  // Every column on every row: a bulk insert fills a missing key with NULL.
+  const payload: CheckinInsert = {
+    id: ctx.newId(),
+    user_id: ctx.userId,
+    kind: "spontaneous",
+    recorded_at: ctx.now,
+    note: note.length > 0 ? note : null,
+    energy: d.energy,
+    feeling: null,
+    tags: [...d.tags],
+    episode_id: painOn ? episodeId : null,
+    training_impact: painOn ? d.pain.impact : null,
+    session_id: null,
+    activity_id: null,
+  };
+  ops.push({ kind: "insert", table: "checkins", payload });
+  return ops;
+}
+
+export function closeEpisodeOp(episodeId: string, today: string): OutboxOp {
   return {
-    id,
-    user_id: userId,
-    phase,
-    nrs_0_10: nrs,
-    captured_at: now,
-    ...fields,
+    kind: "update",
+    table: "symptom_episodes",
+    id: episodeId,
+    patch: { closed_on: today },
   };
 }
 
-export interface EpisodeState {
-  episode_id: string;
-  body_region: string;
-  side: string | null;
-  latest_severity: number | null;
-  consecutive_weeks: number;
-  persistent: boolean;
-  latest_is_substantial: boolean | null;
+/** This user's queued check-ins. Another account's items are held by the
+ *  outbox and must not appear on this person's screen either. */
+export function pendingCheckins(
+  entries: readonly OutboxEntry[],
+  userId: string,
+): CheckinRow[] {
+  const out: CheckinRow[] = [];
+  for (const e of entries) {
+    if (e.user_id !== userId) continue;
+    if (e.op.kind !== "insert" || e.op.table !== "checkins") continue;
+    const p = e.op.payload;
+    out.push({
+      id: p.id,
+      recorded_at: p.recorded_at,
+      note: p.note ?? null,
+      energy: p.energy ?? null,
+      tags: p.tags ?? [],
+      training_impact: p.training_impact ?? null,
+      episode_id: p.episode_id ?? null,
+    });
+  }
+  return out;
 }
 
-/** Open symptom episodes, for the context block and the check-in sheet. */
-export async function getOpenEpisodes(userId: string): Promise<EpisodeState[]> {
-  const { data, error } = await supabase
-    .from("v_symptom_episode_state")
-    .select(
-      "episode_id, body_region, side, latest_severity, consecutive_weeks, persistent, latest_is_substantial",
-    )
-    .eq("user_id", userId)
-    .eq("is_open", true)
-    .order("consecutive_weeks", { ascending: false });
-  throwIf(error);
-  return (data ?? []) as EpisodeState[];
+/** Server rows plus queued rows, one per id, oldest first. */
+export function mergeCheckins(
+  server: readonly CheckinRow[],
+  pending: readonly CheckinRow[],
+): CheckinRow[] {
+  const byId = new Map<string, CheckinRow>();
+  for (const r of [...server, ...pending]) {
+    if (!byId.has(r.id)) byId.set(r.id, r);
+  }
+  return [...byId.values()].sort((a, b) =>
+    a.recorded_at.localeCompare(b.recorded_at),
+  );
+}
+
+/** The server's injuries as this device will see them once its queue lands:
+ *  queued episodes added, queued pain reports moving last_reported_on, queued
+ *  closes applied. Keeps "still there?" from re-asking about a knee someone
+ *  answered offline an hour ago. */
+export function withPending(
+  injuries: readonly InjuryState[],
+  entries: readonly OutboxEntry[],
+  userId: string,
+  localDateOf: (iso: string) => string,
+): InjuryState[] {
+  const byId = new Map(injuries.map((e) => [e.episode_id, { ...e }]));
+  for (const e of entries) {
+    if (e.user_id !== userId) continue;
+    const op = e.op;
+    if (op.kind === "insert" && op.table === "symptom_episodes") {
+      if (!byId.has(op.payload.id)) {
+        byId.set(op.payload.id, {
+          episode_id: op.payload.id,
+          body_region: op.payload.body_region,
+          side: op.payload.side,
+          opened_on: op.payload.opened_on,
+          closed_on: null,
+          last_reported_at: null,
+          last_reported_on: null,
+          reports: 0,
+          state: "active",
+        });
+      }
+    }
+  }
+  for (const e of entries) {
+    if (e.user_id !== userId) continue;
+    const op = e.op;
+    if (
+      op.kind === "insert" &&
+      op.table === "checkins" &&
+      op.payload.episode_id
+    ) {
+      const ep = byId.get(op.payload.episode_id);
+      if (
+        ep &&
+        (ep.last_reported_at === null ||
+          ep.last_reported_at < op.payload.recorded_at)
+      ) {
+        ep.last_reported_at = op.payload.recorded_at;
+        ep.last_reported_on = localDateOf(op.payload.recorded_at);
+        ep.reports += 1;
+      }
+    }
+    if (op.kind === "update" && op.table === "symptom_episodes") {
+      const ep = byId.get(op.id);
+      if (ep) {
+        ep.closed_on = op.patch.closed_on;
+        ep.state = "closed";
+      }
+    }
+  }
+  return [...byId.values()];
 }

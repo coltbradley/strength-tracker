@@ -500,6 +500,89 @@ function vWeeklySummary(s: DemoStore): Row[] {
   return [...weeks.values()];
 }
 
+
+/**
+ * v_checkins_local: every check-in with the device-local date and time-of-day
+ * bucket it happened in. Demo has no `app_tz` row, so this reads the local
+ * clock directly — the same thing the real view resolves to for a user whose
+ * `app_tz` is unset (falls through to `app_config.tz`, then UTC, but the demo
+ * only ever runs on one device anyway).
+ */
+function vCheckinsLocal(s: DemoStore): Row[] {
+  return (s.checkins ?? []).map((c) => {
+    const d = new Date(c.recorded_at as string);
+    const hour = d.getHours();
+    const bucket = hour < 11 ? "morning" : hour < 16 ? "midday" : "evening";
+    return { ...c, local_date: localDateIso(d), bucket };
+  });
+}
+
+/**
+ * v_checkin_buckets: one row per user/day/bucket. energy_mean is rounded to 2
+ * decimals and carries its own energy_n, because avg() skips nulls — a bucket
+ * of three check-ins with one energy score is not a bucket of three scores.
+ */
+function vCheckinBuckets(s: DemoStore): Row[] {
+  const groups = new Map<string, Row[]>();
+  for (const c of vCheckinsLocal(s)) {
+    const key = `${c.user_id as string}|${c.local_date as string}|${c.bucket as string}`;
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(c);
+  }
+  return [...groups.entries()].map(([key, rows]) => {
+    const [user_id, local_date, bucket] = key.split("|");
+    const energies = rows
+      .map((r) => r.energy)
+      .filter((e): e is number => typeof e === "number");
+    return {
+      user_id,
+      local_date,
+      bucket,
+      checkins: rows.length,
+      energy_n: energies.length,
+      energy_mean:
+        energies.length === 0
+          ? null
+          : round(energies.reduce((a, b) => a + b, 0) / energies.length, 2),
+    };
+  });
+}
+
+/**
+ * v_injury_state: an episode's life as its linked check-ins describe it.
+ * `quiet` is a derived LABEL, never a write to closed_on — going silent on a
+ * knee and not checking in at all look the same, so silence is not recovery.
+ */
+function vInjuryState(s: DemoStore): Row[] {
+  const cutoff = Date.now() - 14 * 86400_000;
+  return (s.symptom_episodes ?? []).map((e) => {
+    const linked = (s.checkins ?? []).filter((c) => c.episode_id === e.id);
+    const last =
+      linked.length === 0
+        ? null
+        : linked
+            .map((c) => c.recorded_at as string)
+            .reduce((a, b) => (a > b ? a : b));
+    const closedOn = (e.closed_on as string | null) ?? null;
+    const referenceTime = last
+      ? new Date(last).getTime()
+      : new Date(`${e.opened_on as string}T00:00:00`).getTime();
+    const state =
+      closedOn !== null ? "closed" : referenceTime < cutoff ? "quiet" : "active";
+    return {
+      episode_id: e.id,
+      user_id: e.user_id,
+      body_region: e.body_region,
+      side: e.side,
+      opened_on: e.opened_on,
+      closed_on: closedOn,
+      last_reported_at: last,
+      last_reported_on: last ? localDateIso(new Date(last)) : null,
+      reports: linked.length,
+      state,
+    };
+  });
+}
+
 const VIEWS: Record<string, (s: DemoStore) => Row[]> = {
   v_bodyweight: vBodyweight,
   v_weekly_summary: vWeeklySummary,
@@ -513,6 +596,9 @@ const VIEWS: Record<string, (s: DemoStore) => Row[]> = {
   v_session_set_counts: vSessionSetCounts,
   v_goal_progress: vGoalProgress,
   v_adherence: vAdherence,
+  v_checkins_local: vCheckinsLocal,
+  v_checkin_buckets: vCheckinBuckets,
+  v_injury_state: vInjuryState,
 };
 
 // ---- filtering / ordering / projection --------------------------------------
@@ -700,6 +786,18 @@ const DEFAULTS: Record<string, Row> = {
     load_entry: null,
   },
   programs: { source_note: null, confirmed_at: null },
+  checkins: {
+    kind: "spontaneous",
+    session_id: null,
+    activity_id: null,
+    energy: null,
+    feeling: null,
+    note: null,
+    tags: [],
+    episode_id: null,
+    training_impact: null,
+  },
+  symptom_episodes: { closed_on: null },
 };
 
 function withDefaults(table: string, row: Row): Row {

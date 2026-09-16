@@ -345,7 +345,7 @@ export async function cancelRestAlert(alertId: string): Promise<void> {
  * any of this.
  */
 export async function armPrompt(
-  kind: "daily_readiness" | "ostrc_weekly" | "next_morning_pain",
+  kind: "ostrc_weekly" | "next_morning_pain",
   fireAt: Date,
   label?: string,
 ): Promise<{ armed: boolean; alertId?: string }> {

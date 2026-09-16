@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { E1rmChart } from "../components/charts/E1rmChart";
 import { VolumeChart } from "../components/charts/VolumeChart";
 import { SetRow } from "../components/SetRow";
+import { CheckinWeek } from "../components/CheckinWeek";
 import {
   getAdherence,
   getE1rmSeries,
@@ -98,7 +99,7 @@ function latestTonnage(weeks: WeeklyVolumeRow[]): WeeklyVolumeRow | null {
   return weeks.length === 0 ? null : weeks[weeks.length - 1];
 }
 
-export function History() {
+export function History({ userId }: { userId: string }) {
   const unit = useUnit();
   const [exercises, setExercises] = useState<ExerciseRow[]>([]);
   const [withData, setWithData] = useState<Set<string>>(new Set());
@@ -579,6 +580,13 @@ export function History() {
               </span>
             </div>
             <WeekLine row={week} unit={unit} loading={weekLoading} />
+          </section>
+
+          <section className="rule-section">
+            <div className="section-head">
+              <span className="field-label">CHECK-INS</span>
+            </div>
+            <CheckinWeek today={today} userId={userId} />
           </section>
 
           <section className="rule-section">

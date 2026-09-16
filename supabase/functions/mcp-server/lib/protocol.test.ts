@@ -332,6 +332,8 @@ const EXPECTED_ANNOTATIONS: Record<
   get_lift_history: { readOnly: true, destructive: false },
   get_recent_sessions: { readOnly: true, destructive: false },
   get_checkins: { readOnly: true, destructive: false },
+  get_checkin_buckets: { readOnly: true, destructive: false },
+  get_injuries: { readOnly: true, destructive: false },
   get_goal_progress: { readOnly: true, destructive: false },
   get_volume: { readOnly: true, destructive: false },
   get_training_maxes: { readOnly: true, destructive: false },

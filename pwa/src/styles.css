@@ -641,6 +641,7 @@
   .selected-day-head > *,
   .history-date > *,
   .date-row > *,
+  .date-heading-row > *,
   .detail-actions > *,
   .banner-row > *,
   .rest-row > *,
@@ -837,7 +838,8 @@
   .plate-hint,
   .rpe-reveal,
   .sync-pill,
-  .rest-timer-time {
+  .rest-timer-time,
+  .checkin-link {
     position: relative;
   }
 
@@ -852,7 +854,8 @@
   .plate-hint::after,
   .rpe-reveal::after,
   .sync-pill::after,
-  .rest-timer-time::after {
+  .rest-timer-time::after,
+  .checkin-link::after {
     content: "";
     position: absolute;
     top: 50%;
@@ -919,78 +922,100 @@
     color: var(--bg);
   }
 
-  /* ---- morning check-in ----
-     Built on .chip / .chip-on rather than a parallel set of controls: the
-     1-5 scale is the same affordance as every other chip row in the app, and
-     a second visual language for the same gesture is how a stylesheet doubles.
-     Tapping the chosen chip again clears it, which is why these are
-     aria-pressed toggles and not a radio group. */
+  /* ---- check in ----
+     One sheet, three optional groups. The sheet's own gutter stays (no
+     .pad-sheet), and the groups sit a full --s-8 apart so a note, a tag row
+     and a scale read as three things rather than one crowded form. */
 
-  .scale-row {
-    margin-top: var(--s-4);
+  .checkin-sheet {
+    gap: var(--s-8);
   }
 
-  .scale-chip {
-    /* Five across on the narrowest phone, without wrapping to a ragged
-       second line that makes the scale read as two groups. */
-    flex: 1 1 0;
+  .checkin-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+  }
+
+  .checkin-group .chip-row {
+    margin-top: 0;
+  }
+
+  .checkin-earlier {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-4) var(--s-6);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    color: var(--text-dim);
+  }
+
+  .checkin-earlier b {
+    color: var(--text);
+    margin-left: var(--s-2);
+  }
+
+  .checkin-still {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    padding-bottom: var(--s-6);
+    border-bottom: var(--rule-hair);
+  }
+
+  .checkin-still-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: var(--s-4);
+    align-items: center;
+    font-size: var(--fs-body);
+  }
+
+  .checkin-follow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    margin-top: var(--s-4);
+    padding-left: var(--s-6);
+    border-left: var(--bw-thick) solid var(--danger);
+  }
+
+  .chip-pain.chip-on {
+    background: var(--danger);
+    border-color: var(--danger);
+  }
+
+  .checkin-scale,
+  .checkin-seg {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .checkin-scale {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .checkin-seg {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .checkin-scale .chip,
+  .checkin-seg .chip {
     justify-content: center;
     min-width: 0;
   }
 
-  .scale-ends {
+  .checkin-ends {
     display: flex;
     justify-content: space-between;
-    margin-top: var(--s-4);
     font-size: var(--fs-meta);
     color: var(--text-dim);
   }
 
-  .checkin-open {
-    /* A quiet line, not a call to action. The Start button is this screen's
-       job and nothing here may compete with it for the eye. */
-    display: block;
-    width: 100%;
-    text-align: left;
-    border: 0;
-    border-bottom: var(--rule-hair);
-    background: none;
-    padding: var(--s-4) 0;
-    font: inherit;
+  .checkin-hint {
+    margin: 0;
+    font-size: var(--fs-sm);
     color: var(--text-dim);
-    min-height: var(--tap-min);
-  }
-
-  .checkin-intro {
-    margin-bottom: var(--s-2);
-  }
-
-  .checkbox-field {
-    display: flex;
-    align-items: center;
-    gap: var(--s-4);
-  }
-
-  .checkin-actions {
-    margin-top: var(--s-2);
-  }
-
-  .checkin-actions .btn {
-    width: 100%;
-  }
-
-  /* The once-a-day readiness scales, folded away under the always-useful
-     spontaneous check-in above. A rule above it separates "the thing you can
-     do right now" from "the thing worth opening once a day", and no
-     underline: this reads as a section, not a link. */
-  .disclosure-toggle {
-    display: block;
-    width: 100%;
-    text-align: left;
-    text-decoration: none;
-    margin-top: var(--s-6);
-    padding-top: var(--s-5);
-    border-top: var(--rule-hair);
   }
 
   .link-btn {
@@ -1054,6 +1079,37 @@
     font-weight: 600;
     letter-spacing: var(--track-3);
     color: var(--accent-dim);
+  }
+
+  /* The check-in link rides the date line in the same micro type, so it
+     costs no row and never competes with Start. The 44px tap area comes
+     from the hit extension, not from growing the line. Named apart from
+     .date-row (the date-input row in Plan.tsx / TrainingMaxSheet.tsx) so the
+     two never collide in the cascade. */
+  .date-heading-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-6);
+  }
+
+  /* 44px tap target comes from the hit-extension family (~line 818), not
+     from growing this box. It is the last thing in the row, so bleed only
+     has to clear the gap to .train-date / .today-heading on its left: the
+     row's gap is --s-6 (12px), so --s-4 (8px) reaches the floor without
+     overlapping. */
+  .checkin-link {
+    --hit-bleed: var(--s-4);
+    border: 0;
+    background: none;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-3);
+    text-transform: uppercase;
+    color: var(--text-dim);
+    white-space: nowrap;
   }
 
   /* the program name belongs to the heading above it, not to the next section:
@@ -2576,6 +2632,203 @@
     font-size: var(--fs-sm);
     font-weight: 600;
     letter-spacing: var(--track-tight);
+  }
+
+  /* ---- check-ins in History ---- */
+
+  .checkin-week {
+    /* One source for the width of the grid's row-header column, so the day
+     * columns below (.checkin-days) can line up under the grid's day
+     * columns instead of drifting to whatever font-size they happen to
+     * inherit. Derived from --fs-micro (not an em on this element) so it
+     * stays the same 4.5-characters-at-micro-size width regardless of the
+     * font-size in force wherever it's used. */
+    --checkin-label-col: calc(4.5 * var(--fs-micro));
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+  }
+
+  .checkin-week-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+  }
+
+  .checkin-week-nav button {
+    border: 0;
+    background: none;
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    font: inherit;
+    font-size: var(--fs-base);
+    color: var(--text-dim);
+  }
+
+  .checkin-week-nav button:disabled {
+    visibility: hidden;
+  }
+
+  .checkin-grid {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: var(--s-1);
+    table-layout: fixed;
+    font-family: var(--font-mono);
+  }
+
+  .checkin-grid th {
+    font-size: var(--fs-micro);
+    font-weight: 400;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: var(--track-1);
+  }
+
+  /* The actual column-width source of truth: table-layout: fixed reads
+   * column widths from a <colgroup>'s <col>, or else the first row's cells
+   * — a later row's cell width (e.g. a plain width on th[scope="row"]) is
+   * not consulted and would be silently ignored. */
+  .checkin-grid col:first-child {
+    width: var(--checkin-label-col);
+  }
+
+  .checkin-grid th[scope="row"] {
+    text-align: left;
+  }
+
+  .checkin-grid td {
+    height: var(--tap-min);
+    text-align: center;
+    border-radius: var(--radius);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .checkin-grid td small {
+    display: block;
+    font-size: var(--fs-micro);
+    font-weight: 400;
+  }
+
+  .checkin-grid td.is-empty {
+    border: var(--bw-hair) dashed var(--rule-color);
+  }
+
+  .checkin-grid td.is-selected {
+    outline: var(--bw) solid var(--text);
+    outline-offset: calc(var(--bw) * -1);
+  }
+
+  .checkin-grid th.is-selected {
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .checkin-days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: var(--s-1);
+    /* Same label-column width the grid's row header uses, plus TWO
+     * border-spacing gaps: with border-collapse: separate the grid's
+     * border-spacing (also --s-1) sits both before the label column and
+     * between it and day column 1, so the first day column starts two gaps
+     * in, not one. This offset is what actually lines the day buttons up
+     * under the grid's first day column, verified with a headless browser
+     * at 320/375px in task-6-report.md — one gap left the buttons 2px left
+     * of the grid. */
+    padding-left: calc(var(--checkin-label-col) + 2 * var(--s-1));
+    font-family: var(--font-mono);
+  }
+
+  .checkin-days button {
+    display: grid;
+    place-content: center;
+    gap: var(--s-1);
+    min-height: var(--tap-md);
+    padding: 0;
+    border: var(--bw-hair) solid var(--rule-color);
+    border-radius: var(--radius);
+    background: none;
+    color: var(--text-dim);
+  }
+
+  .checkin-days button b {
+    font-size: var(--fs-label);
+    color: var(--text);
+  }
+
+  .checkin-days button small {
+    font-size: var(--fs-micro);
+  }
+
+  .checkin-days button[aria-pressed="true"] {
+    background: var(--text);
+    border-color: var(--text);
+  }
+
+  .checkin-days button[aria-pressed="true"] b,
+  .checkin-days button[aria-pressed="true"] small {
+    color: var(--text-inverse);
+  }
+
+  /* 320px offers 284px of content for seven 44px targets after the label
+   * column, which doesn't fit — same bleed rationale as .week-strip above:
+   * bleed into the page gutter and drop the gap (320 / 7 = 45.7px per
+   * cell). This gives up alignment with the grid's day columns above (which
+   * keeps its label column and does not bleed) in favour of a real 44px
+   * target; the grid's cells aren't tap targets, so that trade only costs
+   * visual alignment, not usability. */
+  @media (max-width: 359px) {
+    .checkin-days {
+      padding-left: 0;
+      margin-left: calc(var(--gutter) * -1);
+      margin-right: calc(var(--gutter) * -1);
+      gap: 0;
+    }
+  }
+
+  .checkin-day {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    padding-top: var(--s-6);
+    border-top: var(--rule-hair);
+  }
+
+  .checkin-entry {
+    display: grid;
+    grid-template-columns: 4.5em 1.5em 1fr;
+    gap: var(--s-4);
+    align-items: baseline;
+    font-size: var(--fs-body);
+  }
+
+  .checkin-entry-time {
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    color: var(--text-dim);
+  }
+
+  .checkin-entry-energy {
+    font-family: var(--font-mono);
+    font-weight: 700;
+  }
+
+  .checkin-entry-tags {
+    display: block;
+    font-size: var(--fs-sm);
+    color: var(--text-dim);
+  }
+
+  .checkin-entry-note {
+    display: block;
+    overflow-wrap: anywhere;
   }
 
   /* ---- charts ---- */

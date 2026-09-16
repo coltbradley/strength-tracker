@@ -313,13 +313,15 @@ export interface ActiveSession {
   coach_note?: string | null;
 }
 
-
 // ---- subjective capture (E1) ------------------------------------------------
 //
 // Every field on the daily panel is OPTIONAL. A panel somebody must complete is
 // a panel somebody stops opening, and the views carry per-item counts so a
 // half-filled row cannot be mistaken for a full one.
 
+// LEGACY. The table was dropped in 20260916000000; this type remains only so a
+// daily_readiness op queued on a phone before that release still type-checks
+// in the outbox, where it replays, is refused, and shows as a dead item.
 export interface DailyReadinessUpsert {
   /** Stable per (user, local_date): a correction MERGES onto the same row. */
   id: string;
@@ -341,16 +343,58 @@ export interface DailyReadinessUpsert {
   recorded_at?: string;
 }
 
+export type CheckinTag =
+  "great" | "slept_badly" | "unusually_sore" | "stressed" | "sick" | "pain";
+
+export type TrainingImpact = "none" | "modified" | "stopped";
+
+export type EpisodeSide = "left" | "right" | "bilateral" | "n/a";
+
 export interface CheckinInsert {
   id: string;
   user_id: string;
   kind: "pre_session" | "post_session" | "spontaneous" | "prompted";
-  session_id?: string | null;
-  activity_id?: string | null;
-  energy?: number | null;
-  feeling?: number | null;
-  note?: string | null;
-  recorded_at?: string;
+  recorded_at: string;
+  note: string | null;
+  energy: number | null;
+  feeling: number | null;
+  tags: CheckinTag[];
+  episode_id: string | null;
+  training_impact: TrainingImpact | null;
+  session_id: string | null;
+  activity_id: string | null;
+}
+
+/** A check-in as a screen reads it, from the server or the outbox. */
+export interface CheckinRow {
+  id: string;
+  recorded_at: string;
+  note: string | null;
+  energy: number | null;
+  tags: CheckinTag[];
+  training_impact: TrainingImpact | null;
+  episode_id: string | null;
+}
+
+export interface SymptomEpisodeInsert {
+  id: string;
+  user_id: string;
+  body_region: string;
+  side: EpisodeSide;
+  opened_on: string;
+}
+
+/** One row of v_injury_state. `quiet` is derived and never written. */
+export interface InjuryState {
+  episode_id: string;
+  body_region: string;
+  side: EpisodeSide | null;
+  opened_on: string;
+  closed_on: string | null;
+  last_reported_at: string | null;
+  last_reported_on: string | null;
+  reports: number;
+  state: "active" | "quiet" | "closed";
 }
 
 export interface PainCheckInsert {

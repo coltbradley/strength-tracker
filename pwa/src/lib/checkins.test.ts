@@ -1,214 +1,349 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const maybeSingle = vi.fn();
-vi.mock("./supabase", () => ({
-  supabase: {
-    from: () => ({
-      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle }) }) }),
-    }),
-  },
-}));
-vi.mock("./data", () => ({ throwIf: vi.fn() }));
-
+import { describe, expect, it } from "vitest";
 import {
-  answeredItems,
-  checkinRow,
-  chipActive,
-  getReadinessFor,
-  hasCheckinContent,
-  MOOD_CHIPS,
-  painCheckRow,
-  readinessRow,
-  toggleChip,
+  buildCheckinOps,
+  canSubmit,
+  closeEpisodeOp,
+  CHECKIN_TAGS,
+  EMPTY_PAIN,
+  injuryLabel,
+  matchEpisode,
+  mergeCheckins,
+  pendingCheckins,
+  stillThere,
+  toggleTag,
+  withPending,
+  type CheckinDraft,
 } from "./checkins";
+import type { OutboxEntry } from "./outbox";
+import type { CheckinRow, InjuryState } from "./types";
 
-const NOW = "2026-09-07T07:30:00.000Z";
+const NOW = "2026-09-16T15:00:00.000Z";
+const TODAY = "2026-09-16";
+const USER = "u1";
 
-describe("answeredItems", () => {
-  it("counts only the six core items that were actually answered", () => {
-    expect(answeredItems({})).toBe(0);
-    expect(answeredItems({ sleep_hours: 7 })).toBe(1);
-    expect(answeredItems({ sleep_hours: 7, fatigue: 3, mood: 4 })).toBe(3);
+const draft = (over: Partial<CheckinDraft> = {}): CheckinDraft => ({
+  note: "",
+  tags: [],
+  energy: null,
+  pain: EMPTY_PAIN,
+  ...over,
+});
+
+const injury = (over: Partial<InjuryState> = {}): InjuryState => ({
+  episode_id: "ep-1",
+  body_region: "Knee",
+  side: "left",
+  opened_on: "2026-09-02",
+  closed_on: null,
+  last_reported_at: "2026-09-15T08:00:00.000Z",
+  last_reported_on: "2026-09-15",
+  reports: 2,
+  state: "active",
+  ...over,
+});
+
+const entry = (op: OutboxEntry["op"], user = USER): OutboxEntry =>
+  ({
+    key: 1,
+    op,
+    table: op.table,
+    created_at: NOW,
+    retries: 0,
+    last_error: null,
+    user_id: user,
+    state: "waiting",
+  }) as unknown as OutboxEntry;
+
+let n = 0;
+const ids = () => `id-${++n}`;
+
+describe("canSubmit", () => {
+  it("is false when all three inputs are empty", () => {
+    expect(canSubmit(draft())).toBe(false);
+    expect(canSubmit(draft({ note: "   " }))).toBe(false);
   });
-
-  // Zero is a measurement, not an absence. This is the same line the schema
-  // draws and the reason a mean carries its own count.
-  it("counts a zero answer as answered", () => {
-    expect(answeredItems({ soreness: 0 as unknown as number })).toBe(1);
-  });
-
-  it("does not count explicit nulls, which are cleared answers", () => {
-    expect(answeredItems({ sleep_hours: null, mood: null })).toBe(0);
-  });
-
-  it("ignores non-core items, which do not trend", () => {
-    expect(answeredItems({ bodyweight_kg: 72, note: "fine" })).toBe(0);
+  it("is true for any one input alone", () => {
+    expect(canSubmit(draft({ note: "tight hips" }))).toBe(true);
+    expect(canSubmit(draft({ tags: ["great"] }))).toBe(true);
+    expect(canSubmit(draft({ energy: 1 }))).toBe(true);
   });
 });
 
-describe("readinessRow", () => {
-  it("carries only what was answered, and never writes 0 for a blank", () => {
-    const row = readinessRow("id1", "u1", "2026-09-07", { fatigue: 2 }, NOW);
-    expect(row).toEqual({
-      id: "id1",
-      user_id: "u1",
-      local_date: "2026-09-07",
-      recorded_at: NOW,
-      fatigue: 2,
-    });
-    // The load-bearing assertion: an unanswered question must not reach the
-    // database as a value.
-    expect("sleep_hours" in row).toBe(false);
-    expect("mood" in row).toBe(false);
+describe("toggleTag", () => {
+  it("adds and removes, keeping vocabulary order", () => {
+    const on = toggleTag(toggleTag([], "sick"), "great");
+    expect(on).toEqual(["great", "sick"]);
+    expect(toggleTag(on, "great")).toEqual(["sick"]);
   });
-
-  it("accepts a completely empty panel", () => {
-    const row = readinessRow("id1", "u1", "2026-09-07", {}, NOW);
-    expect(row).toEqual({
-      id: "id1",
-      user_id: "u1",
-      local_date: "2026-09-07",
-      recorded_at: NOW,
-    });
+  it("has the six tags in the agreed order", () => {
+    expect(CHECKIN_TAGS.map((t) => t.value)).toEqual([
+      "great",
+      "slept_badly",
+      "unusually_sore",
+      "stressed",
+      "sick",
+      "pain",
+    ]);
   });
+});
 
-  it("keeps an explicit null, which clears an answer given earlier", () => {
-    const row = readinessRow("id1", "u1", "2026-09-07", { mood: null }, NOW);
-    expect(row.mood).toBeNull();
+describe("matchEpisode", () => {
+  it("matches an open episode on exact region and side", () => {
+    expect(matchEpisode([injury()], "Knee", "left")?.episode_id).toBe("ep-1");
+    expect(matchEpisode([injury()], "Knee", "right")).toBeNull();
+    expect(
+      matchEpisode([injury({ closed_on: "2026-09-10" })], "Knee", "left"),
+    ).toBeNull();
   });
-
-  it("keeps a zero, which is an answer", () => {
-    const row = readinessRow(
-      "id1",
-      "u1",
-      "2026-09-07",
-      { alcohol_units: 0 },
-      NOW,
+  it("picks the most recently opened of several", () => {
+    const older = injury({ episode_id: "old", opened_on: "2026-08-01" });
+    const newer = injury({ episode_id: "new", opened_on: "2026-09-01" });
+    expect(matchEpisode([older, newer], "Knee", "left")?.episode_id).toBe(
+      "new",
     );
-    expect(row.alcohol_units).toBe(0);
   });
-
-  // The id is the caller's, so a correction merges onto the row it corrects
-  // rather than colliding with unique (user_id, local_date).
-  it("reuses the id it is given so a correction merges", () => {
-    const first = readinessRow("stable", "u1", "2026-09-07", { mood: 3 }, NOW);
-    const fix = readinessRow("stable", "u1", "2026-09-07", { mood: 5 }, NOW);
-    expect(fix.id).toBe(first.id);
-    expect(fix.mood).toBe(5);
+  it("treats a null side as n/a", () => {
+    expect(
+      matchEpisode([injury({ side: null })], "Knee", "n/a")?.episode_id,
+    ).toBe("ep-1");
   });
 });
 
-describe("checkinRow / painCheckRow", () => {
-  it("stamps the kind and the time", () => {
-    const r = checkinRow("c1", "u1", "post_session", { energy: 3 }, NOW);
-    expect(r).toMatchObject({
-      kind: "post_session",
-      energy: 3,
-      recorded_at: NOW,
-    });
-  });
+describe("buildCheckinOps", () => {
+  const ctx = {
+    userId: USER,
+    now: NOW,
+    today: TODAY,
+    injuries: [injury()],
+    newId: ids,
+  };
 
-  // A 24-hour delayed signal is its own row with its own timestamp; it cannot
-  // be a field on the run it follows.
-  it("makes the next-morning pain check a row of its own", () => {
-    const r = painCheckRow(
-      "p1",
-      "u1",
-      "next_morning",
-      5,
-      { episode_id: "e1" },
-      NOW,
+  it("writes every column on a plain check-in", () => {
+    const ops = buildCheckinOps(
+      draft({ note: "  fine  ", energy: 4, tags: ["great"] }),
+      ctx,
     );
-    expect(r).toMatchObject({
-      phase: "next_morning",
-      nrs_0_10: 5,
-      episode_id: "e1",
-      captured_at: NOW,
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ kind: "insert", table: "checkins" });
+    const p = (ops[0] as Extract<(typeof ops)[0], { table: "checkins" }>)
+      .payload;
+    expect(p).toEqual({
+      id: expect.any(String),
+      user_id: USER,
+      kind: "spontaneous",
+      recorded_at: NOW,
+      note: "fine",
+      energy: 4,
+      feeling: null,
+      tags: ["great"],
+      episode_id: null,
+      training_impact: null,
+      session_id: null,
+      activity_id: null,
+    });
+  });
+
+  it("stores a blank note as null", () => {
+    const ops = buildCheckinOps(draft({ energy: 2 }), ctx);
+    expect((ops[0] as { payload: { note: unknown } }).payload.note).toBeNull();
+  });
+
+  it("files pain against a matching open episode without creating one", () => {
+    const ops = buildCheckinOps(
+      draft({
+        tags: ["pain"],
+        pain: { region: "Knee", side: "left", impact: "modified" },
+      }),
+      ctx,
+    );
+    expect(ops).toHaveLength(1);
+    expect(
+      (ops[0] as { payload: Record<string, unknown> }).payload,
+    ).toMatchObject({
+      episode_id: "ep-1",
+      training_impact: "modified",
+    });
+  });
+
+  it("creates an episode first when nothing matches, and links to it", () => {
+    const ops = buildCheckinOps(
+      draft({
+        tags: ["pain"],
+        pain: { region: "Ankle", side: "bilateral", impact: null },
+      }),
+      ctx,
+    );
+    expect(ops.map((o) => o.table)).toEqual(["symptom_episodes", "checkins"]);
+    const ep = (ops[0] as { payload: Record<string, unknown> }).payload;
+    expect(ep).toEqual({
+      id: expect.any(String),
+      user_id: USER,
+      body_region: "Ankle",
+      side: "bilateral",
+      opened_on: TODAY,
+    });
+    expect(
+      (ops[1] as { payload: Record<string, unknown> }).payload.episode_id,
+    ).toBe(ep.id);
+  });
+
+  it("saves pain with no region as a tag and an impact, with no episode", () => {
+    const ops = buildCheckinOps(
+      draft({
+        tags: ["pain"],
+        pain: { region: null, side: null, impact: "stopped" },
+      }),
+      ctx,
+    );
+    expect(ops).toHaveLength(1);
+    expect(
+      (ops[0] as { payload: Record<string, unknown> }).payload,
+    ).toMatchObject({
+      episode_id: null,
+      training_impact: "stopped",
+    });
+  });
+
+  it("drops pain answers when the pain tag is off", () => {
+    const ops = buildCheckinOps(
+      draft({
+        tags: ["sick"],
+        pain: { region: "Knee", side: "left", impact: "none" },
+      }),
+      ctx,
+    );
+    expect(
+      (ops[0] as { payload: Record<string, unknown> }).payload,
+    ).toMatchObject({
+      episode_id: null,
+      training_impact: null,
     });
   });
 });
 
-describe("mood chips: toggleChip / chipActive", () => {
-  it("has the five words the sheet offers", () => {
-    expect(MOOD_CHIPS).toEqual(["Sore", "Hurt", "Tired", "Stressed", "Great"]);
+describe("stillThere", () => {
+  it("asks about open episodes last reported on an earlier day", () => {
+    expect(stillThere([injury()], TODAY).map((e) => e.episode_id)).toEqual([
+      "ep-1",
+    ]);
   });
-
-  it("appends a word to empty text", () => {
-    expect(toggleChip("", "Sore")).toBe("Sore");
+  it("does not ask again once reported today, or about closed episodes", () => {
+    expect(stillThere([injury({ last_reported_on: TODAY })], TODAY)).toEqual(
+      [],
+    );
+    expect(stillThere([injury({ closed_on: "2026-09-15" })], TODAY)).toEqual(
+      [],
+    );
   });
-
-  it("appends a second word after the first", () => {
-    expect(toggleChip("Sore", "Tired")).toBe("Sore, Tired");
+  it("uses opened_on when an episode has never been reported", () => {
+    const fresh = injury({
+      last_reported_at: null,
+      last_reported_on: null,
+      opened_on: TODAY,
+    });
+    expect(stillThere([fresh], TODAY)).toEqual([]);
+    const old = injury({
+      last_reported_at: null,
+      last_reported_on: null,
+      opened_on: "2026-09-01",
+    });
+    expect(stillThere([old], TODAY)).toHaveLength(1);
   });
-
-  it("is active once its word is a token in the text", () => {
-    expect(chipActive("Sore, Tired", "Tired")).toBe(true);
-    expect(chipActive("Sore, Tired", "Hurt")).toBe(false);
-  });
-
-  it("is case-insensitive", () => {
-    expect(chipActive("sore", "Sore")).toBe(true);
-  });
-
-  // Tapping the same chip again removes exactly that word and nothing else.
-  it("removes the word on a second tap, leaving the rest untouched", () => {
-    expect(toggleChip("Sore, Tired, Great", "Tired")).toBe("Sore, Great");
-    expect(chipActive(toggleChip("Sore, Tired", "Tired"), "Tired")).toBe(false);
-  });
-
-  it("removing the only word leaves the box empty", () => {
-    expect(toggleChip("Sore", "Sore")).toBe("");
-  });
-
-  // Free-typed prose is left alone: a chip only ever adds or removes its own
-  // comma-separated token, never rewrites what somebody typed.
-  it("does not disturb free text typed alongside a chip word", () => {
-    const withNote = toggleChip("legs are sore today", "Great");
-    expect(withNote).toBe("legs are sore today, Great");
-    expect(toggleChip(withNote, "Great")).toBe("legs are sore today");
+  it("shows at most three, most recently reported first", () => {
+    const list = ["a", "b", "c", "d"].map((id, i) =>
+      injury({
+        episode_id: id,
+        last_reported_on: `2026-09-1${i}`,
+        last_reported_at: `2026-09-1${i}T08:00:00.000Z`,
+      }),
+    );
+    expect(stillThere(list, TODAY).map((e) => e.episode_id)).toEqual([
+      "d",
+      "c",
+      "b",
+    ]);
   });
 });
 
-describe("hasCheckinContent", () => {
-  it("is false with nothing entered", () => {
-    expect(hasCheckinContent("", null)).toBe(false);
-    expect(hasCheckinContent("   ", null)).toBe(false);
-  });
-
-  it("is true once there is text", () => {
-    expect(hasCheckinContent("feeling good", null)).toBe(true);
-  });
-
-  it("is true once a chip (or energy) is chosen, with no typed text", () => {
-    expect(hasCheckinContent("Great", null)).toBe(true);
-    expect(hasCheckinContent("", 3)).toBe(true);
+describe("closeEpisodeOp", () => {
+  it("is an update that sets closed_on to today", () => {
+    expect(closeEpisodeOp("ep-1", TODAY)).toEqual({
+      kind: "update",
+      table: "symptom_episodes",
+      id: "ep-1",
+      patch: { closed_on: TODAY },
+    });
   });
 });
 
-describe("getReadinessFor", () => {
-  beforeEach(() => maybeSingle.mockReset());
+describe("injuryLabel", () => {
+  it("reads naturally for each side", () => {
+    expect(injuryLabel(injury())).toBe("left knee");
+    expect(injuryLabel(injury({ side: "bilateral" }))).toBe(
+      "knee (both sides)",
+    );
+    expect(injuryLabel(injury({ side: "n/a" }))).toBe("knee");
+  });
+});
 
-  it("returns today's panel so a correction can reuse its id", async () => {
-    maybeSingle.mockResolvedValue({
-      data: { id: "r1", local_date: "2026-09-07", recorded_at: NOW, mood: 4 },
-      error: null,
-    });
-    const r = await getReadinessFor("u1", "2026-09-07");
-    expect(r?.id).toBe("r1");
+describe("pending merges", () => {
+  const ctx = {
+    userId: USER,
+    now: NOW,
+    today: TODAY,
+    injuries: [],
+    newId: ids,
+  };
+  const ops = buildCheckinOps(
+    draft({
+      tags: ["pain"],
+      pain: { region: "Hip", side: "right", impact: null },
+    }),
+    ctx,
+  );
+
+  it("reads this user's queued check-ins and ignores another user's", () => {
+    const entries = [entry(ops[1]), entry(ops[1], "someone-else")];
+    expect(pendingCheckins(entries, USER)).toHaveLength(1);
   });
 
-  it("returns null when there is none", async () => {
-    maybeSingle.mockResolvedValue({ data: null, error: null });
-    expect(await getReadinessFor("u1", "2026-09-07")).toBeNull();
+  it("merges server and pending check-ins by id, oldest first", () => {
+    const server: CheckinRow[] = [
+      {
+        id: "s1",
+        recorded_at: "2026-09-16T07:00:00.000Z",
+        note: null,
+        energy: 3,
+        tags: [],
+        training_impact: null,
+        episode_id: null,
+      },
+    ];
+    const merged = mergeCheckins(server, [
+      ...server,
+      ...pendingCheckins([entry(ops[1])], USER),
+    ]);
+    expect(merged.map((r) => r.id)).toEqual([
+      "s1",
+      (ops[1] as { payload: { id: string } }).payload.id,
+    ]);
   });
 
-  // Opening blank at worst re-asks a question. Refusing to open costs the
-  // answer entirely, and this data only accrues forward.
-  it("opens blank rather than failing when the read errors", async () => {
-    maybeSingle.mockResolvedValue({
-      data: null,
-      error: { message: "offline", code: "" },
+  it("adds queued episodes, queued reports and queued closes to the server's injuries", () => {
+    const closing = entry(closeEpisodeOp("ep-1", TODAY));
+    const result = withPending(
+      [injury()],
+      [entry(ops[0]), entry(ops[1]), closing],
+      USER,
+      () => TODAY,
+    );
+    const hip = result.find((e) => e.body_region === "Hip");
+    expect(hip).toMatchObject({
+      side: "right",
+      opened_on: TODAY,
+      last_reported_on: TODAY,
+      closed_on: null,
     });
-    expect(await getReadinessFor("u1", "2026-09-07")).toBeNull();
+    expect(result.find((e) => e.episode_id === "ep-1")?.closed_on).toBe(TODAY);
   });
 });
