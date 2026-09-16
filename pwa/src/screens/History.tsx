@@ -24,6 +24,7 @@ import { E1rmChart } from "../components/charts/E1rmChart";
 import { VolumeChart } from "../components/charts/VolumeChart";
 import { SetRow } from "../components/SetRow";
 import { CheckinWeek } from "../components/CheckinWeek";
+import { BodyweightRow } from "../components/BodyweightRow";
 import {
   getAdherence,
   getE1rmSeries,
@@ -605,6 +606,12 @@ export function History({ userId }: { userId: string }) {
           </section>
         </>
       )}
+
+      {/* A standing fact about the person, not about any one exercise's
+          history — same component, same behaviour as the identical row
+          on Today, rendered regardless of `bare` for the same reason
+          Today doesn't gate it on having a program either. */}
+      <BodyweightRow />
 
       {pickerOpen && (
         <ExercisePicker
