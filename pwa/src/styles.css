@@ -4283,9 +4283,10 @@
     text-transform: uppercase;
   }
 
-  .header-action-coach {
-    color: var(--text);
-  }
+  /* No .header-action-coach full-ink override: that one bright icon
+     beside Report and the gear, both already --text-dim, was the header
+     reading as two menus rather than one quiet cluster. All three header
+     actions share the one dim ink .header-action already sets. */
 
   /* Offline is shown, not discovered on tap: the coach is an API call and
    * genuinely cannot work, unlike the rest of this app. */
