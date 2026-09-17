@@ -367,6 +367,13 @@ describe("Session focus presentation", () => {
 
   it("keeps tick-only focus navigation and logging on the same entry", async () => {
     resetDbForTests();
+    // See the "reverse route" test below: an earlier test's
+    // `getServerSessionSets.mockResolvedValue` (no "Once") outlives
+    // `vi.clearAllMocks()` in `beforeEach`, which only clears call history.
+    // Pin this test's own server response so a completed Bench Press left
+    // over from an earlier test can't make focus skip straight to Farmer
+    // Carry before "LOG SET" ever appears.
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
     await seed("reps", [
       prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
       prescription("carry", "farmer-carry", "Farmer Carry", "done", null, 1),

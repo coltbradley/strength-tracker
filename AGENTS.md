@@ -757,7 +757,7 @@ node --test scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.t
 
 # edge functions (Deno — install via denoland/setup-deno or the Deno CLI)
 cd supabase/functions/mcp-server && deno check index.ts && deno test --allow-env --allow-net
-cd supabase/functions/coach && deno check index.ts
+cd supabase/functions/coach && deno check index.ts && deno test
 cd supabase/functions/push-alerts && deno check index.ts && deno test lib/
 cd supabase/functions/endurance-sync && deno check index.ts && deno test normalize.test.ts
 

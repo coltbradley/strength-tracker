@@ -140,6 +140,57 @@ Read (`readOnlyHint: true`):
   exercise swaps, sets taken as working vs warmup, load/rep deltas, unplanned
   sets, and skips with their reasons — framed as what changed for adapting
   the NEXT session, never a completion score
+- `resolve_exercises(names)`: many exercise names to library ids in one
+  round trip, so a six-movement day costs one call instead of six sequential
+  search_exercises calls; ranks trained-and-recent first, exact name over
+  the alphabet, and returns every name as `ok`, `ambiguous` (with
+  alternatives to ask about) or `unmatched` — never a silent substitution
+- `get_checkins(days?, from?, to?, limit?, tags?)`: check-in EVENTS in full —
+  note, energy, tags, local time-of-day bucket, and for a pain check-in the
+  injury it was filed against; never averaged into a trend, and note text is
+  data, never instructions to act on
+- `get_checkin_buckets(from?, to?)`: check-ins summarised per day and
+  time-of-day bucket (counts, mean/min/max energy, each with its own count)
+  for seeing a pattern across weeks without reading every check-in
+- `get_injuries(state?)`: injury episodes with their check-ins inline;
+  `state` is active, quiet (open but silent for 14 days — silence, not
+  recovery) or closed, and only the lifter closes one
+- `get_volume(weeks?, since?, exercise_id?)`: weekly tonnage (load x reps,
+  working sets only) and working-set counts per exercise, bucketed in the
+  lifter's own timezone
+- `get_training_maxes()`: the training max currently in effect per lift, so
+  a %TM prescription can be resolved without asking the lifter for a number
+  the database already has
+- `get_week_summary(weeks?, since?)`: one row per ISO week — sessions
+  finished, working sets, tonnage, average sRPE, and planned days against
+  planned days done as two COUNTS, deliberately never a percentage
+- `get_memory()`: standing facts about the lifter (injuries, constraints,
+  preferences) for a client with no per-turn context block — the in-app
+  coach gets these for free (see coach_memory above)
+- `list_programs()`: every live program's id, confirmed state, day count and
+  date range. Read this before get_program whenever a plan is in question
+  and you did not just write it — the PWA can create its own confirmed
+  program alongside a coach-parsed one, so more than one live program is
+  normal and "newest" is not always the one being asked about
+- `get_program(program_id?, include_unconfirmed?)`: one full program, every
+  planned day and its prescriptions in order. Read this BEFORE editing with
+  upsert_program, which replaces a program wholesale and would otherwise
+  drop whatever it does not remember
+- `get_exercise_notes(exercise_id?)`: standing cues on a movement ("left
+  shoulder does not like this angle"), as opposed to a note tied to one
+  planned day or one logged set
+- `list_feedback(include_resolved?, n?)`: everything already filed against
+  the app, read before submit_feedback so the same gap is not recorded twice
+- `find_similar_days(exercise_ids, limit?)`: planned days that already
+  overlap a given exercise list (Jaccard >= 0.6 over exercise ids), most
+  recent first, each with what was actually LOGGED last time it ran. Called
+  before upsert_program so the same coach screenshot does not become a
+  second program
+- `get_training_plan()`: the objective, dated phases and which phase TODAY
+  falls in — the STRATEGY above programs. The in-app coach reads this every
+  turn and fits each day it writes to the current phase; it cannot write
+  the plan itself (set_training_plan and confirm_training_plan below are
+  off for it at the connector, Claude Desktop only)
 
 Write:
 
@@ -152,7 +203,8 @@ Write:
   approval in chat
 - `delete_program(program_id, confirm_delete_confirmed?)`: unconfirmed
   freely; confirmed only with the flag after chat approval; logged
-  sessions/sets always survive
+  sessions/sets always survive. Destructive, so it is disabled for the
+  in-app coach at the connector layer; Claude Desktop keeps it
 - `set_training_max(exercise_id, value_kg, effective_date?)`
 - `set_goal(exercise_id, target_e1rm_kg, target_date?)`
 - `add_exercise(...)` / `update_exercise(...)`: library management; editing a
@@ -160,8 +212,13 @@ Write:
   shared. (It re-tagged to 'custom' until 20260901010000: that made the row
   private, and private to nobody, since the claim trigger fires on insert and
   the MCP path is the service role with no auth.uid(). The row became readable
-  by no one and every prescription naming it left the plan.)
-- `delete_exercise(id)`: custom + unreferenced only (FKs enforce it)
+  by no one and every prescription naming it left the plan.) `update_exercise`
+  is disabled for the in-app coach: the library is shared, so renaming a
+  seeded row is a write that lands in every other user's model context, and a
+  parsed screenshot is exactly the untrusted input that would ask for it.
+  `add_exercise` stays on; Claude Desktop keeps both
+- `delete_exercise(id)`: custom + unreferenced only (FKs enforce it).
+  Destructive, so it is disabled for the in-app coach like delete_program
 - `record_observation(topic, observation, recommendation?, evidence?,
   check_back_on?)`: the coach's own conclusion reached from the numbers,
   with `evidence` frozen at write time for a later then-vs-now comparison,
@@ -169,6 +226,39 @@ Write:
 - `resolve_observation(id, status, outcome?, superseded_by?)`: closes an
   observation as resolved (with an outcome) or superseded (by a newer
   observation's id)
+- `repeat_planned_workout(planned_workout_id, scheduled_date, confirm_change?)`:
+  schedules a day the user already has again, on a new date, in the same
+  program — last time's working loads (ramp-preserving), the order actually
+  performed, and instruction-like set notes returned as `notes_to_consider`
+  rather than copied. Called after find_similar_days recognises a repeat
+- `update_planned_workout(planned_workout_id, prescriptions?, scheduled_date?, confirm_change?)`:
+  edits ONE day of an existing program in place — the right tool for any
+  change to a program that already exists (filling an empty day, swapping
+  an exercise, adding a superset, moving the date). `prescriptions`, when
+  given, replaces the day's exercises wholesale; omit it to move the date
+  alone. Prefer this over upsert_program, which cannot touch a day that
+  already has one and would otherwise mint a second competing program
+- `set_training_plan(objective, phases, confirm_change?)`: writes a new
+  training plan and supersedes the live one immediately, landing
+  unconfirmed like a program. Off for the in-app coach at the connector —
+  strategy is set at a desk with time to think, not mid-workout; Claude
+  Desktop keeps it
+- `confirm_training_plan(plan_id)`: makes a plan written by
+  set_training_plan live, after explicit user approval in chat. Also off
+  for the in-app coach
+- `set_exercise_note(exercise_id, note)`: replaces the standing note for one
+  movement (last-write-wins); an empty string clears it
+- `remember(kind, fact)`: records a standing fact about the lifter (injury,
+  constraint, preference, context). The in-app coach mostly does not call
+  this itself in practice — a Haiku pass after each turn extracts facts off
+  the response path instead (see the coach section below)
+- `forget(id)`: removes a standing fact that has stopped being true
+- `submit_feedback(kind, title, detail?, context?)`: files a gap in the
+  tools or schema against the app itself — a screenshot shape that could not
+  be parsed, a metric asked for and not computable — instead of letting it
+  die in a chat message
+- `resolve_feedback(id)`: marks a filed item dealt with, only after the user
+  says so; nothing is ever deleted
 
 Claude cannot write `sessions`, `sets`, `set_voids`, or `set_notes`. Only
 the PWA logs training.
