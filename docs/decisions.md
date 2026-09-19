@@ -2936,3 +2936,128 @@ error — never for one that stays pending, held or dead. `sync.ts` wires it to
 Firing on enqueue instead was rejected outright: offline, that would ask the
 server about a note the server does not have yet, and the fire-and-forget
 call would have nothing to read.
+
+## Check-ins become the one subjective capture
+
+Spec: `docs/superpowers/specs/2026-09-16-checkin-redesign-design.md`.
+Migration: 20260916000000.
+
+The sheet had become two forms with two save models: a spontaneous check-in
+and a folded morning panel with thirteen inputs behind it, two note boxes, and
+"Energy" and "Fatigue" asking the same thing. Nobody used the panel (production
+held one `daily_readiness` row), and the Train screen, the one people open, had
+no way in at all, because `Today` returns `TrainHome` before the sheet mounts.
+
+**Dropped, not hidden.** `daily_readiness`, `readiness_fields` and
+`v_readiness_trend` are gone, with the morning prompt, its push copy and the
+coach context read. Hiding them would have left a table no screen writes and
+a view the coach reads as "no check-in today" forever. A queued
+`daily_readiness` op on a phone still type-checks, replays, is refused as a
+404, and shows as a dead item rather than blocking the queue.
+
+**Every check-in is an event.** Unlimited per day, three optional inputs, note
+first. The goal is seeing change hour to hour, so nothing overwrites.
+
+**Tags are a column.** Mood words appended into the note could not be counted.
+The vocabulary is closed by a CHECK. `great` exists because a list that can
+only name bad things cannot show a good week; `unusually_sore` rather than
+`sore` because normal soreness after lifting would mark good training days as
+bad ones.
+
+**Buckets, not averages.** Energy has a daily rhythm, so `v_checkin_buckets`
+compares a morning with mornings and carries a count behind every mean. The
+split is fixed clock time (11:00, 16:00) because a personal split needs weeks
+of data nobody has on day one.
+
+**Pain files against an episode, and only the lifter closes it.** A Pain tap
+with a region matches an open `symptom_episodes` row on region and side or
+opens one. It does not write `symptom_reports` (OSTRC is a seven-day recall
+instrument) or `pain_checks` (its phases belong to a run and its score is
+required). The next day the sheet asks "still feeling your left knee?". Quiet
+for 14 days is a label in `v_injury_state`, never a write, because not
+mentioning a knee and not checking in look the same.
+
+**All of it is readable over MCP.** The notes are why this data is worth
+collecting, so `get_checkins` returns every field, and `get_checkin_buckets`
+and `get_injuries` exist for patterns and episodes.
+
+**Cached reads reuse data.ts's helper.** `checkinHistory.ts` builds its reads with `makeFetchWithCache` and `throwIf` from `data.ts` rather than copying `sessionHistory.ts`'s older local versions, so a real server error served from cache is still reported instead of passing for offline.
+
+**The grid's fill is capped for contrast.** A cell's accent tint runs from 10% at energy 1 to 57% at 5, always with dark text. An earlier version switched to white text past the midpoint and failed WCAG AA for means between about 3.2 and 4.1; a test now checks contrast at every tenth from 1.0 to 5.0.
+
+**`get_checkin_buckets` defaults to tomorrow in UTC.** Its default window ends at tomorrow's UTC date, because no time zone is more than one calendar day ahead of UTC and today's UTC date would drop the newest local day for anyone east of it.
+
+## Live session adaptation
+
+Spec: `docs/superpowers/specs/2026-09-16-live-session-adaptation-design.md`.
+Migrations: `20260917000000` through `20260917030000`.
+
+**The lifter decides what a set is, not the slot it filled.** Set type,
+exercise identity and skips are all chosen at LOG time, and the
+prescription is a suggestion the hero previews, never a default the entry
+silently takes. The trigger was a real session: `Session.tsx` defaulted a
+fresh entry's `setType` to warmup while warmup brackets remained, so four
+squat working sets were stored as one warmup and three working, and
+nothing on screen said why. The fix is a segmented control ON the hero
+next to LOG whenever an entry has warmup brackets, not a toggle a level
+down in `•••` — a control that costs a second tap is a control most
+sessions never touch.
+
+**`session_skips` is append-only and can lose an unfinished session's
+skips, on purpose.** It is written through the outbox at Finish, one row
+per skipped entry, `on conflict do nothing`, with no update or delete
+policy — the same shape as `sets`. An un-skip mid-session therefore never
+reaches the network, which is the whole point: deciding what to do next
+must cost nothing while it's still being decided, and the only fact worth
+keeping is what the lifter had settled on by the time they tapped Finish.
+The cost is real — a session abandoned before Finish loses whatever was
+skipped in it — and it is accepted rather than writing skips live, because
+writing them as they happen would mean either a table that is not
+append-only (an un-skip has to retract a row) or a flood of superseded
+rows for a decision that, most of the time, changes its mind twice before
+the lifter moves on. `exercise_id` is `NOT NULL references exercises`, so
+a legacy cached skip whose exercise can no longer be resolved (a
+pre-reason cache entry from before this shipped, matched against neither
+the day's prescriptions nor its extras) is dropped at Finish rather than
+queued: a constraint violation classifies DEAD, not retryable, and a row
+that can never succeed would sit in the lifter's outbox forever behind a
+Retry button that cannot work. `End.tsx`'s `writeSessionSkips` filters
+those out before enqueueing rather than writing them with an empty
+`exercise_id`.
+
+**Base weight is presentation, never a database column.** The plate
+calculator needs to know what a barbell or a machine starts at before any
+plates go on, but `load_kg` is defined everywhere as the total system
+load, and a `base_kg` column would be a second place that number could
+live and disagree with the first. `ExercisePref.barKg` (device-local,
+`pwa/src/lib/settings.ts`) now means "base weight: bar or sled", resolved
+by the same three-step order `loadEntry` already uses for everything else
+device-local (override, then prescription, then a guess from `equipment`
+and name). Six presentation MODES (`pwa/src/lib/loadStyle.ts`) sit on top
+of that one number; none of them changes what gets written to `sets`.
+
+**`coach_observations.evidence` is a narrow, named exception to "derived
+metrics are never stored."** Every other rule in this codebase about
+e1RM, volume and adherence says the same thing: compute it at read time,
+from `v_live_sets`, never store it, because a stored number goes stale the
+moment new sets land under it. `evidence` breaks that rule in exactly one
+place — a JSONB snapshot of the numbers the coach saw when it wrote an
+observation, frozen so a later check-back can compare THEN against NOW.
+It is allowed to disagree with `v_trend_digest` by design: that
+disagreement IS the comparison `resolve_observation` exists to make. No
+view, chart or MCP tool may read `evidence` as a current metric — it is a
+memory of one, not one — and `v_trend_digest` stays the only live read
+anything else may use. A user with no bodyweight log, no check-ins and no
+logged working sets gets no row in `v_trend_digest` at all, so `get_trends`
+returns `trends: null` with a note explaining absence rather than
+inventing a trend of zero.
+
+**No recurring body-image rating, ever.** The design considered and
+rejected a periodic "how do you feel about your body" prompt alongside
+bodyweight and energy. `daily_readiness`'s three-scale panel was already
+retired for `checkins`' free text and mood chips because nobody used the
+structured version (see "Check-ins become the one subjective capture"
+above); a body-image score would be the same failure with a more
+sensitive subject. Bodyweight, energy and free text are the whole signal,
+and the coach correlates them in prose — never a composite, for the same
+reason there is no composite readiness score anywhere else in this app.

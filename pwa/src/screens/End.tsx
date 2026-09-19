@@ -32,6 +32,7 @@ import {
   toDisplay,
 } from "../lib/units";
 import { formatStoredTwin } from "../lib/format";
+import { readSkipsCache, sessionSkipRows, type SkipRecord } from "../lib/skips";
 import type {
   ActiveSession,
   ResolvedPrescriptionRow,
@@ -41,6 +42,26 @@ import type {
 // Mirror of the DB check: sessions.session_rpe between 0 and 10
 // (supabase/migrations/20260825120001_schema.sql) — keep in sync.
 const LAST_BW_KEY = "lastBodyweightKg";
+/**
+ * Raw cache key (see LAST_BW_KEY above — not a `cacheKeys` entry), keyed
+ * by the PLANNED DAY rather than the session: Today reads this after
+ * `activeSession` is already gone, and it never knew the session's id in
+ * the first place, only the day's. Exported so Today.tsx imports this
+ * exact function rather than keeping its own copy of the template
+ * string, which is how the two would drift.
+ */
+export const doneSummaryKey = (plannedWorkoutId: string): string =>
+  `doneSummary:${plannedWorkoutId}`;
+
+/** What Today's DONE card shows for a day it has no other way to
+ *  summarise once the session that finished it is gone. Deliberately NOT
+ *  working volume/tonnage — that is a derived metric owned by
+ *  `v_weekly_volume`'s filtering rules, and re-deriving it here would be a
+ *  second, driftable definition of the same number. */
+export interface DoneSummary {
+  setCount: number;
+  durationSeconds: number;
+}
 const NOTE_CHIPS = [
   "Felt strong",
   "Sleep was short",
@@ -156,9 +177,12 @@ export function End() {
           (await cacheGet<Array<{ exercise_id: string }>>(
             cacheKeys.sessionExtras(a.id),
           )) ?? [];
-        const skipped = new Set(
-          (await cacheGet<string[]>(cacheKeys.sessionSkips(a.id))) ?? [],
+        const skipMap = readSkipsCache(
+          (await cacheGet<string[] | Record<string, SkipRecord>>(
+            cacheKeys.sessionSkips(a.id),
+          )) ?? {},
         );
+        const skipped = new Set(Object.keys(skipMap));
         // skip keys are the exercise's FIRST bracket id (grouped entries),
         // so resolve skips to exercise ids before counting
         const skippedExercises = new Set(
@@ -245,6 +269,59 @@ export function End() {
     }
   };
 
+  /** One `session_skips` row per entry STILL skipped when Finish is tapped
+   *  (spec: "session_skips"). An un-skip earlier in the session never
+   *  reaches the network — only this snapshot does — and a session that is
+   *  never finished loses its skips (accepted, see docs/decisions.md). A
+   *  legacy (pre-reason) cache entry carries no exercise; resolve it from
+   *  `rx`/`extras` the same way the summary above already does, or drop it
+   *  rather than violate the `exercises` FK with an empty string. */
+  const writeSessionSkips = async (sessionId: string) => {
+    const skipMap = readSkipsCache(
+      (await cacheGet<string[] | Record<string, SkipRecord>>(
+        cacheKeys.sessionSkips(sessionId),
+      )) ?? {},
+    );
+    const raw = Object.values(skipMap);
+    if (raw.length === 0) return;
+    const rxCached =
+      (await cacheGet<ResolvedPrescriptionRow[]>(
+        cacheKeys.sessionRx(sessionId),
+      )) ?? [];
+    const extras =
+      (await cacheGet<Array<{ exercise_id: string }>>(
+        cacheKeys.sessionExtras(sessionId),
+      )) ?? [];
+    const resolved = raw
+      .map((skip) => {
+        if (skip.exerciseId !== "") return skip;
+        const rx = rxCached.find((r) => r.id === skip.entryKey);
+        // A legacy skip's entryKey IS the prescription id (the same
+        // assumption the summary block above makes matching skipped
+        // entries against rxCached by `r.id`), so resolving the exercise
+        // from rx also resolves the prescription it was recorded against.
+        if (rx)
+          return { ...skip, exerciseId: rx.exercise_id, prescriptionId: rx.id };
+        const extraId = skip.entryKey.startsWith("extra:")
+          ? skip.entryKey.slice("extra:".length)
+          : null;
+        const extra = extraId
+          ? extras.find((e) => e.exercise_id === extraId)
+          : undefined;
+        return extra ? { ...skip, exerciseId: extra.exercise_id } : null;
+      })
+      .filter((skip): skip is SkipRecord => skip !== null);
+    if (resolved.length === 0) return;
+    const rows = sessionSkipRows(sessionId, resolved);
+    await outbox.enqueueBatch(
+      rows.map((payload) => ({
+        kind: "insert" as const,
+        table: "session_skips" as const,
+        payload,
+      })),
+    );
+  };
+
   const end = async () => {
     // A ref, not state: React batches a state update, so a genuine double-tap
     // (or a tap that lands twice through a slow frame) reads the old value and
@@ -253,6 +330,10 @@ export function End() {
     if (endingRef.current) return;
     endingRef.current = true;
     try {
+      const endedAtMs = Math.max(
+        Date.now(),
+        Date.parse(active.started_at) || 0,
+      );
       await outbox.enqueue({
         kind: "update",
         table: "sessions",
@@ -265,14 +346,30 @@ export function End() {
           // outbox classifies as dead: the close would sit in the queue
           // failing forever, with the session still open. syncOpenSessions
           // already clamps for exactly this reason; so does this now.
-          ended_at: new Date(
-            Math.max(Date.now(), Date.parse(active.started_at) || 0),
-          ).toISOString(),
+          ended_at: new Date(endedAtMs).toISOString(),
           session_rpe: rpe,
           bodyweight_kg: bwOpen ? Math.round(bwKg * 10) / 10 : null,
           notes: note.trim() === "" ? null : note.trim(),
         },
       });
+      await writeSessionSkips(active.id);
+      // Today remounts fresh the instant we navigate and reads DONE
+      // online-first (fetchWithCache tries the server before the cache).
+      // enqueue() above only FIRES a flush, it doesn't wait for one — so
+      // without this, Today's read could win the race against our own
+      // write and come back "not done" for a session that just ended.
+      // Same fix History.tsx's voidPastSet/discardSession already use:
+      // wait for the queue to be walked so this is on the server before
+      // anything asks the server what is live. Offline it's a no-op
+      // (doFlush leaves everything queued), which is exactly why
+      // markPlannedDayDone below still runs regardless. Bounded: on gym
+      // wifi that hangs, a flush can take the full request timeout, and
+      // Finish must never sit waiting on the network. After 1.5 s Today
+      // falls back to the local done state written below.
+      await Promise.race([
+        outbox.flush(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1500)),
+      ]);
       closedRef.current = true;
       if (bwOpen) await cacheSet(LAST_BW_KEY, bwKg);
       await cacheDelete(cacheKeys.activeSession);
@@ -281,6 +378,18 @@ export function End() {
       // different, and the planned day is done
       await invalidateForSetChange();
       await markPlannedDayDone(active.planned_workout_id);
+      // What Today's DONE card shows for this day. Keyed by the planned
+      // day, not the session, because Today reads it after
+      // `activeSession` above is already gone.
+      if (active.planned_workout_id) {
+        await cacheSet(doneSummaryKey(active.planned_workout_id), {
+          setCount,
+          durationSeconds: Math.max(
+            0,
+            (endedAtMs - Date.parse(active.started_at)) / 1000,
+          ),
+        });
+      }
       toast(
         `Session done — ${setCount} set${setCount === 1 ? "" : "s"} logged${
           rpe !== null ? `, sRPE ${rpe}` : ""

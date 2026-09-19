@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { split } from "./plates";
-import { lbToKg } from "./units";
+import { KG_PER_LB, lbToKg } from "./units";
 
 const KG_INV = [25, 20, 15, 10, 5, 2.5, 1.25];
 
@@ -111,5 +111,75 @@ describe("plates split", () => {
           expect(r.achievedKg).toBeLessThanOrEqual(target + 1e-9);
       }
     }
+  });
+});
+
+// The 9/16 "Lower Strength" session in lb mode against the default lb
+// plate set ([45, 35, 25, 10, 5, 2.5] lb) and 45 lb bar. The pad rounds a
+// typed lb value to 2 decimal PLACES OF KG before it ever reaches split()
+// (Session.tsx), so the target here is that same rounded kg number, not
+// the exact irrational lb->kg conversion. EPS = 1e-6 could not absorb that
+// rounding and silently dropped a plate; EPS = 0.01 can, without ever
+// reporting "exact" for a target the inventory genuinely cannot build.
+describe("regression: 9/16 lb targets against the default lb inventory", () => {
+  const LB_INV = [45, 35, 25, 10, 5, 2.5].map(lbToKg);
+  const LB_BAR = lbToKg(45);
+  const padRoundedKg = (lb: number) => Math.round(lbToKg(lb) * 100) / 100;
+
+  it("135 lb: one 45 lb plate per side, exact (was 130)", () => {
+    const r = split(padRoundedKg(135), LB_BAR, LB_INV);
+    expect(r.plates).toEqual([{ plate: lbToKg(45), count: 1 }]);
+    expect(r.exact).toBe(true);
+  });
+
+  it("145 lb: 45 + 5 lb per side, exact (was 140)", () => {
+    const r = split(padRoundedKg(145), LB_BAR, LB_INV);
+    expect(r.plates).toEqual([
+      { plate: lbToKg(45), count: 1 },
+      { plate: lbToKg(5), count: 1 },
+    ]);
+    expect(r.exact).toBe(true);
+  });
+
+  it("225 lb: two 45 lb plates per side, exact (already worked)", () => {
+    const r = split(padRoundedKg(225), LB_BAR, LB_INV);
+    expect(r.plates).toEqual([{ plate: lbToKg(45), count: 2 }]);
+    expect(r.exact).toBe(true);
+  });
+
+  it("315 lb: three 45 lb plates per side, exact (was 310)", () => {
+    const r = split(padRoundedKg(315), LB_BAR, LB_INV);
+    expect(r.plates).toEqual([{ plate: lbToKg(45), count: 3 }]);
+    expect(r.exact).toBe(true);
+  });
+
+  it("257 lb: not buildable from this inventory, rounds down to 255 (unchanged by the wider tolerance)", () => {
+    const r = split(padRoundedKg(257), LB_BAR, LB_INV);
+    expect(r.exact).toBe(false);
+    expect(Math.round((r.achievedKg / KG_PER_LB) * 10) / 10).toBe(255);
+  });
+
+  it("347 lb: not buildable, rounds down to 345 (unchanged)", () => {
+    const r = split(padRoundedKg(347), LB_BAR, LB_INV);
+    expect(r.exact).toBe(false);
+    expect(Math.round((r.achievedKg / KG_PER_LB) * 10) / 10).toBe(345);
+  });
+
+  it("437 lb: not buildable, rounds down to 435 (unchanged)", () => {
+    const r = split(padRoundedKg(437), LB_BAR, LB_INV);
+    expect(r.exact).toBe(false);
+    expect(Math.round((r.achievedKg / KG_PER_LB) * 10) / 10).toBe(435);
+  });
+
+  it("65 lb: one 10 lb plate per side, exact (was 60)", () => {
+    const r = split(padRoundedKg(65), LB_BAR, LB_INV);
+    expect(r.plates).toEqual([{ plate: lbToKg(10), count: 1 }]);
+    expect(r.exact).toBe(true);
+  });
+
+  it("15 lb: under the 45 lb bar, no plates, not exact (unchanged)", () => {
+    const r = split(padRoundedKg(15), LB_BAR, LB_INV);
+    expect(r.plates).toEqual([]);
+    expect(r.exact).toBe(false);
   });
 });

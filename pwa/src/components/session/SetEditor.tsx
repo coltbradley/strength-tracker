@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
+import { DumbbellIcon, KettlebellIcon } from "../icons/LoadIcons";
 import { PlateBar } from "../PlateBar";
 import { RpeChips } from "../RpeChips";
 import { Stepper, stepTo, type StepDef } from "../Stepper";
@@ -29,6 +30,21 @@ export interface SetEditorProps {
      *  would be a fake zero someone has to read past, not a fact the app
      *  knows. Reps become the only editable number. */
     noLoad?: boolean;
+    /** The load-mode glyph for this exercise: a fixed barbell, or a
+     *  plates<->stack toggle for machine/cable work. Absent for hand-held
+     *  implements and bodyweight, which have no bar/pin concept at all —
+     *  those show only `perSideIcon` below, inside the existing per-hand
+     *  toggle. */
+    styleIcon?: {
+      Icon: (props: { size?: number; count?: 1 | 2 }) => ReactElement;
+      label: string;
+      /** present only when this exercise offers the toggle (machine/cable);
+       *  a barbell's icon is fixed and never receives one. */
+      onToggle?: () => void;
+    } | null;
+    /** Which bell glyph to show inside the existing per-hand toggle button.
+     *  Purely cosmetic — the toggle itself stays `onToggleLoadEntry`. */
+    perSideIcon?: "dumbbell" | "kettlebell" | null;
   };
   unit: Unit;
   maxEntryKg: number;
@@ -56,6 +72,18 @@ export interface SetEditorProps {
    *  Session derives this from the selected entry, so substitutions never
    *  quote history from the planned movement. */
   lastPerformance?: string | null;
+  /** Whether this entry has ANY prescribed warmup — gates the hero's own
+   *  warmup/working toggle and "Already warm". Focus mode only; overview
+   *  keeps its existing unconditional seg-types row. */
+  hasWarmupBracket?: boolean;
+  /** "Already warm": stage working and log nothing. Shown only alongside
+   *  the hero toggle, and only while the draft is staged as warmup. */
+  onAlreadyWarm?(): void;
+  /** "Last: 145 kg × 5 working" — the newest logged set for this entry,
+   *  tappable to open its correction. Null (or omitted) when nothing has
+   *  been logged yet, or for a tick exercise. */
+  lastSetLine?: string | null;
+  onEditLastSet?(): void;
   /** The rest clock, when Session has one running — rendered just above the
    *  bottom bar instead of Session's own fixed strip, so it reads as part of
    *  this set rather than a document-level ticker with the log action below
@@ -129,6 +157,10 @@ export function SetEditor({
   disabled,
   variant = "overview",
   lastPerformance = null,
+  hasWarmupBracket = false,
+  onAlreadyWarm,
+  lastSetLine = null,
+  onEditLastSet,
   restSlot,
   onDraftChange,
   onLog,
@@ -137,8 +169,17 @@ export function SetEditor({
   onToggleLoadEntry,
   onRevealRpe,
 }: SetEditorProps) {
-  const { perSide, totalKg, plateSplit, barKg, hint, canToggleEntry, noLoad } =
-    loadPresentation;
+  const {
+    perSide,
+    totalKg,
+    plateSplit,
+    barKg,
+    hint,
+    canToggleEntry,
+    noLoad,
+    styleIcon,
+    perSideIcon,
+  } = loadPresentation;
   const loadSub = perSide
     ? `${toDisplay(totalKg, unit)} ${unit} total`
     : formatStoredTwin(draft.entryKg, unit);
@@ -184,6 +225,25 @@ export function SetEditor({
       {!focus && (
         <div className="section-head">
           <span className="field-label">LOAD · {unit.toUpperCase()}</span>
+          {styleIcon &&
+            (styleIcon.onToggle ? (
+              <button
+                type="button"
+                className="plate-hint load-style-icon"
+                aria-label={styleIcon.label}
+                onClick={styleIcon.onToggle}
+              >
+                <styleIcon.Icon size={16} />
+              </button>
+            ) : (
+              <span
+                className="plate-hint load-style-icon"
+                role="img"
+                aria-label={styleIcon.label}
+              >
+                <styleIcon.Icon size={16} />
+              </span>
+            ))}
           {canToggleEntry && (
             <button
               type="button"
@@ -195,6 +255,12 @@ export function SetEditor({
               }
               onClick={onToggleLoadEntry}
             >
+              {perSideIcon === "dumbbell" && (
+                <DumbbellIcon size={14} count={perSide ? 2 : 1} />
+              )}
+              {perSideIcon === "kettlebell" && (
+                <KettlebellIcon size={14} count={perSide ? 2 : 1} />
+              )}
               {perSide ? "EACH HAND ×2" : "ONE TOTAL WEIGHT"}
             </button>
           )}
@@ -373,6 +439,38 @@ export function SetEditor({
             onChange={(rpe) => onDraftChange({ rpe })}
           />
         </>
+      )}
+
+      {focus && tracking !== "done" && hasWarmupBracket && (
+        <div className="focus-hero-warmup">
+          <div className="seg seg-types">
+            {SET_TYPES.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={`seg-btn ${draft.setType === t ? "seg-on" : ""}`}
+                onClick={() => onDraftChange({ setType: t })}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          {draft.setType === "warmup" && onAlreadyWarm && (
+            <button
+              type="button"
+              className="btn btn-ghost focus-already-warm"
+              onClick={onAlreadyWarm}
+            >
+              Already warm
+            </button>
+          )}
+        </div>
+      )}
+
+      {focus && tracking !== "done" && lastSetLine && onEditLastSet && (
+        <button type="button" className="focus-last-set" onClick={onEditLastSet}>
+          {lastSetLine}
+        </button>
       )}
 
       {focus && tracking !== "done" && lastPerformance !== null && (

@@ -48,20 +48,26 @@ export function SyncStatus() {
   // hold every item, so the pill says what is true and opens the explanation.
   const allHeld = status.held === status.pending;
 
+  // `state === "error"` here means a RETRYABLE failure — a network blip,
+  // a timed-out auth refresh — that stopped the flush without
+  // dead-lettering anything (outbox.ts's classify()). Nothing is lost and
+  // nothing needs a person's judgment yet, so it reads the same neutral
+  // ink as an ordinary queued write. STUCK and --danger red stay
+  // reserved for the FAILED pill above (`status.dead`), which is an item
+  // the server refused on the merits of the row — the one case that
+  // actually needs someone to look at it.
   const cls = allHeld
     ? "sync-held"
-    : status.state === "error"
-      ? "sync-err"
-      : status.state === "syncing"
-        ? "sync-busy"
-        : "sync-pending";
+    : status.state === "syncing"
+      ? "sync-busy"
+      : "sync-pending";
 
   const label = allHeld
     ? `${status.held} HELD · REVIEW`
     : status.state === "syncing"
       ? `SYNCING ${status.pending}…`
       : status.state === "error"
-        ? `${status.pending} STUCK · RETRY`
+        ? `${status.pending} RETRYING · RETRY`
         : `${status.pending} QUEUED`;
 
   return (

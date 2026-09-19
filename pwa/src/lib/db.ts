@@ -7,12 +7,15 @@ import type {
   BodyweightInsert,
   CheckinInsert,
   DailyReadinessUpsert,
+  FeedbackInsert,
   PainCheckInsert,
   SessionInsert,
   SessionPatch,
+  SessionSkipInsert,
   SetInsert,
   SetNoteUpsert,
   SetVoidInsert,
+  SymptomEpisodeInsert,
 } from "./types";
 
 /**
@@ -62,10 +65,20 @@ export type OutboxOp =
   // cannot hold up somebody's sets. The dependency points endurance -> shared
   // infrastructure, never the reverse.
   //
-  // daily_readiness MERGES like set_notes, because a morning panel is
-  // correctable within the day and the id is stable per (user, local_date).
+  // LEGACY: the table is gone (20260916000000). Kept so an op queued before
+  // that release still type-checks; it replays, is refused, and shows as dead.
   | { kind: "insert"; table: "daily_readiness"; payload: DailyReadinessUpsert }
   | { kind: "insert"; table: "checkins"; payload: CheckinInsert }
+  // A pain check-in with no matching open injury opens one. Queued AHEAD of
+  // the check-in that links to it, so the foreign key resolves in replay order.
+  | { kind: "insert"; table: "symptom_episodes"; payload: SymptomEpisodeInsert }
+  // "Cleared up": the lifter closes an injury. Only closed_on is ever patched.
+  | {
+      kind: "update";
+      table: "symptom_episodes";
+      id: string;
+      patch: { closed_on: string };
+    }
   | { kind: "insert"; table: "pain_checks"; payload: PainCheckInsert }
   // A recorded skip. Same queue, same idempotent replay: "not today" is a fact
   // worth keeping, because report_prompts is the denominator that says whether
@@ -81,7 +94,15 @@ export type OutboxOp =
         channel: string;
         skipped: boolean;
       };
-    };
+    }
+  // A problem report from ReportBugSheet. Same queue as everything else,
+  // so it survives a dead spot in the gym instead of needing a live
+  // connection at the exact moment someone hits send.
+  | { kind: "insert"; table: "feedback"; payload: FeedbackInsert }
+  // A skipped exercise or skipped warmups, written once at Finish
+  // (End.tsx). "on conflict do nothing" like every other append-only insert
+  // here — an un-skip earlier in the session never reaches the network.
+  | { kind: "insert"; table: "session_skips"; payload: SessionSkipInsert };
 
 export interface OutboxItem {
   op: OutboxOp;

@@ -23,12 +23,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { E1rmChart } from "../components/charts/E1rmChart";
 import { VolumeChart } from "../components/charts/VolumeChart";
 import { SetRow } from "../components/SetRow";
+import { CheckinWeek } from "../components/CheckinWeek";
+import { BodyweightRow } from "../components/BodyweightRow";
 import {
+  deleteObservation,
   getAdherence,
   getE1rmSeries,
   getExercises,
   getGoalProgress,
   getLoggedExerciseIds,
+  getObservations,
   getRecentSets,
   getServerSessionSets,
   getSessionMeta,
@@ -37,6 +41,7 @@ import {
   invalidateForSessionClose,
   invalidateForSetChange,
   summariseAdherence,
+  type CoachObservationRow,
   type RxOutcome,
   type SessionMetaRow,
   worstStale,
@@ -98,7 +103,7 @@ function latestTonnage(weeks: WeeklyVolumeRow[]): WeeklyVolumeRow | null {
   return weeks.length === 0 ? null : weeks[weeks.length - 1];
 }
 
-export function History() {
+export function History({ userId }: { userId: string }) {
   const unit = useUnit();
   const [exercises, setExercises] = useState<ExerciseRow[]>([]);
   const [withData, setWithData] = useState<Set<string>>(new Set());
@@ -139,6 +144,12 @@ export function History() {
   /** sets of the open session; undefined means "still reading", which is not
    *  the same claim as the empty array */
   const [openSets, setOpenSets] = useState<SetInsert[] | undefined>(undefined);
+
+  const [observations, setObservations] = useState<CoachObservationRow[]>(
+    [],
+  );
+  const [obsLoading, setObsLoading] = useState(true);
+  const [obsDeleteArm, setObsDeleteArm] = useArmed();
 
   useEffect(() => {
     void cacheGet<ActiveSession>(cacheKeys.activeSession)
@@ -193,6 +204,27 @@ export function History() {
       cancelled = true;
     };
   }, [weekStart, reloadTick]);
+
+  // The coach's own open conclusions. Independent of the exercise picker
+  // and of reloadTick: nothing a set or a session does can make this list
+  // stale, only the coach writing a new one or the lifter deleting one —
+  // and a delete already patches this state directly, without a refetch.
+  useEffect(() => {
+    let cancelled = false;
+    void getObservations()
+      .then((r) => {
+        if (!cancelled) setObservations(r.data);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) reportError(e, "load coach observations");
+      })
+      .finally(() => {
+        if (!cancelled) setObsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // The open session's sets. Loaded on demand rather than with the list: a
   // day is only ever opened one at a time, and twenty days of sets is a read
@@ -368,6 +400,19 @@ export function History() {
       toast("Session discarded — every exercise from that day");
     } catch (e) {
       reportError(e, "discard session");
+    }
+  };
+
+  /** Delete one open observation. Two-tap confirm like DISCARD, since it
+   *  is the coach's own conclusion and not something to lose to a
+   *  fat-fingered tap. */
+  const deleteObservationRow = async (id: string) => {
+    try {
+      await deleteObservation(id);
+      setObservations((prev) => prev.filter((o) => o.id !== id));
+      setObsDeleteArm(null);
+    } catch (e) {
+      reportError(e, "delete coach observation");
     }
   };
 
@@ -583,6 +628,54 @@ export function History() {
 
           <section className="rule-section">
             <div className="section-head">
+              <span className="field-label">CHECK-INS</span>
+            </div>
+            <CheckinWeek today={today} userId={userId} />
+          </section>
+
+          <section className="rule-section">
+            <div className="section-head">
+              <span className="field-label">WHAT THE COACH IS WATCHING</span>
+            </div>
+            {obsLoading && observations.length === 0 && (
+              <p className="muted">Loading…</p>
+            )}
+            {!obsLoading && observations.length === 0 && (
+              <p className="muted">Nothing open right now.</p>
+            )}
+            {observations.map((o) => (
+              <div key={o.id} className="history-session">
+                <div className="history-date">
+                  <span className="muted-mono">{o.topic.toUpperCase()}</span>
+                  <button
+                    type="button"
+                    className={`drawer-action ${obsDeleteArm === o.id ? "drawer-action-armed" : ""}`}
+                    aria-label={
+                      obsDeleteArm === o.id
+                        ? "confirm delete observation"
+                        : "delete observation"
+                    }
+                    onClick={() =>
+                      obsDeleteArm === o.id
+                        ? void deleteObservationRow(o.id)
+                        : setObsDeleteArm(o.id)
+                    }
+                  >
+                    {obsDeleteArm === o.id ? "DELETE?" : "DELETE"}
+                  </button>
+                </div>
+                <div className="detail-note">{o.observation}</div>
+                {o.check_back_on && (
+                  <div className="muted-mono">
+                    CHECK BACK {formatSessionDate(o.check_back_on)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </section>
+
+          <section className="rule-section">
+            <div className="section-head">
               <span className="field-label">SESSIONS</span>
             </div>
             <SessionList
@@ -597,6 +690,12 @@ export function History() {
           </section>
         </>
       )}
+
+      {/* A standing fact about the person, not about any one exercise's
+          history — same component, same behaviour as the identical row
+          on Today, rendered regardless of `bare` for the same reason
+          Today doesn't gate it on having a program either. */}
+      <BodyweightRow />
 
       {pickerOpen && (
         <ExercisePicker

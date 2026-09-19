@@ -2260,120 +2260,128 @@ await db.exec(`
 `);
 const uuid = (n) => `00000000-1111-4000-8000-${String(n).padStart(12, "0")}`;
 
-// THE REQUIREMENT: leave part of it blank and everything still works.
-await check("a panel with one item answered is a real row", async () => {
-  const r = await asUser(
-    SA,
-    `insert into daily_readiness (id, user_id, local_date, sleep_hours)
-     values ('${uuid(1)}', '${SA}', date '2026-09-01', 7.5)`,
-  );
-  assertEq(r.affectedRows ?? 0, 1, "no item is required");
-});
+// --- check-in redesign (20260916000000) --------------------------------------
+const at = (uid, hhmm) =>
+  `(timestamp '2026-09-10 ${hhmm}' at time zone app_tz('${uid}'))`;
 
-await check("a panel with NOTHING answered is also legal, and visibly empty", async () => {
+await check("check-ins are unlimited per day and carry tags", async () => {
   await asUser(
     SA,
-    `insert into daily_readiness (id, user_id, local_date)
-     values ('${uuid(2)}', '${SA}', date '2026-09-02')`,
+    `insert into checkins (id, user_id, kind, energy, tags, recorded_at) values
+       ('${uuid(10)}', '${SA}', 'spontaneous', 3, '{slept_badly}', ${at(SA, "07:10")}),
+       ('${uuid(11)}', '${SA}', 'spontaneous', 5, '{great}', ${at(SA, "08:40")}),
+       ('${uuid(12)}', '${SA}', 'spontaneous', null, '{stressed}', ${at(SA, "12:00")}),
+       ('${uuid(13)}', '${SA}', 'spontaneous', 2, '{}', ${at(SA, "19:30")})`,
   );
-  const r = await db.query(
-    `select answered_items from v_readiness_trend
-      where user_id = '${SA}' and local_date = date '2026-09-02'`,
-  );
-  // Opening the sheet and skipping it is not the same as never opening it, and
-  // only one of those is a gap in the series.
-  assertEq(r.rows[0].answered_items, 0, "an empty answer is an answer");
-});
-
-await check("a rolling mean carries the count of real answers behind it", async () => {
-  await asUser(
-    SA,
-    `insert into daily_readiness (id, user_id, local_date, sleep_hours, fatigue)
-     values ('${uuid(3)}', '${SA}', date '2026-09-03', 6.5, 3)`,
-  );
-  const r = await db.query(
-    `select sleep_hours_7d::float as sleep, sleep_hours_7d_n::int as sleep_n,
-            fatigue_7d::float as fat, fatigue_7d_n::int as fat_n,
-            days_of_history
-       from v_readiness_trend
-      where user_id = '${SA}' and local_date = date '2026-09-03'`,
-  );
-  assertEq(r.rows[0].sleep_n, 2, "two sleep answers across three days");
-  assertEq(r.rows[0].sleep, 7, "(7.5 + 6.5) / 2, not / 3");
-  // The distinction the counts exist for: one item answered once, another
-  // twice, over the same three rows.
-  assertEq(r.rows[0].fat_n, 1, "one fatigue answer");
-  assertEq(r.rows[0].days_of_history, 3, "three rows, which is a different number");
-});
-
-await check("one panel per local date", async () => {
-  let rejected = false;
-  try {
-    await asUser(
-      SA,
-      `insert into daily_readiness (id, user_id, local_date, mood)
-       values ('${uuid(4)}', '${SA}', date '2026-09-01', 4)`,
-    );
-  } catch {
-    rejected = true;
-  }
-  assert(rejected, "unique (user_id, local_date)");
-});
-
-await check("the panel is correctable within the day, unlike a set", async () => {
-  const upd = await asUser(
-    SA,
-    `update daily_readiness set mood = 4 where id = '${uuid(1)}'`,
-  );
-  assertEq(upd.affectedRows ?? 0, 1, "a self-report may be corrected");
-});
-
-await check("custom fields are the athlete's, and never gate anything", async () => {
-  await asUser(
-    SA,
-    `insert into readiness_fields (id, user_id, key, label, kind)
-     values ('${uuid(5)}', '${SA}', 'knee_niggle', 'Left knee', 'scale_1_5')`,
-  );
-  await asUser(
-    SA,
-    `update daily_readiness set custom = '{"knee_niggle": 2}'::jsonb
-      where id = '${uuid(1)}'`,
-  );
-  const r = await db.query(
-    `select custom->>'knee_niggle' as v from v_readiness_trend
-      where user_id = '${SA}' and local_date = date '2026-09-01'`,
-  );
-  assertEq(r.rows[0].v, "2", "recorded and readable");
-  let rejected = false;
-  try {
-    await asUser(
-      SA,
-      `insert into readiness_fields (id, user_id, key, label, kind)
-       values ('${uuid(6)}', '${SA}', 'Bad Key!', 'x', 'number')`,
-    );
-  } catch {
-    rejected = true;
-  }
-  assert(rejected, "a key must survive being a JSON key and a chart label");
-});
-
-await check("checkins are unlimited per day and never touch the daily trend", async () => {
-  for (let i = 0; i < 3; i++) {
-    await asUser(
-      SA,
-      `insert into checkins (id, user_id, kind, energy, note)
-       values ('${uuid(10 + i)}', '${SA}', 'spontaneous', ${i + 1}, 'tap ${i}')`,
-    );
-  }
   const c = await asUser(SA, `select count(*)::int as n from checkins`);
-  assertEq(c.rows[0].n, 3, "three taps");
-  const d = await db.query(
-    `select days_of_history from v_readiness_trend
-      where user_id = '${SA}' and local_date = date '2026-09-03'`,
+  assertEq(c.rows[0].n, 4, "four in one day, none overwritten");
+});
+
+await check(
+  "v_checkin_buckets splits the day and carries a count behind every mean",
+  async () => {
+    const r = await asUser(
+      SA,
+      `select bucket, checkins, energy_n, energy_mean::float as mean,
+            array_to_string(tags, ',') as tags
+       from v_checkin_buckets
+      where local_date = date '2026-09-10'
+      order by bucket`,
+    );
+    assertEq(
+      r.rows.map((x) => [x.bucket, x.checkins, x.energy_n, x.mean, x.tags]),
+      [
+        ["evening", 1, 1, 2, ""],
+        ["midday", 1, 0, null, "stressed"],
+        ["morning", 2, 2, 4, "great,slept_badly"],
+      ],
+      "fixed clock buckets in the owner's timezone",
+    );
+  },
+);
+
+await check("an unknown tag is refused", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into checkins (id, user_id, kind, tags)
+       values ('${uuid(14)}', '${SA}', 'spontaneous', '{tired}')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "tags are a closed vocabulary");
+});
+
+await check("an injury link needs the pain tag", async () => {
+  await asUser(
+    SA,
+    `insert into symptom_episodes (id, user_id, body_region, side, opened_on)
+     values ('${uuid(15)}', '${SA}', 'Knee', 'left', current_date)`,
   );
-  // If these fed the baseline it would depend on how often somebody happened
-  // to tap, which is not a fact about their training.
-  assertEq(d.rows[0].days_of_history, 3, "still three days, not six");
+  let rejected = false;
+  try {
+    await asUser(
+      SA,
+      `insert into checkins (id, user_id, kind, tags, episode_id, training_impact)
+       values ('${uuid(16)}', '${SA}', 'spontaneous', '{}', '${uuid(15)}', 'modified')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, "episode_id without pain");
+  const ok = await asUser(
+    SA,
+    `insert into checkins (id, user_id, kind, tags, episode_id, training_impact)
+     values ('${uuid(17)}', '${SA}', 'spontaneous', '{pain}', '${uuid(15)}', 'modified')`,
+  );
+  assertEq(ok.affectedRows ?? 0, 1, "with pain it lands");
+});
+
+await check("v_injury_state reports active, quiet and closed", async () => {
+  await asUser(
+    SA,
+    `insert into symptom_episodes (id, user_id, body_region, side, opened_on)
+     values ('${uuid(18)}', '${SA}', 'Shoulder', 'right', current_date - 60)`,
+  );
+  const before = await asUser(
+    SA,
+    `select episode_id, state, reports, impact_modified
+       from v_injury_state where episode_id in ('${uuid(15)}', '${uuid(18)}')
+      order by body_region`,
+  );
+  assertEq(
+    before.rows.map((x) => [x.state, x.reports, x.impact_modified]),
+    [
+      ["active", 1, 1],
+      ["quiet", 0, 0],
+    ],
+    "Knee reported today is active; Shoulder silent for 60 days is quiet",
+  );
+  await asUser(
+    SA,
+    `update symptom_episodes set closed_on = current_date where id = '${uuid(18)}'`,
+  );
+  const after = await asUser(
+    SA,
+    `select state from v_injury_state where episode_id = '${uuid(18)}'`,
+  );
+  assertEq(after.rows[0].state, "closed", "closed only when someone says so");
+});
+
+await check("the morning panel is gone", async () => {
+  const t = await db.query(
+    `select count(*)::int as n from information_schema.tables
+      where table_schema = 'public'
+        and table_name in ('daily_readiness', 'readiness_fields', 'v_readiness_trend')`,
+  );
+  assertEq(t.rows[0].n, 0, "dropped");
+  const k = await db.query(
+    `select pg_get_constraintdef(oid) as d from pg_constraint
+      where conname = 'rest_alerts_kind_check'`,
+  );
+  assert(!k.rows[0].d.includes("daily_readiness"), "no morning push kind");
 });
 
 // --- OSTRC ------------------------------------------------------------------
@@ -2575,7 +2583,7 @@ await check("cycle data is deletable, unlike the training record", async () => {
 });
 
 await check("nobody reads anyone else's subjective data", async () => {
-  const a = await asUser(SB, `select count(*)::int as n from daily_readiness`);
+  const a = await asUser(SB, `select count(*)::int as n from checkins`);
   const b = await asUser(SB, `select count(*)::int as n from symptom_reports where user_id = '${SA}'`);
   const c = await asUser(SB, `select count(*)::int as n from pain_checks`);
   assertEq([a.rows[0].n, b.rows[0].n, c.rows[0].n], [0, 0, 0], "scoped to the owner");
@@ -2584,14 +2592,12 @@ await check("nobody reads anyone else's subjective data", async () => {
 await check("deleting a user takes every subjective row with them", async () => {
   await db.exec(`delete from auth.users where id = '${SA}'`);
   const n = await db.query(`
-    select (select count(*) from daily_readiness where user_id = '${SA}')
-         + (select count(*) from checkins where user_id = '${SA}')
+    select (select count(*) from checkins where user_id = '${SA}')
          + (select count(*) from symptom_reports where user_id = '${SA}')
          + (select count(*) from symptom_episodes where user_id = '${SA}')
          + (select count(*) from pain_checks where user_id = '${SA}')
          + (select count(*) from red_flags where user_id = '${SA}')
-         + (select count(*) from report_prompts where user_id = '${SA}')
-         + (select count(*) from readiness_fields where user_id = '${SA}') as n`);
+         + (select count(*) from report_prompts where user_id = '${SA}') as n`);
   assertEq(Number(n.rows[0].n), 0, "cascaded");
 });
 
@@ -2627,6 +2633,268 @@ await check("no client role can make Postgres call out", async () => {
             has_function_privilege('anon', 'run_alert_sweep()', 'execute') as anon`,
   );
   assertEq([r.rows[0].auth, r.rows[0].anon], [false, false], "revoked from both");
+});
+
+
+// --- session_skips (20260917000000) -----------------------------------------
+console.log("\nsession_skips (append-only, owner-scoped):");
+
+await check("owner can insert a skip against their own session", async () => {
+  const r = await asUser(
+    OWNER,
+    `insert into session_skips (id, session_id, exercise_id, scope, reason)
+     values ('77777777-0000-4000-8000-000000000001', '44444444-0000-4000-8000-000000000001',
+             'Barbell_Deadlift', 'exercise', 'Equipment taken')`,
+  );
+  assertEq(r.affectedRows ?? 0, 1, "insert allowed");
+});
+
+await check("scope is a closed vocabulary", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      OWNER,
+      `insert into session_skips (id, session_id, exercise_id, scope)
+       values ('77777777-0000-4000-8000-000000000002', '44444444-0000-4000-8000-000000000001',
+               'Barbell_Deadlift', 'whole_day')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("an unknown scope was accepted");
+});
+
+await check("cannot skip against someone else's session", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      OTHER,
+      `insert into session_skips (id, session_id, exercise_id, scope)
+       values ('77777777-0000-4000-8000-000000000003', '44444444-0000-4000-8000-000000000001',
+               'Barbell_Deadlift', 'exercise')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("cross-user skip insert succeeded");
+});
+
+await check("session_skips is append-only: no update or delete policy", async () => {
+  const upd = await asUser(
+    OWNER,
+    `update session_skips set reason = 'changed my mind' where user_id = '${OWNER}'`,
+  );
+  assertEq(upd.affectedRows ?? 0, 0, "no update policy");
+  const del = await asUser(OWNER, `delete from session_skips where user_id = '${OWNER}'`);
+  assertEq(del.affectedRows ?? 0, 0, "no delete policy");
+});
+
+await check("other user sees no skips", async () => {
+  const r = await asUser(OTHER, `select count(*)::int as n from session_skips`);
+  assertEq(r.rows[0].n, 0, "cross-user isolation");
+});
+
+// --- coach_observations + v_trend_digest (20260917010000) -------------------
+console.log("\ncoach_observations (the coach's own conclusions):");
+
+await db.exec(`
+  insert into coach_observations (id, user_id, topic, observation, recommendation, evidence, check_back_on)
+  values ('88888888-0000-4000-8000-000000000001', '${OWNER}', 'bodyweight',
+          'Bodyweight down 1.8 kg over 28 days during a stated fueling-focused block',
+          'Ask whether this was intended before treating it as progress',
+          '{"bw_28d_slope_kg_per_week": -0.45}', current_date + 14);
+`);
+
+await check("topic is a closed vocabulary", async () => {
+  let rejected = false;
+  try {
+    await db.exec(
+      `insert into coach_observations (id, user_id, topic, observation)
+       values ('88888888-0000-4000-8000-000000000002', '${OWNER}', 'sleep', 'x')`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("an unknown topic was accepted");
+});
+
+await check("status defaults to open and is a closed vocabulary", async () => {
+  const r = await db.query(
+    `select status from coach_observations where id = '88888888-0000-4000-8000-000000000001'`,
+  );
+  assertEq(r.rows[0].status, "open", "default status");
+  let rejected = false;
+  try {
+    await db.exec(
+      `update coach_observations set status = 'ignored'
+        where id = '88888888-0000-4000-8000-000000000001'`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("an unknown status was accepted");
+});
+
+await check("owner can read and delete their own observations", async () => {
+  const read = await asUser(OWNER, `select count(*)::int as n from coach_observations`);
+  assertEq(read.rows[0].n, 1, "owner sees it");
+  const other = await asUser(OTHER, `select count(*)::int as n from coach_observations`);
+  assertEq(other.rows[0].n, 0, "cross-user isolation");
+});
+
+await check("owner cannot insert or update an observation directly (service role only)", async () => {
+  let insertRejected = false;
+  try {
+    await asUser(
+      OWNER,
+      `insert into coach_observations (id, user_id, topic, observation)
+       values ('88888888-0000-4000-8000-000000000003', '${OWNER}', 'other', 'lifter-authored')`,
+    );
+  } catch {
+    insertRejected = true;
+  }
+  if (!insertRejected) throw new Error("the PWA/RLS path allowed an insert");
+  const upd = await asUser(
+    OWNER,
+    `update coach_observations set observation = 'edited' where user_id = '${OWNER}'`,
+  );
+  assertEq(upd.affectedRows ?? 0, 0, "no update policy for the owner either");
+});
+
+await check("owner can delete their own observation", async () => {
+  await db.exec(
+    `insert into coach_observations (id, user_id, topic, observation)
+     values ('88888888-0000-4000-8000-000000000004', '${OWNER}', 'other', 'disposable')`,
+  );
+  const del = await asUser(
+    OWNER,
+    `delete from coach_observations where id = '88888888-0000-4000-8000-000000000004'`,
+  );
+  assertEq(del.affectedRows ?? 0, 1, "owner delete allowed");
+});
+
+console.log("\nv_trend_digest (trends without recomputation):");
+
+await db.exec(`
+  -- A fresh exercise, untouched by any earlier fixture (Pullups and
+  -- Barbell_Deadlift both already carry sets from earlier sections), so the
+  -- 8-week and this-week/last-week counts below are exact.
+  insert into exercises (id, name, primary_muscles, source) values
+    ('Trend_Digest_Test_Lift', 'Trend Digest Test Lift', array['chest'], 'custom')
+    on conflict (id) do nothing;
+
+  insert into bodyweight_log (id, user_id, measured_at, weight_kg) values
+    ('99999999-0000-4000-8000-000000000001', '${OWNER}', now() - interval '1 day', 82.0),
+    ('99999999-0000-4000-8000-000000000002', '${OWNER}', now() - interval '3 days', 82.5),
+    ('99999999-0000-4000-8000-000000000003', '${OWNER}', now() - interval '20 days', 84.0);
+
+  insert into checkins (id, user_id, kind, recorded_at, energy) values
+    ('99999999-0000-4000-8000-000000000010', '${OWNER}', 'spontaneous', now() - interval '2 days', 3),
+    ('99999999-0000-4000-8000-000000000011', '${OWNER}', 'spontaneous', now() - interval '5 days', 5);
+
+  insert into sessions (id, user_id, started_at) values
+    ('66666666-0000-4000-8000-000000000001', '${OWNER}', now()),
+    ('66666666-0000-4000-8000-000000000002', '${OWNER}', now() - interval '5 weeks');
+  insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps, performed_at) values
+    ('99999999-0000-4000-8000-000000000020', '${OWNER}', '66666666-0000-4000-8000-000000000001',
+     'Trend_Digest_Test_Lift', 0, 'working', 60, 5, now()),
+    ('99999999-0000-4000-8000-000000000021', '${OWNER}', '66666666-0000-4000-8000-000000000002',
+     'Trend_Digest_Test_Lift', 0, 'working', 50, 5, now() - interval '5 weeks');
+`);
+
+await check("a user with no bodyweight, check-in or working-set data gets no row", async () => {
+  const r = await db.query(`select count(*)::int as n from v_trend_digest where user_id = '${OTHER}'`);
+  assertEq(r.rows[0].n, 0, "absence, not a row of zeros");
+});
+
+await check("bodyweight: latest value and 7d/28d means each carry their own count", async () => {
+  const r = await db.query(
+    `select bw_latest_kg::float as latest, bw_7d_mean_kg::float as m7, bw_7d_n,
+            bw_28d_mean_kg::float as m28, bw_28d_n
+       from v_trend_digest where user_id = '${OWNER}'`,
+  );
+  assertEq(r.rows[0].latest, 82.0, "most recent weigh-in");
+  assertEq([r.rows[0].m7, r.rows[0].bw_7d_n], [82.25, 2], "7-day mean and count");
+  assertEq([r.rows[0].m28, r.rows[0].bw_28d_n], [82.83, 3], "28-day mean and count");
+});
+
+await check("bodyweight slope is computed, not asserted flat", async () => {
+  const r = await db.query(
+    `select bw_28d_slope_kg_per_week from v_trend_digest where user_id = '${OWNER}'`,
+  );
+  if (r.rows[0].bw_28d_slope_kg_per_week === null) {
+    throw new Error("slope was null with 3 points of history");
+  }
+});
+
+await check("energy: 14-day mean carries its own count, skipping nulls", async () => {
+  const r = await db.query(
+    `select energy_14d_mean::float as m, energy_14d_n from v_trend_digest where user_id = '${OWNER}'`,
+  );
+  assertEq([r.rows[0].m, r.rows[0].energy_14d_n], [4, 2], "mean of 3 and 5");
+});
+
+await check("lifts: top exercises by 8-week working sets, e1RM now vs 4 weeks ago", async () => {
+  const r = await db.query(
+    `select lifts from v_trend_digest where user_id = '${OWNER}'`,
+  );
+  const lifts = r.rows[0].lifts;
+  const testLift = lifts.find((l) => l.exercise_id === "Trend_Digest_Test_Lift");
+  assert(testLift !== undefined, "Trend_Digest_Test_Lift made the top list");
+  assertEq(testLift.e1rm_latest_kg, 70, "60*(1+5/30)");
+  assertEq(testLift.e1rm_4w_ago_kg, 58.3, "50*(1+5/30), the only set before the 4-week cutoff");
+  assertEq(testLift.working_sets_this_week, 1, "only today's set");
+  assertEq(testLift.working_sets_last_week, 0, "the other set is 5 weeks old, not last week");
+  const squat = lifts.find((l) => l.exercise_id === "Barbell_Squat");
+  assert(squat !== undefined, "Barbell_Squat also made the top list");
+});
+
+await check("the widened coach_memory.source CHECK accepts 'set_note'", async () => {
+  await db.exec(
+    `insert into coach_memory (id, user_id, kind, fact, source)
+     values (gen_random_uuid(), '${OWNER}', 'context', 'mentioned knee soreness in a set note', 'set_note')`,
+  );
+  const r = await db.query(
+    `select count(*)::int as n from coach_memory where source = 'set_note'`,
+  );
+  assertEq(r.rows[0].n, 1, "accepted");
+});
+
+await check("set_notes and sessions gain memory_extracted_at, both NULL by default", async () => {
+  const sn = await db.query(
+    `select memory_extracted_at from set_notes
+      where set_id = '55555555-0000-4000-8000-000000000002'`,
+  );
+  assertEq(sn.rows[0].memory_extracted_at, null, "set note not yet processed");
+  const se = await db.query(
+    `select notes_memory_extracted_at from sessions
+      where id = '44444444-0000-4000-8000-000000000001'`,
+  );
+  assertEq(se.rows[0].notes_memory_extracted_at, null, "session note not yet processed");
+});
+
+// --- fk_indexes (20260917030000) ---------------------------------------------
+console.log("\nfk_indexes (six leading-column indexes, none redundant):");
+
+await check("all six new indexes exist with the expected leading column", async () => {
+  const expected = [
+    ["sets", "idx_sets_exercise", "(exercise_id)"],
+    ["prescriptions", "idx_rx_exercise", "(exercise_id)"],
+    ["prescriptions", "idx_rx_user", "(user_id)"],
+    ["training_maxes", "idx_tm_exercise", "(exercise_id)"],
+    ["goals", "idx_goals_exercise", "(exercise_id)"],
+    ["exercise_notes", "idx_exercise_notes_exercise", "(exercise_id)"],
+  ];
+  for (const [table, name, shape] of expected) {
+    const r = await db.query(
+      `select indexdef from pg_indexes where tablename = $1 and indexname = $2`,
+      [table, name],
+    );
+    assertEq(r.rows.length, 1, `${name} exists`);
+    if (!r.rows[0].indexdef.includes(shape)) {
+      throw new Error(`${name} does not lead with ${shape}: ${r.rows[0].indexdef}`);
+    }
+  }
 });
 
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);

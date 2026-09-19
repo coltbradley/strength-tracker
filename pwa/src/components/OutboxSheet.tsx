@@ -67,6 +67,7 @@ export function describeOp(
   exerciseNames: Record<string, string>,
 ): string {
   if (op.kind === "update") {
+    if (op.table === "symptom_episodes") return "Injury cleared up";
     if ("discarded_at" in op.patch) return "Session discarded";
     // A rating given from Today carries session_rpe and nothing else. A finish
     // carries ended_at and MAY carry a rating alongside it, and what that write
@@ -89,6 +90,8 @@ export function describeOp(
       return "Morning check-in";
     case "checkins":
       return "Check-in";
+    case "symptom_episodes":
+      return "Injury started";
     case "pain_checks":
       return "Pain check";
     case "report_prompts":
@@ -100,6 +103,12 @@ export function describeOp(
       const name = exerciseNames[op.payload.exercise_id];
       return name === undefined ? "Set logged" : `Set · ${name}`;
     }
+    case "feedback":
+      return "Problem report";
+    case "session_skips":
+      return op.payload.scope === "warmups"
+        ? "Warmups skipped"
+        : "Exercise skipped";
   }
 }
 

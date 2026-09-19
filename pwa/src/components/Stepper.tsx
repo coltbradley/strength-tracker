@@ -82,7 +82,12 @@ export function stepTo(
     snap && delta !== 0
       ? Math.round((value + delta) / Math.abs(delta)) * Math.abs(delta)
       : value + delta;
-  const raw = Math.round(next * 1000) / 1000;
+  // 2 decimals of kg, matching the tolerance in lib/plates.ts and the pad's
+  // own commit rounding (Session.tsx) — three different call sites writing
+  // load_kg must agree on what "the same value" means, or a +/- tap and a
+  // typed pad entry can each report a different, technically-different
+  // number for what the lifter reads as one weight.
+  const raw = Math.round(next * 100) / 100;
   return Math.min(max, Math.max(min, raw));
 }
 

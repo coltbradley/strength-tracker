@@ -30,9 +30,24 @@ describe("defaultLoadEntry", () => {
     expect(defaultLoadEntry("dumbbell", "Seated Dumbbell Press")).toBe(
       "per_side",
     );
-    expect(defaultLoadEntry("dumbbell", "Bulgarian Split Squat")).toBe(
-      "per_side",
-    );
+  });
+
+  // A split squat, lunge or step-up is usually one dumbbell held
+  // suitcase- or goblet-style, not a pair — the LEG work is unilateral,
+  // but that used to be read as "two dumbbells, one per hand" because
+  // neither word matched the single/one/alternating patterns above.
+  it("calls split squat, lunge and step-up work TOTAL — one dumbbell, not a pair", () => {
+    for (const name of [
+      "Bulgarian Split Squat",
+      "Split Squat with Dumbbells",
+      "Dumbbell Lunges",
+      "Dumbbell Rear Lunge",
+      "Dumbbell Walking Lunge",
+      "Dumbbell Step Ups",
+      "Dumbbell Step-Up",
+    ]) {
+      expect(defaultLoadEntry("dumbbell", name)).toBe("total");
+    }
   });
 
   it("calls one-limb dumbbell work TOTAL — one bell IS the whole system", () => {

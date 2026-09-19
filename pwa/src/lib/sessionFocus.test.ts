@@ -5,6 +5,7 @@ import {
   focusEntryKey,
   isFocusEligible,
   pinnedOverviewEntryKey,
+  railState,
   remainingProgress,
   transitionPresentation,
 } from "./sessionFocus";
@@ -83,5 +84,66 @@ describe("session focus derivations", () => {
       setsRemaining: 3,
       exercisesRemaining: 2,
     });
+  });
+});
+
+describe("railState", () => {
+  const e = (key: string): ExerciseEntry => ({
+    key,
+    exercise_id: key,
+    name: key,
+    brackets: [],
+  });
+  const railEntries = [e("a"), e("b"), e("c"), e("d")];
+  const noneSkipped = () => false;
+
+  it("marks the current entry (or entries, for a live superset pair)", () => {
+    expect(
+      railState(railEntries, e("b"), new Set(["b"]), noneSkipped, () => false),
+    ).toBe("current");
+    expect(
+      railState(
+        railEntries,
+        e("c"),
+        new Set(["b", "c"]),
+        noneSkipped,
+        () => false,
+      ),
+    ).toBe("current");
+  });
+
+  it("marks a skipped entry skipped even if it would otherwise be done", () => {
+    expect(
+      railState(
+        railEntries,
+        e("a"),
+        new Set(),
+        (x) => x.key === "a",
+        () => true,
+      ),
+    ).toBe("skipped");
+  });
+
+  it("marks a completed, non-current, non-skipped entry done", () => {
+    expect(
+      railState(
+        railEntries,
+        e("a"),
+        new Set(["b"]),
+        noneSkipped,
+        (x) => x.key === "a",
+      ),
+    ).toBe("done");
+  });
+
+  it("marks exactly the first not-done, not-skipped, not-current entry next", () => {
+    // b is current, a is done, c is the first untouched entry after it
+    const isDoneRail = (x: ExerciseEntry) => x.key === "a";
+    expect(
+      railState(railEntries, e("c"), new Set(["b"]), noneSkipped, isDoneRail),
+    ).toBe("next");
+    expect(
+      railState(railEntries, e("d"), new Set(["b"]), noneSkipped, isDoneRail),
+    ).toBe("upcoming");
   });
 });

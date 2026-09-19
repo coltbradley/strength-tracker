@@ -37,9 +37,22 @@ interface RestTimerProps {
   /** tap the clock: type the remaining seconds */
   onEdit: () => void;
   onDone: () => void;
+  /** "Next: Squat 145 x 5, set 3 of 4" -- computed by Session from the same
+   *  nextEntry/partnerEntry/advanceTo logic the focus hero's own "next dot"
+   *  line uses, so the two never name a different next set. Null (or
+   *  omitted) when there is nothing left to look forward to (last set of
+   *  the workout, or a by-feel entry with no scheme to quote) -- the rest
+   *  strip falls back to naming what it was recorded against, as before. */
+  nextSetLabel?: string | null;
 }
 
-export function RestTimer({ rest, onAdjust, onEdit, onDone }: RestTimerProps) {
+export function RestTimer({
+  rest,
+  onAdjust,
+  onEdit,
+  onDone,
+  nextSetLabel = null,
+}: RestTimerProps) {
   const [now, setNow] = useState(() => Date.now());
 
   // One rest is one `startedAt`. Keying the tick on the whole `rest` object
@@ -166,7 +179,9 @@ export function RestTimer({ rest, onAdjust, onEdit, onDone }: RestTimerProps) {
       <div className="rest-foot">
         {over
           ? `Past the prescribed ${formatClock(rest.targetSeconds)} — still counting, still recorded.`
-          : `Tap to change. Recorded against ${rest.forLabel}.`}
+          : nextSetLabel
+            ? nextSetLabel
+            : `Tap to change. Recorded against ${rest.forLabel}.`}
       </div>
     </div>
   );

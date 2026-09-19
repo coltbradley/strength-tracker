@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import { targetSets, type ExerciseEntry, type SupersetTag } from "../../lib/entries";
+import { StateGlyph, type ProgressState } from "./StateGlyph";
 
 export interface WorkoutOverviewProps {
   entries: readonly ExerciseEntry[];
@@ -17,6 +18,12 @@ export interface WorkoutOverviewProps {
   formatScheme?(entry: ExerciseEntry): string;
   renderRowAction?(entry: ExerciseEntry): ReactNode;
   onOpenDemo?(entry: ExerciseEntry): void;
+  /** Same shared vocabulary the focus rail uses (StateGlyph.tsx /
+   *  lib/sessionFocus.ts's `railState`). Optional so a caller that has no
+   *  notion of "current" (there is no live focus session, e.g. read-only
+   *  contexts) can omit it; no glyph renders and the row is exactly as it
+   *  was before this task. */
+  entryState?(entry: ExerciseEntry): ProgressState;
 }
 
 /**
@@ -39,6 +46,7 @@ export function WorkoutOverview({
   formatScheme = () => "",
   renderRowAction,
   onOpenDemo,
+  entryState,
 }: WorkoutOverviewProps) {
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -55,7 +63,7 @@ export function WorkoutOverview({
   }, [expandedEntryKey]);
 
   return (
-    <>
+    <div className="wk-overview">
       {focusModeAvailable && (
         <button
           type="button"
@@ -120,7 +128,13 @@ export function WorkoutOverview({
                   // used to just highlight a row with no visible next step —
                   // main's behaviour (the whole row toggles open/closed) is
                   // restored here so the tap keeps doing something.
-                  aria-label={focusModeAvailable ? selectedName : entry.name}
+                  aria-label={
+                    entryState
+                      ? `${focusModeAvailable ? selectedName : entry.name} — ${entryState(entry)}`
+                      : focusModeAvailable
+                        ? selectedName
+                        : entry.name
+                  }
                   aria-pressed={focusModeAvailable ? isSelected : undefined}
                   onClick={() =>
                     focusModeAvailable
@@ -128,6 +142,12 @@ export function WorkoutOverview({
                       : onToggleEntry(entry.key)
                   }
                 >
+                  {entryState && (
+                    <StateGlyph
+                      state={entryState(entry)}
+                      label={`${entry.name} — ${entryState(entry)}`}
+                    />
+                  )}
                   <span
                     className={`wk-name ${skipped ? "wk-name-skipped" : ""}`}
                   >
@@ -176,6 +196,6 @@ export function WorkoutOverview({
           </Fragment>
         );
       })}
-    </>
+    </div>
   );
 }

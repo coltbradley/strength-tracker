@@ -47,8 +47,11 @@ import { systemPrompt } from "./prompt.ts";
 import { captureError } from "./sentry.ts";
 import {
   extractFromCheckins,
+  extractFromSessionNotes,
+  extractFromSetNotes,
   extractMemory,
   type CheckinNote,
+  type NoteRow,
 } from "./memory-extract.ts";
 import { recordRefusalUsage } from "./usage.ts";
 
@@ -686,8 +689,9 @@ const CHECKIN_MEMORY_WINDOW_DAYS = 14;
 const CHECKIN_MEMORY_BATCH = 10;
 
 /**
- * `POST /coach/checkin-memory` — read this CALLER's own unprocessed check-in
- * notes and extract standing facts from them, out of band from any
+ * `POST /coach/checkin-memory` — read this CALLER's own unprocessed
+ * check-ins, set notes and session notes, and extract standing facts from
+ * them, out of band from any
  * conversation.
  *
  * Authenticated the same way as the chat endpoint (the caller's Supabase
@@ -737,7 +741,21 @@ async function handleCheckinMemory(req: Request): Promise<Response> {
   const since = new Date(
     Date.now() - CHECKIN_MEMORY_WINDOW_DAYS * 86_400_000,
   ).toISOString();
-  let notes: CheckinNote[];
+  const anthropic = new Anthropic({ apiKey });
+
+  let processed = 0;
+  let written = 0;
+
+  // Three independent sources, each read/claimed/extracted/released the
+  // same way. A failure in one is captured and the next source still gets
+  // its turn — this route grew from "one source, return its result" to
+  // "three sources, sum what succeeded" in this round, and check-ins,
+  // set_notes and sessions.notes have nothing to do with each other, so one
+  // going down must not silently skip the other two. The PWA calls this
+  // fire-and-forget and never reads the response (see the comment on the
+  // handler below), so there is no caller depending on a non-200 for a
+  // partial failure.
+
   try {
     const { data, error } = await db
       .from("checkins")
@@ -749,73 +767,198 @@ async function handleCheckinMemory(req: Request): Promise<Response> {
       .order("recorded_at", { ascending: true })
       .limit(CHECKIN_MEMORY_BATCH);
     if (error) throw new Error(error.message);
-    notes = (data ?? [])
+    let notes: CheckinNote[] = (data ?? [])
       .filter(
         (r): r is { id: string; note: string; recorded_at: string } =>
           typeof (r as { note?: unknown }).note === "string",
       )
       .map((r) => ({ id: r.id, text: r.note, recorded_at: r.recorded_at }));
+    if (notes.length > 0) {
+      const { data: claimedRows, error: claimErr } = await db
+        .from("checkins")
+        .update({ memory_extracted_at: new Date().toISOString() })
+        .eq("user_id", userId)
+        .in(
+          "id",
+          notes.map((n) => n.id),
+        )
+        .is("memory_extracted_at", null)
+        .select("id");
+      if (claimErr) throw new Error(claimErr.message);
+      const claimedSet = new Set(
+        (claimedRows ?? []).map((r) => (r as { id: string }).id),
+      );
+      notes = notes.filter((n) => claimedSet.has(n.id));
+      if (notes.length > 0) {
+        try {
+          const result = await extractFromCheckins({
+            db,
+            anthropic,
+            userId,
+            notes,
+          });
+          processed += result.processed;
+          written += result.written;
+        } catch (e) {
+          const { error: releaseError } = await db
+            .from("checkins")
+            .update({ memory_extracted_at: null })
+            .eq("user_id", userId)
+            .in("id", [...claimedSet]);
+          if (releaseError) {
+            await captureError(new Error(releaseError.message), {
+              stage: "checkin_memory_release",
+              user_id: userId,
+            });
+          }
+          await captureError(e, {
+            stage: "checkin_memory_extract",
+            user_id: userId,
+          });
+        }
+      }
+    }
   } catch (e) {
     await captureError(e, { stage: "checkin_memory_read", user_id: userId });
-    return json(
-      { error: e instanceof Error ? e.message : "Could not read check-ins" },
-      503,
-    );
   }
 
-  if (notes.length === 0) return json({ processed: 0, written: 0 });
-
-  // CLAIM before spending anything. Two devices syncing at once (or one phone
-  // flushing a backlog) call this route concurrently, and both would otherwise
-  // read the same unstamped batch, pay Haiku twice and write the same fact
-  // twice. A conditional update is atomic per row, so each check-in is claimed
-  // by exactly one request; the loser gets nothing back and extracts nothing.
-  // A failed extraction RELEASES its claim so the rows are retried next time.
-  let claimed: string[];
+  // set_notes: the lifter's own words on one logged set.
   try {
     const { data, error } = await db
-      .from("checkins")
-      .update({ memory_extracted_at: new Date().toISOString() })
+      .from("set_notes")
+      .select("set_id, note, updated_at")
       .eq("user_id", userId)
-      .in("id", notes.map((n) => n.id))
       .is("memory_extracted_at", null)
-      .select("id");
+      .gte("updated_at", since)
+      .order("updated_at", { ascending: true })
+      .limit(CHECKIN_MEMORY_BATCH);
     if (error) throw new Error(error.message);
-    claimed = (data ?? []).map((r) => (r as { id: string }).id);
-  } catch (e) {
-    await captureError(e, { stage: "checkin_memory_claim", user_id: userId });
-    return json({ error: "Could not claim check-ins" }, 503);
-  }
-  const claimedSet = new Set(claimed);
-  notes = notes.filter((n) => claimedSet.has(n.id));
-  if (notes.length === 0) return json({ processed: 0, written: 0 });
-
-  const anthropic = new Anthropic({ apiKey });
-  try {
-    const result = await extractFromCheckins({ db, anthropic, userId, notes });
-    return json(result);
-  } catch (e) {
-    const { error: releaseError } = await db
-      .from("checkins")
-      .update({ memory_extracted_at: null })
-      .eq("user_id", userId)
-      .in("id", claimed);
-    if (releaseError) {
-      await captureError(new Error(releaseError.message), {
-        stage: "checkin_memory_release",
-        user_id: userId,
-      });
+    let notes: NoteRow[] = (
+      (data ?? []) as { set_id: string; note: string; updated_at: string }[]
+    ).map((r) => ({ id: r.set_id, text: r.note, recorded_at: r.updated_at }));
+    if (notes.length > 0) {
+      const { data: claimedRows, error: claimErr } = await db
+        .from("set_notes")
+        .update({ memory_extracted_at: new Date().toISOString() })
+        .eq("user_id", userId)
+        .in(
+          "set_id",
+          notes.map((n) => n.id),
+        )
+        .is("memory_extracted_at", null)
+        .select("set_id");
+      if (claimErr) throw new Error(claimErr.message);
+      const claimedSet = new Set(
+        (claimedRows ?? []).map((r) => (r as { set_id: string }).set_id),
+      );
+      notes = notes.filter((n) => claimedSet.has(n.id));
+      if (notes.length > 0) {
+        try {
+          const result = await extractFromSetNotes({
+            db,
+            anthropic,
+            userId,
+            notes,
+          });
+          processed += result.processed;
+          written += result.written;
+        } catch (e) {
+          const { error: releaseError } = await db
+            .from("set_notes")
+            .update({ memory_extracted_at: null })
+            .eq("user_id", userId)
+            .in("set_id", [...claimedSet]);
+          if (releaseError) {
+            await captureError(new Error(releaseError.message), {
+              stage: "set_note_memory_release",
+              user_id: userId,
+            });
+          }
+          await captureError(e, {
+            stage: "set_note_memory_extract",
+            user_id: userId,
+          });
+        }
+      }
     }
-    console.error(
-      JSON.stringify({
-        event: "coach_checkin_memory_failed",
-        user_id: userId,
-        error: e instanceof Error ? e.message : String(e),
-      }),
-    );
-    await captureError(e, { stage: "checkin_memory_extract", user_id: userId });
-    return json({ error: "Could not process check-ins" }, 500);
+  } catch (e) {
+    await captureError(e, {
+      stage: "set_note_memory_read",
+      user_id: userId,
+    });
   }
+
+  // sessions.notes: the lifter's own end-of-day words.
+  try {
+    const { data, error } = await db
+      .from("sessions")
+      .select("id, notes, started_at")
+      .eq("user_id", userId)
+      .not("notes", "is", null)
+      .is("notes_memory_extracted_at", null)
+      .gte("started_at", since)
+      .order("started_at", { ascending: true })
+      .limit(CHECKIN_MEMORY_BATCH);
+    if (error) throw new Error(error.message);
+    let notes: NoteRow[] = (data ?? [])
+      .filter(
+        (r): r is { id: string; notes: string; started_at: string } =>
+          typeof (r as { notes?: unknown }).notes === "string",
+      )
+      .map((r) => ({ id: r.id, text: r.notes, recorded_at: r.started_at }));
+    if (notes.length > 0) {
+      const { data: claimedRows, error: claimErr } = await db
+        .from("sessions")
+        .update({ notes_memory_extracted_at: new Date().toISOString() })
+        .eq("user_id", userId)
+        .in(
+          "id",
+          notes.map((n) => n.id),
+        )
+        .is("notes_memory_extracted_at", null)
+        .select("id");
+      if (claimErr) throw new Error(claimErr.message);
+      const claimedSet = new Set(
+        (claimedRows ?? []).map((r) => (r as { id: string }).id),
+      );
+      notes = notes.filter((n) => claimedSet.has(n.id));
+      if (notes.length > 0) {
+        try {
+          const result = await extractFromSessionNotes({
+            db,
+            anthropic,
+            userId,
+            notes,
+          });
+          processed += result.processed;
+          written += result.written;
+        } catch (e) {
+          const { error: releaseError } = await db
+            .from("sessions")
+            .update({ notes_memory_extracted_at: null })
+            .eq("user_id", userId)
+            .in("id", [...claimedSet]);
+          if (releaseError) {
+            await captureError(new Error(releaseError.message), {
+              stage: "session_note_memory_release",
+              user_id: userId,
+            });
+          }
+          await captureError(e, {
+            stage: "session_note_memory_extract",
+            user_id: userId,
+          });
+        }
+      }
+    }
+  } catch (e) {
+    await captureError(e, {
+      stage: "session_note_memory_read",
+      user_id: userId,
+    });
+  }
+
+  return json({ processed, written });
 }
 
 Deno.serve(async (req) => {

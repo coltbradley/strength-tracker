@@ -19,6 +19,7 @@ import {
   lifterWords,
   meaningfulCheckinNotes,
   newFacts,
+  noteMemoryRows,
   parseFacts,
 } from "./memory-extract.ts";
 
@@ -246,4 +247,40 @@ Deno.test("meaningfulCheckinNotes: drops empty and near-empty notes", () => {
 
 Deno.test("meaningfulCheckinNotes: an empty batch stays empty", () => {
   assertEquals(meaningfulCheckinNotes([]), []);
+});
+
+// noteMemoryRows: the one piece of NEW decision logic in this task. Both
+// extractFromSetNotes and extractFromSessionNotes build the same insert
+// shape from a batch of facts — same source, no turn id — because the
+// column exists to say WHERE a fact came from for display and audit, and
+// "a note the lifter wrote next to their training" is one place whether
+// the note sat on a set or on the day.
+Deno.test(
+  "noteMemoryRows: stamps every fact 'set_note' with no turn id",
+  () => {
+    const rows = noteMemoryRows("u1", [
+      { kind: "injury", fact: "Left shoulder clicks on overhead press" },
+      { kind: "context", fact: "Coached by Sam, who programs the week" },
+    ]);
+    assertEquals(rows, [
+      {
+        user_id: "u1",
+        kind: "injury",
+        fact: "Left shoulder clicks on overhead press",
+        source: "set_note",
+        source_turn_id: null,
+      },
+      {
+        user_id: "u1",
+        kind: "context",
+        fact: "Coached by Sam, who programs the week",
+        source: "set_note",
+        source_turn_id: null,
+      },
+    ]);
+  },
+);
+
+Deno.test("noteMemoryRows: an empty batch is an empty batch", () => {
+  assertEquals(noteMemoryRows("u1", []), []);
 });

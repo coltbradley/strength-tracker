@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-// Only the pure rules are under test; the network reader is not. Both
+// Only the pure rules are under test; the network reader is not. The
 // modules it imports for that are stubbed so the test needs no client and no
-// IndexedDB.
+// IndexedDB. `./sync` is stubbed too: review.ts -> format.ts -> units.ts ->
+// settings.ts -> errors.ts now statically imports the real outbox, which
+// pulls in currentUser.ts and its module-eval supabase.auth.getSession()
+// call — nothing this file is testing needs that chain.
 vi.mock("./supabase", () => ({ supabase: {} }));
+vi.mock("./sync", () => ({ outbox: { enqueue: vi.fn() } }));
 vi.mock("./data", () => ({ QueryError: class QueryError extends Error {} }));
 
 import {

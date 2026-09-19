@@ -175,6 +175,13 @@
     --focus-set-completed-mark: var(--cream);
     --focus-set-future: var(--control-outline);
 
+    /* State vocabulary roles (StateGlyph.tsx) — reuse the same three focus-set
+     * roles above wherever the meaning matches (done ~ completed, current ~
+     * current, upcoming ~ future) rather than mint parallel tokens for the
+     * same colours. "next" and "skipped" have no existing counterpart. */
+    --state-next: var(--text);
+    --state-skipped: var(--text-dim);
+
     /* -- type ------------------------------------------------------------- */
     --font-sans: Chivo, system-ui, -apple-system, sans-serif;
     --font-mono: "Chivo Mono", ui-monospace, monospace;
@@ -265,6 +272,14 @@
     --ease-sheet: cubic-bezier(0.22, 1, 0.36, 1);
     --dur-tick: 400ms;
     --dur-blink: 1.6s;
+    /* Named motions for live-session feedback (set logged, next set enters,
+     * mode switch) — transform/opacity only, so they cost nothing on the
+     * rest timer's 400ms re-render. Reduced-motion zeroes every animation
+     * and transition duration globally (see the @media block later in this
+     * file), which already covers anything built from these tokens. */
+    --motion-fast: 120ms;
+    --motion-med: 200ms;
+    --ease-out: var(--ease-sheet);
   }
 
   /* Tablet: a wider column and a looser gutter. Type is left alone — the
@@ -403,6 +418,20 @@
     }
     50% {
       opacity: 0.3;
+    }
+  }
+
+  /* One flash for a tap that lands on the 200 ms duplicate-LOG lock
+   * (Decision 6): the tap was real, it just wasn't a second insert. */
+  @keyframes log-held {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.55;
+      transform: scale(0.97);
     }
   }
 
@@ -641,6 +670,7 @@
   .selected-day-head > *,
   .history-date > *,
   .date-row > *,
+  .date-heading-row > *,
   .detail-actions > *,
   .banner-row > *,
   .rest-row > *,
@@ -765,6 +795,13 @@
     font-size: var(--fs-body);
   }
 
+  /* `var(..., 120ms)` / `var(..., ease-out)` fall back to literals matching
+   * `--motion-fast`/`--ease-out` (Task 3) so this rule works whether or not
+   * that task's token-layer edit has landed yet. */
+  .btn-log.is-held {
+    animation: log-held var(--motion-fast, 120ms) var(--ease-out, ease-out);
+  }
+
   .btn-danger {
     background: var(--danger);
     color: var(--text-inverse);
@@ -837,7 +874,8 @@
   .plate-hint,
   .rpe-reveal,
   .sync-pill,
-  .rest-timer-time {
+  .rest-timer-time,
+  .checkin-link {
     position: relative;
   }
 
@@ -852,7 +890,8 @@
   .plate-hint::after,
   .rpe-reveal::after,
   .sync-pill::after,
-  .rest-timer-time::after {
+  .rest-timer-time::after,
+  .checkin-link::after {
     content: "";
     position: absolute;
     top: 50%;
@@ -919,78 +958,100 @@
     color: var(--bg);
   }
 
-  /* ---- morning check-in ----
-     Built on .chip / .chip-on rather than a parallel set of controls: the
-     1-5 scale is the same affordance as every other chip row in the app, and
-     a second visual language for the same gesture is how a stylesheet doubles.
-     Tapping the chosen chip again clears it, which is why these are
-     aria-pressed toggles and not a radio group. */
+  /* ---- check in ----
+     One sheet, three optional groups. The sheet's own gutter stays (no
+     .pad-sheet), and the groups sit a full --s-8 apart so a note, a tag row
+     and a scale read as three things rather than one crowded form. */
 
-  .scale-row {
-    margin-top: var(--s-4);
+  .checkin-sheet {
+    gap: var(--s-8);
   }
 
-  .scale-chip {
-    /* Five across on the narrowest phone, without wrapping to a ragged
-       second line that makes the scale read as two groups. */
-    flex: 1 1 0;
+  .checkin-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+  }
+
+  .checkin-group .chip-row {
+    margin-top: 0;
+  }
+
+  .checkin-earlier {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-4) var(--s-6);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    color: var(--text-dim);
+  }
+
+  .checkin-earlier b {
+    color: var(--text);
+    margin-left: var(--s-2);
+  }
+
+  .checkin-still {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    padding-bottom: var(--s-6);
+    border-bottom: var(--rule-hair);
+  }
+
+  .checkin-still-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: var(--s-4);
+    align-items: center;
+    font-size: var(--fs-body);
+  }
+
+  .checkin-follow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    margin-top: var(--s-4);
+    padding-left: var(--s-6);
+    border-left: var(--bw-thick) solid var(--danger);
+  }
+
+  .chip-pain.chip-on {
+    background: var(--danger);
+    border-color: var(--danger);
+  }
+
+  .checkin-scale,
+  .checkin-seg {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .checkin-scale {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .checkin-seg {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .checkin-scale .chip,
+  .checkin-seg .chip {
     justify-content: center;
     min-width: 0;
   }
 
-  .scale-ends {
+  .checkin-ends {
     display: flex;
     justify-content: space-between;
-    margin-top: var(--s-4);
     font-size: var(--fs-meta);
     color: var(--text-dim);
   }
 
-  .checkin-open {
-    /* A quiet line, not a call to action. The Start button is this screen's
-       job and nothing here may compete with it for the eye. */
-    display: block;
-    width: 100%;
-    text-align: left;
-    border: 0;
-    border-bottom: var(--rule-hair);
-    background: none;
-    padding: var(--s-4) 0;
-    font: inherit;
+  .checkin-hint {
+    margin: 0;
+    font-size: var(--fs-sm);
     color: var(--text-dim);
-    min-height: var(--tap-min);
-  }
-
-  .checkin-intro {
-    margin-bottom: var(--s-2);
-  }
-
-  .checkbox-field {
-    display: flex;
-    align-items: center;
-    gap: var(--s-4);
-  }
-
-  .checkin-actions {
-    margin-top: var(--s-2);
-  }
-
-  .checkin-actions .btn {
-    width: 100%;
-  }
-
-  /* The once-a-day readiness scales, folded away under the always-useful
-     spontaneous check-in above. A rule above it separates "the thing you can
-     do right now" from "the thing worth opening once a day", and no
-     underline: this reads as a section, not a link. */
-  .disclosure-toggle {
-    display: block;
-    width: 100%;
-    text-align: left;
-    text-decoration: none;
-    margin-top: var(--s-6);
-    padding-top: var(--s-5);
-    border-top: var(--rule-hair);
   }
 
   .link-btn {
@@ -1054,6 +1115,37 @@
     font-weight: 600;
     letter-spacing: var(--track-3);
     color: var(--accent-dim);
+  }
+
+  /* The check-in link rides the date line in the same micro type, so it
+     costs no row and never competes with Start. The 44px tap area comes
+     from the hit extension, not from growing the line. Named apart from
+     .date-row (the date-input row in Plan.tsx / TrainingMaxSheet.tsx) so the
+     two never collide in the cascade. */
+  .date-heading-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-6);
+  }
+
+  /* 44px tap target comes from the hit-extension family (~line 818), not
+     from growing this box. It is the last thing in the row, so bleed only
+     has to clear the gap to .train-date / .today-heading on its left: the
+     row's gap is --s-6 (12px), so --s-4 (8px) reaches the floor without
+     overlapping. */
+  .checkin-link {
+    --hit-bleed: var(--s-4);
+    border: 0;
+    background: none;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-3);
+    text-transform: uppercase;
+    color: var(--text-dim);
+    white-space: nowrap;
   }
 
   /* the program name belongs to the heading above it, not to the next section:
@@ -1477,6 +1569,14 @@
     font-weight: 700;
     letter-spacing: var(--track-2);
     color: var(--accent-dim);
+  }
+
+  /* The load-mode glyph shares .plate-hint's sizing, colour and hit-bleed
+     * (it is already in that shared selector list above in section 2); this
+     * only centres the inline svg on the text baseline. */
+  .load-style-icon {
+    display: inline-flex;
+    align-items: center;
   }
 
   /* The reveal is the LAST item in the load head and the only one that can
@@ -1938,6 +2038,20 @@
     letter-spacing: var(--track-1);
     color: var(--text-dim);
     margin-top: var(--s-3);
+  }
+
+  /* Wraps RpeChips under the rest strip. RpeChips renders its own
+   * .rule-section (border-top, padding-top, the .rpe-grid/.rpe-btn pair
+   * that already clears the 44px floor) -- this wrapper adds only the
+   * margin that section needs to sit below .rest-foot's text instead of
+   * touching it. .rest-timer's own `gap` does not reach a child appended
+   * after .rest-foot, since .rest-timer is never actually a flex/grid
+   * container (the property is inert there); every OTHER gap in the strip
+   * comes from a child's own margin, and this follows the same rule rather
+   * than fixing that unrelated declaration. No color literal (the section's
+   * own tokens already clear AA) and no motion: that is task 17's remit. */
+  .rest-rate {
+    margin-top: var(--s-6);
   }
 
   /* ---- sync pill: squared, hairline ---- */
@@ -2578,6 +2692,203 @@
     letter-spacing: var(--track-tight);
   }
 
+  /* ---- check-ins in History ---- */
+
+  .checkin-week {
+    /* One source for the width of the grid's row-header column, so the day
+     * columns below (.checkin-days) can line up under the grid's day
+     * columns instead of drifting to whatever font-size they happen to
+     * inherit. Derived from --fs-micro (not an em on this element) so it
+     * stays the same 4.5-characters-at-micro-size width regardless of the
+     * font-size in force wherever it's used. */
+    --checkin-label-col: calc(4.5 * var(--fs-micro));
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+  }
+
+  .checkin-week-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+  }
+
+  .checkin-week-nav button {
+    border: 0;
+    background: none;
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    font: inherit;
+    font-size: var(--fs-base);
+    color: var(--text-dim);
+  }
+
+  .checkin-week-nav button:disabled {
+    visibility: hidden;
+  }
+
+  .checkin-grid {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: var(--s-1);
+    table-layout: fixed;
+    font-family: var(--font-mono);
+  }
+
+  .checkin-grid th {
+    font-size: var(--fs-micro);
+    font-weight: 400;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: var(--track-1);
+  }
+
+  /* The actual column-width source of truth: table-layout: fixed reads
+   * column widths from a <colgroup>'s <col>, or else the first row's cells
+   * — a later row's cell width (e.g. a plain width on th[scope="row"]) is
+   * not consulted and would be silently ignored. */
+  .checkin-grid col:first-child {
+    width: var(--checkin-label-col);
+  }
+
+  .checkin-grid th[scope="row"] {
+    text-align: left;
+  }
+
+  .checkin-grid td {
+    height: var(--tap-min);
+    text-align: center;
+    border-radius: var(--radius);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .checkin-grid td small {
+    display: block;
+    font-size: var(--fs-micro);
+    font-weight: 400;
+  }
+
+  .checkin-grid td.is-empty {
+    border: var(--bw-hair) dashed var(--rule-color);
+  }
+
+  .checkin-grid td.is-selected {
+    outline: var(--bw) solid var(--text);
+    outline-offset: calc(var(--bw) * -1);
+  }
+
+  .checkin-grid th.is-selected {
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .checkin-days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: var(--s-1);
+    /* Same label-column width the grid's row header uses, plus TWO
+     * border-spacing gaps: with border-collapse: separate the grid's
+     * border-spacing (also --s-1) sits both before the label column and
+     * between it and day column 1, so the first day column starts two gaps
+     * in, not one. This offset is what actually lines the day buttons up
+     * under the grid's first day column, verified with a headless browser
+     * at 320/375px in task-6-report.md — one gap left the buttons 2px left
+     * of the grid. */
+    padding-left: calc(var(--checkin-label-col) + 2 * var(--s-1));
+    font-family: var(--font-mono);
+  }
+
+  .checkin-days button {
+    display: grid;
+    place-content: center;
+    gap: var(--s-1);
+    min-height: var(--tap-md);
+    padding: 0;
+    border: var(--bw-hair) solid var(--rule-color);
+    border-radius: var(--radius);
+    background: none;
+    color: var(--text-dim);
+  }
+
+  .checkin-days button b {
+    font-size: var(--fs-label);
+    color: var(--text);
+  }
+
+  .checkin-days button small {
+    font-size: var(--fs-micro);
+  }
+
+  .checkin-days button[aria-pressed="true"] {
+    background: var(--text);
+    border-color: var(--text);
+  }
+
+  .checkin-days button[aria-pressed="true"] b,
+  .checkin-days button[aria-pressed="true"] small {
+    color: var(--text-inverse);
+  }
+
+  /* 320px offers 284px of content for seven 44px targets after the label
+   * column, which doesn't fit — same bleed rationale as .week-strip above:
+   * bleed into the page gutter and drop the gap (320 / 7 = 45.7px per
+   * cell). This gives up alignment with the grid's day columns above (which
+   * keeps its label column and does not bleed) in favour of a real 44px
+   * target; the grid's cells aren't tap targets, so that trade only costs
+   * visual alignment, not usability. */
+  @media (max-width: 359px) {
+    .checkin-days {
+      padding-left: 0;
+      margin-left: calc(var(--gutter) * -1);
+      margin-right: calc(var(--gutter) * -1);
+      gap: 0;
+    }
+  }
+
+  .checkin-day {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    padding-top: var(--s-6);
+    border-top: var(--rule-hair);
+  }
+
+  .checkin-entry {
+    display: grid;
+    grid-template-columns: 4.5em 1.5em 1fr;
+    gap: var(--s-4);
+    align-items: baseline;
+    font-size: var(--fs-body);
+  }
+
+  .checkin-entry-time {
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    color: var(--text-dim);
+  }
+
+  .checkin-entry-energy {
+    font-family: var(--font-mono);
+    font-weight: 700;
+  }
+
+  .checkin-entry-tags {
+    display: block;
+    font-size: var(--fs-sm);
+    color: var(--text-dim);
+  }
+
+  .checkin-entry-note {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+
   /* ---- charts ---- */
 
   .chart {
@@ -2993,17 +3304,6 @@
     gap: var(--s-5);
   }
 
-  .focus-deck-overview {
-    align-self: flex-start;
-    padding: 0;
-    min-height: var(--tap-min);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    letter-spacing: var(--track-1);
-    text-transform: uppercase;
-  }
-
   /* Uppercased here, not in the string: a superset's "round 1 of 3" comes
    * from Session.tsx in sentence case and sat beside "SET 1 OF 5" looking
    * like a different component. */
@@ -3070,6 +3370,114 @@
   .focus-set-segment--current {
     border-color: var(--focus-set-current, var(--text));
     color: var(--focus-set-current, var(--text));
+  }
+
+  /* ---- state vocabulary (StateGlyph.tsx) ----
+   * One shape family, reused by the progress rail, FocusSetProgress and
+   * WorkoutOverview rows. Circular by default; warmups get a squared-off
+   * variant so a warmup-only day's dots are never mistaken for working sets
+   * at a glance — shape, not colour, is the tell. */
+  .state-glyph {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    font-size: 10px;
+    line-height: 1;
+    border: var(--bw) solid transparent;
+  }
+
+  .state-glyph-warmup {
+    border-radius: 3px;
+  }
+
+  .state-glyph-done {
+    background: var(--focus-set-completed);
+    border-color: var(--focus-set-completed);
+    color: var(--focus-set-completed-mark);
+  }
+
+  .state-glyph-current {
+    border-width: var(--bw-thick);
+    border-color: var(--focus-set-current);
+    color: var(--focus-set-current);
+    /* the state table's "outline ring": a second ring outside the border,
+     * on the page background, so it reads on both --bg and --bg-raised. */
+    box-shadow:
+      0 0 0 2px var(--bg),
+      0 0 0 3px var(--focus-set-current);
+  }
+
+  .state-glyph-next {
+    border-color: var(--state-next);
+    color: var(--state-next);
+  }
+
+  .state-glyph-skipped {
+    border-color: var(--state-skipped);
+    color: var(--state-skipped);
+  }
+
+  .state-glyph-upcoming {
+    border-color: var(--focus-set-future);
+    color: var(--focus-set-future);
+  }
+
+  /* ---- motion (transform/opacity only — see the design's Clarity and
+   * motion section). Named per the spec's own motion table, zeroed by the
+   * existing prefers-reduced-motion block at the top of this file, which
+   * already forces every animation-duration to 0.01ms. */
+  @keyframes set-logged-leave {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
+
+  @keyframes set-entering-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes mode-cross-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .motion-set-logged {
+    animation: set-logged-leave var(--motion-fast) var(--ease-out);
+    animation-fill-mode: backwards;
+  }
+
+  .motion-set-entering {
+    animation: set-entering-enter var(--motion-med) var(--ease-out);
+    animation-delay: 40ms;
+    animation-fill-mode: backwards;
+  }
+
+  /* Mode switch (focus <-> overview): each root mounts when the mode
+     changes, so an enter-only animation plays once per switch. FocusDeck is
+     not keyed per entry, so moving between exercises does not replay it. */
+  .focus-deck,
+  .wk-overview {
+    animation: mode-cross-fade var(--motion-med) var(--ease-out);
   }
 
   /* The plain hero editor stretches to fill .focus-deck-editor so its own
@@ -3238,8 +3646,105 @@
     justify-content: space-between;
   }
 
-  .focus-deck-overview {
-    font-size: var(--fs-lg);
+  /* Swap and Skip: visible secondary actions on the hero, not buried in
+   * the ••• sheet — the lifter chooses exercise identity and skips at log
+   * time (AGENTS.md), so both live where the tap actually happens. */
+  .focus-deck-secondary-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-5);
+  }
+
+  .focus-deck-secondary {
+    padding: var(--s-3) var(--s-5);
+    min-height: var(--tap-min);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+    border: var(--rule-hair);
+    border-radius: var(--radius);
+  }
+
+  .skip-reason-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+
+  .skip-reason-input {
+    width: 100%;
+  }
+
+  .skip-reason-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s-5);
+  }
+
+  /* The hero's own warmup/working toggle — shown only for an entry that
+   * actually prescribes a warmup, so an exercise with none never offers a
+   * choice it doesn't have. */
+  .focus-hero-warmup {
+    display: flex;
+    align-items: center;
+    gap: var(--s-5);
+  }
+
+  .focus-already-warm {
+    padding: var(--s-3) var(--s-5);
+    min-height: var(--tap-min);
+    font-size: var(--fs-label);
+  }
+
+  /* "Last: 145 kg × 5 working" — the newest logged set, tappable onto its
+   * correction, styled like the last-performance line it sits beside. */
+  .focus-last-set {
+    text-align: left;
+    margin: 0;
+    padding: 0;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--track-1);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* One faint line: the progress rail (tap a dot to jump, tap the current
+   * one for the full workout) on the left, ••• on the right. A real <ul> in
+   * the markup, reset here — list-style/margin/padding never carry meaning,
+   * so stripping them costs nothing semantic (role="list" in the markup
+   * keeps the list role explicit for Safari/VoiceOver regardless). */
+  .focus-progress-rail {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    overflow-x: auto;
+    /* the row can outgrow the screen on a long day; the dots stay a fixed
+     * size (see .state-glyph) so it degrades to a scroll, never a squeeze */
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .focus-progress-dot-item {
+    flex: none;
+    display: inline-flex;
+  }
+
+  .focus-progress-dot {
+    flex: none;
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
   }
 
   .focus-deck-more {
@@ -3703,6 +4208,20 @@
     font-weight: 700;
   }
 
+  /* A finished day's own line — sets and duration, ahead of whatever
+       dayDetail offers next ("Start again", "Review with the coach"). Same
+       muted ink the state vocabulary already gives DONE (.week-label-done),
+       not --accent: the fact of what happened outranks anything you might
+       do about it, but it isn't a call to action. */
+  .done-summary {
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 600;
+    letter-spacing: var(--track-2);
+    color: var(--text-dim);
+    margin: var(--s-2) 0;
+  }
+
   /* ---- per-set notes ---- */
 
   .logged-set-wrap {
@@ -4022,9 +4541,10 @@
     text-transform: uppercase;
   }
 
-  .header-action-coach {
-    color: var(--text);
-  }
+  /* No .header-action-coach full-ink override: that one bright icon
+     beside Report and the gear, both already --text-dim, was the header
+     reading as two menus rather than one quiet cluster. All three header
+     actions share the one dim ink .header-action already sets. */
 
   /* Offline is shown, not discovered on tap: the coach is an API call and
    * genuinely cannot work, unlike the rest of this app. */

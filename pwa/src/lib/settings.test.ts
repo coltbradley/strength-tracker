@@ -348,6 +348,8 @@ describe("per-exercise preferences", () => {
             press: "not an object",
             "": { barKg: 20 },
             row: { barKg: 20, junkField: true },
+            "leg-press": { barKg: 0, loadStyle: "plates" },
+            deadlift: { barKg: 20, loadStyle: "pins" },
           },
         },
       }),
@@ -361,6 +363,9 @@ describe("per-exercise preferences", () => {
     expect(prefs[""]).toBeUndefined();
     // unknown fields are stripped, valid ones survive
     expect(prefs.row).toEqual({ barKg: 20 });
+    expect(prefs["leg-press"]).toEqual({ barKg: 0, loadStyle: "plates" });
+    // an invalid loadStyle value drops only that field, same as barKg above
+    expect(prefs.deadlift).toEqual({ barKg: 20 });
   });
 
   it("resolves rest as bracket -> exercise -> global", () => {
