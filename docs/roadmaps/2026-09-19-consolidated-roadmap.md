@@ -2,9 +2,22 @@
 
 ## Decision
 
-For the next release cycle, Strength Tracker is a trustworthy strength log
-with an explainable coaching loop. Do not add activation, endurance-planning,
-or scale features until the release and training-record gates below pass.
+For the next release cycle, Strength Tracker is a trustworthy strength log for
+private lifters who are also endurance athletes. Do not add activation,
+endurance-planning, or scale features until the release and training-record
+gates below pass.
+
+The PWA is the phone-first capture and plan-read surface. MCP is the primary
+planning and review surface. The in-app coach is a bounded fallback for a
+private lifter who cannot use MCP, not the main distribution or monetisation
+path. Neither coaching surface may silently write logged sets or rewrite a
+confirmed plan.
+
+The first beta success event is: a new lifter completes three real sessions,
+reviews one through MCP, and returns the following week without manual rescue.
+The beta-ready bar is deliberately narrower than full public launch: sign in,
+plan, offline logging, safe finish, truthful review, and a release that has
+direct production readback.
 
 The system audit is an evidence backlog, not a current release verdict. It was
 committed at `4a854c2`; `main` subsequently merged the live-session adaptation
@@ -57,6 +70,9 @@ only after the release gates below have direct readback.
    push, and a new product capability unless the dependency is unavoidable.
 4. The audit's 209 findings must be grouped by failure boundary. Do not run a
    209-ticket implementation programme.
+5. Missing endurance context is UNKNOWN, never zero. Until an endurance
+   integration is trusted, MCP must say what it does not know before making a
+   combined-training recommendation.
 
 ## Roadmap
 
@@ -79,9 +95,9 @@ acceptance.
 - Create one release ledger with finding ID, boundary, owner, regression test,
   production proof, rollback, and state. It replaces status claims scattered
   across `docs/plan.md`, old implementation plans, and the audit.
-- Confirm the intended beta-access policy: private allowlist, paid access, or
-  another explicit control. Do not leave "unset means public" as an accidental
-  product decision.
+- Keep the owner-paid in-app coach to its intended fallback users. MCP remains
+  the primary beta interface; do not broaden the in-app coach merely because a
+  private beta account exists.
 
 **Exit gate:** a reviewer can see the current state of every stop-release item
 and the coach cannot spend money for an unapproved account.
@@ -139,22 +155,26 @@ each session has exactly one valid terminal state; a simulated retry or second
 device cannot duplicate, hide, or disclose a set; browser E2E and live
 readback pass.
 
-### 3. Make the existing coaching loop useful, Oct 19-30
+### 3. Make the private lifter's plan legible, Oct 19-30
 
 **Owner:** Product and Engineering.
 
-Only after Wave 2, ship the smallest activation loop:
+Only after Wave 2, ship the smallest strength-only activation loop:
 
-- O-01 guided calibration, with an explicitly unconfirmed starter proposal.
-- O-02 confirmed plan/phase dashboard, which makes today's work intelligible.
+- O-02 confirmed plan/phase dashboard, which makes an MCP-created strategy
+  intelligible on the phone where the session is logged.
+- O-01 guided calibration is optional. It must not displace MCP as the
+  primary planning path, and it creates only an explicitly unconfirmed starter
+  proposal.
 - Finish live acceptance of the already-merged check-in, skip, and
   coach-observation paths. They are foundations for O-03 explainable
   progression proposals and O-04 weekly exception review, not proof those
   product loops already work.
 
-Instrument only three outcomes: sign-in to first set, first-session
-completion, and weekly plan review. Do not add streaks, a readiness score, or
-automatic program rewrites.
+Instrument three outcomes: first-session completion, one completed MCP review,
+and return for the following week's first session. Do not add streaks, a
+readiness score, automatic program rewrites, or general multi-user
+collaboration.
 
 **Exit gate:** a new athlete can reach a first useful plan and confirm it; an
 athlete can see the current phase; a proposal names its inputs, uncertainty,
@@ -164,10 +184,20 @@ expiry, and confirm/override outcome.
 
 **Owner:** Product and Engineering; Colt supplies real-user acceptance data.
 
-E0/E1 schema and sync foundations are deployed, but the endurance product is
-not complete. The audit still identifies provider pagination/correction,
+Endurance is a required future planning input, not a feature wishlist: planning
+strength without knowing hard endurance days, long runs, current volume, and
+constraints eventually becomes unsafe or unhelpful. It remains deferred because
+the strength-only product must first be trustworthy, and the endurance product
+is not yet operational. E0/E1 schema and sync foundations are deployed, but
+the audit still identifies provider pagination/correction,
 connection/revocation, scheduling, credential, and prompt-delivery failures
 (A-21, A-74 to A-76, A-121, A-139 to A-141, A-157, A-159).
+
+Before the integration is trustworthy, combined-strength planning needs an
+explicit interim source of endurance truth. The MCP must receive a confirmed
+summary or state that endurance context is missing; it may not infer "no runs"
+from an empty integration. The exact interim interaction remains the next
+product decision.
 
 First finish the operational foundation: a consented connection and revoke
 flow, bounded/paginated/correctable sync, encrypted credential treatment,
