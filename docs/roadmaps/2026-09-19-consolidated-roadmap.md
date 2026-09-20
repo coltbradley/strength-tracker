@@ -263,16 +263,23 @@ measured RPO/RTO.
   connection.
 - The in-app coach is not enabled for the cohort. It remains a one-person
   fallback for Colt's wife.
-- Beta feedback is about trustworthy capture, clear plan visibility, and MCP
+- Beta feedback uses the existing durable `feedback` record, not a survey.
+  The PWA's Report a problem path files immediate app bugs; MCP's existing
+  `submit_feedback` tool files a bug, feature, data gap, or question found
+  during planning or review. MCP reads `list_feedback` before filing and tells
+  the athlete what it recorded. An entry is resolved only after the athlete
+  says the outcome is acceptable.
+- Before analysing cohort feedback by client, make new MCP submissions report
+  source `mcp` rather than the current literal `claude`. Keep historical
+  `claude` rows intact; this is provenance cleanup, not a release blocker.
+- Feedback is about trustworthy capture, clear plan visibility, and MCP
   usefulness, not coach collaboration or social features.
 
 ## Remaining decisions
 
 1. Name the release owner who can run the real-device acceptance gate. A green
    GitHub run is not that role.
-2. Decide whether friend-beta feedback is collected in the existing durable
-   bug-report channel, a short recurring check-in, or both.
-3. Decide the minimum MCP onboarding proof for each beta athlete: a completed
+2. Decide the minimum MCP onboarding proof for each beta athlete: a completed
    OAuth authorization plus read-only query, then a separate approved plan
    write.
 
