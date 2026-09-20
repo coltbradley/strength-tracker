@@ -13,18 +13,19 @@ private lifter who cannot use MCP, not the main distribution or monetisation
 path. Neither coaching surface may silently write logged sets or rewrite a
 confirmed plan.
 
-The first beta is a small, named group of three to five friends, not a coaching
-product or a collaboration test. Each athlete uses their own Claude or ChatGPT
-MCP client for planning and review. The in-app coach is enabled only for Colt's
-wife; every other beta participant uses the PWA plus MCP. Colt provisions the
-accounts, then athletes use the product normally; there is no scripted
-onboarding qualification beyond a real request succeeding.
+The first beta is a small, named group of three to five friends, chosen for
+ease rather than deliberate device coverage. It is not a coaching product or a
+collaboration test. Each athlete chooses Claude or ChatGPT immediately and uses
+their own MCP client for planning and review. The in-app coach is enabled only
+for Colt's wife; every other beta participant uses the PWA plus MCP. Colt
+provisions the accounts, then athletes use the product normally; there is no
+scripted onboarding qualification beyond a real request succeeding.
 
-The first beta success event is: a new lifter completes three real sessions,
-reviews one through MCP, and returns the following week without manual rescue.
-The beta-ready bar is deliberately narrower than full public launch: sign in,
-plan, offline logging, safe finish, truthful review, and a release that has
-direct production readback.
+The beta does not have a numeric activation or exit target. Colt expands,
+pauses, or ends it on observed usefulness and friction: if it works, it works.
+The beta-ready safety bar is deliberately narrower than full public launch but
+not optional: sign in, plan, offline logging, safe finish, truthful review, and
+a release that has direct production readback.
 
 For plan creation, an unambiguous natural-language instruction such as "make
 the plan and approve it" is valid approval in the same MCP conversation. A
@@ -196,6 +197,8 @@ Only after Wave 2, ship the smallest strength-only activation loop:
 - O-01 guided calibration is optional. It must not displace MCP as the
   primary planning path, and it creates only an explicitly unconfirmed starter
   proposal.
+- An athlete may instead create and manage a plan manually in the PWA. Beta
+  does not force a coach screenshot, MCP-created plan, or a single entry path.
 - Use endurance context only when MCP receives it, with no new PWA flow,
   proactive questionnaire, or durable endurance-state abstraction.
 - Finish live acceptance of the already-merged check-in, skip, and
@@ -283,8 +286,6 @@ measured RPO/RTO.
 
 1. Name the release owner who can run the real-device acceptance gate. A green
    GitHub run is not that role.
-2. Decide when evidence from three to five friends is enough to leave private
-   beta, rather than treating an arbitrary calendar date as success.
 
 ## Deliberately deferred
 
