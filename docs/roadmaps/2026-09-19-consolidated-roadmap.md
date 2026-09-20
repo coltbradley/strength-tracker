@@ -13,6 +13,11 @@ private lifter who cannot use MCP, not the main distribution or monetisation
 path. Neither coaching surface may silently write logged sets or rewrite a
 confirmed plan.
 
+The first beta is a small, named group of friends, not a coaching product or a
+collaboration test. Each athlete uses their own Claude or ChatGPT MCP client
+for planning and review. The in-app coach is enabled only for Colt's wife;
+every other beta participant uses the PWA plus MCP.
+
 The first beta success event is: a new lifter completes three real sessions,
 reviews one through MCP, and returns the following week without manual rescue.
 The beta-ready bar is deliberately narrower than full public launch: sign in,
@@ -104,10 +109,11 @@ acceptance.
 
 **Owner:** Colt for settings and acceptance; Engineering for evidence.
 
-- Set `COACH_ALLOWED_USERS` to the intended user UUIDs now, or turn off the
-  coach until the access policy is made explicit. The current code deliberately
-  permits everyone when the secret is unset, which is unacceptable for a public
-  signup surface with an owner-paid model key (A-02).
+- Set `COACH_ALLOWED_USERS` to Colt's wife's user UUID only, or turn off the
+  in-app coach until that narrow allowlist is in place. The current code
+  deliberately permits everyone when the secret is unset, which is
+  unacceptable for a public signup surface with an owner-paid model key
+  (A-02). This does not restrict the beta's MCP path.
 - Re-run every audit item touched by the post-audit merge. Start with A-94,
   A-105, and A-119, because their cited missing flows now have merged code.
   Mark each item `open`, `fixed with test`, `needs live proof`, or `not
@@ -168,7 +174,9 @@ Work by lifecycle, not screen:
 
 Add a small seeded browser E2E suite in this wave: sign in, create/confirm a
 plan, start/resume/log/correct/finish a session, go offline/online, and prove a
-second user cannot see or write the first user's data.
+second friend-beta user cannot see or write the first user's data. This is
+multi-account safety testing, not an invitation to build shared coaching or
+collaboration.
 
 **Exit gate:** the phone run completes once offline and once across an update;
 each session has exactly one valid terminal state; a simulated retry or second
@@ -248,14 +256,25 @@ or rewrite RLS solely because an advisor suggests it.
 unchanged RLS/offline behavior, and a successful sanitized restore drill with
 measured RPO/RTO.
 
-## The next three decisions
+## Confirmed beta model
 
-1. Adopt the reliability-first sequence above, which delays new endurance
-   planning and most growth features until the training record is safe.
-2. Choose the coach access policy today. My recommendation is a non-empty
-   private allowlist until there is deliberate billing and abuse control.
-3. Assign a release owner who can run the real-device acceptance gate. A green
+- A small named group of friends receives PWA access after the safety gates.
+- Every participant plans and reviews through their own Claude or ChatGPT MCP
+  connection.
+- The in-app coach is not enabled for the cohort. It remains a one-person
+  fallback for Colt's wife.
+- Beta feedback is about trustworthy capture, clear plan visibility, and MCP
+  usefulness, not coach collaboration or social features.
+
+## Remaining decisions
+
+1. Name the release owner who can run the real-device acceptance gate. A green
    GitHub run is not that role.
+2. Decide whether friend-beta feedback is collected in the existing durable
+   bug-report channel, a short recurring check-in, or both.
+3. Decide the minimum MCP onboarding proof for each beta athlete: a completed
+   OAuth authorization plus read-only query, then a separate approved plan
+   write.
 
 ## Deliberately deferred
 
