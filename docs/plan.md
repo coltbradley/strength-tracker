@@ -1,5 +1,9 @@
 # Build plan
 
+> Historical build log. Do not follow this document's phase numbers or
+> "What's left" list as the current execution plan. The active roadmap is
+> [`docs/roadmaps/2026-09-19-consolidated-roadmap.md`](roadmaps/2026-09-19-consolidated-roadmap.md).
+
 Status legend: [x] done, [~] in progress, [ ] not started.
 
 ## Phase 0: verify the spec (done)

@@ -1,5 +1,24 @@
 # Consolidated roadmap, 2026-09-19
 
+## Plan authority
+
+This is the one active product and release roadmap. Follow its phases in
+order. It supersedes every older "what is next" list in this repository.
+
+| Document | Status now | How to use it |
+| --- | --- | --- |
+| This roadmap | **Active** | The current product boundary, phase order, release gates, and beta model. |
+| `docs/audits/2026-09-19-system-audit.md` | Evidence backlog | Look up finding IDs and re-verify evidence. Do not execute its 209 findings as a flat plan. |
+| `docs/plan.md` | Historical build log | Useful for what shipped and why, but its "What's left" list is superseded. |
+| `docs/superpowers/plans/` | Historical scoped plans | Reuse a plan's evidence or design only after checking it against this roadmap and current code. Never resume unchecked tasks wholesale. |
+| `AGENTS.md` and `docs/decisions.md` | Current constraints | They remain binding. Historical specs are supporting design references only when consistent with them and this roadmap. |
+| `docs/endurance-plan.md` and the endurance implementation spec | Deferred product reference | Use only in Phase 5. They do not authorize endurance product work before then. |
+
+Before starting code in any phase, write one small implementation plan for
+that failure boundary, with exact files, tests, live proof, and rollback. Do
+not turn this roadmap into one giant patch or treat an old unchecked task as
+automatically current.
+
 ## Decision
 
 For the next release cycle, Strength Tracker is a trustworthy strength log for
@@ -102,13 +121,16 @@ dependency of ordinary strength logging.
 - Do not build a second endurance state store merely to avoid a question MCP
   was not asked to pose.
 
-## Roadmap
+## Active execution phases
 
-Dates are proposed planning windows, not commitments. "Engineering" means the
-implementation owner; Colt owns product policy, access settings, and release
-acceptance.
+Follow these phases in order. A later phase can be researched, but code and
+release work starts only after the preceding phase's exit gate passes.
+"Engineering" means the implementation owner; Colt owns product policy,
+access settings, beta invitations, and release acceptance.
 
-### 0. Contain and make the backlog truthful, Sep 19-22
+### Phase 0: Establish a truthful safety backlog
+
+**State:** Start here.
 
 **Owner:** Colt for settings and acceptance; Engineering for evidence.
 
@@ -131,7 +153,9 @@ acceptance.
 **Exit gate:** a reviewer can see the current state of every stop-release item
 and the coach cannot spend money for an unapproved account.
 
-### 1. Release and identity safety, Sep 22-Oct 2
+### Phase 1: Make release and identity safety real
+
+**Starts after:** Phase 0's ledger and coach boundary are complete.
 
 **Owner:** Engineering; Colt accepts the access and deployment policy.
 
@@ -153,7 +177,9 @@ Build this as two independently releasable slices.
 missing configuration fails visibly, a deployed release has its own smoke
 receipt, and the access/tenant tests reject every adversarial fixture.
 
-### 2. Training-record correctness, Oct 5-16
+### Phase 2: Prove the training record survives real use
+
+**Starts after:** Phase 1's deployment and tenant-boundary gates pass.
 
 **Owner:** Engineering; a real lifter performs acceptance on a phone.
 
@@ -186,11 +212,33 @@ each session has exactly one valid terminal state; a simulated retry or second
 device cannot duplicate, hide, or disclose a set; browser E2E and live
 readback pass.
 
-### 3. Make the private lifter's plan legible, Oct 19-30
+### Phase 3: Start the small friend beta
+
+**Starts after:** Phase 2's phone, browser, and live-readback gate passes.
+
+Colt provisions three to five friend accounts. Each athlete immediately picks
+Claude or ChatGPT and uses MCP for planning and review, while the PWA remains
+available for manual planning and phone logging. The in-app coach stays limited
+to Colt's wife. There is no scripted onboarding, weekly survey, activation
+target, or collaboration feature.
+
+Collect feedback through PWA Report a problem and MCP `submit_feedback`; Colt
+reviews it while coding or updating the app. Keep running the beta while it is
+useful. Pause it for any credible data-loss, cross-account, or release-integrity
+defect.
+
+**Exit gate:** none by metric. Colt decides whether the app is useful enough
+to keep inviting friends, pause for a repair, or move on to the feedback-driven
+improvements in Phase 4.
+
+### Phase 4: Make the private lifter's plan legible
+
+**Starts after:** Phase 3 has generated real usage or a clear feedback-backed
+need. Do not build this merely because it appears next on a list.
 
 **Owner:** Product and Engineering.
 
-Only after Wave 2, ship the smallest strength-only activation loop:
+Ship the smallest strength-only activation loop indicated by real use:
 
 - O-02 confirmed plan/phase dashboard, which makes an MCP-created strategy
   intelligible on the phone where the session is logged.
@@ -215,7 +263,10 @@ collaboration.
 athlete can see the current phase; a proposal names its inputs, uncertainty,
 expiry, and confirm/override outcome.
 
-### 4. Endurance becomes a product only after the core is trusted, November+
+### Phase 5: Make endurance a product only after the core is trusted
+
+**Starts after:** strength logging is trusted in the friend beta and the
+operational failures below have an owner and evidence plan.
 
 **Owner:** Product and Engineering; Colt supplies real-user acceptance data.
 
@@ -246,7 +297,9 @@ readiness score, injury prediction, or finish-time prediction.
 **Exit gate for E2:** the returned state carries `missing[]`, has no invented
 capacity, and strength logging remains operational with the integration down.
 
-### 5. Measured scale and recovery, after proven use
+### Phase 6: Measured scale and recovery
+
+**Starts after:** a measured bottleneck or recovery requirement appears.
 
 **Owner:** Engineering, with a release owner for recovery exercises.
 
@@ -282,10 +335,12 @@ measured RPO/RTO.
 - Colt reviews the feedback queue while coding or updating the app. There is
   no scheduled beta survey or standing review meeting.
 
-## Remaining decisions
+## Operating ownership
 
-1. Name the release owner who can run the real-device acceptance gate. A green
-   GitHub run is not that role.
+Colt is the release owner for this private beta. Engineering produces the
+release receipt and runs automated checks; Colt runs the real-device acceptance
+gate before adding or expanding friend access. A green GitHub run is not that
+gate.
 
 ## Deliberately deferred
 
