@@ -74,6 +74,26 @@ only after the release gates below have direct readback.
    integration is trusted, MCP must say what it does not know before making a
    combined-training recommendation.
 
+## Interim endurance-context contract
+
+This is an MCP-native, optional preflight, not a required PWA form or a
+dependency of ordinary strength logging.
+
+- For a strength-only request, MCP proceeds without an endurance questionnaire.
+- When a user asks for combined-training advice, or identifies current
+  endurance work, MCP asks for a compact confirmed summary: current hard days
+  and long session, expected next-seven-day endurance work, near-term event or
+  goal, and any injury, recovery, or availability constraint that changes the
+  strength recommendation.
+- An explicit "I am not doing endurance work" is enough to plan strength-only
+  work. An unanswered question remains UNKNOWN, never "no endurance."
+- Until sync is trusted, the summary is used for that planning decision. Do
+  not build a second endurance state store merely to avoid asking a relevant
+  question in MCP.
+- The planner may make a strength-only recommendation with missing endurance
+  context, but it must label the limitation and avoid claims about combined
+  schedule, recovery, or interference.
+
 ## Roadmap
 
 Dates are proposed planning windows, not commitments. "Engineering" means the
@@ -166,6 +186,8 @@ Only after Wave 2, ship the smallest strength-only activation loop:
 - O-01 guided calibration is optional. It must not displace MCP as the
   primary planning path, and it creates only an explicitly unconfirmed starter
   proposal.
+- Add the optional MCP endurance preflight above for combined-training changes,
+  with no new PWA flow or durable endurance-state abstraction.
 - Finish live acceptance of the already-merged check-in, skip, and
   coach-observation paths. They are foundations for O-03 explainable
   progression proposals and O-04 weekly exception review, not proof those
@@ -193,11 +215,9 @@ the audit still identifies provider pagination/correction,
 connection/revocation, scheduling, credential, and prompt-delivery failures
 (A-21, A-74 to A-76, A-121, A-139 to A-141, A-157, A-159).
 
-Before the integration is trustworthy, combined-strength planning needs an
-explicit interim source of endurance truth. The MCP must receive a confirmed
-summary or state that endurance context is missing; it may not infer "no runs"
-from an empty integration. The exact interim interaction remains the next
-product decision.
+Before the integration is trustworthy, combined-strength planning uses the
+optional MCP preflight above. It may not infer "no runs" from an empty
+integration, and it does not need a new PWA flow or durable context store.
 
 First finish the operational foundation: a consented connection and revoke
 flow, bounded/paginated/correctable sync, encrypted credential treatment,
