@@ -24,6 +24,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { type Caller, resolveCaller } from "./auth.ts";
 import { dbFor } from "./db.ts";
+import { HEALTH_DOWN, HEALTH_OK, mcpHealthStatus } from "./health.ts";
 import type { RequestContext } from "./errors.ts";
 import { log } from "./log.ts";
 import { protectedResourceMetadata } from "./oauth.ts";
@@ -203,11 +204,8 @@ export async function handleRequestWithCaller(
     // "is this URL an MCP server" question do not need a credential.
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname.endsWith("/health")) {
-      return json(200, {
-        status: "ok",
-        server: "strength-tracker",
-        transport: "streamable-http",
-      });
+      const code = await mcpHealthStatus();
+      return json(code, code === 200 ? HEALTH_OK : HEALTH_DOWN);
     }
 
     // RFC 9728 discovery, before auth for the same reason as /health: a client

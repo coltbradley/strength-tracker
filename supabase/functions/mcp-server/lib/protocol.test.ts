@@ -210,11 +210,11 @@ Deno.test(
     const res = await handleRequest(
       new Request(`${URL_}/health`, { method: "GET" }),
     );
-    assertEquals(res.status, 200);
+    assertEquals(res.status, 503);
     const body = await res.json();
-    assertEquals(body.status, "ok");
-    // No user ids, no counts, no configuration.
+    assertEquals(body.status, "unavailable");
     assertEquals(Object.keys(body).sort(), ["server", "status", "transport"]);
+    assertEquals(JSON.stringify(body).includes("ECONNREFUSED"), false);
   },
 );
 
