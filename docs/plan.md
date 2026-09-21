@@ -3,6 +3,8 @@
 > Historical build log. Do not follow this document's phase numbers or
 > "What's left" list as the current execution plan. The active roadmap is
 > [`docs/roadmaps/2026-09-19-consolidated-roadmap.md`](roadmaps/2026-09-19-consolidated-roadmap.md).
+> Stop-release status lives in
+> [`docs/roadmaps/release-ledger.md`](roadmaps/release-ledger.md).
 
 Status legend: [x] done, [~] in progress, [ ] not started.
 

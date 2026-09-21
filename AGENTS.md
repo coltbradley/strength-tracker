@@ -44,7 +44,7 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   give it the next index: that is how a corrected set 2 became set 5.
   `isNoopCorrection` normalises undefined to null before comparing, because a
   row cached before a column exists reads back undefined and `undefined ===
-  null` is false: without it, saving an unrated set unrated writes a void and a
+null` is false: without it, saving an unrated set unrated writes a void and a
   duplicate row.
   `set_notes` is the one editable set-adjacent row (a user annotation,
   last-write-wins) — the sessions.notes mutability class, never a way to
@@ -727,6 +727,8 @@ npm --prefix scripts install && node scripts/validate-db.mjs
 
 # every column any code SELECTs must exist against that same schema
 node scripts/check-selects.mjs
+node --test scripts/release-ledger.test.mjs
+node scripts/check-release-ledger.mjs
 
 # mcp server: serve locally
 supabase functions serve mcp-server --env-file supabase/functions/.env
@@ -753,7 +755,8 @@ node scripts/build-exercise-seed.mjs
 npm --prefix scripts ci
 node scripts/validate-db.mjs
 node scripts/check-selects.mjs
-node --test scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs
+node scripts/check-release-ledger.mjs
 
 # edge functions (Deno — install via denoland/setup-deno or the Deno CLI)
 cd supabase/functions/mcp-server && deno check index.ts && deno test --allow-env --allow-net
@@ -896,6 +899,7 @@ scope to fix it. Instead:
    label it normally and leave it for a human to triage.
 
 **`copilot-ready` means all of the following:**
+
 - Unambiguous: one reasonable interpretation of "done".
 - Bounded: touches a small, identifiable set of files/areas.
 - Objectively verifiable: a test, typecheck, or lint command can confirm it
@@ -905,6 +909,7 @@ scope to fix it. Instead:
 - Does not require a product or architecture decision.
 
 **Never label (or delegate) as `copilot-ready`:**
+
 - Security-sensitive changes (RLS policies, MCP auth, token handling,
   identity resolution).
 - Schema redesigns or new migrations that change existing data shapes.
