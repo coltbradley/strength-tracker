@@ -9,11 +9,6 @@
 // Only the SHA-256 of a token is ever stored. A database leak yields digests,
 // not working credentials. Tokens are minted by scripts/issue-mcp-token.mjs.
 //
-// LEGACY OWNER TOKEN: the pre-multi-user deployment authenticated with a single
-// MCP_SECRET mapped to a single OWNER_USER_ID. Both still work, so an existing
-// Claude Desktop config keeps running across this deploy with nothing to
-// change. Issue a real token per person and drop the env vars when convenient.
-//
 // OAUTH: clients that sign in (ChatGPT, claude.ai) send a Supabase OAuth access
 // token instead. lib/oauth.ts verifies it and yields the same Caller, so nothing
 // past this file can tell the two apart. See docs/decisions.md 2026-09-13.
@@ -30,6 +25,7 @@ import {
 export interface Caller {
   userId: string;
   label: string;
+  ephemeral: boolean;
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -40,17 +36,6 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-// Compare via SHA-256 digests so both sides are fixed-length, then XOR every
-// byte. No early exit, so timing reveals nothing about where a mismatch is.
-async function timingSafeEqual(a: string, b: string): Promise<boolean> {
-  const [da, db] = await Promise.all([sha256Hex(a), sha256Hex(b)]);
-  let diff = 0;
-  for (let i = 0; i < da.length; i++) {
-    diff |= da.charCodeAt(i) ^ db.charCodeAt(i);
-  }
-  return diff === 0;
 }
 
 /** 401 that tells a client HOW to authenticate, per RFC 9110 and RFC 9728.
@@ -92,19 +77,8 @@ export async function resolveCaller(
     return unauthorized("Send Authorization: Bearer <token>.");
   }
 
-  // Legacy single-user secret, checked first so it costs no database round trip.
-  const legacySecret = Deno.env.get("MCP_SECRET");
-  const legacyUser = Deno.env.get("OWNER_USER_ID");
-  if (
-    legacySecret &&
-    legacyUser &&
-    (await timingSafeEqual(token, legacySecret))
-  ) {
-    return { userId: legacyUser, label: "legacy owner token" };
-  }
-
   // Supabase OAuth access token (ChatGPT, claude.ai, any client that signed in).
-  // Checked after the legacy secret and before the mcp_tokens lookup: a JWT is
+  // Checked before the mcp_tokens lookup: a JWT is
   // never in mcp_tokens, so looking it up would only spend a round trip.
   if (looksLikeJwt(token)) {
     const result = await verifyOAuthToken(token, requestId);
@@ -149,7 +123,7 @@ export async function resolveCaller(
     // A permanent token must keep working exactly as before, so the filter has
     // to accept null rather than compare it.
     .or(`expires_at.is.null,expires_at.gt.${now}`)
-    .select("user_id, label")
+    .select("user_id, label, expires_at")
     .maybeSingle();
 
   if (error) {
@@ -173,6 +147,14 @@ export async function resolveCaller(
     return unauthorized("Unknown or revoked token.");
   }
 
-  const row = data as { user_id: string; label: string };
-  return { userId: row.user_id, label: row.label };
+  const row = data as {
+    user_id: string;
+    label: string;
+    expires_at: string | null;
+  };
+  return {
+    userId: row.user_id,
+    label: row.label,
+    ephemeral: row.expires_at != null,
+  };
 }

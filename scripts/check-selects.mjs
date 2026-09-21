@@ -77,7 +77,10 @@ function pairs(source) {
   while ((m = re.exec(source)) !== null) {
     const [, relation, , rawArg] = m;
     // Only literal strings; a built-up variable is not checkable here.
-    const literal = [...rawArg.matchAll(/"([^"]*)"/g)].map((x) => x[1]).join("");
+    // The first argument is the PostgREST column list. Other string literals
+    // belong to options (for example `{ count: "exact" }`) and are not
+    // column names.
+    const literal = rawArg.match(/^\s*"([^"]*)"/)?.[1] ?? "";
     if (!literal.trim()) continue;
     if (literal.includes("*")) continue;
     out.push({ relation, columns: literal });

@@ -22,8 +22,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // @ts-types="@modelcontextprotocol/sdk/server/webStandardStreamableHttp"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { resolveCaller } from "./auth.ts";
+import { type Caller, resolveCaller } from "./auth.ts";
 import { dbFor } from "./db.ts";
+import { HEALTH_DOWN, HEALTH_OK, mcpHealthStatus } from "./health.ts";
 import type { RequestContext } from "./errors.ts";
 import { log } from "./log.ts";
 import { protectedResourceMetadata } from "./oauth.ts";
@@ -157,7 +158,15 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-export async function handleRequest(req: Request): Promise<Response> {
+export type CallerResolver = (
+  req: Request,
+  requestId: string,
+) => Promise<Caller | Response>;
+
+export async function handleRequestWithCaller(
+  req: Request,
+  resolve: CallerResolver,
+): Promise<Response> {
   const requestId = crypto.randomUUID();
   const started = performance.now();
   const ctx: RequestContext = { requestId };
@@ -195,11 +204,8 @@ export async function handleRequest(req: Request): Promise<Response> {
     // "is this URL an MCP server" question do not need a credential.
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname.endsWith("/health")) {
-      return json(200, {
-        status: "ok",
-        server: "strength-tracker",
-        transport: "streamable-http",
-      });
+      const code = await mcpHealthStatus();
+      return json(code, code === 200 ? HEALTH_OK : HEALTH_DOWN);
     }
 
     // RFC 9728 discovery, before auth for the same reason as /health: a client
@@ -212,7 +218,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     }
 
     // Auth before anything else.
-    const caller = await resolveCaller(req, requestId);
+    const caller = await resolve(req, requestId);
     if (caller instanceof Response) {
       finish(
         "error",
@@ -222,6 +228,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     }
     userLabel = caller.label;
     userId = caller.userId;
+    ctx.ephemeral = caller.ephemeral;
 
     // Stateless streamable HTTP: POST only. There is no session to resume, so
     // there is no SSE stream to GET and nothing for DELETE to tear down. 405
@@ -293,4 +300,8 @@ export async function handleRequest(req: Request): Promise<Response> {
       request_id: requestId,
     });
   }
+}
+
+export async function handleRequest(req: Request): Promise<Response> {
+  return handleRequestWithCaller(req, resolveCaller);
 }

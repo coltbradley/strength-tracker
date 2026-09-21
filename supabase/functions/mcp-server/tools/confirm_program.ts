@@ -4,6 +4,7 @@ import type { Db } from "../lib/db.ts";
 import {
   guard,
   jsonResult,
+  refuseIfEphemeral,
   ToolError,
   type RequestContext,
 } from "../lib/errors.ts";
@@ -36,6 +37,7 @@ export function registerConfirmProgram(
     },
     (args) =>
       guard(ctx, "confirm_program", async () => {
+        refuseIfEphemeral(ctx, "confirm a program");
         const { data, error } = await db.client
           .from("programs")
           .update({ confirmed_at: new Date().toISOString() })

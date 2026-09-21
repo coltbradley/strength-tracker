@@ -14,8 +14,17 @@ export class ToolError extends Error {}
 /** Per-request state shared between index.ts and the tool guard. */
 export interface RequestContext {
   requestId: string;
+  ephemeral?: boolean;
   /** Set by guard() when a tool call fails; index.ts logs it as the outcome. */
   toolError?: string;
+}
+
+export function refuseIfEphemeral(ctx: RequestContext, action: string): void {
+  if (ctx.ephemeral) {
+    throw new ToolError(
+      `The in-app coach cannot ${action}. Confirm from Claude Desktop or the plan editor.`,
+    );
+  }
 }
 
 export function errorResult(text: string): CallToolResult {

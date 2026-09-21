@@ -94,7 +94,9 @@ async function writeActivities(
   let duplicates = 0;
   let withDescent = 0;
   for (let i = 0; i < rows.length; i += 100) {
-    const chunk = rows.slice(i, i + 100).map((r) => ({ ...r, user_id: userId }));
+    const chunk = rows
+      .slice(i, i + 100)
+      .map((r) => ({ ...r, user_id: userId }));
     const { data, error } = await db
       .from("activities")
       .upsert(chunk, {
@@ -124,7 +126,7 @@ async function runProvider(
 ): Promise<ProviderResult> {
   const { data: cred, error } = await db
     .from("integration_credentials")
-    .select("secret, enabled, external_id")
+    .select("secret_enc, enabled, external_id")
     .eq("user_id", userId)
     .eq("provider", provider)
     .maybeSingle();
@@ -132,14 +134,20 @@ async function runProvider(
   if (!cred) return { provider, status: "not_connected" };
   if (!cred.enabled) return { provider, status: "disabled" };
 
+  const { data: decrypted, error: decErr } = await db.rpc(
+    "decrypt_integration_secret",
+    { ciphertext: cred.secret_enc },
+  );
+  if (decErr) throw new Error(`credentials decrypt: ${decErr.message}`);
   const secret = {
-    ...(cred.secret as Record<string, unknown>),
+    ...(decrypted as Record<string, unknown>),
     ...(cred.external_id ? { athlete_id: cred.external_id } : {}),
   };
   try {
-    const fetched = provider === "intervals_icu"
-      ? await fetchIntervals(secret, { since, limit: PAGE_LIMIT })
-      : await fetchStrava(secret, { since, limit: PAGE_LIMIT });
+    const fetched =
+      provider === "intervals_icu"
+        ? await fetchIntervals(secret, { since, limit: PAGE_LIMIT })
+        : await fetchStrava(secret, { since, limit: PAGE_LIMIT });
     const w = await writeActivities(db, userId, fetched.activities);
     await db
       .from("integration_credentials")
@@ -195,9 +203,10 @@ Deno.serve(async (req: Request) => {
   let since: Date;
   if (mode === "backfill") {
     const asked = typeof body.since === "string" ? new Date(body.since) : null;
-    since = asked && !Number.isNaN(asked.getTime())
-      ? asked
-      : new Date(Date.now() - BACKFILL_DEFAULT_DAYS * 86_400_000);
+    since =
+      asked && !Number.isNaN(asked.getTime())
+        ? asked
+        : new Date(Date.now() - BACKFILL_DEFAULT_DAYS * 86_400_000);
   } else {
     const { data } = await db
       .from("activities")
@@ -206,7 +215,9 @@ Deno.serve(async (req: Request) => {
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const newest = data?.started_at ? new Date(data.started_at as string) : null;
+    const newest = data?.started_at
+      ? new Date(data.started_at as string)
+      : null;
     since = newest
       ? new Date(newest.getTime() - OVERLAP_MS)
       : new Date(Date.now() - BACKFILL_DEFAULT_DAYS * 86_400_000);
@@ -249,8 +260,7 @@ Deno.serve(async (req: Request) => {
       mode,
       connected: [],
       inserted: 0,
-      note:
-        "No endurance source is connected. Add a row to integration_credentials to connect one.",
+      note: "No endurance source is connected. Add a row to integration_credentials to connect one.",
       results,
     });
   }

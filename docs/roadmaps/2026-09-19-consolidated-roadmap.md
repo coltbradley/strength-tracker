@@ -6,15 +6,24 @@
 The release ledger exists and is CI-checked. Re-verification closed A-26,
 A-96, A-97, A-105, and A-119 with tests.
 
-**Next: Phase 1 — Make release and identity safety real.** Write a small
-implementation plan for one of its two slices before coding. Do not start
-Phases 2–6, endurance E2+, or a 209-ticket audit programme until Phase 1's
-exit gate passes.
+**Phase 1 Slices 1 and 2** are implemented on branch `docs/phase-1-plans`
+(not merged). Slice 1 is admission and tenant-safety. Slice 2 is the
+release contract: PWA env checker, fail-not-skip backend deploy, Pages
+smoke receipt, MCP `/health` readiness, rollback/sweep runbook. **A-02**
+still needs live proof: set production `COACH_ALLOWED_USERS`. Unset is
+fail-closed in code (503). **A-134** stays `open` (GitHub Actions CI
+billing; deploy must not wait). **A-137/A-138** need live sweep queries.
+**A-135** production proof is the next `deploy` job log's `receipt sha=`
+line.
 
-**Still on Colt (Phase 0 operational leftover):** set production
-`COACH_ALLOWED_USERS` to the intended fallback UUID. Until that secret is
-set, A-02 stays `needs live proof`. Unset still admits everyone in code;
-Phase 1 A-02 fail-closes that.
+**Next:** merge this branch when ready. Do not start Phases 2–6, endurance
+E2+, or a 209-ticket audit programme until Phase 1's exit gate passes.
+GitHub Actions CI is billed-out; do not wait on it.
+
+- Slice 1 spec: `docs/superpowers/specs/2026-09-21-phase-1-admission-design.md`
+- Slice 1 plan: `docs/superpowers/plans/2026-09-21-phase-1-admission-tenant.md`
+- Slice 2 spec: `docs/superpowers/specs/2026-09-21-phase-1-release-contract-design.md`
+- Slice 2 plan: `docs/superpowers/plans/2026-09-21-phase-1-release-contract.md`
 
 **Also shipped outside phase order:** M-01 `update_memory` is on `main`
 (`3cc8159`). Close the feedback row only after the next MCP deploy and the
@@ -188,7 +197,7 @@ access settings, beta invitations, and release acceptance.
 - Re-run every audit item touched by the post-audit merge. Start with A-94,
   A-105, and A-119, because their cited missing flows now have merged code.
   Mark each item `open`, `fixed with test`, `needs live proof`, or `not
-  reproducible`; never silently remove it.
+reproducible`; never silently remove it.
 - Create one release ledger with finding ID, boundary, owner, regression test,
   production proof, rollback, and state. It replaces status claims scattered
   across `docs/plan.md`, old implementation plans, and the audit.
@@ -201,13 +210,18 @@ and the coach cannot spend money for an unapproved account.
 
 ### Phase 1: Make release and identity safety real
 
-**State:** Next. Write an implementation plan for one slice before coding.
+**State:** Slices 1 and 2 implemented on `docs/phase-1-plans` (not merged);
+see `release-ledger.md` (A-02, A-137, A-138 still `needs live proof`; A-134
+stays `open`).
 
 **Starts after:** Phase 0's ledger and coach boundary are complete.
 
 **Owner:** Engineering; Colt accepts the access and deployment policy.
 
-Build this as two independently releasable slices.
+Build this as two independently releasable slices. Locked 2026-09-21:
+unset `COACH_ALLOWED_USERS` is 503; the in-app coach cannot confirm
+(`expires_at IS NOT NULL`); parent ownership is composite FKs; GitHub
+Actions CI is billed-out, so deploy must not wait on CI.
 
 1. **Admission and tenant boundaries:** repair and test tunnel readiness
    (A-01), fail-closed coach admission and an atomic quota reservation (A-02,
@@ -215,11 +229,17 @@ Build this as two independently releasable slices.
    endpoint SSRF controls (A-69), credential handling (A-149, A-159), and
    prompt-injection boundaries around write-capable coaching (A-150 to A-152).
    Use direct cross-user and malformed-input tests, not only unit tests.
-2. **A real release contract:** make CI a prerequisite for deployment; fail a
-   PWA deployment when required Supabase settings or a required backend deploy
-   is missing; add a release manifest that binds commit, migrations, function
-   versions, and PWA build; add deployed auth/MCP/PWA smoke checks; document a
-   tested rollback decision. This addresses A-24 to A-26 and A-134 to A-138.
+   Spec: `docs/superpowers/specs/2026-09-21-phase-1-admission-design.md`.
+   Plan: `docs/superpowers/plans/2026-09-21-phase-1-admission-tenant.md`.
+2. **A real release contract:** fail a PWA deployment when required
+   Supabase settings are invalid; fail (not skip-success) a required
+   backend deploy when `supabase/` changed and secrets are missing; smoke
+   the published PWA and MCP `/health`; document Pages revert and
+   forward-only migrations. Do **not** wait on `ci.yml` while Actions
+   billing keeps CI red. A-26 is already fixed. A-134 stays open
+   (deferred, not a fifth ledger state). Spec:
+   `docs/superpowers/specs/2026-09-21-phase-1-release-contract-design.md`.
+   Plan: `docs/superpowers/plans/2026-09-21-phase-1-release-contract.md`.
 
 **Exit gate:** a deliberately broken PWA/backend build cannot publish, a
 missing configuration fails visibly, a deployed release has its own smoke
