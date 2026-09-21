@@ -113,6 +113,11 @@ export function createRelayServer({ upstreamUrl, token, logger = () => {}, fetch
       return textResponse(response, 403, "forbidden");
     }
     if (path !== "/mcp") return textResponse(response, 404, "not found");
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, { allow: "POST" });
+      response.end();
+      return;
+    }
     if (request.method !== "POST") {
       return textResponse(response, 405, "method not allowed", { allow: "POST" });
     }
