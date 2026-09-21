@@ -176,7 +176,12 @@ jobs:
         run: |
           set -euo pipefail
           pages_url="${PAGES_URL:-https://coltbradley.github.io/strength-tracker/}"
-          pages_code=$(curl -sS -o /tmp/pages-body -w '%{http_code}' "$pages_url")
+          pages_code=000
+          for attempt in 1 2 3 4 5; do
+            pages_code=$(curl -sS --max-time 30 -o /tmp/pages-body -w '%{http_code}' "$pages_url")
+            [ "$pages_code" = "200" ] && break
+            [ "$attempt" -lt 5 ] && sleep 3
+          done
           echo "pages_http=$pages_code"
           if [ "$pages_code" != "200" ]; then
             echo "::error::Pages smoke failed ($pages_code)"
@@ -185,7 +190,7 @@ jobs:
           mcp_code=skipped
           if [ -n "${SUPABASE_PROJECT_REF:-}" ]; then
             mcp_url="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/mcp-server/health"
-            mcp_code=$(curl -sS -o /tmp/mcp-health -w '%{http_code}' "$mcp_url")
+            mcp_code=$(curl -sS --max-time 30 -o /tmp/mcp-health -w '%{http_code}' "$mcp_url")
             echo "mcp_http=$mcp_code"
             if [ "$mcp_code" != "200" ]; then
               echo "::error::MCP /health smoke failed ($mcp_code)"

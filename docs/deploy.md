@@ -5,8 +5,10 @@
 Pushing to `main` deploys. The three CI settings landed on 2026-09-12, so
 `deploy.yml` now runs `supabase db push`, deploys all four functions, and only
 then publishes Pages. Check a release with `gh run list` and the
-`migrations + edge functions` job log: it should say "Remote database is up to
-date" or list what it applied, and must not print "Supabase deploy skipped".
+`migrations + edge functions` job log: when credentials are set it should say
+"Remote database is up to date" or list what it applied. A `supabase/` push
+without all three credentials fails at the gate step — it does not skip with
+success.
 
 Live as of that check: migrations match local through `20260907060000`;
 `mcp-server` v26, `coach` v15, `push-alerts` v5, `endurance-sync` v3 all
@@ -205,7 +207,9 @@ cd supabase/functions/endurance-sync && deno check index.ts && deno test normali
 cd pwa && npm run build && npm test -- --run && cd -
 ```
 
-CI runs the same jobs on push; running them first just saves a round trip.
+GitHub Actions CI does not currently run on this repo (billing); run these
+locally before merge. `node scripts/validate-db.mjs` replays migrations in
+PGlite — that gate is local, not a green CI job on push.
 
 Note `npm run build`, not `tsc --noEmit`. `pwa/tsconfig.json` is a solution
 file (`files: []` plus references), so `tsc --noEmit` resolves zero files,
@@ -553,8 +557,10 @@ update for a build that did not change.
 
 What this trades away: a migration goes to production with no human between
 the merge and the database. That is acceptable here for three specific
-reasons, none of which is "it will probably be fine". CI has already run the
-whole migration chain in PGlite before anything reaches main; migrations are
+reasons, none of which is "it will probably be fine". Operators should run
+`node scripts/validate-db.mjs` locally before merge (PGlite replays the
+migration chain); that is not GitHub Actions CI, which does not run here.
+Migrations are
 append-only by rule, so there is no destructive statement to fire; and
 `db push` applies only what the remote has not seen, so a re-run changes
 nothing. What is bought is that the failure mode this project has hit twice

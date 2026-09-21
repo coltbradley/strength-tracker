@@ -17,10 +17,14 @@ test("deploy does not wait on CI", async () => {
 test("a supabase-path push with missing secrets fails the supabase job", async () => {
   const text = await yaml();
   assert.match(text, /if: needs\.changes\.outputs\.supabase == 'true'/);
-  assert.match(text, /exit 1/);
-  assert.equal(text.includes('echo "on=false"'), true);
+  const gateStart = text.indexOf("- id: gate");
+  const smokeStart = text.indexOf("- name: smoke");
+  assert.ok(gateStart >= 0 && smokeStart > gateStart, "gate step must precede smoke");
+  const gateSlice = text.slice(gateStart, smokeStart);
+  assert.equal(gateSlice.includes('echo "on=false"'), true);
+  assert.match(gateSlice, /exit 1/);
   assert.equal(
-    /on=false[\s\S]*exit 0/.test(text),
+    /on=false[\s\S]*exit 0/.test(gateSlice),
     false,
     "missing secrets must not skip-success",
   );
