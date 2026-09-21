@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createTimeoutFetch } from "./timeoutFetch";
+import { assertProductionSupabaseEnv } from "./supabaseEnv";
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -9,6 +10,8 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 // The dynamic import lives behind a build-time constant, so the mock and its
 // fixtures are dead-code-eliminated from the production bundle.
 const demoMode = import.meta.env.VITE_DEMO === "1";
+
+assertProductionSupabaseEnv(url, anonKey, import.meta.env.PROD, demoMode);
 
 export const supabaseConfigured = demoMode || Boolean(url && anonKey);
 
