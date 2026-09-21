@@ -734,7 +734,7 @@ npm --prefix scripts install && node scripts/validate-db.mjs
 
 # every column any code SELECTs must exist against that same schema
 node scripts/check-selects.mjs
-node --test scripts/release-ledger.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/check-pwa-env.test.mjs
 node scripts/check-release-ledger.mjs
 
 # mcp server: serve locally
@@ -762,7 +762,7 @@ node scripts/build-exercise-seed.mjs
 npm --prefix scripts ci
 node scripts/validate-db.mjs
 node scripts/check-selects.mjs
-node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs scripts/check-pwa-env.test.mjs
 node scripts/check-release-ledger.mjs
 
 # edge functions (Deno — install via denoland/setup-deno or the Deno CLI)
