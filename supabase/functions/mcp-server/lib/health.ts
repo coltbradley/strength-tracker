@@ -18,7 +18,7 @@ export async function defaultHealthPing(): Promise<void> {
   const client = getClient();
   const { error } = await client
     .from("mcp_tokens")
-    .select("id", { head: true, count: "exact" })
+    .select("token_sha256", { head: true, count: "exact" })
     .limit(1);
   if (error) throw new Error("token store unreachable");
 }
