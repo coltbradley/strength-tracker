@@ -59,4 +59,13 @@ end;
 $$;
 
 revoke all on function reserve_coach_turn(uuid, uuid, int, numeric) from public, authenticated;
-grant execute on function reserve_coach_turn(uuid, uuid, int, numeric) to service_role;
+
+-- PGlite replay paths (check-selects, validate-db without the role shim) have no
+-- service_role; Supabase always does. Guard so one migration body works everywhere.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function reserve_coach_turn(uuid, uuid, int, numeric) to service_role;
+  end if;
+end
+$$;
