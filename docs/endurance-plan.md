@@ -1,5 +1,10 @@
 # Endurance layer: build plan
 
+> Deferred product reference. The active roadmap
+> ([2026-09-19-consolidated-roadmap.md](roadmaps/2026-09-19-consolidated-roadmap.md))
+> does not authorize endurance product work until Phase 5. E0/E1 schema and
+> sync already shipped; do not start E2 from this file.
+
 The strength log grows an endurance half and a planning engine above both. The
 evidence base is [endurance-research.md](endurance-research.md); every rule
 referenced by a phase below is tagged and cited there. The build itself, with

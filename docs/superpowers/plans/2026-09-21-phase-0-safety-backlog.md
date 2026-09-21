@@ -2,7 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Tasks 1–4 implemented on `phase-0-safety-backlog`. Exit gate still needs Colt to set `COACH_ALLOWED_USERS` in production (A-02 `needs live proof`).
+**Status:** Merged to `main` as PR #8 (`c25e3ad`, 2026-09-21). Engineering
+tasks 1–4 are done. Remaining: Colt sets production `COACH_ALLOWED_USERS` so
+A-02 can move past `needs live proof`. Phase 1 owns fail-closed allowlist
+code. Do not resume this plan.
 
 **Goal:** Make Phase 0's exit gate true: a reviewer can see every stop-release item's state in one ledger, and the in-app coach cannot spend money for an unapproved account.
 

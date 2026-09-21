@@ -3083,3 +3083,6 @@ so it can be tested. Unset `COACH_ALLOWED_USERS` still means everyone in
 code; Phase 1 A-02 fail-closes that. Production must set the secret to the
 intended fallback UUID. The door is operational in Phase 0, not a code
 change that would lock the owner out on a deploy that forgot the secret.
+
+Merged to `main` as PR #8 (`c25e3ad`, 2026-09-21). A-02 remains
+`needs live proof` until the production secret is set.

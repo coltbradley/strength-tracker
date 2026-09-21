@@ -77,7 +77,11 @@ node scripts/validate-db.mjs           # runs migrations+seed+fixtures in PGlite
 - [docs/decisions.md](docs/decisions.md): every deviation and why
 - [docs/security.md](docs/security.md): threat model, what's secret, why
   service-role-behind-a-bearer is acceptable here
-- [docs/plan.md](docs/plan.md): build status
+- [docs/plan.md](docs/plan.md): historical build log (not the current plan)
+- [docs/roadmaps/2026-09-19-consolidated-roadmap.md](docs/roadmaps/2026-09-19-consolidated-roadmap.md):
+  active product and release roadmap. Phase 0 merged; Phase 1 is next.
+- [docs/roadmaps/release-ledger.md](docs/roadmaps/release-ledger.md):
+  stop-release finding status
 
 ## License
 

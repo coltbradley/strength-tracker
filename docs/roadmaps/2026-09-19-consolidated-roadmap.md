@@ -1,5 +1,25 @@
 # Consolidated roadmap, 2026-09-19
 
+## Current status (2026-09-21)
+
+**Phase 0 is merged.** Engineering landed on `main` as PR #8 (`c25e3ad`).
+The release ledger exists and is CI-checked. Re-verification closed A-26,
+A-96, A-97, A-105, and A-119 with tests.
+
+**Next: Phase 1 — Make release and identity safety real.** Write a small
+implementation plan for one of its two slices before coding. Do not start
+Phases 2–6, endurance E2+, or a 209-ticket audit programme until Phase 1's
+exit gate passes.
+
+**Still on Colt (Phase 0 operational leftover):** set production
+`COACH_ALLOWED_USERS` to the intended fallback UUID. Until that secret is
+set, A-02 stays `needs live proof`. Unset still admits everyone in code;
+Phase 1 A-02 fail-closes that.
+
+**Also shipped outside phase order:** M-01 `update_memory` is on `main`
+(`3cc8159`). Close the feedback row only after the next MCP deploy and the
+athlete accepts the outcome.
+
 ## Plan authority
 
 This is the one active product and release roadmap. Follow its phases in
@@ -113,21 +133,21 @@ athlete has not yet accepted its outcome; it is not evidence that the capability
 is absent. Re-check current code before scheduling work, and leave a feedback
 row open until the athlete says the outcome is acceptable.
 
-| Live request                                                   | Roadmap disposition                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Edit or delete standing memories                               | **M-01, immediate maintenance slice.** `forget` remains the explicit permanent-delete action; add owner-scoped `update_memory` for correcting a current fact in place. This is an exception to phase order because stale equipment, injury, or schedule facts can distort every future recommendation, and coach memory is deliberately editable rather than append-only. Test its owner scope and changed-row readback before the next MCP deploy. |
-| Change a planned-workout date                                  | Already implemented by `update_planned_workout` with `scheduled_date`. Re-verify through the affected athlete's MCP client before resolving the request; do not build a second scheduling path.                                                                                                                                                                                                                                                     |
-| Automated block-level training review                          | **Phase 4 candidate.** Start only from real beta use. The review must name its input window, missing data, skipped movements, notes, RPE coverage, and uncertainty, then propose rather than apply a next block.                                                                                                                                                                                                                                    |
-| Fatigue-cost and eccentric-load metadata                       | **Phase 4 candidate, only as qualitative context.** Keep coach-curated labels such as local/systemic/eccentric cost; never present a physiological recovery calculation or readiness score.                                                                                                                                                                                                                                                         |
-| Exercise role and training-purpose metadata                    | **Phase 4 candidate.** Model a small controlled role vocabulary only when it enables a visible plan or review decision, such as what workload can move or be trimmed.                                                                                                                                                                                                                                                                               |
-| Progression beyond estimated 1RM                               | **Phase 4 candidate.** Extend the review evidence model to rep capacity, timed work, unilateral benchmarks, and explicitly defined athlete metrics. Do not turn all movements into a false e1RM comparison.                                                                                                                                                                                                                                         |
-| Training-objective priority hierarchy                          | **Phase 4 candidate.** Make primary, secondary, and development priorities explicit before the planner uses them to trade work across a week.                                                                                                                                                                                                                                                                                                       |
-| Cross-modality weekly-load dashboard                           | **Phase 5.** Requires a trusted endurance source. Show transparent components, including mileage, elevation, key/long runs, strength work, session RPE, and recovery notes; no single load or readiness score.                                                                                                                                                                                                                                      |
-| Protected external coach plan with an assistant strength layer | **Phase 5.** Import the running coach's plan as a read-only, provenance-carrying source. The assistant may draft or rearrange strength around it, but never silently alter the protected source.                                                                                                                                                                                                                                                    |
-| Running-load context and endurance integration                 | **Phase 5.** A personal Intervals.icu connection is the preferred first source, but only after the operational foundation below: consented connect/revoke, encrypted server-side credential handling, pagination, correction reconciliation, scheduled sync with visible failure, and an empty source treated as UNKNOWN.                                                                                                                           |
+| Live request                                                   | Roadmap disposition                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Edit or delete standing memories                               | **Shipped on `main` (`3cc8159`, M-01).** Owner-scoped `update_memory` is in the MCP server with tests; `forget` remains the permanent-delete action. Keep the feedback row open until the next MCP deploy and the athlete accepts the outcome. Does not authorize adjacent product work.                                  |
+| Change a planned-workout date                                  | Already implemented by `update_planned_workout` with `scheduled_date`. Re-verify through the affected athlete's MCP client before resolving the request; do not build a second scheduling path.                                                                                                                           |
+| Automated block-level training review                          | **Phase 4 candidate.** Start only from real beta use. The review must name its input window, missing data, skipped movements, notes, RPE coverage, and uncertainty, then propose rather than apply a next block.                                                                                                          |
+| Fatigue-cost and eccentric-load metadata                       | **Phase 4 candidate, only as qualitative context.** Keep coach-curated labels such as local/systemic/eccentric cost; never present a physiological recovery calculation or readiness score.                                                                                                                               |
+| Exercise role and training-purpose metadata                    | **Phase 4 candidate.** Model a small controlled role vocabulary only when it enables a visible plan or review decision, such as what workload can move or be trimmed.                                                                                                                                                     |
+| Progression beyond estimated 1RM                               | **Phase 4 candidate.** Extend the review evidence model to rep capacity, timed work, unilateral benchmarks, and explicitly defined athlete metrics. Do not turn all movements into a false e1RM comparison.                                                                                                               |
+| Training-objective priority hierarchy                          | **Phase 4 candidate.** Make primary, secondary, and development priorities explicit before the planner uses them to trade work across a week.                                                                                                                                                                             |
+| Cross-modality weekly-load dashboard                           | **Phase 5.** Requires a trusted endurance source. Show transparent components, including mileage, elevation, key/long runs, strength work, session RPE, and recovery notes; no single load or readiness score.                                                                                                            |
+| Protected external coach plan with an assistant strength layer | **Phase 5.** Import the running coach's plan as a read-only, provenance-carrying source. The assistant may draft or rearrange strength around it, but never silently alter the protected source.                                                                                                                          |
+| Running-load context and endurance integration                 | **Phase 5.** A personal Intervals.icu connection is the preferred first source, but only after the operational foundation below: consented connect/revoke, encrypted server-side credential handling, pagination, correction reconciliation, scheduled sync with visible failure, and an empty source treated as UNKNOWN. |
 
-M-01 does not authorize adjacent product work or an automatic feedback cleanup.
-All other rows retain the phase gates below.
+M-01 shipped on `main` and still does not authorize adjacent product work or
+an automatic feedback cleanup. All other rows retain the phase gates below.
 
 ## Interim endurance-context contract
 
@@ -153,7 +173,10 @@ access settings, beta invitations, and release acceptance.
 
 ### Phase 0: Establish a truthful safety backlog
 
-**State:** Plan at docs/superpowers/plans/2026-09-21-phase-0-safety-backlog.md. Ledger at docs/roadmaps/release-ledger.md.
+**State:** Complete on `main` (PR #8, 2026-09-21). Plan at
+`docs/superpowers/plans/2026-09-21-phase-0-safety-backlog.md`. Ledger at
+`docs/roadmaps/release-ledger.md`. Remaining operational: A-02 still
+`needs live proof` until production `COACH_ALLOWED_USERS` is set.
 
 **Owner:** Colt for settings and acceptance; Engineering for evidence.
 
@@ -178,6 +201,8 @@ and the coach cannot spend money for an unapproved account.
 
 ### Phase 1: Make release and identity safety real
 
+**State:** Next. Write an implementation plan for one slice before coding.
+
 **Starts after:** Phase 0's ledger and coach boundary are complete.
 
 **Owner:** Engineering; Colt accepts the access and deployment policy.
@@ -201,6 +226,8 @@ missing configuration fails visibly, a deployed release has its own smoke
 receipt, and the access/tenant tests reject every adversarial fixture.
 
 ### Phase 2: Prove the training record survives real use
+
+**State:** Not started. Blocked on Phase 1.
 
 **Starts after:** Phase 1's deployment and tenant-boundary gates pass.
 
@@ -237,6 +264,8 @@ readback pass.
 
 ### Phase 3: Start the small friend beta
 
+**State:** Not started. Blocked on Phase 2.
+
 **Starts after:** Phase 2's phone, browser, and live-readback gate passes.
 
 Colt provisions three to five friend accounts. Each athlete immediately picks
@@ -255,6 +284,8 @@ to keep inviting friends, pause for a repair, or move on to the feedback-driven
 improvements in Phase 4.
 
 ### Phase 4: Make the private lifter's plan legible
+
+**State:** Not started. Blocked on real beta use from Phase 3.
 
 **Starts after:** Phase 3 has generated real usage or a clear feedback-backed
 need. Do not build this merely because it appears next on a list.
@@ -291,6 +322,8 @@ athlete can see the current phase; a proposal names its inputs, uncertainty,
 expiry, and confirm/override outcome.
 
 ### Phase 5: Make endurance a product only after the core is trusted
+
+**State:** Not started. E0/E1 schema already deployed; product work waits.
 
 **Starts after:** strength logging is trusted in the friend beta and the
 operational failures below have an owner and evidence plan.
@@ -330,6 +363,8 @@ the imported plan remains protected and retains its source and sync provenance.
 capacity, and strength logging remains operational with the integration down.
 
 ### Phase 6: Measured scale and recovery
+
+**State:** Not started. Blocked on a measured bottleneck or recovery need.
 
 **Starts after:** a measured bottleneck or recovery requirement appears.
 

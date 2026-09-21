@@ -3,6 +3,9 @@
 Single-user strength log with a Claude programming layer. The coach programs,
 Claude parses and analyzes, the app captures. Full technical direction is in
 [spec.md](spec.md); deviations are logged in [decisions.md](decisions.md).
+What to build next is
+[roadmaps/2026-09-19-consolidated-roadmap.md](roadmaps/2026-09-19-consolidated-roadmap.md)
+(Phase 0 merged; Phase 1 is next).
 
 ```
 Coach screenshot ──► Claude Desktop ──► mcp-remote (local, static bearer)

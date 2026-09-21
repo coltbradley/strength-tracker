@@ -3,6 +3,9 @@
 Status source of truth for stop-release and Phase 0 re-verification items.
 Do not scatter status in `docs/plan.md` or old implementation plans.
 
+Phase 0 engineering merged 2026-09-21 (PR #8). Open rows below are Phase 1+
+work except A-02, which is waiting on production secret proof.
+
 States: `open` · `fixed with test` · `needs live proof` · `not reproducible`.
 A finding is not closed because the audit is old. Close only with a regression
 test and the evidence layer the roadmap names.

@@ -23,13 +23,17 @@ programs. Claude parses, analyzes, and proposes. The app captures.
   (Deno, streamable HTTP). Tools in `tools/`, shared code in `lib/`.
 - `pwa/`: React + Vite PWA. Offline-first, IndexedDB write queue.
 - `scripts/`: seed generation and dev utilities (Node).
-- `docs/`: plan, architecture, decisions, setup, deploy. `docs/decisions.md`
-  is the log of every deviation from the original spec and why.
-  `docs/deploy.md` is the per-release runbook — follow it instead of
+- `docs/`: plan, architecture, decisions, setup, deploy. The active product
+  and release roadmap is `docs/roadmaps/2026-09-19-consolidated-roadmap.md`;
+  stop-release status is `docs/roadmaps/release-ledger.md`. `docs/plan.md` is
+  a historical build log — do not follow its "What's left" list.
+  `docs/decisions.md` is the log of every deviation from the original spec
+  and why. `docs/deploy.md` is the per-release runbook — follow it instead of
   rediscovering the deploy steps. `docs/endurance-research.md` is the evidence
   base for the endurance layer, including the list of metrics this system
-  refuses to compute and why; `docs/endurance-plan.md` is its phased build plan,
-  whose every gate re-checks that the strength app still works untouched.
+  refuses to compute and why; `docs/endurance-plan.md` is its phased build
+  plan, deferred until Phase 5 of the active roadmap. Every endurance gate
+  re-checks that the strength app still works untouched.
 
 ## Hard rules
 

@@ -1,5 +1,10 @@
 # Endurance layer: implementation spec, E0 to E9
 
+> Deferred product reference. The active roadmap
+> ([../../roadmaps/2026-09-19-consolidated-roadmap.md](../../roadmaps/2026-09-19-consolidated-roadmap.md))
+> does not authorize endurance product work until Phase 5. E0/E1 already
+> shipped; do not start E2 from this file.
+
 The design is [../../endurance-plan.md](../../endurance-plan.md); the evidence
 is [../../endurance-research.md](../../endurance-research.md). This file is the
 build: assigned migration numbers, file ownership, exact table shapes, and the

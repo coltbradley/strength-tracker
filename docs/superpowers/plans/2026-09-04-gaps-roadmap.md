@@ -1,5 +1,10 @@
 # Gaps roadmap, September 2026
 
+> Historical scoped plan. Do not execute. The active roadmap is
+> [`docs/roadmaps/2026-09-19-consolidated-roadmap.md`](../../roadmaps/2026-09-19-consolidated-roadmap.md).
+> Its Phase 0 (safety ledger) already merged; Phase 1 is next. The "Phase 0"
+> in this file is a different, older sequence.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Tasks here are sized as one PR each; expand a task into write-failing-test / run / implement / run / commit steps at execution time using the file map and interfaces given. Every task ends with the preflight in "Global constraints".
 
 **Goal:** Close the gaps found in the 2026-09-04 audit (production data, Sentry, four code audits, market research) so the app is something a coached lifter opens every session and a coach trusts as the record.

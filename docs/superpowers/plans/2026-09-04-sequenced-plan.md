@@ -1,5 +1,9 @@
 # The plan of record, September 2026
 
+> Historical scoped plan. Do not execute. The active roadmap is
+> [`docs/roadmaps/2026-09-19-consolidated-roadmap.md`](../../roadmaps/2026-09-19-consolidated-roadmap.md).
+> Phase 0 of that roadmap merged 2026-09-21; Phase 1 is next.
+
 Decisions made and work sequenced, from the 2026-09-04 audit (production data,
 Sentry, four code audits, market research) and eval run 1.
 

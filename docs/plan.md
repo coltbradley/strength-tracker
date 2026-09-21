@@ -250,6 +250,12 @@ dependency of the strength half.
 
 ## What's left, in order
 
+> Superseded. Current work is Phase 1 of
+> [`docs/roadmaps/2026-09-19-consolidated-roadmap.md`](roadmaps/2026-09-19-consolidated-roadmap.md).
+> Phase 0 of that roadmap merged 2026-09-21 (PR #8). The numbered list
+> below is a historical operator checklist from before that roadmap; do
+> not treat item 7 (E2) as next.
+
 1. Use focus mode and the check-in on a real workout: a barbell ramp, a
    dumbbell pair, a superset round, a bodyweight movement, and correcting a
    set from the ••• sheet. Then write a check-in with a note and confirm a
