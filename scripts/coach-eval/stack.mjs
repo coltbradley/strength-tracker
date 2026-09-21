@@ -114,6 +114,9 @@ export async function createDb() {
 
 export async function startStack({ ownerId, log = () => {} }) {
   const db = await createDb();
+  await db.exec(`
+    insert into auth.users (id, email) values ('${ownerId}', 'valentine@example.test') on conflict do nothing;
+  `);
   const { token: mcpToken, digest: mcpDigest } = mintMcpToken();
   await db.exec(`
     insert into mcp_tokens (token_sha256, user_id, label)
