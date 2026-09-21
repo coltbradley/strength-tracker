@@ -193,7 +193,7 @@ access settings, beta invitations, and release acceptance.
 - Re-run every audit item touched by the post-audit merge. Start with A-94,
   A-105, and A-119, because their cited missing flows now have merged code.
   Mark each item `open`, `fixed with test`, `needs live proof`, or `not
-  reproducible`; never silently remove it.
+reproducible`; never silently remove it.
 - Create one release ledger with finding ID, boundary, owner, regression test,
   production proof, rollback, and state. It replaces status claims scattered
   across `docs/plan.md`, old implementation plans, and the audit.
@@ -206,8 +206,8 @@ and the coach cannot spend money for an unapproved account.
 
 ### Phase 1: Make release and identity safety real
 
-**State:** Plans written. Implement Slice 1 first, then Slice 2. Product
-code has not started.
+**State:** Slice 1 admission merged; see `release-ledger.md` (A-02 still
+`needs live proof`). Implement Slice 2 next.
 
 **Starts after:** Phase 0's ledger and coach boundary are complete.
 
