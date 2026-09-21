@@ -384,6 +384,15 @@ select kind, fire_at, sent_at, error from rest_alerts
  where sent_at is null and cancelled_at is null order by fire_at;
 ```
 
+### Is the sweep alive?
+
+There is no pager. If prompts stop arriving while the app is closed, run
+the queries above. A missing Vault row (`project_url` or `sweep_secret`)
+means `run_alert_sweep()` does nothing and raises a notice each tick —
+that is success-with-no-work, not a 401 storm. Rest alerts are a different
+path (`POST /schedule`) and are unaffected. In-app prompts on foreground
+keep working even if the cron is gone.
+
 A healthy tick returns 200 with a JSON body counting `sent`, `stale` and
 `failed`. A 401 means the Vault `sweep_secret` and the function's
 `SWEEP_SECRET` do not match. A 503 means `SWEEP_SECRET` is unset on the
@@ -523,9 +532,10 @@ data survives updates (IndexedDB is untouched).
 
 `deploy.yml` can push migrations and deploy both edge functions itself, in
 front of the Pages publish, so the client can never ship ahead of its schema.
-It does so only when three repository settings exist; without them it prints a
-notice and skips, and everything above stays by hand. All three have been set
-since 2026-09-12.
+It requires three repository settings. A push that touches `supabase/` without
+all three fails the supabase job and Pages does not publish. A push touching
+only `pwa/` still skips the Supabase job and publishes straight away. All three
+have been set since 2026-09-12.
 
 | Setting                 | Kind     | Where it comes from                                                                                                                    |
 | ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -571,7 +581,10 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
 ## Post-deploy smoke test (2 min)
 
 1. `curl https://<PROJECT_REF>.supabase.co/functions/v1/mcp-server/health`
-   — `{"status":"ok",...}` with no credential.
+   — HTTP **200** and `{"status":"ok",...}` only when the function's
+   `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set and the token store
+   (`mcp_tokens`) is reachable; otherwise **503** with `"status":"unavailable"`.
+   No credential on the request.
 2. Open the PWA, pull up Today — the week should load.
 3. Ask Claude (MCP) to `search_exercises` for "pendulum" — curated rows
    should appear after a seed deploy.
@@ -579,16 +592,30 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
 5. After a migration touching auth or ownership: confirm each person still
    sees their own log and none of anyone else's.
 
+## Rollback
+
+- **PWA:** revert the `gh-pages` commit, or revert the `main` commit that
+  triggered Pages and re-run `deploy`. Device IndexedDB is untouched either
+  way.
+- **Migrations:** do not roll back. Add a new numbered migration. Applied
+  migrations are append-only; a database undo is not a release lever this
+  project has.
+- **Functions:** `supabase functions deploy <name>` from the previous
+  known-good SHA (`mcp-server`, `coach`, `push-alerts`, `endurance-sync`).
+  `mcp-server` stays `--no-verify-jwt`.
+
 ## Known snags (learned the hard way)
 
 - A commit is not a deploy, and the two halves go out separately UNLESS the
-  three settings in "Automating the Supabase half" exist. Without them the PWA
-  ships from a Pages build on push while a migration needs `supabase db push`
-  and each edge function needs its own `supabase functions deploy` —
-  each function is its own deploy. Shipping PWA code that
-  reads or writes a column whose migration has not been pushed yet fails every
-  such read or write until someone runs it — that has happened once already,
-  with `prescriptions.set_type`. Push the migration FIRST, then the code that
+  three settings in "Automating the Supabase half" exist. Without them, a
+  `pwa/`-only push still publishes Pages, but any push that touches
+  `supabase/` fails the workflow and Pages does not publish for that run —
+  migrations and functions still need `supabase db push` and each
+  `supabase functions deploy` by hand until the settings exist. Each function
+  is its own deploy. Shipping PWA code that reads or writes a column whose
+  migration has not been pushed yet fails every such read or write until
+  someone runs it — that has happened once already, with
+  `prescriptions.set_type`. Push the migration FIRST, then the code that
   depends on it: the schema tolerates a column nothing writes, the app does
   not tolerate a column that is not there. With the settings in place the
   workflow enforces that order for you, which is the whole reason it exists.
