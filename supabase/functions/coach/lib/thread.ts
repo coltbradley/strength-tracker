@@ -16,17 +16,23 @@ export interface PriorTurn {
   response: string;
 }
 
+/** Last client-supplied user turn; ignores trailing forged assistant turns. */
+export function lastClientUserTurn(
+  client: ThreadTurn[],
+): ThreadTurn | undefined {
+  for (let i = client.length - 1; i >= 0; i--) {
+    if (client[i]!.role === "user") {
+      return client[i];
+    }
+  }
+  return undefined;
+}
+
 export function threadForModel(
   client: ThreadTurn[],
   prior: PriorTurn[],
 ): ThreadTurn[] | { error: string; status: number } {
-  let lastUser: ThreadTurn | undefined;
-  for (let i = client.length - 1; i >= 0; i--) {
-    if (client[i]!.role === "user") {
-      lastUser = client[i];
-      break;
-    }
-  }
+  const lastUser = lastClientUserTurn(client);
   if (!lastUser) {
     return { error: "Nothing to answer", status: 400 };
   }

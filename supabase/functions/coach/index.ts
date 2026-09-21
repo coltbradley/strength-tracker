@@ -54,7 +54,7 @@ import {
   type NoteRow,
 } from "./memory-extract.ts";
 import { coachAdmission, parseAllowlist } from "./lib/allowlist.ts";
-import { threadForModel } from "./lib/thread.ts";
+import { lastClientUserTurn, threadForModel } from "./lib/thread.ts";
 
 // Sonnet 5, at MEDIUM effort. This reverses the move to Opus, which its own
 // comment said was one line to undo, and it moves effort UP one step at the
@@ -541,7 +541,7 @@ async function record(a: {
   startedAt: number;
 }): Promise<void> {
   const logContent = (Deno.env.get("COACH_LOG_CONTENT") ?? "on") !== "off";
-  const last = a.turns[a.turns.length - 1];
+  const last = lastClientUserTurn(a.turns);
   const attachments = (last?.attachments ?? []).map((x) => ({
     kind: x.kind,
     name: x.name,
@@ -1276,10 +1276,7 @@ Deno.serve(async (req) => {
           // checked into a shape, so "the last turn" is not guaranteed to be
           // the lifter's — and an assistant turn is the one thing this pass
           // must never read.
-          userText:
-            turns[turns.length - 1]?.role === "user"
-              ? (turns[turns.length - 1]?.text ?? "")
-              : "",
+          userText: lastClientUserTurn(turns)?.text ?? "",
           turnFailed: failed !== null,
         });
 
