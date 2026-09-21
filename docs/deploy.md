@@ -221,6 +221,12 @@ supabase db push
 Applies only migrations the remote hasn't seen. Never edit an applied
 migration; add a new numbered file.
 
+**Before `db push` of `20260921030000`:** if production already has rows in
+`integration_credentials`, set Vault secret `integration_encryption_key` first
+(a long random string). That migration backfills encrypted `access_token` /
+`refresh_token` values and raises if the key is missing when any row exists.
+An empty table is fine without the secret.
+
 ## Exercise seed changed (supabase/seed/*.sql)
 
 Seeds do NOT run automatically in production — `db push` only applies
@@ -459,8 +465,10 @@ storing conversation text), `COACH_MEMORY_EXTRACT` (`off` stops the post-turn
 memory pass), `SENTRY_DSN`.
 
 The post-turn memory pass reads `coach_usage.kind`, so `20260906050000` has to
-be pushed FIRST. It is the one migration the coach's own quota check depends
-on: without the column `overLimit` fails and every turn answers 503.
+be pushed FIRST. Quota is reserved up front via `reserve_coach_turn` (a
+placeholder row per client `turn_id`); the model runs only after that succeeds,
+and `record()` updates the placeholder in a `finally`. Without that migration
+and RPC, reservation fails and every turn answers 503.
 
 If the round changed `COACH_ALLOWED_USERS`, `COACH_LOG_CONTENT`,
 `COACH_MEMORY_EXTRACT`, `SENTRY_DSN` or the API key, set the secret first and

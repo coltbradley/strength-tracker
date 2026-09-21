@@ -33,6 +33,7 @@
 // the logs are readable by whoever runs the deployment.
 import { createClient } from "@supabase/supabase-js";
 import { isAllowedPushEndpoint } from "./lib/endpoint.ts";
+import { postToPushEndpoint } from "./lib/push-to-endpoint.ts";
 import {
   buildPushRequest,
   generateVapidKeys,
@@ -461,37 +462,24 @@ async function sendAlertNow(
     (
       subs as { id: string; endpoint: string; p256dh: string; auth: string }[]
     ).map(async (sub) => {
-      try {
-        const push = await buildPushRequest({
-          endpoint: sub.endpoint,
-          subscription: { p256dh: sub.p256dh, auth: sub.auth },
-          payload,
-          vapid,
-          subject: VAPID_SUBJECT,
-          ttlSeconds: TTL_SECONDS,
-          // Topic per KIND, so a phone that was offline for a day wakes to
-          // one of each rather than a week of check-in reminders.
-          topic: a.kind.slice(0, 32),
-          // A prompt is not urgent the way a rest is; low urgency lets the
-          // push service batch it and costs the phone less battery.
-          urgency: "normal",
-        });
-        const res = await fetch(push.endpoint, {
-          method: "POST",
-          headers: push.headers,
-          body: push.body,
-          signal: AbortSignal.timeout(8000),
-        });
-        if (res.status === 404 || res.status === 410) {
-          await db
-            .from("push_subscriptions")
-            .update({ revoked_at: new Date().toISOString() })
-            .eq("id", sub.id);
-        }
-        return res.ok;
-      } catch {
-        return false;
+      const sent = await postToPushEndpoint({
+        endpoint: sub.endpoint,
+        subscription: { p256dh: sub.p256dh, auth: sub.auth },
+        payload,
+        vapid,
+        subject: VAPID_SUBJECT,
+        ttlSeconds: TTL_SECONDS,
+        topic: a.kind.slice(0, 32),
+        urgency: "normal",
+      });
+      if (sent.blocked) return false;
+      if (sent.status === 404 || sent.status === 410) {
+        await db
+          .from("push_subscriptions")
+          .update({ revoked_at: new Date().toISOString() })
+          .eq("id", sub.id);
       }
+      return sent.ok;
     }),
   );
   const ok = results.some(Boolean);
@@ -855,43 +843,36 @@ async function deliver(
 
     const results = await Promise.all(
       subs.map(async (s) => {
-        try {
-          const push = await buildPushRequest({
-            endpoint: s.endpoint as string,
-            subscription: {
-              p256dh: s.p256dh as string,
-              auth: s.auth as string,
-            },
-            payload,
-            vapid,
-            subject: VAPID_SUBJECT,
-            ttlSeconds: TTL_SECONDS,
-            // A newer rest alert replaces an older undelivered one at the
-            // push service, so a phone that was offline gets one buzz, not a
-            // backlog.
-            topic: "rest",
-            urgency: "high",
-          });
-          const res = await fetch(push.endpoint, {
-            method: "POST",
-            headers: push.headers,
-            body: push.body,
-            signal: AbortSignal.timeout(8000),
-          });
-          // The push service says this endpoint is gone (the person removed
-          // the app, or the browser rotated the subscription). Stop trying it.
-          if (res.status === 404 || res.status === 410) {
-            const { error } = await db
-              .from("push_subscriptions")
-              .update({ revoked_at: new Date().toISOString() })
-              .eq("id", s.id as string);
-            if (error)
-              logError("push_revoke_failed", { ...base, error: error.message });
-          }
-          return { status: res.status, ok: res.ok };
-        } catch (e) {
-          return { status: 0, ok: false, error: message(e) };
+        const sent = await postToPushEndpoint({
+          endpoint: s.endpoint as string,
+          subscription: {
+            p256dh: s.p256dh as string,
+            auth: s.auth as string,
+          },
+          payload,
+          vapid,
+          subject: VAPID_SUBJECT,
+          ttlSeconds: TTL_SECONDS,
+          topic: "rest",
+          urgency: "high",
+        });
+        if (sent.blocked) {
+          return { status: 0, ok: false, error: "endpoint not allowed" };
         }
+        if (sent.status === 404 || sent.status === 410) {
+          const { error } = await db
+            .from("push_subscriptions")
+            .update({ revoked_at: new Date().toISOString() })
+            .eq("id", s.id as string);
+          if (error) {
+            logError("push_revoke_failed", { ...base, error: error.message });
+          }
+        }
+        return {
+          status: sent.status,
+          ok: sent.ok,
+          error: sent.error,
+        };
       }),
     );
 

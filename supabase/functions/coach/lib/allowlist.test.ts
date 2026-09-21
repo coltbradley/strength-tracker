@@ -1,9 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@^1";
-import {
-  coachAdmission,
-  isCoachUserAllowed,
-  parseAllowlist,
-} from "./allowlist.ts";
+import { coachAdmission, parseAllowlist } from "./allowlist.ts";
 
 const UID = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
