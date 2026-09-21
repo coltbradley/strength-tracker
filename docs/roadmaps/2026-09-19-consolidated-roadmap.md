@@ -6,14 +6,19 @@
 The release ledger exists and is CI-checked. Re-verification closed A-26,
 A-96, A-97, A-105, and A-119 with tests.
 
-**Phase 1 Slice 1** admission and tenant-safety product code is implemented on
-branch `docs/phase-1-plans`. **A-02** still needs live proof: set production
-`COACH_ALLOWED_USERS` to the intended allowlist. Unset is fail-closed in code
-(503); production must set the secret before the in-app coach works.
+**Phase 1 Slices 1 and 2** are implemented on branch `docs/phase-1-plans`
+(not merged). Slice 1 is admission and tenant-safety. Slice 2 is the
+release contract: PWA env checker, fail-not-skip backend deploy, Pages
+smoke receipt, MCP `/health` readiness, rollback/sweep runbook. **A-02**
+still needs live proof: set production `COACH_ALLOWED_USERS`. Unset is
+fail-closed in code (503). **A-134** stays `open` (GitHub Actions CI
+billing; deploy must not wait). **A-137/A-138** need live sweep queries.
+**A-135** production proof is the next `deploy` job log's `receipt sha=`
+line.
 
-**Next: Phase 1 Slice 2** — release contract. Implement on its own branch and
-PR; do not wait on CI to start Slice 2. Do not start Phases 2–6, endurance
+**Next:** merge this branch when ready. Do not start Phases 2–6, endurance
 E2+, or a 209-ticket audit programme until Phase 1's exit gate passes.
+GitHub Actions CI is billed-out; do not wait on it.
 
 - Slice 1 spec: `docs/superpowers/specs/2026-09-21-phase-1-admission-design.md`
 - Slice 1 plan: `docs/superpowers/plans/2026-09-21-phase-1-admission-tenant.md`
@@ -205,8 +210,9 @@ and the coach cannot spend money for an unapproved account.
 
 ### Phase 1: Make release and identity safety real
 
-**State:** Slice 1 admission implemented on `docs/phase-1-plans`; see
-`release-ledger.md` (A-02 still `needs live proof`). Implement Slice 2 next.
+**State:** Slices 1 and 2 implemented on `docs/phase-1-plans` (not merged);
+see `release-ledger.md` (A-02, A-137, A-138 still `needs live proof`; A-134
+stays `open`).
 
 **Starts after:** Phase 0's ledger and coach boundary are complete.
 
