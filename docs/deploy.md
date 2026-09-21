@@ -452,7 +452,9 @@ into the function, not read from anywhere at runtime, so editing it and
 pushing to main changes nothing a lifter talks to.
 
 Secrets it reads, all optional except the first: `ANTHROPIC_API_KEY`,
-`COACH_ALLOWED_USERS` (unset means everyone). Phase 0 production: this secret MUST be set to the intended fallback user's UUID (Colt's wife only). Unset still means everyone in code until Phase 1 A-02. Setting it has no append: it is the whole list every time. Do not log the value. `COACH_LOG_CONTENT` (`off` stops
+`COACH_ALLOWED_USERS` (unset returns 503; production MUST set this secret to the
+intended user UUIDs). Setting it has no append: it is the whole list every
+time. Do not log the value. `COACH_LOG_CONTENT` (`off` stops
 storing conversation text), `COACH_MEMORY_EXTRACT` (`off` stops the post-turn
 memory pass), `SENTRY_DSN`.
 

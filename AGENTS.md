@@ -562,8 +562,9 @@ null` is false: without it, saving an unrated set unrated writes a void and a
 
 - Who gets the in-app coach is TWO gates and both must pass.
   `COACH_ALLOWED_USERS` is the door: an env var, checked before any database
-  read, unset means everyone, and it exists so an open sign-up cannot mint
-  accounts that spend the deployment owner's Anthropic key. `coach_access`
+  read, unset returns 503 (the coach is not configured), and it exists so an
+  open sign-up cannot mint accounts that spend the deployment owner's
+  Anthropic key. Production must set the secret. `coach_access`
   (20260907020000) is the switch: one row per person, NO ROW MEANS ON so it
   changed nothing when it landed, with a `reason` written for the person to
   read. It is not a column on `user_config` because that table has an owner

@@ -560,10 +560,10 @@ The MCP server is unaffected. Somebody switched off here still reads and writes
 their own log from Claude Desktop with their bearer token — this controls who
 spends the deployment's Anthropic key, not who owns their data.
 
-Unset — the default — means everyone who can sign in can use the coach, so an
-existing deployment behaves exactly as it did before this variable existed.
-Set, and anyone not named gets a 403 and a plain "the coach isn't enabled for
-this account" instead of a turn, before anything is spent or recorded. There is
+Unset — the default — returns 503 ("the coach is not configured"); production
+must set this secret before the in-app coach works. Set, and anyone not named
+gets a 403 and a plain "the coach isn't enabled for this account" instead of a
+turn, before anything is spent or recorded. There is
 no append: adding someone means re-setting the whole list. The per-user quota
 still applies on top; the allowlist decides who has one.
 
@@ -595,20 +595,20 @@ dashboard's analytics are the thing that is down.
 
 ## Env var reference
 
-| Where                     | Var                                           | What                                                                                                                                                                                                                                                                                          |
-| ------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Edge function secret      | `ANTHROPIC_API_KEY`                           | the coach's key; the coach 503s without it                                                                                                                                                                                                                                                    |
-| Edge fn secret (optional) | `COACH_ALLOWED_USERS`                         | uuids that may use the coach; everyone if unset. Phase 0 production: this secret MUST be set to the intended fallback user's UUID (Colt's wife only). Unset still means everyone in code until Phase 1 A-02. Setting it has no append: it is the whole list every time. Do not log the value. |
-| Edge fn secret (optional) | `COACH_LOG_CONTENT`                           | `off` stops storing prompts/answers in `coach_usage`                                                                                                                                                                                                                                          |
-| Edge fn secret (optional) | `SENTRY_DSN`                                  | error tracking for both functions; no-op if unset                                                                                                                                                                                                                                             |
-| Edge function secret      | `MCP_SECRET`                                  | LEGACY single-user bearer token                                                                                                                                                                                                                                                               |
-| Edge function secret      | `OWNER_USER_ID`                               | LEGACY user that `MCP_SECRET` maps to                                                                                                                                                                                                                                                         |
-| Edge runtime (auto)       | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`   | injected by platform                                                                                                                                                                                                                                                                          |
-| PWA build                 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | public client creds                                                                                                                                                                                                                                                                           |
-| PWA build (optional)      | `VITE_SENTRY_DSN`                             | error tracking; no-op if unset                                                                                                                                                                                                                                                                |
-| GitHub Actions secret     | `SUPABASE_ACCESS_TOKEN`                       | lets `deploy.yml` push migrations + functions; skipped if unset                                                                                                                                                                                                                               |
-| GitHub Actions secret     | `SUPABASE_DB_PASSWORD`                        | `db push` needs Postgres itself, not just the API                                                                                                                                                                                                                                             |
-| GitHub Actions variable   | `SUPABASE_PROJECT_REF`                        | which project the workflow links; not secret, still not in the repo                                                                                                                                                                                                                           |
+| Where                             | Var                                           | What                                                                                                                                                               |
+| --------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Edge function secret              | `ANTHROPIC_API_KEY`                           | the coach's key; the coach 503s without it                                                                                                                         |
+| Edge fn secret (required in prod) | `COACH_ALLOWED_USERS`                         | uuids that may use the coach; unset returns 503. Production MUST set this secret. Setting it has no append: it is the whole list every time. Do not log the value. |
+| Edge fn secret (optional)         | `COACH_LOG_CONTENT`                           | `off` stops storing prompts/answers in `coach_usage`                                                                                                               |
+| Edge fn secret (optional)         | `SENTRY_DSN`                                  | error tracking for both functions; no-op if unset                                                                                                                  |
+| Edge function secret              | `MCP_SECRET`                                  | LEGACY single-user bearer token                                                                                                                                    |
+| Edge function secret              | `OWNER_USER_ID`                               | LEGACY user that `MCP_SECRET` maps to                                                                                                                              |
+| Edge runtime (auto)               | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`   | injected by platform                                                                                                                                               |
+| PWA build                         | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | public client creds                                                                                                                                                |
+| PWA build (optional)              | `VITE_SENTRY_DSN`                             | error tracking; no-op if unset                                                                                                                                     |
+| GitHub Actions secret             | `SUPABASE_ACCESS_TOKEN`                       | lets `deploy.yml` push migrations + functions; skipped if unset                                                                                                    |
+| GitHub Actions secret             | `SUPABASE_DB_PASSWORD`                        | `db push` needs Postgres itself, not just the API                                                                                                                  |
+| GitHub Actions variable           | `SUPABASE_PROJECT_REF`                        | which project the workflow links; not secret, still not in the repo                                                                                                |
 
 `MCP_SECRET` / `OWNER_USER_ID` are the pre-multi-user credential: one secret
 mapped to one person. They still work, so an existing Claude Desktop config
