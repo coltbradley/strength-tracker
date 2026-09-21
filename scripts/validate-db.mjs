@@ -51,6 +51,7 @@ await db.exec(`
     as $$ select nullif(current_setting('app.user_id', true), '')::uuid $$;
   create role authenticated login;
   create role anon login;
+  create role service_role nologin bypassrls;
   -- Supabase grants EXECUTE on every new public function to anon and
   -- authenticated through default privileges, i.e. at CREATE time. Modelled the
   -- same way, and BEFORE the migrations run, so that a migration which revokes
@@ -1416,6 +1417,61 @@ await check("an extraction costs money but is not a message", async () => {
     rejected = true;
   }
   if (!rejected) throw new Error("accepted an unknown usage kind");
+});
+
+await check("reserve_coach_turn inserts one row under the cap", async () => {
+  const turn = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const r = await db.query(
+    `select reserve_coach_turn($1::uuid, $2::uuid, 150, 800000) as j`,
+    [OWNER, turn],
+  );
+  assertEq(r.rows[0].j.ok, true, "ok");
+  const n = await db.query(
+    `select count(*)::int as n from coach_usage where turn_id = $1`,
+    [turn],
+  );
+  assertEq(n.rows[0].n, 1, "one reservation");
+});
+
+await check("reserve_coach_turn refuses a duplicate turn_id", async () => {
+  const turn = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  await db.query(`select reserve_coach_turn($1::uuid, $2::uuid, 150, 800000)`, [
+    OWNER,
+    turn,
+  ]);
+  const r = await db.query(
+    `select reserve_coach_turn($1::uuid, $2::uuid, 150, 800000) as j`,
+    [OWNER, turn],
+  );
+  assertEq(r.rows[0].j.ok, false, "duplicate not ok");
+  assertEq(r.rows[0].j.reason, "duplicate_turn", "reason");
+});
+
+await check("reserve_coach_turn refuses at the daily cap", async () => {
+  const capUser = "00000000-0000-4000-8000-0000000000ca";
+  await db.query(
+    `insert into auth.users (id, email) values ($1, 'quota-cap@example.test')
+     on conflict do nothing`,
+    [capUser],
+  );
+  await db.query(
+    `insert into coach_usage (user_id, model, kind, input_tokens, output_tokens, turn_id)
+     select $1::uuid, 'x', 'turn', 0, 0,
+            ('cccccccc-cccc-4ccc-8ccc-' || lpad(i::text, 12, '0'))::uuid
+     from generate_series(1, 150) i`,
+    [capUser],
+  );
+  const turn = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const r = await db.query(
+    `select reserve_coach_turn($1::uuid, $2::uuid, 150, 800000) as j`,
+    [capUser, turn],
+  );
+  assertEq(r.rows[0].j.ok, false, "at cap");
+  assertEq(
+    r.rows[0].j.reason,
+    "Daily limit reached (150 messages). It resets a day after your first message today.",
+    "daily reason",
+  );
 });
 
 await check("cost is priced per model, and an unknown model is not guessed", async () => {
