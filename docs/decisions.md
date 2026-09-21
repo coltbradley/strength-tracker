@@ -12,6 +12,7 @@ discovery, dynamic client registration and PKCE, so the edge function only has
 to be a resource server.
 
 Spike against the hosted project, 2026-09-13 (`scripts/oauth-spike.mjs --mcp`):
+
 - Enabling the OAuth server and enabling dynamic registration are two separate
   dashboard toggles. With only the first, discovery omits
   `registration_endpoint` and `POST /oauth/clients/register` answers 403.
@@ -21,7 +22,7 @@ Spike against the hosted project, 2026-09-13 (`scripts/oauth-spike.mjs --mcp`):
   affect this project. GitHub Pages serves that path through `404.html` with
   HTTP 404 and the app renders normally.
 - Access token: ES256, claims include `client_id`, `sub`, `role:
-  authenticated`, `aud: authenticated`, `session_id`; lifetime 3600 s; a refresh
+authenticated`, `aud: authenticated`, `session_id`; lifetime 3600 s; a refresh
   token is issued.
 - The deployed MCP server answered `tools/list` with 200 and 33 tools for that
   token, which is only reachable through `auth.getUser` accepting it.
@@ -3061,3 +3062,24 @@ above); a body-image score would be the same failure with a more
 sensitive subject. Bodyweight, energy and free text are the whole signal,
 and the coach correlates them in prose — never a composite, for the same
 reason there is no composite readiness score anywhere else in this app.
+
+## 2026-09-21 Phase 0 is a ledger and a production allowlist, not fail-closed code
+
+The consolidated roadmap's Phase 0 asked for a truthful stop-release backlog
+and a coach that cannot spend money for an unapproved account. Status was
+scattered across the 2026-09-19 audit, `docs/plan.md`, and old implementation
+plans, which is how a merged skip/observation loop still read as missing.
+
+Decision: `docs/roadmaps/release-ledger.md` is the only status source of
+truth. `scripts/lib/release-ledger.mjs` validates the closed state set and
+that every stop-release ID has a row; CI runs that checker. Re-verification
+of the post-audit merge closed A-105, A-119, A-26, A-96, and A-97 with
+tests. A-94 (prompt `responded_at`) and A-95 (unwired `duePrompts`) stay
+open. A-120's extractors exist but stay open until the route has a
+regression test.
+
+Coach admission is extracted to `supabase/functions/coach/lib/allowlist.ts`
+so it can be tested. Unset `COACH_ALLOWED_USERS` still means everyone in
+code; Phase 1 A-02 fail-closes that. Production must set the secret to the
+intended fallback UUID. The door is operational in Phase 0, not a code
+change that would lock the owner out on a deploy that forgot the secret.
