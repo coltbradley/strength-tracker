@@ -1,5 +1,10 @@
 # System audit, 2026-09-19
 
+> Evidence backlog, not the active execution plan. Finding status must be
+> re-verified against current code before work begins. Follow
+> [`docs/roadmaps/2026-09-19-consolidated-roadmap.md`](../roadmaps/2026-09-19-consolidated-roadmap.md)
+> for phase order and release gates.
+
 Read-only audit of the PWA, Supabase migrations and Edge Functions, MCP/OAuth,
 relay/tunnel scripts, CI/deployment, and documentation. No production code was
 changed.

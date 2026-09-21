@@ -54,6 +54,7 @@ import {
   type NoteRow,
 } from "./memory-extract.ts";
 import { recordRefusalUsage } from "./usage.ts";
+import { isCoachUserAllowed, parseAllowlist } from "./lib/allowlist.ts";
 
 // Sonnet 5, at MEDIUM effort. This reverses the move to Opus, which its own
 // comment said was one line to undo, and it moves effort UP one step at the
@@ -117,16 +118,7 @@ const LIMIT_OUTPUT_TOKENS_PER_MONTH = 800_000;
  * is present but names nobody refuses everyone rather than falling open — the
  * two mistakes are not symmetrical, and only one of them spends money.
  */
-const ALLOWED_USERS: Set<string> | null = (() => {
-  const raw = Deno.env.get("COACH_ALLOWED_USERS")?.trim();
-  if (!raw) return null;
-  return new Set(
-    raw
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter((s) => s !== ""),
-  );
-})();
+const ALLOWED_USERS = parseAllowlist(Deno.env.get("COACH_ALLOWED_USERS"));
 
 /** Attachment ceilings, enforced before anything is sent upstream. */
 const MAX_ATTACHMENTS = 8;
@@ -709,7 +701,7 @@ async function handleCheckinMemory(req: Request): Promise<Response> {
 
   // Same two gates the chat endpoint enforces, and in the same order: WHO may
   // use the coach at all, then whether THIS account has it switched off.
-  if (ALLOWED_USERS && !ALLOWED_USERS.has(userId.toLowerCase())) {
+  if (!isCoachUserAllowed(userId, ALLOWED_USERS)) {
     return json({ error: "The coach isn't enabled for this account." }, 403);
   }
 
@@ -985,7 +977,7 @@ Deno.serve(async (req) => {
   // look at. No coach_usage row is written either. Refusal rows exist to keep
   // the rolling quota honest for someone who HAS a quota; one per rejected
   // caller would hand anybody with an account an unbounded insert.
-  if (ALLOWED_USERS && !ALLOWED_USERS.has(userId.toLowerCase())) {
+  if (!isCoachUserAllowed(userId, ALLOWED_USERS)) {
     return json(
       {
         error:
