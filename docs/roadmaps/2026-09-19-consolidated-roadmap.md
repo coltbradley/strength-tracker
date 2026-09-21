@@ -106,6 +106,29 @@ only after the release gates below have direct readback.
    integration is trusted, MCP must say what it does not know before making a
    combined-training recommendation.
 
+## Feedback intake, 2026-09-20
+
+`public.feedback` is the live intake queue. An unresolved request means the
+athlete has not yet accepted its outcome; it is not evidence that the capability
+is absent. Re-check current code before scheduling work, and leave a feedback
+row open until the athlete says the outcome is acceptable.
+
+| Live request | Roadmap disposition |
+| --- | --- |
+| Edit or delete standing memories | **M-01, immediate maintenance slice.** `forget` remains the explicit permanent-delete action; add owner-scoped `update_memory` for correcting a current fact in place. This is an exception to phase order because stale equipment, injury, or schedule facts can distort every future recommendation, and coach memory is deliberately editable rather than append-only. Test its owner scope and changed-row readback before the next MCP deploy. |
+| Change a planned-workout date | Already implemented by `update_planned_workout` with `scheduled_date`. Re-verify through the affected athlete's MCP client before resolving the request; do not build a second scheduling path. |
+| Automated block-level training review | **Phase 4 candidate.** Start only from real beta use. The review must name its input window, missing data, skipped movements, notes, RPE coverage, and uncertainty, then propose rather than apply a next block. |
+| Fatigue-cost and eccentric-load metadata | **Phase 4 candidate, only as qualitative context.** Keep coach-curated labels such as local/systemic/eccentric cost; never present a physiological recovery calculation or readiness score. |
+| Exercise role and training-purpose metadata | **Phase 4 candidate.** Model a small controlled role vocabulary only when it enables a visible plan or review decision, such as what workload can move or be trimmed. |
+| Progression beyond estimated 1RM | **Phase 4 candidate.** Extend the review evidence model to rep capacity, timed work, unilateral benchmarks, and explicitly defined athlete metrics. Do not turn all movements into a false e1RM comparison. |
+| Training-objective priority hierarchy | **Phase 4 candidate.** Make primary, secondary, and development priorities explicit before the planner uses them to trade work across a week. |
+| Cross-modality weekly-load dashboard | **Phase 5.** Requires a trusted endurance source. Show transparent components, including mileage, elevation, key/long runs, strength work, session RPE, and recovery notes; no single load or readiness score. |
+| Protected external coach plan with an assistant strength layer | **Phase 5.** Import the running coach's plan as a read-only, provenance-carrying source. The assistant may draft or rearrange strength around it, but never silently alter the protected source. |
+| Running-load context and endurance integration | **Phase 5.** A personal Intervals.icu connection is the preferred first source, but only after the operational foundation below: consented connect/revoke, encrypted server-side credential handling, pagination, correction reconciliation, scheduled sync with visible failure, and an empty source treated as UNKNOWN. |
+
+M-01 does not authorize adjacent product work or an automatic feedback cleanup.
+All other rows retain the phase gates below.
+
 ## Interim endurance-context contract
 
 This is an MCP-native, optional preflight, not a required PWA form or a
@@ -253,6 +276,10 @@ Ship the smallest strength-only activation loop indicated by real use:
   coach-observation paths. They are foundations for O-03 explainable
   progression proposals and O-04 weekly exception review, not proof those
   product loops already work.
+- If beta feedback confirms the need, take the block-review, qualitative
+  exercise-metadata, broader progression-evidence, and objective-priority
+  requests from the feedback-intake table in that order. Each proposal remains
+  reviewable and confirmable; none may rewrite a plan automatically.
 
 Instrument three outcomes: first-session completion, one completed MCP review,
 and return for the following week's first session. Do not add streaks, a
@@ -293,6 +320,11 @@ E4 calendar representation, E5 draft blocks, and E6 replanning.
 
 Never pull forward deep FIT analysis (E7), automatic planner actions, a
 readiness score, injury prediction, or finish-time prediction.
+
+After those operational gates, use Intervals.icu as the first personal
+read-only source. Its data can support the transparent cross-modality weekly
+view and scheduling strength around an externally coached running plan, but
+the imported plan remains protected and retains its source and sync provenance.
 
 **Exit gate for E2:** the returned state carries `missing[]`, has no invented
 capacity, and strength logging remains operational with the integration down.

@@ -366,6 +366,7 @@ const EXPECTED_ANNOTATIONS: Record<
   repeat_planned_workout: { readOnly: false, destructive: false },
   confirm_training_plan: { readOnly: false, destructive: false },
   remember: { readOnly: false, destructive: false },
+  update_memory: { readOnly: false, destructive: false },
   submit_feedback: { readOnly: false, destructive: false },
   resolve_feedback: { readOnly: false, destructive: false },
   // Additive: a new open observation, never overwriting or deleting one.

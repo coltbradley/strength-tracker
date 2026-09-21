@@ -5,8 +5,8 @@ import { must } from "../lib/db.ts";
 import {
   guard,
   jsonResult,
-  ToolError,
   type RequestContext,
+  ToolError,
 } from "../lib/errors.ts";
 
 /**
@@ -121,6 +121,69 @@ export function registerMemory(
             note:
               "Tell them what you saved, in a few words. Do not save this " +
               "again in this conversation.",
+          },
+        });
+      }),
+  );
+
+  server.registerTool(
+    "update_memory",
+    {
+      title: "Update memory",
+      description:
+        "Correct a standing fact when the underlying reality changed, such " +
+        "as new equipment, a resolved constraint, or a revised coaching " +
+        "preference. Use get_memory first and name the existing memory id. " +
+        "This replaces the old wording in place because memory is a current " +
+        "fact, not an append-only training record. Say what you changed.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+      inputSchema: {
+        id: z.string().uuid().describe("Memory id, from get_memory."),
+        fact: z
+          .string()
+          .min(1)
+          .max(300)
+          .describe(
+            "Replacement fact, in the lifter's own terms where possible.",
+          ),
+        kind: z
+          .enum(["injury", "constraint", "preference", "context"])
+          .optional()
+          .describe(
+            "Change the category only when the fact now belongs elsewhere.",
+          ),
+      },
+    },
+    (args) =>
+      guard(ctx, "update_memory", async () => {
+        const patch = {
+          fact: args.fact.trim(),
+          updated_at: new Date().toISOString(),
+          ...(args.kind === undefined ? {} : { kind: args.kind }),
+        };
+        const rows = must(
+          await db.client
+            .from("coach_memory")
+            .update(patch)
+            .eq("id", args.id)
+            .eq("user_id", db.ownerId)
+            .select("id, kind, fact, updated_at"),
+          "update_memory",
+        );
+        if (rows.length === 0) {
+          throw new ToolError(
+            `No memory with id ${args.id} belongs to this user. Use ` +
+              `get_memory for a valid id.`,
+          );
+        }
+        return jsonResult({
+          data: { updated: rows[0] },
+          metadata: {
+            note: "Tell them what you corrected, in a few words.",
           },
         });
       }),
