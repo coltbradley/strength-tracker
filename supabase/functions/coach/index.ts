@@ -54,6 +54,7 @@ import {
   type NoteRow,
 } from "./memory-extract.ts";
 import { coachAdmission, parseAllowlist } from "./lib/allowlist.ts";
+import { threadForModel } from "./lib/thread.ts";
 
 // Sonnet 5, at MEDIUM effort. This reverses the move to Opus, which its own
 // comment said was one line to undo, and it moves effort UP one step at the
@@ -986,6 +987,22 @@ Deno.serve(async (req) => {
 
   const db = serviceClient();
 
+  const { data: prior } = await db
+    .from("coach_usage")
+    .select("prompt, response, created_at")
+    .eq("user_id", userId)
+    .eq("kind", "turn")
+    .is("refused", null)
+    .not("prompt", "is", null)
+    .not("response", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  const chronological = [...(prior ?? [])].reverse();
+  const thread = threadForModel(turns, chronological);
+  if (!Array.isArray(thread)) {
+    return json({ error: thread.error }, thread.status);
+  }
+
   try {
     // The per-person switch, before the quota. Someone switched off should be
     // told that, not told they are out of messages, and their refusal must not
@@ -1070,7 +1087,7 @@ Deno.serve(async (req) => {
         }
       };
       try {
-        const messages = turns.map((t) => ({
+        const messages = thread.map((t) => ({
           role: t.role,
           content: toContent(t),
         }));
