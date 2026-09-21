@@ -444,6 +444,38 @@ await check("cannot void another user's set", async () => {
   if (!rejected) throw new Error("cross-user void insert succeeded");
 });
 
+await check("cannot attach a set to another user's session", async () => {
+  await asUser(
+    OTHER,
+    `insert into sessions (id, user_id, started_at) values ('44444444-0000-4000-8000-000000000099', '${OTHER}', now())`,
+  );
+  let rejected = false;
+  try {
+    await asUser(
+      OTHER,
+      `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps)
+       values ('55555555-0000-4000-8000-000000000099', '${OTHER}', '44444444-0000-4000-8000-000000000001', 'Barbell_Squat', 0, 'working', 60, 5)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("cross-user session_id on set insert succeeded");
+});
+
+await check("NaN is not a legal load_kg", async () => {
+  let rejected = false;
+  try {
+    await db.query(
+      `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps)
+       values (gen_random_uuid(), $1, $2, 'Barbell_Squat', 0, 'working', 'NaN'::numeric, 5)`,
+      [OWNER, "44444444-0000-4000-8000-000000000001"],
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("NaN load_kg was accepted");
+});
+
 await check("set_voids is append-only: update/delete affect 0 rows", async () => {
   const upd = await asUser(OWNER, `update set_voids set created_at = now() where user_id = '${OWNER}'`);
   assertEq(upd.affectedRows ?? 0, 0, "no update policy");
