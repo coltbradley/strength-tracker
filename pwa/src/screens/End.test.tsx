@@ -9,7 +9,17 @@ import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { cacheKeys, cacheSet, resetDbForTests } from "../lib/db";
+import {
+  cacheDelete,
+  cacheKeys,
+  cacheSet,
+  resetDbForTests,
+} from "../lib/db";
+import {
+  countServerSessionSets,
+  invalidateForSessionClose,
+  invalidateForSetChange,
+} from "../lib/data";
 import type { ActiveSession, ResolvedPrescriptionRow } from "../lib/types";
 import { formatDuration, End } from "./End";
 
@@ -75,11 +85,33 @@ function prescription(
 beforeEach(async () => {
   globalThis.indexedDB = new IDBFactory();
   resetDbForTests();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.mocked(countServerSessionSets).mockReset();
+  vi.mocked(invalidateForSessionClose).mockReset();
+  vi.mocked(invalidateForSetChange).mockReset();
+  vi.mocked(outbox.enqueue).mockReset();
+  vi.mocked(outbox.enqueueBatch).mockReset();
+  vi.mocked(outbox.flush).mockReset();
+  vi.mocked(countServerSessionSets).mockResolvedValue(0);
+  vi.mocked(invalidateForSessionClose).mockResolvedValue(undefined);
+  vi.mocked(invalidateForSetChange).mockResolvedValue(undefined);
+  vi.mocked(outbox.enqueue).mockResolvedValue(undefined);
+  vi.mocked(outbox.enqueueBatch).mockResolvedValue(undefined);
+  vi.mocked(outbox.flush).mockResolvedValue(undefined);
   await cacheSet(cacheKeys.activeSession, active);
 });
 
-afterEach(cleanup);
+afterEach(async () => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+  await cacheDelete(cacheKeys.activeSession);
+  cleanup();
+});
 
 describe("formatDuration", () => {
   it("reads in minutes under an hour", () => {
@@ -122,6 +154,9 @@ describe("End: session_skips at Finish", () => {
     fireEvent.click(await screen.findByRole("button", { name: "End session" }));
 
     await vi.waitFor(() =>
+      expect(screen.queryByRole("button", { name: "End session" })).toBeNull(),
+    );
+    await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
     );
     const ops = vi.mocked(outbox.enqueueBatch).mock.calls[0]?.[0] ?? [];
@@ -158,6 +193,9 @@ describe("End: session_skips at Finish", () => {
     fireEvent.click(await screen.findByRole("button", { name: "End session" }));
 
     await vi.waitFor(() =>
+      expect(screen.queryByRole("button", { name: "End session" })).toBeNull(),
+    );
+    await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
     );
     const ops = vi.mocked(outbox.enqueueBatch).mock.calls[0]?.[0] ?? [];
@@ -186,6 +224,9 @@ describe("End: session_skips at Finish", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "End session" }));
 
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("button", { name: "End session" })).toBeNull(),
+    );
     // Finish still completes normally: the sessions update and the flush
     // race both still run. A dropped skip must never take the session
     // close down with it.
@@ -229,6 +270,9 @@ describe("End: session_skips at Finish", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "End session" }));
 
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("button", { name: "End session" })).toBeNull(),
+    );
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
     );

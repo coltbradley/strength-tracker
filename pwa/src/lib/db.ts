@@ -148,6 +148,7 @@ interface StrengthDB extends DBSchema {
 export type Database = IDBPDatabase<StrengthDB>;
 
 let dbPromise: Promise<Database> | null = null;
+let dbName = "strength-log";
 
 export function getDb(): Promise<Database> {
   // DATA SAFETY: this database holds unsynced training data (the outbox).
@@ -156,7 +157,7 @@ export function getDb(): Promise<Database> {
   // rows forward); never delete the "outbox" or "kv" stores, and never
   // rename the database. Guard old-version branches with
   // `if (oldVersion < N)` so existing data flows through untouched.
-  dbPromise ??= openDB<StrengthDB>("strength-log", 1, {
+  dbPromise ??= openDB<StrengthDB>(dbName, 1, {
     upgrade(db) {
       db.createObjectStore("outbox", { autoIncrement: true });
       db.createObjectStore("kv");
@@ -165,9 +166,18 @@ export function getDb(): Promise<Database> {
   return dbPromise;
 }
 
-/** Test hook: reset the cached connection so fake-indexeddb starts clean. */
+/** Test hook: reset the cached connection so fake-indexeddb starts clean.
+ *  We intentionally move to a fresh database name rather than reusing the
+ *  same one: backing stores persist across tests in fake-indexeddb, and a
+ *  single cached `dbPromise` is enough to leak keys from one test into the
+ *  next even when every `beforeEach` sets the same values again.
+ */
 export function resetDbForTests(): void {
+  if (dbPromise) {
+    void dbPromise.then((db) => db.close());
+  }
   dbPromise = null;
+  dbName = `strength-log-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 // ---- kv cache helpers ------------------------------------------------------
