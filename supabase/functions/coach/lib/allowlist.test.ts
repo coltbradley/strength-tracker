@@ -4,11 +4,11 @@ import { isCoachUserAllowed, parseAllowlist } from "./allowlist.ts";
 const UID = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
 
-Deno.test("unset or blank allowlist is fail-open", () => {
-  assertEquals(parseAllowlist(undefined), null);
-  assertEquals(parseAllowlist(""), null);
-  assertEquals(parseAllowlist("  "), null);
-  assertEquals(isCoachUserAllowed(UID, null), true);
+Deno.test("unset or blank allowlist denies everyone", () => {
+  assertEquals(parseAllowlist(undefined).size, 0);
+  assertEquals(parseAllowlist("").size, 0);
+  assertEquals(parseAllowlist("  ").size, 0);
+  assertEquals(isCoachUserAllowed(UID, parseAllowlist(undefined)), false);
 });
 
 Deno.test("comma list admits only those uuids, case-insensitive", () => {

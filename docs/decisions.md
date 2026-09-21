@@ -3079,7 +3079,7 @@ open. A-120's extractors exist but stay open until the route has a
 regression test.
 
 Coach admission is extracted to `supabase/functions/coach/lib/allowlist.ts`
-so it can be tested. Unset `COACH_ALLOWED_USERS` still means everyone in
-code; Phase 1 A-02 fail-closes that. Production must set the secret to the
-intended fallback UUID. The door is operational in Phase 0, not a code
-change that would lock the owner out on a deploy that forgot the secret.
+so it can be tested, and it fails closed: unset or blank
+`COACH_ALLOWED_USERS` admits nobody. Production must set the secret to the
+intended fallback UUID before enabling the coach. The MCP path remains
+separate.

@@ -6,7 +6,7 @@
 
 **Goal:** Make Phase 0's exit gate true: a reviewer can see every stop-release item's state in one ledger, and the in-app coach cannot spend money for an unapproved account.
 
-**Architecture:** One markdown ledger is the status source of truth. A small parser/validator in `scripts/` refuses a missing stop-release row or an illegal state. Coach admission stays fail-open in code (Phase 1 owns A-02 fail-closed) but the parser becomes a tested module so production can set `COACH_ALLOWED_USERS` without touching `index.ts`. Post-merge audit items are re-verified into the ledger; this plan does not implement A-94 or any Phase 1+ fix.
+**Architecture:** One markdown ledger is the status source of truth. A small parser/validator in `scripts/` refuses a missing stop-release row or an illegal state. Coach admission fails closed in code, and the parser is a tested module so production can set `COACH_ALLOWED_USERS` without touching `index.ts`. Post-merge audit items are re-verified into the ledger; this plan does not implement A-94 or any Phase 1+ fix.
 
 **Tech Stack:** Node `node:test` for the ledger checker; Deno `jsr:@std/assert` for coach allowlist tests; Vitest for PWA skip-row tests; existing GitHub Actions `ci.yml`.
 
@@ -14,7 +14,8 @@
 
 ## Global Constraints
 
-- Do not fail-close `COACH_ALLOWED_USERS` when unset. Unset still means everyone in code. Phase 1 A-02 flips that.
+- An unset or blank `COACH_ALLOWED_USERS` must deny everyone. Production must set
+  the secret before enabling the coach.
 - Do not implement audit fixes. Re-verify, test what already exists, mark state. A-94 stays `open`.
 - Do not add `update_memory` (M-01), endurance work, or a 209-ticket programme.
 - Never print, commit, or log a real user UUID or secret value. Placeholder only.
@@ -33,7 +34,7 @@
 | `docs/roadmaps/release-ledger.md`                                                     | create | Human ledger: one row per finding                              |
 | `.github/workflows/ci.yml`                                                            | modify | Run ledger tests + checker                                     |
 | `supabase/functions/coach/lib/allowlist.ts`                                           | create | `parseAllowlist`, `isCoachUserAllowed`                         |
-| `supabase/functions/coach/lib/allowlist.test.ts`                                      | create | Deno tests for the door, including fail-open                   |
+| `supabase/functions/coach/lib/allowlist.test.ts`                                      | create | Deno tests for the fail-closed door                             |
 | `supabase/functions/coach/index.ts`                                                   | modify | Call the module at both 403 sites                              |
 | `pwa/src/lib/skips.test.ts`                                                           | create | Prove skip rows carry every column                             |
 | `docs/deploy.md`, `docs/setup.md`, `docs/roadmaps/2026-09-19-consolidated-roadmap.md` | modify | Production must set the allowlist; Phase 0 points here         |
@@ -377,7 +378,7 @@ EOF
 
 ---
 
-### Task 2: Coach allowlist module (keep fail-open)
+### Task 2: Coach allowlist module (fail closed)
 
 **Files:**
 
@@ -404,7 +405,7 @@ import { isCoachUserAllowed, parseAllowlist } from "./allowlist.ts";
 const UID = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
 
-Deno.test("unset or blank allowlist is fail-open", () => {
+Deno.test("unset or blank allowlist denies everyone", () => {
   assertEquals(parseAllowlist(undefined), null);
   assertEquals(parseAllowlist(""), null);
   assertEquals(parseAllowlist("  "), null);
@@ -493,11 +494,12 @@ In `docs/roadmaps/release-ledger.md`, set A-02 to:
 | A-02 | Coach allowlist | Colt | needs live proof | supabase/functions/coach/lib/allowlist.test.ts | `supabase secrets list` shows COACH_ALLOWED_USERS | Redeploy coach after setting the secret |
 ```
 
-In `docs/deploy.md` coach secrets paragraph, after `COACH_ALLOWED_USERS (unset means everyone)`, add:
+In `docs/deploy.md` coach secrets paragraph, document that an unset or blank
+`COACH_ALLOWED_USERS` denies everyone:
 
-> Phase 0 production: this secret MUST be set to the intended fallback user's UUID (Colt's wife only). Unset still means everyone in code until Phase 1 A-02. Setting it has no append: it is the whole list every time. Do not log the value.
+> Phase 0 production: this secret MUST be set to the intended fallback user's UUID (Colt's wife only). Setting it has no append: it is the whole list every time. Do not log the value.
 
-In `docs/setup.md` env table row for `COACH_ALLOWED_USERS`, same MUST-set sentence. Do not change the AGENTS.md fail-open rule.
+In `docs/setup.md` env table row for `COACH_ALLOWED_USERS`, same MUST-set sentence. Update the AGENTS.md security boundary to document the fail-closed rule.
 
 In `docs/roadmaps/2026-09-19-consolidated-roadmap.md` Phase 0, change `**State:** Start here.` to `**State:** Plan at docs/superpowers/plans/2026-09-21-phase-0-safety-backlog.md. Ledger at docs/roadmaps/release-ledger.md.`
 

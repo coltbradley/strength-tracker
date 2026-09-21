@@ -1,10 +1,7 @@
-/** WHO may use the in-app coach.
- *  `null` means the secret is unset: everyone is admitted (Phase 0 keeps
- *  this; Phase 1 A-02 fail-closes it). A present list that names nobody
- *  refuses everyone. */
-export function parseAllowlist(raw: string | undefined): Set<string> | null {
+/** WHO may use the in-app coach. An unset or blank secret admits nobody. */
+export function parseAllowlist(raw: string | undefined): Set<string> {
   const trimmed = raw?.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return new Set();
   return new Set(
     trimmed
       .split(",")
@@ -15,8 +12,7 @@ export function parseAllowlist(raw: string | undefined): Set<string> | null {
 
 export function isCoachUserAllowed(
   userId: string,
-  allowlist: Set<string> | null,
+  allowlist: Set<string>,
 ): boolean {
-  if (allowlist === null) return true;
   return allowlist.has(userId.toLowerCase());
 }

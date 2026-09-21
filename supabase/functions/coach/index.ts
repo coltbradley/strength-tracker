@@ -112,11 +112,9 @@ const LIMIT_OUTPUT_TOKENS_PER_MONTH = 800_000;
  * day on someone else's bill. A per-user quota only ever shaped the blast
  * radius of a person already inside; it was never the door.
  *
- * UNSET MEANS EVERYONE, deliberately: this lands on a running deployment and
- * must not lock its own lifter out the moment it deploys. Set it to a
- * comma-separated list of user uuids and only those ids get in. A value that
- * is present but names nobody refuses everyone rather than falling open — the
- * two mistakes are not symmetrical, and only one of them spends money.
+ * UNSET MEANS NOBODY: a missing deployment secret must not expose an
+ * owner-paid model key. Set it to a comma-separated list of user UUIDs and
+ * only those IDs get in. A value that names nobody also refuses everyone.
  */
 const ALLOWED_USERS = parseAllowlist(Deno.env.get("COACH_ALLOWED_USERS"));
 

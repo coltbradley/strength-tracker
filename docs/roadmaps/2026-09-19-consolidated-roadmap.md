@@ -158,10 +158,10 @@ access settings, beta invitations, and release acceptance.
 **Owner:** Colt for settings and acceptance; Engineering for evidence.
 
 - Set `COACH_ALLOWED_USERS` to Colt's wife's user UUID only, or turn off the
-  in-app coach until that narrow allowlist is in place. The current code
-  deliberately permits everyone when the secret is unset, which is
-  unacceptable for a public signup surface with an owner-paid model key
-  (A-02). This does not restrict the beta's MCP path.
+  in-app coach until that narrow allowlist is in place. The coach now denies
+  everyone when the secret is unset, and the secret must still be set to admit
+  the intended fallback user on the public signup surface (A-02). This does
+  not restrict the beta's MCP path.
 - Re-run every audit item touched by the post-audit merge. Start with A-94,
   A-105, and A-119, because their cited missing flows now have merged code.
   Mark each item `open`, `fixed with test`, `needs live proof`, or `not
