@@ -32,6 +32,8 @@
 // endpoint is a capability URL (whoever holds it can push to that phone), and
 // the logs are readable by whoever runs the deployment.
 import { createClient } from "@supabase/supabase-js";
+import { isAllowedPushEndpoint } from "./lib/endpoint.ts";
+import { postToPushEndpoint } from "./lib/push-to-endpoint.ts";
 import {
   buildPushRequest,
   generateVapidKeys,
@@ -40,8 +42,7 @@ import {
 
 // Provided by the Supabase edge runtime; absent under plain `deno run`.
 declare const EdgeRuntime:
-  | { waitUntil(promise: Promise<unknown>): void }
-  | undefined;
+  { waitUntil(promise: Promise<unknown>): void } | undefined;
 
 /** When this WORKER started. Module evaluation is worker birth, and the wall
  *  clock counts from there — not from this request. */
@@ -80,7 +81,12 @@ const LABEL_MAX = 120;
 function hasForbiddenChar(s: string): boolean {
   for (const ch of s) {
     const c = ch.codePointAt(0) ?? 0;
-    if ((c >= 0x01 && c <= 0x1f) || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029) {
+    if (
+      (c >= 0x01 && c <= 0x1f) ||
+      (c >= 0x7f && c <= 0x9f) ||
+      c === 0x2028 ||
+      c === 0x2029
+    ) {
       return true;
     }
   }
@@ -105,11 +111,15 @@ function json(body: unknown, status = 200): Response {
 }
 
 function log(event: string, fields: Record<string, unknown>): void {
-  console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
+  console.log(
+    JSON.stringify({ at: new Date().toISOString(), event, ...fields }),
+  );
 }
 
 function logError(event: string, fields: Record<string, unknown>): void {
-  console.error(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
+  console.error(
+    JSON.stringify({ at: new Date().toISOString(), event, ...fields }),
+  );
 }
 
 function message(e: unknown): string {
@@ -224,6 +234,7 @@ function subscriptionShape(body: Record<string, unknown>): {
   const { p256dh, auth } = keys;
   if (typeof p256dh !== "string" || !B64URL_87.test(p256dh)) return null;
   if (typeof auth !== "string" || !B64URL_22.test(auth)) return null;
+  if (!isAllowedPushEndpoint(endpoint)) return null;
   return { endpoint, p256dh, auth };
 }
 
@@ -233,10 +244,21 @@ function secondsLeft(): number {
   return WALL_CLOCK_SECONDS - age - SAFETY_MARGIN_SECONDS;
 }
 
-async function subscribe(req: Request, db: Db, userId: string): Promise<Response> {
+async function subscribe(
+  req: Request,
+  db: Db,
+  userId: string,
+): Promise<Response> {
   const body = await readBody(req);
   const sub = body ? subscriptionShape(body) : null;
-  if (!sub) return json({ error: "That is not a push subscription." }, 400);
+  if (!sub) {
+    const endpoint =
+      body && typeof body.endpoint === "string" ? body.endpoint : "";
+    if (endpoint && !isAllowedPushEndpoint(endpoint)) {
+      return json({ error: "That push endpoint is not allowed." }, 400);
+    }
+    return json({ error: "That is not a push subscription." }, 400);
+  }
   // One row per endpoint. A device that subscribes again — after a reinstall,
   // or with a different person signed in — replaces its own row, and the row
   // follows the CURRENT user: an endpoint is one phone, and the phone's alerts
@@ -257,10 +279,15 @@ async function subscribe(req: Request, db: Db, userId: string): Promise<Response
   return json({ ok: true });
 }
 
-async function unsubscribe(req: Request, db: Db, userId: string): Promise<Response> {
+async function unsubscribe(
+  req: Request,
+  db: Db,
+  userId: string,
+): Promise<Response> {
   const body = await readBody(req);
   const endpoint = body?.endpoint;
-  if (typeof endpoint !== "string") return json({ error: "Missing endpoint." }, 400);
+  if (typeof endpoint !== "string")
+    return json({ error: "Missing endpoint." }, 400);
   const { error } = await db
     .from("push_subscriptions")
     .update({ revoked_at: new Date().toISOString() })
@@ -339,7 +366,8 @@ async function arm(req: Request, db: Db, userId: string): Promise<Response> {
       400,
     );
   }
-  const fireAt = typeof body.fire_at === "string" ? Date.parse(body.fire_at) : NaN;
+  const fireAt =
+    typeof body.fire_at === "string" ? Date.parse(body.fire_at) : NaN;
   if (!Number.isFinite(fireAt)) {
     return json({ error: "fire_at must be an ISO timestamp." }, 400);
   }
@@ -352,22 +380,38 @@ async function arm(req: Request, db: Db, userId: string): Promise<Response> {
       ? body.label.trim()
       : PROMPT_COPY[kind].body;
   if (label.length > LABEL_MAX || hasForbiddenChar(label)) {
-    return json({ error: `label must be one printable line of at most ${LABEL_MAX} characters.` }, 400);
+    return json(
+      {
+        error: `label must be one printable line of at most ${LABEL_MAX} characters.`,
+      },
+      400,
+    );
   }
 
   const { data: inserted, error: insErr } = await db
     .from("rest_alerts")
-    .insert({ user_id: userId, kind, fire_at: new Date(fireAt).toISOString(), label })
+    .insert({
+      user_id: userId,
+      kind,
+      fire_at: new Date(fireAt).toISOString(),
+      label,
+    })
     .select("id")
     .single();
-  if (insErr || !inserted) throw new Error(`arm: ${insErr?.message ?? "no row"}`);
+  if (insErr || !inserted)
+    throw new Error(`arm: ${insErr?.message ?? "no row"}`);
   const alertId = inserted.id as string;
 
   // One live alert PER KIND: re-arming today's check-in replaces today's
   // check-in and leaves a rest timer and the weekly alone.
   await cancelOpenAlerts(db, userId, kind, alertId);
 
-  log("alert_armed", { user_id: userId, alert_id: alertId, kind, fire_at: new Date(fireAt).toISOString() });
+  log("alert_armed", {
+    user_id: userId,
+    alert_id: alertId,
+    kind,
+    fire_at: new Date(fireAt).toISOString(),
+  });
   // 202: accepted and stored. Whether it is DELIVERED depends on a sweep
   // running, which this endpoint cannot promise and does not pretend to.
   return json({ ok: true, alert_id: alertId, kind }, 202);
@@ -380,7 +424,13 @@ async function arm(req: Request, db: Db, userId: string): Promise<Response> {
  */
 async function sendAlertNow(
   db: Db,
-  a: { id: string; user_id: string; kind: string; label: string; fire_at: string },
+  a: {
+    id: string;
+    user_id: string;
+    kind: string;
+    label: string;
+    fire_at: string;
+  },
 ): Promise<"sent" | "no_subscription" | "failed"> {
   const base = { user_id: a.user_id, alert_id: a.id, kind: a.kind };
   const { data: subs, error: subErr } = await db
@@ -409,41 +459,28 @@ async function sendAlertNow(
   );
 
   const results = await Promise.all(
-    (subs as { id: string; endpoint: string; p256dh: string; auth: string }[]).map(
-      async (sub) => {
-        try {
-          const push = await buildPushRequest({
-            endpoint: sub.endpoint,
-            subscription: { p256dh: sub.p256dh, auth: sub.auth },
-            payload,
-            vapid,
-            subject: VAPID_SUBJECT,
-            ttlSeconds: TTL_SECONDS,
-            // Topic per KIND, so a phone that was offline for a day wakes to
-            // one of each rather than a week of check-in reminders.
-            topic: a.kind.slice(0, 32),
-            // A prompt is not urgent the way a rest is; low urgency lets the
-            // push service batch it and costs the phone less battery.
-            urgency: "normal",
-          });
-          const res = await fetch(push.endpoint, {
-            method: "POST",
-            headers: push.headers,
-            body: push.body,
-            signal: AbortSignal.timeout(8000),
-          });
-          if (res.status === 404 || res.status === 410) {
-            await db
-              .from("push_subscriptions")
-              .update({ revoked_at: new Date().toISOString() })
-              .eq("id", sub.id);
-          }
-          return res.ok;
-        } catch {
-          return false;
-        }
-      },
-    ),
+    (
+      subs as { id: string; endpoint: string; p256dh: string; auth: string }[]
+    ).map(async (sub) => {
+      const sent = await postToPushEndpoint({
+        endpoint: sub.endpoint,
+        subscription: { p256dh: sub.p256dh, auth: sub.auth },
+        payload,
+        vapid,
+        subject: VAPID_SUBJECT,
+        ttlSeconds: TTL_SECONDS,
+        topic: a.kind.slice(0, 32),
+        urgency: "normal",
+      });
+      if (sent.blocked) return false;
+      if (sent.status === 404 || sent.status === 410) {
+        await db
+          .from("push_subscriptions")
+          .update({ revoked_at: new Date().toISOString() })
+          .eq("id", sub.id);
+      }
+      return sent.ok;
+    }),
   );
   const ok = results.some(Boolean);
   await stamp(db, a.id, ok ? {} : { error: "every endpoint failed" });
@@ -497,7 +534,11 @@ async function sweep(req: Request, db: Db): Promise<Response> {
   let stale = 0;
   let failed = 0;
   for (const row of (due ?? []) as {
-    id: string; user_id: string; kind: string; label: string; fire_at: string;
+    id: string;
+    user_id: string;
+    kind: string;
+    label: string;
+    fire_at: string;
   }[]) {
     if (now - Date.parse(row.fire_at) > graceMs) {
       await stamp(db, row.id, { error: "stale; not sent" });
@@ -512,21 +553,42 @@ async function sweep(req: Request, db: Db): Promise<Response> {
   return json({ ok: true, considered: due?.length ?? 0, sent, stale, failed });
 }
 
-async function schedule(req: Request, db: Db, userId: string): Promise<Response> {
+async function schedule(
+  req: Request,
+  db: Db,
+  userId: string,
+): Promise<Response> {
   const body = await readBody(req);
   if (!body) return json({ error: "Bad request body." }, 400);
 
-  const fireAt = typeof body.fire_at === "string" ? Date.parse(body.fire_at) : NaN;
-  if (!Number.isFinite(fireAt)) return json({ error: "fire_at must be an ISO timestamp." }, 400);
+  const fireAt =
+    typeof body.fire_at === "string" ? Date.parse(body.fire_at) : NaN;
+  if (!Number.isFinite(fireAt))
+    return json({ error: "fire_at must be an ISO timestamp." }, 400);
   const label = typeof body.label === "string" ? body.label.trim() : "";
-  if (label.length === 0 || label.length > LABEL_MAX || hasForbiddenChar(label)) {
-    return json({ error: `label must be one printable line of at most ${LABEL_MAX} characters.` }, 400);
+  if (
+    label.length === 0 ||
+    label.length > LABEL_MAX ||
+    hasForbiddenChar(label)
+  ) {
+    return json(
+      {
+        error: `label must be one printable line of at most ${LABEL_MAX} characters.`,
+      },
+      400,
+    );
   }
 
   const now = Date.now();
   const leadSeconds = (fireAt - now) / 1000;
   if (leadSeconds < -LATE_GRACE_SECONDS) {
-    return json({ error: "That rest is already over.", max_lead_seconds: Math.floor(secondsLeft()) }, 422);
+    return json(
+      {
+        error: "That rest is already over.",
+        max_lead_seconds: Math.floor(secondsLeft()),
+      },
+      422,
+    );
   }
   // The cap, and the reason for it, is at the top of this file. Refusing is
   // the honest answer: a 202 for an alert the platform will kill before it
@@ -567,14 +629,21 @@ async function schedule(req: Request, db: Db, userId: string): Promise<Response>
     .insert({ user_id: userId, fire_at: new Date(fireAt).toISOString(), label })
     .select("id")
     .single();
-  if (insErr || !inserted) throw new Error(`schedule: ${insErr?.message ?? "no row"}`);
+  if (insErr || !inserted)
+    throw new Error(`schedule: ${insErr?.message ?? "no row"}`);
   const alertId = inserted.id as string;
   // One live REST alert per person. The app cancels its own on the next LOG,
   // but a reload or a second device cannot, and two buzzes for one rest is a
   // bug. Scoped to 'rest' so a queued check-in prompt survives it.
   await cancelOpenAlerts(db, userId, "rest", alertId);
 
-  const work = deliver(db, { alertId, userId, fireAt, label, requestedAt: now });
+  const work = deliver(db, {
+    alertId,
+    userId,
+    fireAt,
+    label,
+    requestedAt: now,
+  });
   if (typeof EdgeRuntime !== "undefined") {
     EdgeRuntime.waitUntil(work);
   } else {
@@ -588,7 +657,10 @@ async function schedule(req: Request, db: Db, userId: string): Promise<Response>
     lead_s: Math.round(leadSeconds),
     worker_age_s: Math.round((now - WORKER_BORN) / 1000),
   });
-  return json({ alert_id: alertId, fire_at: new Date(fireAt).toISOString() }, 202);
+  return json(
+    { alert_id: alertId, fire_at: new Date(fireAt).toISOString() },
+    202,
+  );
 }
 
 async function cancel(req: Request, db: Db, userId: string): Promise<Response> {
@@ -607,7 +679,11 @@ async function cancel(req: Request, db: Db, userId: string): Promise<Response> {
     .select("id");
   if (error) throw new Error(`cancel: ${error.message}`);
   const cancelled = (data?.length ?? 0) > 0;
-  log("rest_alert_cancelled", { user_id: userId, alert_id: alertId, cancelled });
+  log("rest_alert_cancelled", {
+    user_id: userId,
+    alert_id: alertId,
+    cancelled,
+  });
   return json({ ok: true, cancelled });
 }
 
@@ -625,6 +701,9 @@ async function test(req: Request, db: Db, userId: string): Promise<Response> {
   if (!/^https:\/\//.test(endpoint) || endpoint.length > 2048) {
     return json({ error: "Missing browser push subscription." }, 400);
   }
+  if (!isAllowedPushEndpoint(endpoint)) {
+    return json({ error: "That push endpoint is not allowed." }, 400);
+  }
 
   const { data: sub, error } = await db
     .from("push_subscriptions")
@@ -634,7 +713,11 @@ async function test(req: Request, db: Db, userId: string): Promise<Response> {
     .is("revoked_at", null)
     .maybeSingle();
   if (error) throw new Error(`test subscription: ${error.message}`);
-  if (!sub) return json({ error: "This browser is not subscribed to rest alerts." }, 409);
+  if (!sub)
+    return json(
+      { error: "This browser is not subscribed to rest alerts." },
+      409,
+    );
 
   const vapid = await loadVapid(db);
   const payload = new TextEncoder().encode(
@@ -673,7 +756,11 @@ async function test(req: Request, db: Db, userId: string): Promise<Response> {
       .from("push_subscriptions")
       .update({ revoked_at: new Date().toISOString() })
       .eq("id", sub.id as string);
-    if (revokeError) logError("push_revoke_failed", { user_id: userId, error: revokeError.message });
+    if (revokeError)
+      logError("push_revoke_failed", {
+        user_id: userId,
+        error: revokeError.message,
+      });
   }
   if (!res.ok) {
     logError("rest_alert_test_failed", { user_id: userId, status: res.status });
@@ -700,7 +787,13 @@ function sleep(ms: number): Promise<void> {
  */
 async function deliver(
   db: Db,
-  a: { alertId: string; userId: string; fireAt: number; label: string; requestedAt: number },
+  a: {
+    alertId: string;
+    userId: string;
+    fireAt: number;
+    label: string;
+    requestedAt: number;
+  },
 ): Promise<void> {
   const base = { user_id: a.userId, alert_id: a.alertId };
   try {
@@ -714,7 +807,10 @@ async function deliver(
       .maybeSingle();
     if (rowErr) throw new Error(`re-read: ${rowErr.message}`);
     if (!row || row.cancelled_at || row.sent_at) {
-      log("rest_alert_skipped", { ...base, reason: !row ? "gone" : row.cancelled_at ? "cancelled" : "already sent" });
+      log("rest_alert_skipped", {
+        ...base,
+        reason: !row ? "gone" : row.cancelled_at ? "cancelled" : "already sent",
+      });
       return;
     }
 
@@ -725,7 +821,9 @@ async function deliver(
       .is("revoked_at", null);
     if (subErr) throw new Error(`subscriptions: ${subErr.message}`);
     if (!subs || subs.length === 0) {
-      await stamp(db, a.alertId, { error: "no active subscription at send time" });
+      await stamp(db, a.alertId, {
+        error: "no active subscription at send time",
+      });
       log("rest_alert_failed", { ...base, reason: "no subscription" });
       return;
     }
@@ -745,45 +843,46 @@ async function deliver(
 
     const results = await Promise.all(
       subs.map(async (s) => {
-        try {
-          const push = await buildPushRequest({
-            endpoint: s.endpoint as string,
-            subscription: { p256dh: s.p256dh as string, auth: s.auth as string },
-            payload,
-            vapid,
-            subject: VAPID_SUBJECT,
-            ttlSeconds: TTL_SECONDS,
-            // A newer rest alert replaces an older undelivered one at the
-            // push service, so a phone that was offline gets one buzz, not a
-            // backlog.
-            topic: "rest",
-            urgency: "high",
-          });
-          const res = await fetch(push.endpoint, {
-            method: "POST",
-            headers: push.headers,
-            body: push.body,
-            signal: AbortSignal.timeout(8000),
-          });
-          // The push service says this endpoint is gone (the person removed
-          // the app, or the browser rotated the subscription). Stop trying it.
-          if (res.status === 404 || res.status === 410) {
-            const { error } = await db
-              .from("push_subscriptions")
-              .update({ revoked_at: new Date().toISOString() })
-              .eq("id", s.id as string);
-            if (error) logError("push_revoke_failed", { ...base, error: error.message });
-          }
-          return { status: res.status, ok: res.ok };
-        } catch (e) {
-          return { status: 0, ok: false, error: message(e) };
+        const sent = await postToPushEndpoint({
+          endpoint: s.endpoint as string,
+          subscription: {
+            p256dh: s.p256dh as string,
+            auth: s.auth as string,
+          },
+          payload,
+          vapid,
+          subject: VAPID_SUBJECT,
+          ttlSeconds: TTL_SECONDS,
+          topic: "rest",
+          urgency: "high",
+        });
+        if (sent.blocked) {
+          return { status: 0, ok: false, error: "endpoint not allowed" };
         }
+        if (sent.status === 404 || sent.status === 410) {
+          const { error } = await db
+            .from("push_subscriptions")
+            .update({ revoked_at: new Date().toISOString() })
+            .eq("id", s.id as string);
+          if (error) {
+            logError("push_revoke_failed", { ...base, error: error.message });
+          }
+        }
+        return {
+          status: sent.status,
+          ok: sent.ok,
+          error: sent.error,
+        };
       }),
     );
 
     const anyOk = results.some((r) => r.ok);
     const summary = results
-      .map((r) => (r.ok ? `ok ${r.status}` : `fail ${r.status}${r.error ? ` ${r.error}` : ""}`))
+      .map((r) =>
+        r.ok
+          ? `ok ${r.status}`
+          : `fail ${r.status}${r.error ? ` ${r.error}` : ""}`,
+      )
       .join("; ")
       .slice(0, 500);
     await stamp(
@@ -813,7 +912,10 @@ async function stamp(
   alertId: string,
   patch: { sent_at?: string; error?: string },
 ): Promise<void> {
-  const { error } = await db.from("rest_alerts").update(patch).eq("id", alertId);
+  const { error } = await db
+    .from("rest_alerts")
+    .update(patch)
+    .eq("id", alertId);
   if (error) throw new Error(`stamp: ${error.message}`);
 }
 
@@ -872,7 +974,12 @@ Deno.serve(async (req) => {
         return json({ error: "No such route." }, 404);
     }
   } catch (e) {
-    logError("push_alerts_failed", { route, method: req.method, user_id: userId, error: message(e) });
+    logError("push_alerts_failed", {
+      route,
+      method: req.method,
+      user_id: userId,
+      error: message(e),
+    });
     return json({ error: "Rest alerts are unavailable right now." }, 500);
   }
 });

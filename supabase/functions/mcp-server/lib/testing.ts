@@ -90,6 +90,7 @@ export function toolHarness(
   name: string,
   fixtures: Record<string, unknown[]> = {},
   ownerId: string = TEST_USER,
+  ctx: RequestContext = { requestId: "test-request" },
 ) {
   const calls: Recorded[] = [];
   const client = {
@@ -127,7 +128,7 @@ export function toolHarness(
       meta.readOnly = config.annotations?.readOnlyHint;
     },
   };
-  register(server, db, { requestId: "test-request" });
+  register(server, db, ctx);
   if (schema === null || handler === null)
     throw new Error(`${name} did not register`);
   const parse = schema as z.ZodTypeAny;

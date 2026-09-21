@@ -4,6 +4,7 @@ import http from "node:http";
 import { test } from "node:test";
 
 import { createRelayServer, validateRelayConfig } from "./strength-mcp-relay.mjs";
+import { waitForRelay } from "./strength-tunnel-supervisor.mjs";
 
 async function startRelay(options = {}) {
   const server = createRelayServer({
@@ -61,6 +62,18 @@ test("replaces caller credentials with the configured bearer", async () => {
   }
 });
 
+test("OPTIONS /mcp is 204 so the supervisor readiness check can succeed", async () => {
+  const relay = await startRelay();
+  try {
+    const response = await fetch(relay.url, { method: "OPTIONS" });
+    assert.equal(response.status, 204);
+    assert.equal(response.headers.get("allow"), "POST");
+    await waitForRelay({ url: relay.url, attempts: 3, delay: async () => {} });
+  } finally {
+    await relay.stop();
+  }
+});
+
 test("rejects non-MCP routes and unsupported methods", async () => {
   const relay = await startRelay();
   try {
@@ -97,7 +110,7 @@ test("refuses browser requests and non-loopback hosts without reaching the upstr
       assert.equal(response.headers["access-control-allow-origin"], undefined);
     }
     const preflight = await fetch(relay.url, { method: "OPTIONS" });
-    assert.equal(preflight.status, 405);
+    assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get("access-control-allow-origin"), null);
     assert.equal(called, false);
   } finally {

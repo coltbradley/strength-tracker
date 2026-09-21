@@ -53,8 +53,8 @@ import {
   type CheckinNote,
   type NoteRow,
 } from "./memory-extract.ts";
-import { recordRefusalUsage } from "./usage.ts";
-import { isCoachUserAllowed, parseAllowlist } from "./lib/allowlist.ts";
+import { coachAdmission, parseAllowlist } from "./lib/allowlist.ts";
+import { lastClientUserTurn, threadForModel } from "./lib/thread.ts";
 
 // Sonnet 5, at MEDIUM effort. This reverses the move to Opus, which its own
 // comment said was one line to undo, and it moves effort UP one step at the
@@ -112,11 +112,11 @@ const LIMIT_OUTPUT_TOKENS_PER_MONTH = 800_000;
  * day on someone else's bill. A per-user quota only ever shaped the blast
  * radius of a person already inside; it was never the door.
  *
- * UNSET MEANS EVERYONE, deliberately: this lands on a running deployment and
- * must not lock its own lifter out the moment it deploys. Set it to a
- * comma-separated list of user uuids and only those ids get in. A value that
- * is present but names nobody refuses everyone rather than falling open — the
- * two mistakes are not symmetrical, and only one of them spends money.
+ * UNSET MEANS 503: the coach is not configured and nobody spends money. Set
+ * it to a comma-separated list of user uuids and only those ids get in. A
+ * value that is present but names nobody refuses everyone with 403 rather
+ * than falling open — the two mistakes are not symmetrical, and only one of
+ * them spends money.
  */
 const ALLOWED_USERS = parseAllowlist(Deno.env.get("COACH_ALLOWED_USERS"));
 
@@ -326,41 +326,6 @@ async function monthlySpentTokens(
   }, 0);
 }
 
-async function overLimit(
-  db: ReturnType<typeof serviceClient>,
-  userId: string,
-): Promise<string | null> {
-  const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
-
-  // `refused is null`: a refusal row must not itself count toward the limit.
-  // Counting them meant every retry after hitting the cap extended the rolling
-  // window, turning a 24-hour limit into a permanent lockout — and made the
-  // message the user was shown ("resets a day after your first message") false.
-  //
-  // `kind = 'turn'` for the same reason one level along: the memory-extraction
-  // pass writes its own coach_usage row after every turn, and this cap counts
-  // MESSAGES. Without the filter, shipping that pass would have silently
-  // halved the daily allowance for everyone. Its TOKENS still count, in the
-  // monthly sum below, because they are the same money.
-  const { count, error } = await db
-    .from("coach_usage")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .eq("kind", "turn")
-    .is("refused", null)
-    .gte("created_at", dayAgo);
-  if (error) throw new Error(`usage check: ${error.message}`);
-  if ((count ?? 0) >= LIMIT_TURNS_PER_DAY) {
-    return `Daily limit reached (${LIMIT_TURNS_PER_DAY} messages). It resets a day after your first message today.`;
-  }
-
-  const spent = await monthlySpentTokens(db, userId);
-  if (spent >= LIMIT_OUTPUT_TOKENS_PER_MONTH) {
-    return "Monthly limit reached for the coach. Tell Colt if you need it raised.";
-  }
-  return null;
-}
-
 /**
  * One attachment, checked for SHAPE before anything reads it as one.
  *
@@ -561,7 +526,7 @@ async function record(a: {
   db: ReturnType<typeof serviceClient>;
   userId: string;
   /** the id the CLIENT chose, so it can find this turn again */
-  turnId: string | null;
+  turnId: string;
   turns: Turn[];
   answer: string;
   tools: string[];
@@ -576,7 +541,7 @@ async function record(a: {
   startedAt: number;
 }): Promise<void> {
   const logContent = (Deno.env.get("COACH_LOG_CONTENT") ?? "on") !== "off";
-  const last = a.turns[a.turns.length - 1];
+  const last = lastClientUserTurn(a.turns);
   const attachments = (last?.attachments ?? []).map((x) => ({
     kind: x.kind,
     name: x.name,
@@ -617,7 +582,8 @@ async function record(a: {
   };
 
   // Never fail a turn the user already received over bookkeeping, but do make
-  // the failure visible: a silent one means the quota stops counting.
+  // the failure visible: a silent one means the reserved row never becomes a
+  // real usage record and the monthly cap stops counting it.
   const complain = async (event: string, message: string) => {
     console.error(
       JSON.stringify({
@@ -627,9 +593,10 @@ async function record(a: {
         error: message,
       }),
     );
-    // Reported as well as logged, because this row IS the quota: a write that
-    // fails silently is a free turn on the owner's key, and "silently" has so
-    // far meant "unless somebody happens to read the function logs".
+    // Reported as well as logged, because this row IS the quota reservation: a
+    // write that fails silently is a free turn on the owner's key, and
+    // "silently" has so far meant "unless somebody happens to read the
+    // function logs".
     await captureError(new Error(`${event}: ${message}`), {
       stage: "usage_write",
       user_id: a.userId,
@@ -640,25 +607,15 @@ async function record(a: {
   try {
     // READ THE ERROR. supabase-js does not throw on a PostgREST failure, it
     // RETURNS one, so a try/catch around this call catches a transport
-    // problem and nothing else. The row not being written was therefore
-    // invisible — and this row IS the quota: overLimit() counts these, so a
-    // failed insert is a free turn on the deployment owner's API key. Two
-    // client-reachable ways to cause one (a reused turn_id against the unique
-    // index, a turn_id that is not a uuid) are now refused up front, which
-    // leaves this as the alarm for everything nobody has thought of.
-    const { error } = await a.db.from("coach_usage").insert(row);
+    // problem and nothing else. The row not being updated was therefore
+    // invisible — reserve_coach_turn already inserted the placeholder, so a
+    // failed update is a free turn on the deployment owner's API key.
+    const { error } = await a.db
+      .from("coach_usage")
+      .update(row)
+      .eq("turn_id", a.turnId);
     if (!error) return;
     await complain("coach_usage_write_failed", error.message);
-    if (row.turn_id === null) return;
-    // The turn_id is the client's handle for recovering this answer, and the
-    // quota's count of this turn. If the id is what the write choked on, the
-    // count still has to happen: keep the accounting, lose the handle.
-    const { error: retry } = await a.db
-      .from("coach_usage")
-      .insert({ ...row, turn_id: null });
-    if (retry) {
-      await complain("coach_usage_write_failed_untagged", retry.message);
-    }
   } catch (e) {
     await complain(
       "coach_usage_write_failed",
@@ -701,9 +658,8 @@ async function handleCheckinMemory(req: Request): Promise<Response> {
 
   // Same two gates the chat endpoint enforces, and in the same order: WHO may
   // use the coach at all, then whether THIS account has it switched off.
-  if (!isCoachUserAllowed(userId, ALLOWED_USERS)) {
-    return json({ error: "The coach isn't enabled for this account." }, 403);
-  }
+  const gate = coachAdmission(userId, ALLOWED_USERS);
+  if (gate.status !== 200) return json({ error: gate.error }, gate.status);
 
   const db = serviceClient();
 
@@ -977,13 +933,16 @@ Deno.serve(async (req) => {
   // look at. No coach_usage row is written either. Refusal rows exist to keep
   // the rolling quota honest for someone who HAS a quota; one per rejected
   // caller would hand anybody with an account an unbounded insert.
-  if (!isCoachUserAllowed(userId, ALLOWED_USERS)) {
+  const gate = coachAdmission(userId, ALLOWED_USERS);
+  if (gate.status !== 200) {
     return json(
       {
         error:
-          "The coach isn't enabled for this account. Ask whoever runs this deployment to add you.",
+          gate.status === 403
+            ? `${gate.error} Ask whoever runs this deployment to add you.`
+            : gate.error,
       },
-      403,
+      gate.status,
     );
   }
 
@@ -1008,15 +967,13 @@ Deno.serve(async (req) => {
   // of one malformed field. A turn whose usage cannot be recorded must not
   // run.
   const rawTurnId = body.turn_id;
-  const turnId =
-    rawTurnId === undefined || rawTurnId === null
-      ? null
-      : typeof rawTurnId === "string" && UUID_RE.test(rawTurnId)
-        ? rawTurnId
-        : false;
-  if (turnId === false) {
+  if (rawTurnId === undefined || rawTurnId === null) {
+    return json({ error: "That request is missing a turn id." }, 400);
+  }
+  if (typeof rawTurnId !== "string" || !UUID_RE.test(rawTurnId)) {
     return json({ error: "That request has a malformed turn id." }, 400);
   }
+  const turnId = rawTurnId;
 
   const checked = checkTurns(body.turns);
   if (!Array.isArray(checked)) {
@@ -1030,6 +987,22 @@ Deno.serve(async (req) => {
 
   const db = serviceClient();
 
+  const { data: prior } = await db
+    .from("coach_usage")
+    .select("prompt, response, created_at")
+    .eq("user_id", userId)
+    .eq("kind", "turn")
+    .is("refused", null)
+    .not("prompt", "is", null)
+    .not("response", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  const chronological = [...(prior ?? [])].reverse();
+  const thread = threadForModel(turns, chronological);
+  if (!Array.isArray(thread)) {
+    return json({ error: thread.error }, thread.status);
+  }
+
   try {
     // The per-person switch, before the quota. Someone switched off should be
     // told that, not told they are out of messages, and their refusal must not
@@ -1038,46 +1011,24 @@ Deno.serve(async (req) => {
     const off = await coachSwitchedOff(db, userId);
     if (off) return json({ error: off }, 403);
 
-    const refusal = await overLimit(db, userId);
-    if (refusal) {
-      await recordRefusalUsage(
-        () =>
-          db.from("coach_usage").insert({
-            user_id: userId,
-            model: MODEL,
-            refused: refusal,
-          }),
-        async (message) => {
-          console.error(
-            JSON.stringify({
-              event: "coach_refusal_usage_write_failed",
-              user_id: userId,
-              error: message,
-            }),
-          );
-          await captureError(
-            new Error(`coach refusal usage write: ${message}`),
-            { stage: "refusal_usage_write", user_id: userId },
-          );
-        },
-      );
-      return json({ error: refusal }, 429);
+    const { data: reserveData, error: reserveError } = await db.rpc(
+      "reserve_coach_turn",
+      {
+        p_user_id: userId,
+        p_turn_id: turnId,
+        p_day_limit: LIMIT_TURNS_PER_DAY,
+        p_month_token_limit: LIMIT_OUTPUT_TOKENS_PER_MONTH,
+      },
+    );
+    if (reserveError) {
+      return json({ error: "Could not reserve this turn." }, 503);
     }
-    if (turnId) {
-      // The other half of the same bypass: coach_usage has a unique index on
-      // turn_id, so REUSING an id makes the closing insert fail and the turn
-      // free. The id is the client's own handle for recovering an answer it
-      // was disconnected from — that lookup is a read, and re-sending an id
-      // already answered is not something the app does.
-      const { data, error } = await db
-        .from("coach_usage")
-        .select("id")
-        .eq("turn_id", turnId)
-        .maybeSingle();
-      if (error) throw new Error(`usage check: ${error.message}`);
-      if (data) {
-        return json({ error: "That message was already answered." }, 409);
-      }
+    const reserve = reserveData as { ok: boolean; reason?: string };
+    if (!reserve.ok && reserve.reason === "duplicate_turn") {
+      return json({ error: "That turn was already recorded." }, 409);
+    }
+    if (!reserve.ok) {
+      return json({ error: reserve.reason }, 429);
     }
   } catch (e) {
     await captureError(e, { stage: "usage_check", user_id: userId });
@@ -1136,7 +1087,7 @@ Deno.serve(async (req) => {
         }
       };
       try {
-        const messages = turns.map((t) => ({
+        const messages = thread.map((t) => ({
           role: t.role,
           content: toContent(t),
         }));
@@ -1221,6 +1172,7 @@ Deno.serve(async (req) => {
                 // Claude Desktop keeps both.
                 set_training_plan: { enabled: false },
                 confirm_training_plan: { enabled: false },
+                confirm_program: { enabled: false },
               },
             },
           ],
@@ -1324,10 +1276,7 @@ Deno.serve(async (req) => {
           // checked into a shape, so "the last turn" is not guaranteed to be
           // the lifter's — and an assistant turn is the one thing this pass
           // must never read.
-          userText:
-            turns[turns.length - 1]?.role === "user"
-              ? (turns[turns.length - 1]?.text ?? "")
-              : "",
+          userText: lastClientUserTurn(turns)?.text ?? "",
           turnFailed: failed !== null,
         });
 

@@ -51,6 +51,7 @@ await db.exec(`
     as $$ select nullif(current_setting('app.user_id', true), '')::uuid $$;
   create role authenticated login;
   create role anon login;
+  create role service_role nologin bypassrls;
   -- Supabase grants EXECUTE on every new public function to anon and
   -- authenticated through default privileges, i.e. at CREATE time. Modelled the
   -- same way, and BEFORE the migrations run, so that a migration which revokes
@@ -441,6 +442,38 @@ await check("cannot void another user's set", async () => {
     rejected = true;
   }
   if (!rejected) throw new Error("cross-user void insert succeeded");
+});
+
+await check("cannot attach a set to another user's session", async () => {
+  await asUser(
+    OTHER,
+    `insert into sessions (id, user_id, started_at) values ('44444444-0000-4000-8000-000000000099', '${OTHER}', now())`,
+  );
+  let rejected = false;
+  try {
+    await asUser(
+      OTHER,
+      `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps)
+       values ('55555555-0000-4000-8000-000000000099', '${OTHER}', '44444444-0000-4000-8000-000000000001', 'Barbell_Squat', 0, 'working', 60, 5)`,
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("cross-user session_id on set insert succeeded");
+});
+
+await check("NaN is not a legal load_kg", async () => {
+  let rejected = false;
+  try {
+    await db.query(
+      `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps)
+       values (gen_random_uuid(), $1, $2, 'Barbell_Squat', 0, 'working', 'NaN'::numeric, 5)`,
+      [OWNER, "44444444-0000-4000-8000-000000000001"],
+    );
+  } catch {
+    rejected = true;
+  }
+  if (!rejected) throw new Error("NaN load_kg was accepted");
 });
 
 await check("set_voids is append-only: update/delete affect 0 rows", async () => {
@@ -1418,6 +1451,61 @@ await check("an extraction costs money but is not a message", async () => {
   if (!rejected) throw new Error("accepted an unknown usage kind");
 });
 
+await check("reserve_coach_turn inserts one row under the cap", async () => {
+  const turn = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const r = await db.query(
+    `select reserve_coach_turn($1::uuid, $2::uuid, 150, 800000) as j`,
+    [OWNER, turn],
+  );
+  assertEq(r.rows[0].j.ok, true, "ok");
+  const n = await db.query(
+    `select count(*)::int as n from coach_usage where turn_id = $1`,
+    [turn],
+  );
+  assertEq(n.rows[0].n, 1, "one reservation");
+});
+
+await check("reserve_coach_turn refuses a duplicate turn_id", async () => {
+  const turn = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  await db.query(`select reserve_coach_turn($1::uuid, $2::uuid, 150, 800000)`, [
+    OWNER,
+    turn,
+  ]);
+  const r = await db.query(
+    `select reserve_coach_turn($1::uuid, $2::uuid, 150, 800000) as j`,
+    [OWNER, turn],
+  );
+  assertEq(r.rows[0].j.ok, false, "duplicate not ok");
+  assertEq(r.rows[0].j.reason, "duplicate_turn", "reason");
+});
+
+await check("reserve_coach_turn refuses at the daily cap", async () => {
+  const capUser = "00000000-0000-4000-8000-0000000000ca";
+  await db.query(
+    `insert into auth.users (id, email) values ($1, 'quota-cap@example.test')
+     on conflict do nothing`,
+    [capUser],
+  );
+  await db.query(
+    `insert into coach_usage (user_id, model, kind, input_tokens, output_tokens, turn_id)
+     select $1::uuid, 'x', 'turn', 0, 0,
+            ('cccccccc-cccc-4ccc-8ccc-' || lpad(i::text, 12, '0'))::uuid
+     from generate_series(1, 150) i`,
+    [capUser],
+  );
+  const turn = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const r = await db.query(
+    `select reserve_coach_turn($1::uuid, $2::uuid, 150, 800000) as j`,
+    [capUser, turn],
+  );
+  assertEq(r.rows[0].j.ok, false, "at cap");
+  assertEq(
+    r.rows[0].j.reason,
+    "Daily limit reached (150 messages). It resets a day after your first message today.",
+    "daily reason",
+  );
+});
+
 await check("cost is priced per model, and an unknown model is not guessed", async () => {
   // One rate table across two models underpriced the turns and overpriced the
   // extractions, which partly cancel — the worst way for a cost view to be
@@ -2221,11 +2309,51 @@ await check("nobody deletes an activity", async () => {
   assertEq(del.affectedRows ?? 0, 0, "no delete policy");
 });
 
+await check("integration secret is not stored as the bearer", async () => {
+  await db.exec("begin");
+  try {
+    await db.exec(
+      `select set_config('app.integration_key', 'test-key-32-bytes-long!!!!!!', true)`,
+    );
+    await db.query(
+      `insert into integration_credentials (user_id, provider, secret_enc)
+       values ($1, 'intervals_icu', encrypt_integration_secret('{"api_key":"super-secret"}'::jsonb))`,
+      [OWNER],
+    );
+    const raw = await db.query(
+      `select secret_enc::text as t from integration_credentials where user_id = $1`,
+      [OWNER],
+    );
+    if (String(raw.rows[0].t).includes("super-secret")) {
+      throw new Error("bearer still visible in the stored column");
+    }
+    const back = await db.query(
+      `select decrypt_integration_secret(secret_enc) as j from integration_credentials where user_id = $1`,
+      [OWNER],
+    );
+    assertEq(back.rows[0].j.api_key, "super-secret", "round trip");
+    await db.exec("commit");
+  } catch (e) {
+    await db.exec("rollback");
+    throw e;
+  }
+});
+
 await check("sync credentials are unreadable by any client", async () => {
-  await db.exec(`
-    insert into integration_credentials (user_id, provider, secret)
-    values ('${EA}', 'intervals_icu', '{"api_key":"secret"}'::jsonb);
-  `);
+  await db.exec("begin");
+  try {
+    await db.exec(
+      `select set_config('app.integration_key', 'test-key-32-bytes-long!!!!!!', true)`,
+    );
+    await db.exec(`
+      insert into integration_credentials (user_id, provider, secret_enc)
+      values ('${EA}', 'intervals_icu', encrypt_integration_secret('{"api_key":"secret"}'::jsonb));
+    `);
+    await db.exec("commit");
+  } catch (e) {
+    await db.exec("rollback");
+    throw e;
+  }
   const rls = await db.query(
     `select relrowsecurity from pg_class where relname = 'integration_credentials'`,
   );

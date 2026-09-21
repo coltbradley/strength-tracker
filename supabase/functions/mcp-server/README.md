@@ -2,7 +2,8 @@
 
 MCP server for the strength tracker, running as a Supabase Edge Function.
 Streamable HTTP, stateless (every POST is independent, no session ids). Claude
-connects through `mcp-remote` with a static bearer token and gets 14 tools.
+connects through `mcp-remote` with a **per-user** bearer token from
+`scripts/issue-mcp-token.mjs` and gets 14 tools.
 
 Read (`readOnlyHint`): `search_exercises`, `resolve_exercises` (the same
 lookup for many names at once, in one round trip), `get_lift_history`,
@@ -22,15 +23,15 @@ each tool does.
 
 ## Env vars
 
-| Var                         | Source                                                                                                      |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `MCP_SECRET`                | Function secret. Long random bearer token, same value as in Claude Desktop's mcp-remote `--header` config.  |
-| `OWNER_USER_ID`             | Function secret. UUID of the single Supabase Auth user; every query filters and every write stamps this id. |
-| `SUPABASE_URL`              | Auto-injected by the edge runtime.                                                                          |
-| `SUPABASE_SERVICE_ROLE_KEY` | Auto-injected by the edge runtime.                                                                          |
+| Var                         | Source                             |
+| --------------------------- | ---------------------------------- |
+| `SUPABASE_URL`              | Auto-injected by the edge runtime. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Auto-injected by the edge runtime. |
 
-Set secrets with `supabase secrets set MCP_SECRET=... OWNER_USER_ID=...`
-(locally: put them in `supabase/functions/.env`).
+Identity is the bearer token, not an env var: `mcp_tokens` maps its SHA-256
+digest to a user. Mint and activate tokens per [docs/setup.md](../../../docs/setup.md)
+step 3 (`issue-mcp-token.mjs`). The legacy shared `MCP_SECRET` /
+`OWNER_USER_ID` pair is not accepted.
 
 ## Deploy
 
@@ -66,14 +67,19 @@ supabase functions serve mcp-server --env-file supabase/functions/.env
 # endpoint: http://127.0.0.1:54321/functions/v1/mcp-server
 ```
 
+Put `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `supabase/functions/.env`
+for local serve (or rely on `supabase start`). Auth still needs a row in
+`mcp_tokens` for the bearer you send.
+
 ## Smoke test with curl
 
 Streamable HTTP requires `Accept: application/json, text/event-stream` on every
-POST. Stateless mode means no session header anywhere.
+POST. Stateless mode means no session header anywhere. Use a minted per-user
+token (not a deployment secret):
 
 ```bash
 URL=http://127.0.0.1:54321/functions/v1/mcp-server
-AUTH="Authorization: Bearer $MCP_SECRET"
+AUTH="Authorization: Bearer <mcp-token-from-issue-mcp-token>"
 HDRS=(-H "$AUTH" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream")
 
 # initialize

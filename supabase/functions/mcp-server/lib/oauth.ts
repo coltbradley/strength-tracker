@@ -61,7 +61,7 @@ export function callerFromClaims(
   if (typeof sub !== "string" || sub.length === 0) return null;
   if (role !== "authenticated") return null;
   if (typeof client_id !== "string" || client_id.length === 0) return null;
-  return { userId: sub, label: `oauth client ${client_id}` };
+  return { userId: sub, label: `oauth client ${client_id}`, ephemeral: false };
 }
 
 function supabaseUrl(): string {

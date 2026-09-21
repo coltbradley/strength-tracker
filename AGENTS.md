@@ -562,8 +562,9 @@ null` is false: without it, saving an unrated set unrated writes a void and a
 
 - Who gets the in-app coach is TWO gates and both must pass.
   `COACH_ALLOWED_USERS` is the door: an env var, checked before any database
-  read, unset means everyone, and it exists so an open sign-up cannot mint
-  accounts that spend the deployment owner's Anthropic key. `coach_access`
+  read, unset returns 503 (the coach is not configured), and it exists so an
+  open sign-up cannot mint accounts that spend the deployment owner's
+  Anthropic key. Production must set the secret. `coach_access`
   (20260907020000) is the switch: one row per person, NO ROW MEANS ON so it
   changed nothing when it landed, with a `reason` written for the person to
   read. It is not a column on `user_config` because that table has an owner
@@ -682,14 +683,16 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   prompt injection into script injection.
 - A turn is completed and RECORDED whether or not the client is still
   listening, against a client-chosen `turn_id`, so closing the app mid-answer
-  loses nothing. Usage is written in a `finally`, or an aborted turn is billed
-  and invisible to the quota. A turn whose usage cannot be RECORDED must not
-  run: supabase-js returns a PostgREST error rather than throwing, so a failed
-  usage write was invisible and left `overLimit()` counting zero, which
-  disabled both caps. The error is read now, a malformed `turn_id` is a 400
-  before any tokens are spent, a reused one is a 409, and a write that fails
-  anyway retries once without the id so the turn still counts. Nothing the
-  client sends is trusted by the checks that depend on its shape — `unit` is
+  loses nothing. Quota is reserved up front via `reserve_coach_turn` (a
+  placeholder row with that `turn_id`); `record()` updates that row in a
+  `finally`, or an aborted turn is still billed against the reservation. A turn
+  must not spend tokens until reservation succeeds. supabase-js returns a
+  PostgREST error rather than throwing, so a failed final `record()` update was
+  invisible and left caps wrong. The error is read now, a malformed `turn_id`
+  is a 400 before any tokens are spent, a reused one is a 409, and a failed
+  `record()` update is logged to Sentry without dropping the answer the lifter
+  already read. Nothing the client sends is trusted by the checks that depend
+  on its shape — `unit` is
   whitelisted to kg or lb before it reaches the SYSTEM prompt, attachment
   shapes are validated before their sizes are measured, and an over-length turn
   is a 413 rather than being dropped from the array.
@@ -731,7 +734,7 @@ npm --prefix scripts install && node scripts/validate-db.mjs
 
 # every column any code SELECTs must exist against that same schema
 node scripts/check-selects.mjs
-node --test scripts/release-ledger.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs
 node scripts/check-release-ledger.mjs
 
 # mcp server: serve locally
@@ -759,7 +762,7 @@ node scripts/build-exercise-seed.mjs
 npm --prefix scripts ci
 node scripts/validate-db.mjs
 node scripts/check-selects.mjs
-node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs
 node scripts/check-release-ledger.mjs
 
 # edge functions (Deno — install via denoland/setup-deno or the Deno CLI)

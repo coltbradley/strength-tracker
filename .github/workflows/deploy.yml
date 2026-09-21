@@ -2,15 +2,13 @@ name: deploy
 
 # Every push to main deploys what changed, in the order the schema needs.
 #
-# Three jobs. `changes` looks at the diff. `supabase` pushes migrations and both
-# edge functions when anything under supabase/ changed — but ONLY when the three
-# deploy settings exist (see docs/deploy.md, "Automating the Supabase half");
-# without them it prints a notice and skips, so this file is safe to merge
-# before anyone has added a secret. `pages` publishes the PWA when pwa/ changed,
-# and it WAITS for `supabase`: a build that selects a column the database does
-# not have yet fails every read until someone runs the migration by hand, and
-# that has happened once already (prescriptions.set_type). A skipped supabase
-# job lets pages proceed; a failed one blocks it, which is the point.
+# Three jobs. `changes` looks at the diff. `supabase` pushes migrations and
+# edge functions when anything under supabase/ changed. If those paths
+# changed and the three deploy settings are missing, the job FAILS so Pages
+# cannot publish a client against a schema/function set that did not go out.
+# If supabase/ did not change, the job is skipped and Pages may still publish.
+# There is no wait on `ci.yml`: GitHub Actions CI billing currently fails that
+# workflow automatically, and a release must not wait on a job that cannot run.
 #
 # The installed app does NOT reload itself to pick up a Pages build: registerType
 # is "prompt", so main.tsx applies a waiting worker only when no session is open
@@ -87,7 +85,8 @@ jobs:
             echo "on=true" >> "$GITHUB_OUTPUT"
           else
             echo "on=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Supabase deploy skipped::SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD (repository secrets) and SUPABASE_PROJECT_REF (repository variable) are not all set. Migrations and edge functions still go out by hand — docs/deploy.md."
+            echo "::error title=Supabase deploy blocked::SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD (repository secrets) and SUPABASE_PROJECT_REF (repository variable) are not all set. A change under supabase/ cannot publish without them — docs/deploy.md."
+            exit 1
           fi
       - if: steps.gate.outputs.on == 'true'
         uses: supabase/setup-cli@v1
@@ -142,6 +141,10 @@ jobs:
           cache-dependency-path: pwa/package-lock.json
       - run: npm ci
         working-directory: pwa
+      - run: node scripts/check-pwa-env.mjs
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
       - run: npm run build
         working-directory: pwa
         env:
@@ -166,3 +169,34 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: pwa/dist
           commit_message: "Deploy PWA (${{ github.sha }})"
+      - name: smoke
+        env:
+          PAGES_URL: ${{ vars.PAGES_URL }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          pages_url="${PAGES_URL:-https://coltbradley.github.io/strength-tracker/}"
+          pages_code=000
+          for attempt in 1 2 3 4 5; do
+            pages_code=$(curl -sS --max-time 30 -o /tmp/pages-body -w '%{http_code}' "$pages_url")
+            [ "$pages_code" = "200" ] && break
+            [ "$attempt" -lt 5 ] && sleep 3
+          done
+          echo "pages_http=$pages_code"
+          if [ "$pages_code" != "200" ]; then
+            echo "::error::Pages smoke failed ($pages_code)"
+            exit 1
+          fi
+          mcp_code=skipped
+          if [ -n "${SUPABASE_PROJECT_REF:-}" ]; then
+            mcp_url="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/mcp-server/health"
+            mcp_code=$(curl -sS --max-time 30 -o /tmp/mcp-health -w '%{http_code}' "$mcp_url")
+            echo "mcp_http=$mcp_code"
+            if [ "$mcp_code" != "200" ]; then
+              echo "::error::MCP /health smoke failed ($mcp_code)"
+              exit 1
+            fi
+          else
+            echo "MCP smoke skipped: SUPABASE_PROJECT_REF unset"
+          fi
+          echo "receipt sha=${{ github.sha }} run=${{ github.run_id }} supabase_job=${{ needs.supabase.result }} pages_http=$pages_code mcp_http=$mcp_code"

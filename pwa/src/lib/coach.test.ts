@@ -17,7 +17,7 @@ vi.mock("./coachContext", () => ({
 }));
 vi.mock("./errors", () => ({ reportError: vi.fn() }));
 
-import { askCoach, readAttachment } from "./coach";
+import { askCoach, readAttachment, wrapCoachContext } from "./coach";
 import { reportError } from "./errors";
 
 /** A Response whose body streams the given SSE text in arbitrary chunks. */
@@ -76,7 +76,7 @@ describe("askCoach SSE handling", () => {
     const frames =
       'event: text\ndata: {"text":"Drop the last "}\n\n' +
       'event: text\ndata: {"text":"set."}\n\n' +
-      'event: done\ndata: {}\n\n';
+      "event: done\ndata: {}\n\n";
     vi.mocked(fetch).mockResolvedValue(sseResponse(frames, 5));
     const c = collector();
     await askCoach([{ role: "user", text: "hi" }], c.events);
@@ -90,7 +90,7 @@ describe("askCoach SSE handling", () => {
       'event: thinking\ndata: {"text":"..."}\n\n' +
       'event: tool\ndata: {"name":"get_program"}\n\n' +
       'event: text\ndata: {"text":"ok"}\n\n' +
-      'event: done\ndata: {}\n\n';
+      "event: done\ndata: {}\n\n";
     vi.mocked(fetch).mockResolvedValue(sseResponse(frames, 11));
     const c = collector();
     await askCoach([{ role: "user", text: "hi" }], c.events);
@@ -119,8 +119,17 @@ describe("askCoach SSE handling", () => {
     expect(c.errors).toEqual(["Daily limit reached (150)."]);
   });
 
+  it("wraps context as untrusted JSON, not XML", () => {
+    const wrapped = wrapCoachContext("TODAY\nSquat", "what next?");
+    expect(wrapped).toContain('"source":"app_current_context"');
+    expect(wrapped).not.toContain("<current_context>");
+    expect(wrapped).toContain("what next?");
+  });
+
   it("attaches context to the last user turn only", async () => {
-    vi.mocked(fetch).mockResolvedValue(sseResponse('event: done\ndata: {}\n\n'));
+    vi.mocked(fetch).mockResolvedValue(
+      sseResponse("event: done\ndata: {}\n\n"),
+    );
     await askCoach(
       [
         { role: "user", text: "first" },
@@ -133,7 +142,8 @@ describe("askCoach SSE handling", () => {
       (vi.mocked(fetch).mock.calls[0]![1] as { body: string }).body,
     ) as { turns: { text: string }[] };
     expect(body.turns[0]!.text).toBe("first");
-    expect(body.turns[2]!.text).toContain("CONTEXT HERE");
+    expect(body.turns[2]!.text).toContain('"source":"app_current_context"');
+    expect(body.turns[2]!.text).not.toContain("<current_context>");
     expect(body.turns[2]!.text).toContain("second");
   });
 
@@ -216,6 +226,8 @@ describe("readAttachment", () => {
   });
 
   it("refuses a type the API cannot read", async () => {
-    expect(await readAttachment(file("clip.mov", "video/quicktime"))).toBeNull();
+    expect(
+      await readAttachment(file("clip.mov", "video/quicktime")),
+    ).toBeNull();
   });
 });

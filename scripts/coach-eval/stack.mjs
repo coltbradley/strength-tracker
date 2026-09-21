@@ -7,14 +7,14 @@
 //               └─ proxy :54321  strips /rest/v1 so supabase-js is none the wiser
 //                    └─ deno run supabase/functions/mcp-server :8000
 //
-// Auth into the MCP server uses its legacy env path (MCP_SECRET + OWNER_USER_ID)
-// so the fixture needs no mcp_tokens row.
+// Auth into the MCP server uses a per-user token row in mcp_tokens, minted the
+// same way scripts/issue-mcp-token.mjs does.
 
 import { readFile, readdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import http from "node:http";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
@@ -24,12 +24,16 @@ export const root = join(here, "..", "..");
 
 const PORTS = { pg: 54329, postgrest: 54330, proxy: 54321, mcp: 8000 };
 
-// Generated per run, never hardcoded. These authenticate a throwaway
-// in-memory database to itself for the life of one process: PostgREST
-// verifies the JWT it is handed, and the MCP server matches the bearer
-// against its legacy env path. Neither is a credential for anything real.
+// Generated per run, never hardcoded. PostgREST verifies the JWT it is handed;
+// the MCP server hashes the bearer and looks up mcp_tokens. Neither is a
+// credential for anything real.
 const JWT_SECRET = randomUUID() + randomUUID();
-export const MCP_SECRET = randomUUID();
+
+function mintMcpToken() {
+  const token = `stl_${randomBytes(32).toString("base64url")}`;
+  const digest = createHash("sha256").update(token).digest("hex");
+  return { token, digest };
+}
 
 function b64url(s) {
   return Buffer.from(s).toString("base64url");
@@ -110,6 +114,14 @@ export async function createDb() {
 
 export async function startStack({ ownerId, log = () => {} }) {
   const db = await createDb();
+  await db.exec(`
+    insert into auth.users (id, email) values ('${ownerId}', 'valentine@example.test') on conflict do nothing;
+  `);
+  const { token: mcpToken, digest: mcpDigest } = mintMcpToken();
+  await db.exec(`
+    insert into mcp_tokens (token_sha256, user_id, label)
+    values ('${mcpDigest}', '${ownerId}', 'coach-eval stack');
+  `);
   const socket = new PGLiteSocketServer({ db, port: PORTS.pg, host: "127.0.0.1" });
   await socket.start();
   log(`pglite socket on :${PORTS.pg}`);
@@ -184,8 +196,6 @@ log-level = "error"
         ...process.env,
         SUPABASE_URL: `http://127.0.0.1:${PORTS.proxy}`,
         SUPABASE_SERVICE_ROLE_KEY: serviceJwt(),
-        MCP_SECRET,
-        OWNER_USER_ID: ownerId,
         LOG_LEVEL: "error",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -204,7 +214,7 @@ log-level = "error"
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
-        authorization: `Bearer ${MCP_SECRET}`,
+        authorization: `Bearer ${mcpToken}`,
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     });
@@ -221,6 +231,7 @@ log-level = "error"
 
   return {
     db,
+    mcpToken,
     rpc,
     /** MCP tools as Anthropic client tools (the connector would present the same schemas). */
     async tools(exclude = ["delete_program", "delete_exercise"]) {

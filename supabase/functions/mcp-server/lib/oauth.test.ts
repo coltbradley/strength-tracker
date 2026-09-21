@@ -40,7 +40,7 @@ Deno.test(
   () => {
     assertEquals(
       callerFromClaims({ sub: USER, role: "authenticated", client_id: "c1" }),
-      { userId: USER, label: "oauth client c1" },
+      { userId: USER, label: "oauth client c1", ephemeral: false },
     );
     // A plain PWA session token: no client_id. Refused on purpose.
     assertEquals(callerFromClaims({ sub: USER, role: "authenticated" }), null);
@@ -60,7 +60,11 @@ Deno.test("a token the auth server accepts resolves to its user", async () => {
   const result = await verifyOAuthToken(token, "req-1", () =>
     Promise.resolve({ data: { user: { id: USER } }, error: null }),
   );
-  assertEquals(result, { userId: USER, label: "oauth client c1" });
+  assertEquals(result, {
+    userId: USER,
+    label: "oauth client c1",
+    ephemeral: false,
+  });
 });
 
 Deno.test(
