@@ -22,7 +22,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import http from "node:http";
-import { startStack, MCP_SECRET } from "./stack.mjs";
+import { startStack } from "./stack.mjs";
 import { applyFixture, OWNER } from "./fixture.mjs";
 import { selectCases } from "./cases.mjs";
 import { runChecks } from "./checks.mjs";
@@ -142,7 +142,7 @@ you called and why.
 const stack = await startStack({ ownerId: OWNER, log: onMcpLine });
 const tools = await stack.tools();
 await mkdir(OUT, { recursive: true });
-await writeFile(join(OUT, "mcp-token.txt"), MCP_SECRET);
+await writeFile(join(OUT, "mcp-token.txt"), stack.mcpToken);
 console.log(`stack up, ${tools.length} tools; MCP on :8000, control on :${PORT}`);
 
 function json(res, code, body) {

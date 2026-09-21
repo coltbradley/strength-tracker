@@ -21,6 +21,11 @@ export interface Db {
 
 let cachedClient: SupabaseClient | null = null;
 
+/** Tests inject a client so token lookup does not need network. */
+export function setClientForTests(client: SupabaseClient | null): void {
+  cachedClient = client;
+}
+
 /**
  * The service-role client. Stateless with respect to who is calling, so it is
  * safe (and worth it) to reuse across requests in one isolate.
@@ -102,7 +107,9 @@ export async function visibleExerciseIds(
     .in("id", exerciseIds);
   if (error) throw new Error(`look up exercises: ${error.message}`);
   const rows = (data ?? []) as OwnedExerciseRow[];
-  return new Set(rows.filter((r) => canSeeExercise(r, db.ownerId)).map((r) => r.id));
+  return new Set(
+    rows.filter((r) => canSeeExercise(r, db.ownerId)).map((r) => r.id),
+  );
 }
 
 /**

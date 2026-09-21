@@ -5,22 +5,50 @@
 // Calls the handler directly, so there is no port, no network and no Supabase.
 // That is exactly why lib/handler.ts is separate from index.ts.
 //
-// The legacy owner token is used because it resolves without a database round
-// trip; the per-user token path is the same code past resolveCaller().
+// Authenticated RPC tests inject a fixture caller so they need no database.
+// resolveCaller itself is exercised by the 401/503 cases that call handleRequest.
 
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@^1";
+import { resolveCaller } from "./auth.ts";
+import type { Caller } from "./auth.ts";
+import { setClientForTests } from "./db.ts";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const SECRET = "test-secret-do-not-use";
 const USER = "00000000-0000-4000-8000-000000000001";
 
-Deno.env.set("MCP_SECRET", SECRET);
-Deno.env.set("OWNER_USER_ID", USER);
+Deno.env.delete("MCP_SECRET");
+Deno.env.delete("OWNER_USER_ID");
 // Never contacted by initialize/tools/list, but getClient() asserts they exist.
 Deno.env.set("SUPABASE_URL", "http://127.0.0.1:1");
 Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "service-role-not-used-here");
 Deno.env.set("SUPABASE_ANON_KEY", "anon-not-used-here");
 
-const { handleRequest } = await import("./handler.ts");
+const { handleRequest, handleRequestWithCaller } = await import("./handler.ts");
+
+const FIXTURE_CALLER: Caller = {
+  userId: USER,
+  label: "test",
+  ephemeral: false,
+};
+
+async function authed(req: Request): Promise<Response> {
+  return handleRequestWithCaller(req, async () => FIXTURE_CALLER);
+}
+
+/** PostgREST stub: token hash not in mcp_tokens. */
+function emptyTokenLookupClient(): SupabaseClient {
+  const tail = {
+    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+  };
+  const chain = {
+    eq: () => chain,
+    is: () => chain,
+    or: () => chain,
+    select: () => tail,
+  };
+  return { from: () => ({ update: () => chain }) } as unknown as SupabaseClient;
+}
 
 const URL_ = "https://example.test/functions/v1/mcp-server";
 
@@ -48,8 +76,26 @@ const INITIALIZE = {
   },
 };
 
+Deno.test("legacy MCP_SECRET is not an identity", async () => {
+  Deno.env.set("MCP_SECRET", SECRET);
+  Deno.env.set("OWNER_USER_ID", USER);
+  setClientForTests(emptyTokenLookupClient());
+  try {
+    const result = await resolveCaller(
+      new Request(URL_, { headers: { authorization: `Bearer ${SECRET}` } }),
+      "legacy-test",
+    );
+    assertEquals(result instanceof Response, true);
+    assertEquals((result as Response).status, 401);
+  } finally {
+    Deno.env.delete("MCP_SECRET");
+    Deno.env.delete("OWNER_USER_ID");
+    setClientForTests(null);
+  }
+});
+
 Deno.test("initialize returns a protocol version and server info", async () => {
-  const res = await handleRequest(rpc(INITIALIZE));
+  const res = await authed(rpc(INITIALIZE));
   assertEquals(res.status, 200);
   const body = await res.json();
   assertEquals(body.jsonrpc, "2.0");
@@ -60,7 +106,7 @@ Deno.test("initialize returns a protocol version and server info", async () => {
 });
 
 Deno.test("tools/list advertises every tool with a usable schema", async () => {
-  const res = await handleRequest(
+  const res = await authed(
     rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
   );
   assertEquals(res.status, 200);
@@ -148,7 +194,7 @@ Deno.test("a browser preflight succeeds without credentials", async () => {
 Deno.test(
   "responses carry CORS so a browser client can read them",
   async () => {
-    const res = await handleRequest(rpc(INITIALIZE));
+    const res = await authed(rpc(INITIALIZE));
     assertEquals(res.headers.get("access-control-allow-origin"), "*");
     assertStringIncludes(
       res.headers.get("access-control-expose-headers") ?? "",
@@ -215,19 +261,18 @@ Deno.test(
         headers: {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
-          "x-api-key": SECRET,
+          "x-api-key": "nope",
         },
         body: JSON.stringify(INITIALIZE),
       }),
     );
-    assertEquals(res.status, 200);
-    const body = await res.json();
-    assertEquals(body.result.serverInfo.name, "strength-tracker");
+    assertEquals(res.status, 503);
+    await res.body?.cancel();
   },
 );
 
 Deno.test("GET is refused with Allow, not with a hang or a 500", async () => {
-  const res = await handleRequest(
+  const res = await authed(
     new Request(URL_, {
       method: "GET",
       headers: { authorization: `Bearer ${SECRET}` },
@@ -241,7 +286,7 @@ Deno.test("GET is refused with Allow, not with a hang or a 500", async () => {
 Deno.test(
   "malformed JSON gets a JSON-RPC parse error, not a crash",
   async () => {
-    const res = await handleRequest(
+    const res = await authed(
       new Request(URL_, {
         method: "POST",
         headers: {
@@ -388,7 +433,7 @@ const EXPECTED_ANNOTATIONS: Record<
 };
 
 Deno.test("every tool declares what it does to existing data", async () => {
-  const res = await handleRequest(
+  const res = await authed(
     rpc({ jsonrpc: "2.0", id: 9, method: "tools/list" }),
   );
   const { result } = await res.json();

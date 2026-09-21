@@ -21,8 +21,9 @@ PGlite (migrations + seed + fixture)
                                       Claude Code subagent over tool.mjs)
 ```
 
-The MCP server authenticates through its legacy env path (`MCP_SECRET` +
-`OWNER_USER_ID`), so the fixture needs no `mcp_tokens` row and no auth server.
+The MCP server authenticates with a per-user bearer token. `stack.mjs` mints one
+and inserts its digest into `mcp_tokens` for the fixture user (same shape as
+`scripts/issue-mcp-token.mjs`).
 
 ## Why it exists
 

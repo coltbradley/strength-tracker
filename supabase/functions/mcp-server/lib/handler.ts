@@ -22,7 +22,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // @ts-types="@modelcontextprotocol/sdk/server/webStandardStreamableHttp"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { resolveCaller } from "./auth.ts";
+import { type Caller, resolveCaller } from "./auth.ts";
 import { dbFor } from "./db.ts";
 import type { RequestContext } from "./errors.ts";
 import { log } from "./log.ts";
@@ -157,7 +157,15 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-export async function handleRequest(req: Request): Promise<Response> {
+export type CallerResolver = (
+  req: Request,
+  requestId: string,
+) => Promise<Caller | Response>;
+
+export async function handleRequestWithCaller(
+  req: Request,
+  resolve: CallerResolver,
+): Promise<Response> {
   const requestId = crypto.randomUUID();
   const started = performance.now();
   const ctx: RequestContext = { requestId };
@@ -212,7 +220,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     }
 
     // Auth before anything else.
-    const caller = await resolveCaller(req, requestId);
+    const caller = await resolve(req, requestId);
     if (caller instanceof Response) {
       finish(
         "error",
@@ -294,4 +302,8 @@ export async function handleRequest(req: Request): Promise<Response> {
       request_id: requestId,
     });
   }
+}
+
+export async function handleRequest(req: Request): Promise<Response> {
+  return handleRequestWithCaller(req, resolveCaller);
 }
