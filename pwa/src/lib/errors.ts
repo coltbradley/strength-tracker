@@ -33,6 +33,12 @@ export function toast(message: string, kind: ToastKind = "info"): void {
 type SentryApi = typeof import("@sentry/react");
 let sentry: SentryApi | null = null;
 
+export function resetSentryForTests(): void {
+  sentry = null;
+  pendingUserId = null;
+  recentErrors.length = 0;
+}
+
 /** Whoever is signed in, so an event says which log it came from. */
 let pendingUserId: string | null = null;
 
