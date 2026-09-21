@@ -6,20 +6,19 @@
 The release ledger exists and is CI-checked. Re-verification closed A-26,
 A-96, A-97, A-105, and A-119 with tests.
 
-**Next: Phase 1 — Make release and identity safety real.** Specs and
-Superpowers TDD plans are written. Implement Slice 1, then Slice 2, each
-on its own branch and PR. Do not start Phases 2–6, endurance E2+, or a
-209-ticket audit programme until Phase 1's exit gate passes.
+**Phase 1 Slice 1** admission and tenant-safety product code is implemented on
+branch `docs/phase-1-plans`. **A-02** still needs live proof: set production
+`COACH_ALLOWED_USERS` to the intended allowlist. Unset is fail-closed in code
+(503); production must set the secret before the in-app coach works.
+
+**Next: Phase 1 Slice 2** — release contract. Implement on its own branch and
+PR; do not wait on CI to start Slice 2. Do not start Phases 2–6, endurance
+E2+, or a 209-ticket audit programme until Phase 1's exit gate passes.
 
 - Slice 1 spec: `docs/superpowers/specs/2026-09-21-phase-1-admission-design.md`
 - Slice 1 plan: `docs/superpowers/plans/2026-09-21-phase-1-admission-tenant.md`
 - Slice 2 spec: `docs/superpowers/specs/2026-09-21-phase-1-release-contract-design.md`
 - Slice 2 plan: `docs/superpowers/plans/2026-09-21-phase-1-release-contract.md`
-
-**Still on Colt (Phase 0 operational leftover):** set production
-`COACH_ALLOWED_USERS` to the intended fallback UUID. Until that secret is
-set, A-02 stays `needs live proof`. Unset still admits everyone in code;
-Phase 1 A-02 fail-closes that.
 
 **Also shipped outside phase order:** M-01 `update_memory` is on `main`
 (`3cc8159`). Close the feedback row only after the next MCP deploy and the
@@ -206,8 +205,8 @@ and the coach cannot spend money for an unapproved account.
 
 ### Phase 1: Make release and identity safety real
 
-**State:** Slice 1 admission merged; see `release-ledger.md` (A-02 still
-`needs live proof`). Implement Slice 2 next.
+**State:** Slice 1 admission implemented on `docs/phase-1-plans`; see
+`release-ledger.md` (A-02 still `needs live proof`). Implement Slice 2 next.
 
 **Starts after:** Phase 0's ledger and coach boundary are complete.
 

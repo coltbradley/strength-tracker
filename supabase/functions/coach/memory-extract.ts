@@ -101,19 +101,33 @@ const MAX_FACT_CHARS = 300;
 /**
  * The lifter's own words, with the app's context block taken back off.
  *
- * The PWA prepends `<current_context>...</current_context>` to the LAST user
- * turn (pwa/src/lib/coach.ts) — today's plan, the week strip, and, at the top
- * of it, the memory this pass writes. Feeding that back in would be a model
- * reading its own output and calling it something the lifter said, which is
- * rule 1 broken in the most direct way available, and it would make every
- * existing fact look freshly stated on every turn.
+ * The PWA prepends a JSON envelope (`source: app_current_context`, see
+ * pwa/src/lib/coach.ts `wrapCoachContext`) to the LAST user turn — today's
+ * plan, the week strip, and, at the top of it, the memory this pass writes.
+ * Older clients used `<current_context>...</current_context>`; both are
+ * stripped here. Feeding either back in would be a model reading its own
+ * output and calling it something the lifter said, which is rule 1 broken in
+ * the most direct way available, and it would make every existing fact look
+ * freshly stated on every turn.
  *
- * Only stripped when it OPENS the message, and only to the first closing tag:
- * anything else is text the lifter typed.
+ * Only stripped when it OPENS the message: anything else is text the lifter
+ * typed.
  */
 export function lifterWords(text: string): string {
-  const m = /^\s*<current_context>[\s\S]*?<\/current_context>\s*/.exec(text);
-  return (m ? text.slice(m[0].length) : text).trim();
+  let rest = text;
+  const jsonLead = /^\s*(\{[^\n]*\})\s*(?:\n\n|\n|$)/.exec(rest);
+  if (jsonLead) {
+    try {
+      const parsed = JSON.parse(jsonLead[1]) as { source?: string };
+      if (parsed?.source === "app_current_context") {
+        rest = rest.slice(jsonLead[0].length);
+      }
+    } catch {
+      // not our envelope
+    }
+  }
+  const m = /^\s*<current_context>[\s\S]*?<\/current_context>\s*/.exec(rest);
+  return (m ? rest.slice(m[0].length) : rest).trim();
 }
 
 /**

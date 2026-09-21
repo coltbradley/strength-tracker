@@ -432,9 +432,10 @@ which Strava's activity list does not, and the endurance layer is built around
 descent.
 
 ```sql
-insert into integration_credentials (user_id, provider, secret, external_id)
+insert into integration_credentials (user_id, provider, secret_enc, external_id)
 values ('<uuid>', 'intervals_icu',
-        '{"api_key":"<key>"}'::jsonb, '<athlete id, like i123456>');
+        encrypt_integration_secret('{"api_key":"<key>"}'::jsonb),
+        '<athlete id, like i123456>');
 ```
 
 **Strava is supported and is not the default.** Read
@@ -444,8 +445,9 @@ subscription, allows roughly 100 reads per 15 minutes, and bars use of the data
 in AI models. None of that stops a personal deployment; all of it is your call.
 
 ```sql
-insert into integration_credentials (user_id, provider, secret)
-values ('<uuid>', 'strava', '{"access_token":"<token>"}'::jsonb);
+insert into integration_credentials (user_id, provider, secret_enc)
+values ('<uuid>', 'strava',
+        encrypt_integration_secret('{"access_token":"<token>"}'::jsonb));
 ```
 
 Then pull:
@@ -560,7 +562,7 @@ The MCP server is unaffected. Somebody switched off here still reads and writes
 their own log from Claude Desktop with their bearer token — this controls who
 spends the deployment's Anthropic key, not who owns their data.
 
-Unset — the default — returns 503 ("the coach is not configured"); production
+Unset — the default — returns 503 ("The coach is not configured"); production
 must set this secret before the in-app coach works. Set, and anyone not named
 gets a 403 and a plain "the coach isn't enabled for this account" instead of a
 turn, before anything is spent or recorded. There is

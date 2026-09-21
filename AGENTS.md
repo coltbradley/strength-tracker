@@ -683,14 +683,16 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   prompt injection into script injection.
 - A turn is completed and RECORDED whether or not the client is still
   listening, against a client-chosen `turn_id`, so closing the app mid-answer
-  loses nothing. Usage is written in a `finally`, or an aborted turn is billed
-  and invisible to the quota. A turn whose usage cannot be RECORDED must not
-  run: supabase-js returns a PostgREST error rather than throwing, so a failed
-  usage write was invisible and left `overLimit()` counting zero, which
-  disabled both caps. The error is read now, a malformed `turn_id` is a 400
-  before any tokens are spent, a reused one is a 409, and a write that fails
-  anyway retries once without the id so the turn still counts. Nothing the
-  client sends is trusted by the checks that depend on its shape — `unit` is
+  loses nothing. Quota is reserved up front via `reserve_coach_turn` (a
+  placeholder row with that `turn_id`); `record()` updates that row in a
+  `finally`, or an aborted turn is still billed against the reservation. A turn
+  must not spend tokens until reservation succeeds. supabase-js returns a
+  PostgREST error rather than throwing, so a failed final `record()` update was
+  invisible and left caps wrong. The error is read now, a malformed `turn_id`
+  is a 400 before any tokens are spent, a reused one is a 409, and a failed
+  `record()` update is logged to Sentry without dropping the answer the lifter
+  already read. Nothing the client sends is trusted by the checks that depend
+  on its shape — `unit` is
   whitelisted to kg or lb before it reaches the SYSTEM prompt, attachment
   shapes are validated before their sizes are measured, and an over-length turn
   is a 413 rather than being dropped from the array.
