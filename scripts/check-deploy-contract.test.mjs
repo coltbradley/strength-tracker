@@ -32,3 +32,23 @@ test("pages still waits on a failed supabase job and proceeds when it is skipped
   assert.match(text, /needs\.supabase\.result != 'failure'/);
   assert.match(text, /always\(\)/);
 });
+
+test("pages runs the PWA env checker before vite build", async () => {
+  const text = await yaml();
+  const pages = text.slice(text.indexOf("name: publish PWA"));
+  const checkAt = pages.indexOf("node scripts/check-pwa-env.mjs");
+  const buildAt = pages.indexOf("npm run build");
+  assert.ok(checkAt >= 0, "missing check-pwa-env.mjs");
+  assert.ok(buildAt > checkAt, "env checker must run before npm run build");
+});
+
+test("pages smokes the published app and prints a receipt", async () => {
+  const text = await yaml();
+  const afterPublish = text.slice(text.indexOf("peaceiris/actions-gh-pages"));
+  assert.match(afterPublish, /curl /);
+  assert.match(afterPublish, /github\.sha/);
+  assert.match(afterPublish, /github\.run_id/);
+  assert.equal(afterPublish.includes("SUPABASE_ACCESS_TOKEN"), false);
+  assert.equal(afterPublish.includes("SUPABASE_DB_PASSWORD"), false);
+  assert.equal(afterPublish.includes("SERVICE_ROLE"), false);
+});

@@ -141,6 +141,10 @@ jobs:
           cache-dependency-path: pwa/package-lock.json
       - run: npm ci
         working-directory: pwa
+      - run: node scripts/check-pwa-env.mjs
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
       - run: npm run build
         working-directory: pwa
         env:
@@ -165,3 +169,29 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: pwa/dist
           commit_message: "Deploy PWA (${{ github.sha }})"
+      - name: smoke
+        env:
+          PAGES_URL: ${{ vars.PAGES_URL }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          pages_url="${PAGES_URL:-https://coltbradley.github.io/strength-tracker/}"
+          pages_code=$(curl -sS -o /tmp/pages-body -w '%{http_code}' "$pages_url")
+          echo "pages_http=$pages_code"
+          if [ "$pages_code" != "200" ]; then
+            echo "::error::Pages smoke failed ($pages_code)"
+            exit 1
+          fi
+          mcp_code=skipped
+          if [ -n "${SUPABASE_PROJECT_REF:-}" ]; then
+            mcp_url="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/mcp-server/health"
+            mcp_code=$(curl -sS -o /tmp/mcp-health -w '%{http_code}' "$mcp_url")
+            echo "mcp_http=$mcp_code"
+            if [ "$mcp_code" != "200" ]; then
+              echo "::error::MCP /health smoke failed ($mcp_code)"
+              exit 1
+            fi
+          else
+            echo "MCP smoke skipped: SUPABASE_PROJECT_REF unset"
+          fi
+          echo "receipt sha=${{ github.sha }} run=${{ github.run_id }} supabase_job=${{ needs.supabase.result }} pages_http=$pages_code mcp_http=$mcp_code"
