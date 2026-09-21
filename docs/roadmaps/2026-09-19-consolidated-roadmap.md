@@ -5,14 +5,14 @@
 This is the one active product and release roadmap. Follow its phases in
 order. It supersedes every older "what is next" list in this repository.
 
-| Document | Status now | How to use it |
-| --- | --- | --- |
-| This roadmap | **Active** | The current product boundary, phase order, release gates, and beta model. |
-| `docs/audits/2026-09-19-system-audit.md` | Evidence backlog | Look up finding IDs and re-verify evidence. Do not execute its 209 findings as a flat plan. |
-| `docs/plan.md` | Historical build log | Useful for what shipped and why, but its "What's left" list is superseded. |
-| `docs/superpowers/plans/` | Historical scoped plans | Reuse a plan's evidence or design only after checking it against this roadmap and current code. Never resume unchecked tasks wholesale. |
-| `AGENTS.md` and `docs/decisions.md` | Current constraints | They remain binding. Historical specs are supporting design references only when consistent with them and this roadmap. |
-| `docs/endurance-plan.md` and the endurance implementation spec | Deferred product reference | Use only in Phase 5. They do not authorize endurance product work before then. |
+| Document                                                       | Status now                 | How to use it                                                                                                                           |
+| -------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| This roadmap                                                   | **Active**                 | The current product boundary, phase order, release gates, and beta model.                                                               |
+| `docs/audits/2026-09-19-system-audit.md`                       | Evidence backlog           | Look up finding IDs and re-verify evidence. Do not execute its 209 findings as a flat plan.                                             |
+| `docs/plan.md`                                                 | Historical build log       | Useful for what shipped and why, but its "What's left" list is superseded.                                                              |
+| `docs/superpowers/plans/`                                      | Historical scoped plans    | Reuse a plan's evidence or design only after checking it against this roadmap and current code. Never resume unchecked tasks wholesale. |
+| `AGENTS.md` and `docs/decisions.md`                            | Current constraints        | They remain binding. Historical specs are supporting design references only when consistent with them and this roadmap.                 |
+| `docs/endurance-plan.md` and the endurance implementation spec | Deferred product reference | Use only in Phase 5. They do not authorize endurance product work before then.                                                          |
 
 Before starting code in any phase, write one small implementation plan for
 that failure boundary, with exact files, tests, live proof, and rollback. Do
@@ -59,13 +59,13 @@ and coach-observation loop. Any finding these changes may affect is
 
 ## Verified starting point
 
-| Area | Current evidence | What it does not prove |
-| --- | --- | --- |
-| Local engineering baseline | PWA: 81 test files / 934 tests, typecheck, and production build passed on 2026-09-19. Relay tests, database validation, and selected-column validation also passed. | A phone, browser, managed Supabase, or provider workflow. |
-| GitHub CI | CI run 35477247194 passed for `eb17a1c`. | A deployment or production behavior. |
-| Deployed database | Remote migration history matches local through `20260917030000_fk_indexes`. | That each product path uses the migration correctly. |
-| Edge Functions | `mcp-server` v43, `coach` v18, `push-alerts` v6, and `endurance-sync` v3 are active. | That a particular source SHA or a real provider/phone transaction works. |
-| PWA publishing | Deploy run 35166323767 published the PWA for `c391a54`. Its Supabase job was skipped. | Schema/function parity, or a post-deploy smoke test. |
+| Area                       | Current evidence                                                                                                                                                    | What it does not prove                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Local engineering baseline | PWA: 81 test files / 934 tests, typecheck, and production build passed on 2026-09-19. Relay tests, database validation, and selected-column validation also passed. | A phone, browser, managed Supabase, or provider workflow.                |
+| GitHub CI                  | CI run 35477247194 passed for `eb17a1c`.                                                                                                                            | A deployment or production behavior.                                     |
+| Deployed database          | Remote migration history matches local through `20260917030000_fk_indexes`.                                                                                         | That each product path uses the migration correctly.                     |
+| Edge Functions             | `mcp-server` v43, `coach` v18, `push-alerts` v6, and `endurance-sync` v3 are active.                                                                                | That a particular source SHA or a real provider/phone transaction works. |
+| PWA publishing             | Deploy run 35166323767 published the PWA for `c391a54`. Its Supabase job was skipped.                                                                               | Schema/function parity, or a post-deploy smoke test.                     |
 
 The current production build still has one 766.82 kB minified entry bundle
 (229.09 kB gzip). That is a measured maintenance concern, not the next release
@@ -113,18 +113,18 @@ athlete has not yet accepted its outcome; it is not evidence that the capability
 is absent. Re-check current code before scheduling work, and leave a feedback
 row open until the athlete says the outcome is acceptable.
 
-| Live request | Roadmap disposition |
-| --- | --- |
-| Edit or delete standing memories | **M-01, immediate maintenance slice.** `forget` remains the explicit permanent-delete action; add owner-scoped `update_memory` for correcting a current fact in place. This is an exception to phase order because stale equipment, injury, or schedule facts can distort every future recommendation, and coach memory is deliberately editable rather than append-only. Test its owner scope and changed-row readback before the next MCP deploy. |
-| Change a planned-workout date | Already implemented by `update_planned_workout` with `scheduled_date`. Re-verify through the affected athlete's MCP client before resolving the request; do not build a second scheduling path. |
-| Automated block-level training review | **Phase 4 candidate.** Start only from real beta use. The review must name its input window, missing data, skipped movements, notes, RPE coverage, and uncertainty, then propose rather than apply a next block. |
-| Fatigue-cost and eccentric-load metadata | **Phase 4 candidate, only as qualitative context.** Keep coach-curated labels such as local/systemic/eccentric cost; never present a physiological recovery calculation or readiness score. |
-| Exercise role and training-purpose metadata | **Phase 4 candidate.** Model a small controlled role vocabulary only when it enables a visible plan or review decision, such as what workload can move or be trimmed. |
-| Progression beyond estimated 1RM | **Phase 4 candidate.** Extend the review evidence model to rep capacity, timed work, unilateral benchmarks, and explicitly defined athlete metrics. Do not turn all movements into a false e1RM comparison. |
-| Training-objective priority hierarchy | **Phase 4 candidate.** Make primary, secondary, and development priorities explicit before the planner uses them to trade work across a week. |
-| Cross-modality weekly-load dashboard | **Phase 5.** Requires a trusted endurance source. Show transparent components, including mileage, elevation, key/long runs, strength work, session RPE, and recovery notes; no single load or readiness score. |
-| Protected external coach plan with an assistant strength layer | **Phase 5.** Import the running coach's plan as a read-only, provenance-carrying source. The assistant may draft or rearrange strength around it, but never silently alter the protected source. |
-| Running-load context and endurance integration | **Phase 5.** A personal Intervals.icu connection is the preferred first source, but only after the operational foundation below: consented connect/revoke, encrypted server-side credential handling, pagination, correction reconciliation, scheduled sync with visible failure, and an empty source treated as UNKNOWN. |
+| Live request                                                   | Roadmap disposition                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Edit or delete standing memories                               | **M-01, immediate maintenance slice.** `forget` remains the explicit permanent-delete action; add owner-scoped `update_memory` for correcting a current fact in place. This is an exception to phase order because stale equipment, injury, or schedule facts can distort every future recommendation, and coach memory is deliberately editable rather than append-only. Test its owner scope and changed-row readback before the next MCP deploy. |
+| Change a planned-workout date                                  | Already implemented by `update_planned_workout` with `scheduled_date`. Re-verify through the affected athlete's MCP client before resolving the request; do not build a second scheduling path.                                                                                                                                                                                                                                                     |
+| Automated block-level training review                          | **Phase 4 candidate.** Start only from real beta use. The review must name its input window, missing data, skipped movements, notes, RPE coverage, and uncertainty, then propose rather than apply a next block.                                                                                                                                                                                                                                    |
+| Fatigue-cost and eccentric-load metadata                       | **Phase 4 candidate, only as qualitative context.** Keep coach-curated labels such as local/systemic/eccentric cost; never present a physiological recovery calculation or readiness score.                                                                                                                                                                                                                                                         |
+| Exercise role and training-purpose metadata                    | **Phase 4 candidate.** Model a small controlled role vocabulary only when it enables a visible plan or review decision, such as what workload can move or be trimmed.                                                                                                                                                                                                                                                                               |
+| Progression beyond estimated 1RM                               | **Phase 4 candidate.** Extend the review evidence model to rep capacity, timed work, unilateral benchmarks, and explicitly defined athlete metrics. Do not turn all movements into a false e1RM comparison.                                                                                                                                                                                                                                         |
+| Training-objective priority hierarchy                          | **Phase 4 candidate.** Make primary, secondary, and development priorities explicit before the planner uses them to trade work across a week.                                                                                                                                                                                                                                                                                                       |
+| Cross-modality weekly-load dashboard                           | **Phase 5.** Requires a trusted endurance source. Show transparent components, including mileage, elevation, key/long runs, strength work, session RPE, and recovery notes; no single load or readiness score.                                                                                                                                                                                                                                      |
+| Protected external coach plan with an assistant strength layer | **Phase 5.** Import the running coach's plan as a read-only, provenance-carrying source. The assistant may draft or rearrange strength around it, but never silently alter the protected source.                                                                                                                                                                                                                                                    |
+| Running-load context and endurance integration                 | **Phase 5.** A personal Intervals.icu connection is the preferred first source, but only after the operational foundation below: consented connect/revoke, encrypted server-side credential handling, pagination, correction reconciliation, scheduled sync with visible failure, and an empty source treated as UNKNOWN.                                                                                                                           |
 
 M-01 does not authorize adjacent product work or an automatic feedback cleanup.
 All other rows retain the phase gates below.
@@ -153,7 +153,7 @@ access settings, beta invitations, and release acceptance.
 
 ### Phase 0: Establish a truthful safety backlog
 
-**State:** Start here.
+**State:** Plan at docs/superpowers/plans/2026-09-21-phase-0-safety-backlog.md. Ledger at docs/roadmaps/release-ledger.md.
 
 **Owner:** Colt for settings and acceptance; Engineering for evidence.
 
@@ -165,7 +165,7 @@ access settings, beta invitations, and release acceptance.
 - Re-run every audit item touched by the post-audit merge. Start with A-94,
   A-105, and A-119, because their cited missing flows now have merged code.
   Mark each item `open`, `fixed with test`, `needs live proof`, or `not
-  reproducible`; never silently remove it.
+reproducible`; never silently remove it.
 - Create one release ledger with finding ID, boundary, owner, regression test,
   production proof, rollback, and state. It replaces status claims scattered
   across `docs/plan.md`, old implementation plans, and the audit.

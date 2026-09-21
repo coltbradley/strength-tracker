@@ -140,6 +140,7 @@ Verify by requesting a sign-in code and reading where it came from.
 ```bash
 supabase secrets set SWEEP_SECRET="$(openssl rand -base64 32)"
 ```
+
 ```sql
 select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
 select vault.create_secret('<the same value as SWEEP_SECRET>', 'sweep_secret');
@@ -187,7 +188,6 @@ On the phone, in one session:
 
 If the badge never appears but the notification does, that is iOS below 16.4 or
 notification permission not actually granted — the badge is gated on both.
-
 
 What to run after changing each layer. `docs/setup.md` is the one-time
 bootstrap; this is the every-release path. Everything here is idempotent and
@@ -452,7 +452,7 @@ into the function, not read from anywhere at runtime, so editing it and
 pushing to main changes nothing a lifter talks to.
 
 Secrets it reads, all optional except the first: `ANTHROPIC_API_KEY`,
-`COACH_ALLOWED_USERS` (unset means everyone), `COACH_LOG_CONTENT` (`off` stops
+`COACH_ALLOWED_USERS` (unset means everyone). Phase 0 production: this secret MUST be set to the intended fallback user's UUID (Colt's wife only). Unset still means everyone in code until Phase 1 A-02. Setting it has no append: it is the whole list every time. Do not log the value. `COACH_LOG_CONTENT` (`off` stops
 storing conversation text), `COACH_MEMORY_EXTRACT` (`off` stops the post-turn
 memory pass), `SENTRY_DSN`.
 
@@ -517,11 +517,11 @@ It does so only when three repository settings exist; without them it prints a
 notice and skips, and everything above stays by hand. All three have been set
 since 2026-09-12.
 
-| Setting                 | Kind     | Where it comes from                                                                                                                          |
-| ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | secret   | Supabase dashboard → Account → Access Tokens. Scope it to this one project if the dashboard offers it.                                       |
-| `SUPABASE_DB_PASSWORD`  | secret   | The database password from project creation (Settings → Database). `db push` needs it; the access token alone does not reach Postgres.       |
-| `SUPABASE_PROJECT_REF`  | variable | The project ref. Not secret, so a variable, but it stays out of the repo like every other ref.                                              |
+| Setting                 | Kind     | Where it comes from                                                                                                                    |
+| ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | secret   | Supabase dashboard → Account → Access Tokens. Scope it to this one project if the dashboard offers it.                                 |
+| `SUPABASE_DB_PASSWORD`  | secret   | The database password from project creation (Settings → Database). `db push` needs it; the access token alone does not reach Postgres. |
+| `SUPABASE_PROJECT_REF`  | variable | The project ref. Not secret, so a variable, but it stays out of the repo like every other ref.                                         |
 
 Add them under Settings → Secrets and variables → Actions. The next push that
 touches `supabase/` runs `supabase db push`, then deploys `mcp-server`
