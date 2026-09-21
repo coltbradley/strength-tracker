@@ -5,6 +5,7 @@ import { must } from "../lib/db.ts";
 import {
   guard,
   jsonResult,
+  refuseIfEphemeral,
   type RequestContext,
   ToolError,
 } from "../lib/errors.ts";
@@ -231,6 +232,9 @@ export function registerUpsertProgram(
     },
     (args) =>
       guard(ctx, "upsert_program", async () => {
+        if (args.confirm_change) {
+          refuseIfEphemeral(ctx, "confirm a live plan change");
+        }
         const program = args.program;
 
         // Structural checks the DB would otherwise reject with an opaque 500.

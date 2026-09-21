@@ -26,6 +26,7 @@ import { assertIsoDate } from "../lib/dates.ts";
 import {
   guard,
   jsonResult,
+  refuseIfEphemeral,
   type RequestContext,
   ToolError,
 } from "../lib/errors.ts";
@@ -136,6 +137,9 @@ export function registerUpdatePlannedWorkout(
     },
     (args) =>
       guard(ctx, "update_planned_workout", async () => {
+        if (args.confirm_change) {
+          refuseIfEphemeral(ctx, "confirm a live plan change");
+        }
         const days = must(
           await db.client
             .from("planned_workouts")

@@ -27,6 +27,7 @@ import { assertIsoDate, todayIso } from "../lib/dates.ts";
 import {
   guard,
   jsonResult,
+  refuseIfEphemeral,
   type RequestContext,
   ToolError,
 } from "../lib/errors.ts";
@@ -496,6 +497,9 @@ export function registerSetTrainingPlan(
     },
     (args) =>
       guard(ctx, "set_training_plan", async () => {
+        if (args.confirm_change) {
+          refuseIfEphemeral(ctx, "confirm a live plan change");
+        }
         const dates = validatePhases(args.phases, {
           starts_on: args.starts_on,
           ends_on: args.ends_on,
@@ -708,6 +712,7 @@ export function registerConfirmTrainingPlan(
     },
     (args) =>
       guard(ctx, "confirm_training_plan", async () => {
+        refuseIfEphemeral(ctx, "confirm a training plan");
         const { data, error } = await db.client
           .from("training_plans")
           .update({ confirmed_at: new Date().toISOString() })

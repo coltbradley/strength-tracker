@@ -7,7 +7,7 @@
 //
 //   deno test prompt.test.ts
 
-import { assertStringIncludes } from "jsr:@std/assert@^1";
+import { assertEquals, assertStringIncludes } from "jsr:@std/assert@^1";
 import { systemPrompt } from "./prompt.ts";
 
 const PROMPT = systemPrompt("2026-09-16", "kg");
@@ -50,3 +50,10 @@ Deno.test(
     assertStringIncludes(PROMPT, "resolve_observation");
   },
 );
+
+Deno.test("in-app coach cannot confirm programs or live plan changes", () => {
+  assertStringIncludes(PROMPT, "You cannot confirm from here");
+  assertStringIncludes(PROMPT, "plan editor in the app");
+  assertStringIncludes(PROMPT, "Claude Desktop");
+  assertEquals(PROMPT.includes("confirm_change=true"), false);
+});

@@ -222,6 +222,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     }
     userLabel = caller.label;
     userId = caller.userId;
+    ctx.ephemeral = caller.ephemeral;
 
     // Stateless streamable HTTP: POST only. There is no session to resume, so
     // there is no SSE stream to GET and nothing for DELETE to tear down. 405

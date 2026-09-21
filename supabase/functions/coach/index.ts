@@ -1155,6 +1155,7 @@ Deno.serve(async (req) => {
                 // Claude Desktop keeps both.
                 set_training_plan: { enabled: false },
                 confirm_training_plan: { enabled: false },
+                confirm_program: { enabled: false },
               },
             },
           ],

@@ -30,6 +30,7 @@ import {
 export interface Caller {
   userId: string;
   label: string;
+  ephemeral: boolean;
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -100,7 +101,11 @@ export async function resolveCaller(
     legacyUser &&
     (await timingSafeEqual(token, legacySecret))
   ) {
-    return { userId: legacyUser, label: "legacy owner token" };
+    return {
+      userId: legacyUser,
+      label: "legacy owner token",
+      ephemeral: false,
+    };
   }
 
   // Supabase OAuth access token (ChatGPT, claude.ai, any client that signed in).
@@ -149,7 +154,7 @@ export async function resolveCaller(
     // A permanent token must keep working exactly as before, so the filter has
     // to accept null rather than compare it.
     .or(`expires_at.is.null,expires_at.gt.${now}`)
-    .select("user_id, label")
+    .select("user_id, label, expires_at")
     .maybeSingle();
 
   if (error) {
@@ -173,6 +178,14 @@ export async function resolveCaller(
     return unauthorized("Unknown or revoked token.");
   }
 
-  const row = data as { user_id: string; label: string };
-  return { userId: row.user_id, label: row.label };
+  const row = data as {
+    user_id: string;
+    label: string;
+    expires_at: string | null;
+  };
+  return {
+    userId: row.user_id,
+    label: row.label,
+    ephemeral: row.expires_at != null,
+  };
 }
