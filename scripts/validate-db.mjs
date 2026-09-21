@@ -2309,11 +2309,51 @@ await check("nobody deletes an activity", async () => {
   assertEq(del.affectedRows ?? 0, 0, "no delete policy");
 });
 
+await check("integration secret is not stored as the bearer", async () => {
+  await db.exec("begin");
+  try {
+    await db.exec(
+      `select set_config('app.integration_key', 'test-key-32-bytes-long!!!!!!', true)`,
+    );
+    await db.query(
+      `insert into integration_credentials (user_id, provider, secret_enc)
+       values ($1, 'intervals_icu', encrypt_integration_secret('{"api_key":"super-secret"}'::jsonb))`,
+      [OWNER],
+    );
+    const raw = await db.query(
+      `select secret_enc::text as t from integration_credentials where user_id = $1`,
+      [OWNER],
+    );
+    if (String(raw.rows[0].t).includes("super-secret")) {
+      throw new Error("bearer still visible in the stored column");
+    }
+    const back = await db.query(
+      `select decrypt_integration_secret(secret_enc) as j from integration_credentials where user_id = $1`,
+      [OWNER],
+    );
+    assertEq(back.rows[0].j.api_key, "super-secret", "round trip");
+    await db.exec("commit");
+  } catch (e) {
+    await db.exec("rollback");
+    throw e;
+  }
+});
+
 await check("sync credentials are unreadable by any client", async () => {
-  await db.exec(`
-    insert into integration_credentials (user_id, provider, secret)
-    values ('${EA}', 'intervals_icu', '{"api_key":"secret"}'::jsonb);
-  `);
+  await db.exec("begin");
+  try {
+    await db.exec(
+      `select set_config('app.integration_key', 'test-key-32-bytes-long!!!!!!', true)`,
+    );
+    await db.exec(`
+      insert into integration_credentials (user_id, provider, secret_enc)
+      values ('${EA}', 'intervals_icu', encrypt_integration_secret('{"api_key":"secret"}'::jsonb));
+    `);
+    await db.exec("commit");
+  } catch (e) {
+    await db.exec("rollback");
+    throw e;
+  }
   const rls = await db.query(
     `select relrowsecurity from pg_class where relname = 'integration_credentials'`,
   );
