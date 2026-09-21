@@ -165,7 +165,7 @@ access settings, beta invitations, and release acceptance.
 - Re-run every audit item touched by the post-audit merge. Start with A-94,
   A-105, and A-119, because their cited missing flows now have merged code.
   Mark each item `open`, `fixed with test`, `needs live proof`, or `not
-reproducible`; never silently remove it.
+  reproducible`; never silently remove it.
 - Create one release ledger with finding ID, boundary, owner, regression test,
   production proof, rollback, and state. It replaces status claims scattered
   across `docs/plan.md`, old implementation plans, and the audit.
