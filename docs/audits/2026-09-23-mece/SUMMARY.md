@@ -3,30 +3,33 @@
 ## Decision in brief
 
 This is a triage package, not a release verdict or an implementation queue. The
-13 area reports below review the `docs/phase-1-plans` code present at
-`38e32d0`; subsequent commits in this branch add audit documents only. The
-branch's Phase 1 work is still separate from `main`. The active roadmap and
+13 area reports below started from `docs/phase-1-plans` at `38e32d0` and were
+reconciled against remote source changes through `e74b91d`. Those changes
+resolved G01-F01; the other findings' cited behaviors were unchanged.
+The branch's Phase 1 work is still separate from `main`. The active roadmap and
 release ledger govern phase order and stop-release status. Older A-numbers are
 cross-references to the 2026-09-19 evidence backlog, not claims that every old
 finding remains open.
 
-The strongest direct check in this review is repeatable: `node
-scripts/check-selects.mjs` currently exits with `mcp_tokens has no column
-"idexact"` (G01-F01). Other findings are grounded in current source paths and
-adjacent tests, with their required reproduction or live proof stated in the
-area report. `node scripts/validate-db.mjs` passed in the database review. No
+At the initial snapshot, `node scripts/check-selects.mjs` failed on the MCP
+health query (G01-F01). After the remote parser and health-query corrections
+were merged, the same check passed with 459 selected columns. Other findings
+are grounded in current source paths and adjacent tests, with their required
+reproduction or live proof stated in the area report. `node
+scripts/validate-db.mjs` passed in the database review. No
 full test matrix, browser/device run, hosted Supabase check, provider call, or
 production deploy was performed for this package.
 
-Across the 13 reports there are 96 distinct findings: 1 P0, 40 P1, and 55
-P2. These are triage severities, not a claim that all paths reproduced at
+Across the 13 reports there are 95 active findings: 1 P0, 39 P1, and 55 P2.
+One additional P1 (G01-F01) was resolved by the concurrent remote work. These
+are triage severities, not a claim that all paths reproduced at
 runtime or that every item belongs in the next release.
 
 ## Separate area reports
 
 | Group | Report | Findings | Primary next verification |
 | --- | --- | ---: | --- |
-| 01 Database | [01-database.md](01-database.md) | 3 | FK delete and NaN fixtures; repair selected-column check |
+| 01 Database | [01-database.md](01-database.md) | 2 active, 1 resolved | FK delete and NaN fixtures; CI/health proof for resolved check |
 | 02 PWA platform | [02-pwa-platform.md](02-pwa-platform.md) | 15 | Two-account and IndexedDB fault injection |
 | 03 Workout capture | [03-session.md](03-session.md) | 6 | Interrupted log, finish/discard race, timed-set round trip |
 | 04 Phone planning | [04-planning.md](04-planning.md) | 7 | Delayed Plan reads and multi-request failure injection |
@@ -52,7 +55,7 @@ severity rules.
 | Wrong-account data | G02-F01 (new writes can be ownerless at enqueue), G02-F05 (fallback can pick another Supabase project's session), G02-F06 (shared-device queue reveals another owner's payload) | Treat as a tenant-safety gate. Reproduce with two accounts, auth delay, and a shared device before any beta expansion; define a safe legacy ownerless-row path. |
 | Local training durability | G03-F01 (set shown before durable enqueue), G02-F11/G02-F15 (post-commit errors look like failures), G03-F02 and G02-F07/G02-F12 (terminal writes race or succeed with zero rows) | One Phase 2 lifecycle slice should fault-inject enqueue, retry, concurrent close, and second-device completion. Require readback of the final server state. |
 | Plan meaning and mutation | G04-F01/G04-F04 (stale editor and partial section writes), G08-F01/G08-F03/G08-F05 (retry collision, duplicate phase program, lost live training plan), G01-F02 (composite FK delete action can null owner), G08-F02 (superset meaning differs by surface) | Assign one owner for shared plan contracts before code changes. Exercise whole-day/plan transactions, retries, and the same superset fixture through MCP, Plan, Session, and SQL. |
-| Release proof | G01-F01 reproduces a failing selected-column validator. G13-F02 finds that the Pages receipt prints the intended SHA without reading it from the served app. G13-F01 is the already-open A-134 policy where deploy does not wait for billed-out CI. | Restore an executable validation path and make the smoke receipt compare the served build identifier to the expected SHA. Keep the CI billing exception explicit until a required check can actually run. |
+| Release proof | G01-F01's validator now passes locally after upstream changes. G13-F02 finds that the Pages receipt prints the intended SHA without reading it from the served app. G13-F01 is the already-open A-134 policy where deploy does not wait for billed-out CI. | Run CI and deployed health on the integrated tip; make the smoke receipt compare the served build identifier to the expected SHA. Keep the CI billing exception explicit until a required check can actually run. |
 | Public gateway and coach spend | G07-F01 lacks a bounded request body; G07-F02 lacks local resource/scope validation and needs issuer-token proof; G08-F06 accepts a caller confirmation flag for confirmed-program deletion; G10-F01 retains sensitive context by default; G11-F01 permits unbounded push fanout. | Verify actual token grants and approval authority, add size/fanout tests, and make the retention policy a product decision with production configuration proof. |
 | Existing user flows | G03-F03 cannot write timed duration; G04-F03 hides older live programs; G05-F01 exports incomplete set semantics; G09-F01 excludes most of an inclusive bodyweight end date; G10-F02/F03/F04 cover coach recovery. | Give each flow a focused round-trip test, then phone/browser acceptance where screen behavior matters. These are existing contracts, not new feature proposals. |
 | Deferred operations | G05-F06 records the missing subjective prompt caller; G11-F02-F05 cover alert recovery. G12-F01/F02/F03/F05/F10 would leave provider imports incomplete or stale, while G12-O01/O02 describe Phase 5 connection and scheduling work. | Keep these visible, but follow the roadmap's Phase 5 gate for endurance product work. Validate the existing sync foundation before adding a user-facing connection flow. A scheduler's SQL or code path alone is not live delivery proof. |

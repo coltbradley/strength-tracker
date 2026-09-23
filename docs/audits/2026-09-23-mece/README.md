@@ -1,7 +1,10 @@
 # MECE codebase review, 2026-09-23
 
-This review maps the `docs/phase-1-plans` checkout at `38e32d0`. It is a new
-read-only audit, not an implementation plan or a claim about the deployed app.
+This review started from the `docs/phase-1-plans` checkout at `38e32d0` and
+was reconciled against remote source changes through `e74b91d`. G01-F01 was
+resolved during that reconciliation; the other cited behaviors were unchanged
+by those source and test edits. It is a read-only audit, not an implementation plan
+or a claim about the deployed app.
 The active roadmap is `docs/roadmaps/2026-09-19-consolidated-roadmap.md`; the
 release ledger is the source of stop-release status. The 2026-09-19 system audit
 is an evidence backlog whose findings need re-verification against current code.

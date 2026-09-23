@@ -38,7 +38,7 @@ Confirmed findings: **1 P0, 11 P1, 3 P2**. The highest risks are a newly queued 
 
 - **Severity:** P1. **Confidence:** high. **Existing leads:** A-09, A-42.
 - **Trigger:** A user transition starts `claimCacheFor` while the authenticated shell mounts or another claim starts before the first clear completes.
-- **Evidence and impact:** `useAuth` publishes session state before calling the asynchronous claim (`pwa/src/hooks/useAuth.ts:44-59`), and `App` immediately renders the user-keyed shell (`pwa/src/App.tsx:202-213`). `claimCacheFor` reads the shared marker, clears the cache asynchronously, then writes the marker without serialization (`pwa/src/lib/db.ts:283-301`). A child can read the prior account's cache before the clear, or overlapping claims can clear data after the newer account loaded it. Current DB tests cover sequential claims, not interleavings (`pwa/src/lib/db.test.ts:1-25`).
+- **Evidence and impact:** `useAuth` publishes session state before calling the asynchronous claim (`pwa/src/hooks/useAuth.ts:44-59`), and `App` immediately renders the user-keyed shell (`pwa/src/App.tsx:202-213`). `claimCacheFor` reads the shared marker, clears the cache asynchronously, then writes the marker without serialization (`pwa/src/lib/db.ts:293-311`). A child can read the prior account's cache before the clear, or overlapping claims can clear data after the newer account loaded it. Current DB tests cover sequential claims, not interleavings (`pwa/src/lib/db.test.ts:1-25`).
 - **Fix boundary:** Make account transition and cache claim one ordered boundary; do not allow account-scoped reads until the relevant claim has completed.
 - **Verification needed:** Deferred-clear tests for both shell reads during account switch and two overlapping claims resolved in reverse order.
 
@@ -54,7 +54,7 @@ Confirmed findings: **1 P0, 11 P1, 3 P2**. The highest risks are a newly queued 
 
 - **Severity:** P1. **Confidence:** high. **Existing lead:** A-148.
 - **Trigger:** A second account opens the Outbox sheet or exports the queue on the same browser/device.
-- **Evidence and impact:** `inspect()` maps all outbox rows without filtering by current owner (`pwa/src/lib/outbox.ts:582-599`). The sheet displays held entries and builds an export from that same unfiltered result (`pwa/src/components/OutboxSheet.tsx:135-148`, `165-168`, `193-204`). Queue payloads can include sets, session notes and subjective records. `cacheClearAll` deliberately retains outbox rows because they may be the only copy of unsynced work (`pwa/src/lib/db.ts:205-228`).
+- **Evidence and impact:** `inspect()` maps all outbox rows without filtering by current owner (`pwa/src/lib/outbox.ts:582-599`). The sheet displays held entries and builds an export from that same unfiltered result (`pwa/src/components/OutboxSheet.tsx:135-148`, `165-168`, `193-204`). Queue payloads can include sets, session notes and subjective records. `cacheClearAll` deliberately retains outbox rows because they may be the only copy of unsynced work (`pwa/src/lib/db.ts:215-238`).
 - **Fix boundary:** Preserve every account's rows, while limiting normal inspection/export to the current user's rows and presenting foreign rows only as a count or status without payloads.
 - **Verification needed:** Seed two owners' queue rows; under each identity verify only that owner's details/export are exposed and that retry/flush still holds the other owner's rows.
 

@@ -7,23 +7,23 @@ Inspected `supabase/migrations/**`, `supabase/seed/**`, `supabase/config.toml`, 
 Checks run:
 
 - `node scripts/validate-db.mjs`: passed all checks, including the exercise seed assertions. This exercises the migration chain in PGlite, not hosted Supabase/PostgREST.
-- `node scripts/check-selects.mjs`: failed with `supabase/functions/mcp-server/lib/health.ts: mcp_tokens has no column "idexact"`.
+- At the initial `38e32d0` source snapshot, `node scripts/check-selects.mjs` failed with `supabase/functions/mcp-server/lib/health.ts: mcp_tokens has no column "idexact"`. After merging remote commit `e74b91d`, the same command passed: `ok 459 selected columns all exist`.
 
 ## 2. Executive summary
 
-Three confirmed findings: one P1 and two P2. The top risks are a CI-blocking SELECT-checker failure, valid plan edits/deletes that fail when skip history references prescriptions, and accepted NaN values that can corrupt goals, readiness bodyweight, and endurance aggregates. The P1 is the checker failure; the database defects are P2 because they affect bounded workflows and metrics, with user-owned data.
+Two active P2 findings and one P1 resolved during this audit. The remaining risks are valid plan edits/deletes failing when skip history references prescriptions and accepted NaN values corrupting goals, readiness bodyweight, or endurance aggregates. The selected-column checker failure is retained below as a reconciliation record, not an open issue.
 
 ## 3. Findings
 
-### G01-F01. SELECT checker treats PostgREST options as selected columns
+### G01-F01. SELECT checker and health query failure, resolved upstream
 
-- Severity: P1. Confidence: high.
-- Trigger: CI runs `node scripts/check-selects.mjs` against the health query that calls `.select("id", { head: true, count: "exact" })`.
-- Evidence: `scripts/check-selects.mjs:74-84` extracts all quoted strings from the full `.select(...)` argument and joins them, producing `idexact`. The current invocation fails with the nonexistent `mcp_tokens.idexact` error. CI runs this check at `.github/workflows/ci.yml:23-27`.
-- Impact: The current CI workflow fails on every run, blocking the normal release checks despite the selected `mcp_tokens.id` column existing.
+- Severity: P1 at discovery. Confidence: high. Status: resolved in remote commit `e74b91d`, then merged into this branch.
+- Trigger at `38e32d0`: CI ran `node scripts/check-selects.mjs` against `.select("id", { head: true, count: "exact" })` in the health query.
+- Evidence: The old parser joined quoted strings from the full `.select(...)` call into `idexact`; the old health query also selected `id`, which does not exist on `mcp_tokens` (`supabase/migrations/20260827180000_multi_user.sql:219-226`). The remote change parses only the first literal column argument and selects `token_sha256` in the health query. After merging it, `node scripts/check-selects.mjs` passes with 459 selected columns. CI runs this check at `.github/workflows/ci.yml:23-27`.
+- Impact at discovery: The validation check failed. The parser error masked the separate invalid health-column selection. Current source has both corrections; full CI and deployed health were not rerun in this audit.
 - Existing audit/ledger ID: none found.
-- Suggested fix boundary: Parse only the first `.select` argument, or otherwise distinguish the column expression from options.
-- Verification needed: Run `node scripts/check-selects.mjs` and CI; retain a case with select options and verify unknown literal columns still fail.
+- Fix boundary completed upstream: The parser and health query changed together. The validator now passes locally.
+- Remaining verification: Run CI on the integrated tip and exercise deployed health; the local validator alone does not prove either.
 
 ### G01-F02. Composite foreign-key SET NULL actions also null the owner key
 
@@ -58,7 +58,7 @@ The current validator is a useful full-chain check, but critical invariants are 
 
 ## 6. Handoffs
 
-- Group 07, MCP gateway: the failing SELECT check is triggered by the health query at `supabase/functions/mcp-server/lib/health.ts:19-22`; the parser fix belongs to this database validation group, while the MCP health query provides the regression input.
+- Group 07, MCP gateway: G01-F01 was resolved by the upstream health-query and parser changes. Retain a deployed health check in the release gate.
 - Group 12, endurance: activity NaN values can poison `v_weekly_endurance` (`supabase/migrations/20260907030000_activities.sql:249-264`). The schema guard and validator are reported here; confirm downstream presentation behavior in the endurance pass.
 
 ## 7. Open questions and limits
