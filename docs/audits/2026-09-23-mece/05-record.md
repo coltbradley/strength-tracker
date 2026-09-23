@@ -6,7 +6,7 @@ Inspected `pwa/src/screens/History.tsx`, `components/{BodyweightRow,CheckInSheet
 
 ## Executive summary
 
-Confirmed findings: 6 (P1: 1, P2: 5). The largest risks are incomplete export semantics, prompt/response capture not connected to the production flow, and History surfaces that can disagree with queued or filtered records. The current check-in redesign and History check-in review are present; A-96 and A-97 are correctly listed as fixed with tests.
+Confirmed findings: 7 (P1: 1, P2: 6). The largest risks are incomplete export semantics, prompt/response capture not connected to the production flow, and History surfaces that can disagree with queued or filtered records. The current check-in redesign and History check-in review are present; A-96 and A-97 are correctly listed as fixed with tests.
 
 ## Findings
 
@@ -69,6 +69,16 @@ Confirmed findings: 6 (P1: 1, P2: 5). The largest risks are incomplete export se
 - **Existing lead:** A-94 and A-95 (both open in the release ledger; verified against current callers).
 - **Fix boundary:** Connect scheduling/delivery, durable prompt creation, and answer/skip linkage as one flow. Coordinate the row contract with group 01 and the push scheduler/operational path with groups 11/13.
 - **Verification needed:** End-to-end test for due prompt creation, offline answer/skip, replay, response timestamp, and no duplicate or stale prompt; then real-device next-morning acceptance and live scheduler proof where applicable.
+
+### G05-F07. Check-in memory requests discard HTTP failures without retry
+
+- **Severity:** P2. **Confidence:** high.
+- **Trigger:** The extraction route returns a non-2xx response, such as quota refusal or a transient server error.
+- **Evidence:** The client in `pwa/src/lib/checkinMemory.ts:19-61` starts the request and discards its `Response` without checking `ok` or scheduling a retry. A later successful check-in sync is the only ordinary trigger for another attempt.
+- **Impact:** Standing facts in the current note can remain unprocessed indefinitely if no later sync occurs, with no visible or durable failure state.
+- **Existing lead:** A-16.
+- **Fix boundary:** Add a bounded retry/recovery trigger while keeping check-in save success independent of extraction; coordinate the server outcome with group 10.
+- **Verification needed:** Return 429/503, then verify a later eligible retry occurs and a terminal failure is recorded or surfaced without duplicating facts.
 
 ## Opportunities
 
