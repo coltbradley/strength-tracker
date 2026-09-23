@@ -1,5 +1,10 @@
 # MECE codebase review, 2026-09-23
 
+`ASSESSMENT.md` re-checks these reports against the source they cite, corrects
+the claims that do not hold as written, adds findings the reports handed off
+without an id, and groups the rest into fix clusters. Read that before turning
+this package into tickets.
+
 This review started from the `docs/phase-1-plans` checkout at `38e32d0` and
 was reconciled against remote source changes through `e74b91d`. G01-F01 was
 resolved during that reconciliation; the other cited behaviors were unchanged

@@ -1,5 +1,8 @@
 # MECE codebase audit synthesis, 2026-09-23
 
+The working plan after a source re-check is [`ASSESSMENT.md`](ASSESSMENT.md).
+This file remains the original triage synthesis.
+
 ## Decision in brief
 
 This is a triage package, not a release verdict or an implementation queue. The
