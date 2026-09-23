@@ -100,11 +100,34 @@ beforeEach(async () => {
   resetDbForTests();
   resetAllSettings();
   vi.clearAllMocks();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.mocked(getExercises).mockReset();
+  vi.mocked(getLastActuals).mockReset();
+  vi.mocked(getServerSessionSets).mockReset();
+  vi.mocked(outbox.enqueue).mockReset();
+  vi.mocked(outbox.enqueueBatch).mockReset();
+  vi.mocked(getExercises).mockResolvedValue({
+    data: [],
+    error: null,
+    status: 200,
+    statusText: "OK",
+  } as any);
+  vi.mocked(getLastActuals).mockResolvedValue({
+    data: {},
+    fromCache: false,
+    stale: null,
+  } as any);
+  vi.mocked(getServerSessionSets).mockResolvedValue([] as any);
+  vi.mocked(outbox.enqueue).mockResolvedValue(undefined);
+  vi.mocked(outbox.enqueueBatch).mockResolvedValue(undefined);
   await seed();
 });
 
 afterEach(() => {
+  vi.clearAllTimers();
   vi.useRealTimers();
+  vi.clearAllMocks();
   cleanup();
   resetAllSettings();
 });

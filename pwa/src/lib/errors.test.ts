@@ -6,7 +6,7 @@
 // 2. It is saved durably before Sentry gets a best-effort mirror. A report
 //    that only enters a third-party inbox is not a report we can rely on.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // sendBugReport now queues through the outbox rather than writing directly,
 // so what is under test is the enqueue call, not a supabase insert — see the
@@ -42,6 +42,7 @@ import {
   buildBugDiagnostics,
   initSentry,
   onToast,
+  resetSentryForTests,
   sendBugReport,
   type BugFacts,
   type Toast,
@@ -158,8 +159,19 @@ describe("buildBugDiagnostics", () => {
 
 describe("sendBugReport", () => {
   beforeEach(() => {
+    resetSentryForTests();
+    vi.restoreAllMocks();
     vi.clearAllMocks();
+    enqueueMock.mockReset();
     enqueueMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    resetSentryForTests();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it("saves the report even when Sentry is not configured", async () => {
