@@ -401,6 +401,16 @@ export function createOutbox({
     setStatus(counts(await readAll(db)));
   }
 
+  /** Count after a committed add. Failure is visible and does not reject. */
+  async function refreshCountsAfterCommit(): Promise<void> {
+    try {
+      await refreshCounts();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setStatus({ state: "error", lastError: message });
+    }
+  }
+
   function flush(): Promise<void> {
     chain = chain.then(doFlush, doFlush);
     return chain;
@@ -550,7 +560,10 @@ export function createOutbox({
     async enqueue(op) {
       const db = await getDb();
       await db.add("outbox", makePendingItem(op, whoAmI()));
-      await refreshCounts();
+      // The row is the commit. A count that throws after it must not look
+      // like a failed log: the caller would retry with a new UUID, and this
+      // row would sit unflushed.
+      await refreshCountsAfterCommit();
       void flush();
     },
 
@@ -563,7 +576,7 @@ export function createOutbox({
         await tx.store.add(makePendingItem(op, owner));
       }
       await tx.done;
-      await refreshCounts();
+      await refreshCountsAfterCommit();
       void flush();
     },
 

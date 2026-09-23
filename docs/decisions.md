@@ -3103,3 +3103,19 @@ still stamps the person this device already knows. `inspect` and the outbox
 export return that person's rows; other accounts stay in IndexedDB and show
 up as a held count. Pre-multi-user rows that were still unsynced on upgrade
 stay on the device. Sending them was the permanent wrong-owner write.
+
+## 2026-09-23 A logged set is shown only after it is the queued row
+
+`logSet` painted the set, then called `enqueue` without waiting. A failure
+after the IndexedDB add — the count refresh, or the bodyweight cache write —
+rejected a call that had already stored one UUID, and a retry stored a second.
+History's open day read the server sets and pending voids, so the queued set
+was missing until flush.
+
+Decision: the IndexedDB add is the commit. The session screen updates only
+after that promise resolves, and a rejection leaves the set off the screen.
+`enqueue` and `enqueueBatch` still schedule a flush when the following count
+throws. `recordBodyweight` returns after the queue write and reports a cache
+failure. History merges pending sets into the open day; the same id shows
+once, and a pending void still hides the set. A session that has not reached
+`ended_at` on the server is still absent from that list.

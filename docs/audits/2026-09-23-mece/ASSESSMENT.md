@@ -44,9 +44,9 @@ numbers. Line numbers below are the current file.
 | G02-F06 | Fixed for disclosure. `inspect()` returns only the current user's rows. The sheet counts `status.held` and does not render or export another account's payload. `cacheClearAll` still keeps the outbox. |
 | G02-F07 | `sync.ts` `update` returns success when PostgREST returns no error. A zero-row update is not an error. `doFlush` then deletes the queue row. |
 | G02-F08 | `makeFetchWithCache` puts `cacheSet` in the same `try` as the fetch. A thrown cache write returns the previous cache entry with `fromCache: true`. |
-| G02-F11 / G02-F15 | `enqueue` awaits `refreshCounts()` after `db.add` and only then calls `flush`. `recordBodyweight` awaits the cache write after a successful enqueue. |
+| G02-F11 / G02-F15 | Fixed. After the IndexedDB add, a thrown count is recorded on the outbox status and `flush` still runs. `recordBodyweight` returns once the queue write lands; a later cache failure is reported and does not reject. |
 | G02-F12 | `complete` adds `.is("ended_at", null)`. `discard` updates by id only (`data.ts`). `syncOpenSessions` decides from an earlier `listOpen()` snapshot. |
-| G03-F01 | `Session.tsx` appends the set to React state, fires `cacheSet`, then calls `outbox.enqueue` without awaiting it. The paired-round path awaits `enqueueBatch` first. |
+| G03-F01 | Fixed. `logSet` awaits `enqueue` before React state, the cache, and the rest clock, matching the paired-round path. A rejected add is reported and the set is not shown. |
 | G03-F02 | `End.tsx` guards finish with `endingRef`. `discard` has no shared lock, and both buttons stay enabled. |
 | G03-F03 | `SetEditor` accepts only `"reps" \| "done"`. The normal insert does not write `duration_seconds`. `Session.focus.test.tsx` says duration tracking is unavailable. |
 | G04-F01 | `Plan.tsx` `reload` applies `setList` and `setRx` from promises that do not check that `id` is still the route they started for. `reload` is recreated when `id` changes, so the old request is not cancelled. |
@@ -198,14 +198,13 @@ above; the rest were handed off or not filed.
 
 ### N01. History drops offline work the session screen keeps
 
-Session bootstrap merges `outbox.pendingSets`. History's expanded day calls
-`getServerSessionSets` and subtracts `pendingVoidIds` only
-(`pwa/src/screens/History.tsx`). `getSessionLog` requires `ended_at` on the
-server and only subtracts pending discards (`sessionHistory.ts`). A set logged
-offline, and a session finished offline, are missing from History until the
-queue flushes. Group 05 named the set half as a handoff to group 02 and did
-not number it. It is one defect: History reads server-or-cache and applies
-only the destructive half of the outbox.
+The expanded day now merges `outbox.pendingSets` with `getServerSessionSets`
+and still subtracts `pendingVoidIds` (`pwa/src/screens/History.tsx`). A queued
+set on a session the list already shows appears once. `getSessionLog` still
+requires `ended_at` on the server and only subtracts pending discards
+(`sessionHistory.ts`), so a session finished only on this device stays off
+the list until that close flushes. Group 05 named the set half as a handoff
+to group 02 and did not number it.
 
 Severity P1. Confidence high for the source path. Verification: log a set and
 finish while offline, open History, and see that session and those sets; after
@@ -330,9 +329,10 @@ completed.
 
 Fix:
 
-- Single-set log awaits the outbox add, then shows the set. `enqueue` /
-  `enqueueBatch` treat the add as the result and schedule flush even if the
-  count read fails. `recordBodyweight` does the same for its cache write.
+- Landed: single-set log awaits the outbox add, then shows the set.
+  `enqueue` / `enqueueBatch` treat the add as the result and schedule flush
+  even if the count read fails. `recordBodyweight` does the same for its
+  cache write. History's open day merges the queued set once.
 - One synchronous terminal lock for finish and discard. The buttons show it.
 - `update` asks for a count or a returning row. Zero rows stay in the queue
   with a visible cause, not a delete. `discard` and `complete` both require

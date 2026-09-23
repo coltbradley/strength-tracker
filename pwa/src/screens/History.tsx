@@ -35,6 +35,7 @@ import {
   getObservations,
   getRecentSets,
   getServerSessionSets,
+  mergeSets,
   getSessionMeta,
   getSetNotesForExercise,
   getWeeklyVolume,
@@ -235,13 +236,16 @@ export function History({ userId }: { userId: string }) {
     let cancelled = false;
     setOpenSets(undefined);
     void (async () => {
-      const [rows, voided] = await Promise.all([
+      const [rows, pending, voided] = await Promise.all([
         getServerSessionSets(openId),
+        outbox.pendingSets(openId),
         outbox.pendingVoidIds(),
       ]);
-      // v_live_sets has already dropped voids that LANDED; this subtracts the
-      // ones still in the outbox, exactly as the per-exercise list above does
-      if (!cancelled) setOpenSets(liveSets(rows, voided));
+      // Server rows win on id, so a flushed set still sitting in the queue
+      // shows once. v_live_sets has already dropped voids that LANDED; this
+      // subtracts the ones still in the outbox.
+      if (!cancelled)
+        setOpenSets(liveSets(mergeSets(rows, pending), voided));
     })();
     return () => {
       cancelled = true;

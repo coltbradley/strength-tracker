@@ -2016,7 +2016,11 @@ export async function recordBodyweight(
     table: "bodyweight_log",
     payload: { id: uuid(), measured_at: measuredAt, weight_kg: weightKg },
   });
-  await cacheBodyweightPoint(point);
+  // The queue row is the weigh-in. A cache miss after that is not a failed
+  // save, and a retry would insert a second UUID.
+  cacheBodyweightPoint(point).catch((e: unknown) =>
+    reportError(e, "cache bodyweight"),
+  );
   return point;
 }
 

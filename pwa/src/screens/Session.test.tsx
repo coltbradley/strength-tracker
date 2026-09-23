@@ -100,6 +100,7 @@ beforeEach(async () => {
   globalThis.indexedDB = new IDBFactory();
   resetDbForTests();
   vi.clearAllMocks();
+  vi.mocked(outbox.enqueue).mockImplementation(async () => undefined);
   vi.mocked(getServerSessionSets).mockResolvedValue([benchSet]);
   await cacheSet(cacheKeys.activeSession, active);
   await cacheSet(cacheKeys.sessionRx(active.id), [bench, squat]);
@@ -185,6 +186,70 @@ describe("Session log lock", () => {
     expect(
       screen.getByRole("button", { name: /log set/i }).className,
     ).not.toContain("is-held");
+  });
+
+  it("shows a logged set only after the outbox add resolves", async () => {
+    resetDbForTests();
+    const squat1 = prescription("squat", "back-squat", "Back Squat", 100);
+    await cacheSet(cacheKeys.activeSession, active);
+    await cacheSet(cacheKeys.sessionRx(active.id), [squat1]);
+    await cacheSet(cacheKeys.sessionSets(active.id), []);
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+
+    let release: () => void = () => undefined;
+    const queued = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(outbox.enqueue).mockImplementation(() => queued);
+
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    const log = await screen.findByRole("button", { name: /log set/i });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    fireEvent.click(log);
+
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Last: 100 kg × 5/)).toBeNull();
+
+    await act(async () => {
+      release();
+      await queued;
+    });
+    expect(await screen.findByText(/Last: 100 kg × 5/)).toBeTruthy();
+  });
+
+  it("does not show a set when the outbox add fails", async () => {
+    resetDbForTests();
+    const squat1 = prescription("squat", "back-squat", "Back Squat", 100);
+    await cacheSet(cacheKeys.activeSession, active);
+    await cacheSet(cacheKeys.sessionRx(active.id), [squat1]);
+    await cacheSet(cacheKeys.sessionSets(active.id), []);
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
+    vi.mocked(outbox.enqueue).mockRejectedValue(new Error("disk full"));
+
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    const log = await screen.findByRole("button", { name: /log set/i });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    fireEvent.click(log);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Last: 100 kg × 5/)).toBeNull();
   });
 
   it("applies a correction started right after a log, before the 200 ms lock clears", async () => {

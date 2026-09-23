@@ -208,6 +208,68 @@ describe("outbox", () => {
     expect(await failingDb.count("outbox")).toBe(0);
   });
 
+  it("flushes the one queued row when the post-add count throws", async () => {
+    const { calls, transport } = makeTransport();
+    let opens = 0;
+    const outbox = createOutbox({
+      getDb: async () => {
+        opens += 1;
+        // The add uses the first open. The count that follows is the second.
+        if (opens === 2) throw new Error("count failed");
+        return getDb();
+      },
+      transport,
+      isOnline: () => online,
+      currentUserId: () => FIXTURE_USER,
+    });
+
+    await expect(
+      outbox.enqueue({ kind: "insert", table: "sets", payload: setA }),
+    ).resolves.toBeUndefined();
+
+    const db = await getDb();
+    expect(
+      (await db.getAll("outbox")).map(
+        (item) =>
+          (item.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>)
+            .payload.id,
+      ),
+    ).toEqual([setA.id]);
+
+    online = true;
+    await outbox.flush();
+    expect(calls.map((call) => (call.payload as SetInsert).id)).toEqual([
+      setA.id,
+    ]);
+  });
+
+  it("flushes the whole batch when the post-commit count throws", async () => {
+    const { calls, transport } = makeTransport();
+    let opens = 0;
+    const outbox = createOutbox({
+      getDb: async () => {
+        opens += 1;
+        if (opens === 2) throw new Error("count failed");
+        return getDb();
+      },
+      transport,
+      isOnline: () => online,
+      currentUserId: () => FIXTURE_USER,
+    });
+
+    await expect(outbox.enqueueBatch(roundOps)).resolves.toBeUndefined();
+
+    const db = await getDb();
+    expect((await db.getAll("outbox")).length).toBe(2);
+
+    online = true;
+    await outbox.flush();
+    expect(calls.map((call) => (call.payload as SetInsert).id)).toEqual([
+      setA.id,
+      setB.id,
+    ]);
+  });
+
   it("replays both batch members in order and preserves normal idempotency", async () => {
     const { calls, transport } = makeTransport();
     const outbox = build(transport);

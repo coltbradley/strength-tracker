@@ -1287,11 +1287,9 @@ export function Session() {
     // verify would number this set 0 on top of whatever is already logged.
     if (!entryToLog || !sessionId || logLocked || !setsLoaded || setsFailed)
       return;
-    delete stagedDraftsRef.current[
-      `${entryToLog.key}:${entryToLog.exercise_id}`
-    ];
+    // Synchronous with the tap, before the queue await: a second tap in this
+    // turn still sees the lock, and iOS still has the gesture for the cue.
     setLogLocked(true);
-    window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     setVoidArm(null);
     // logging on a skipped exercise means it's happening after all
     if (skips[entryToLog.key]) {
@@ -1322,72 +1320,90 @@ export function Session() {
       nextIndex,
       recordableRest(),
     );
-    const next = applySets((prev) => [...prev, set]);
-    setLastLoggedSet(set);
-    cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
-      reportError(e, "cache session sets"),
-    );
-    outbox
-      .enqueue({ kind: "insert", table: "sets", payload: set })
-      .catch((e: unknown) => reportError(e, "log set"));
 
-    // Done-ness read from the list that now INCLUDES this set: `sets` state
-    // is a render behind, and both decisions below are about the workout as
-    // it stands after the tap.
-    const doneAfter = (e: ExerciseEntry): boolean =>
-      // logging on a skipped exercise un-skips it (above), so the open entry
-      // is never treated as skipped here
-      (e.key in skips && e.key !== entryToLog.key) ||
-      entryMet(e, setsForEntryOf(e, next, rx, knownRxIds));
-    // Mid-superset the rest strip is a countdown to nothing: the next thing
-    // to do is the partner, not a wait. Only the STRIP is held — the clock
-    // below always starts, because `rest_seconds_actual` is data and
-    // append-only, so a rest not measured now can never be recorded later.
-    const roundOpen = supersetPartnerOf(entries, entryToLog.key, doneAfter);
+    void (async () => {
+      try {
+        // Same commit point as a superset round: the screen shows the set
+        // only once IndexedDB has that one row.
+        await outbox.enqueue({ kind: "insert", table: "sets", payload: set });
+        delete stagedDraftsRef.current[
+          `${entryToLog.key}:${entryToLog.exercise_id}`
+        ];
+        const next = applySets((prev) => [...prev, set]);
+        setLastLoggedSet(set);
+        cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
+          reportError(e, "cache session sets"),
+        );
 
-    // The clock always starts MEASURING (rest_seconds_actual is data, and
-    // append-only means it can never be added later); auto-start governs only
-    // whether the strip appears.
-    const now = Date.now();
-    restRef.current = { startedAt: now };
-    const forLabel = `${entryToLog.name} set ${nextIndex + 1}`;
-    const targetRestSeconds = getExerciseRestSeconds(
-      entryToLog.exercise_id,
-      bracket?.rest_seconds ?? null,
-    );
-    const showStrip = autoStartRest && roundOpen === null;
-    if (showStrip)
-      setRest({ startedAt: now, targetSeconds: targetRestSeconds, forLabel });
-    // The next LOG cancels the previous rest's closed-app alert whatever
-    // happens to the strip, and arms one for this rest only when a strip is
-    // shown: no strip means mid-superset or auto-start off, and neither wants
-    // a buzz.
-    disarmRestAlert();
-    if (showStrip) armRestAlert(now + targetRestSeconds * 1000, forLabel);
-    // Mirror the clock HERE, whether or not a strip appeared. With auto-start
-    // off nothing about `rest` changes, so nothing else would ever write the
-    // new startedAt — and no strip also means there is none to restore, which
-    // is the null target.
-    mirrorRest(
-      showStrip ? targetRestSeconds : null,
-      showStrip ? forLabel : null,
-    );
-    // What the NEXT set should be, from the plan rather than from a reset:
-    // this was an unconditional "working", so a coach's second prescribed
-    // warmup arrived pre-set to working and got logged as one.
-    const warmupsLogged = setsForEntryOf(
-      entryToLog,
-      next,
-      rx,
-      knownRxIds,
-    ).filter((s) => s.set_type === "warmup").length;
-    if (entryToLog.key === openEntry?.key)
-      setSetType(warmupsLogged < warmupSets(entryToLog) ? "warmup" : "working");
-    // The rating does NOT carry to the next set. Load and reps do, because
-    // they are the plan repeating; how hard set 3 felt is not a prediction
-    // about set 4, and a sticky value would quietly attach one lifter's one
-    // honest answer to every row after it.
-    setRpe(null);
+        // Done-ness read from the list that now INCLUDES this set: `sets` state
+        // is a render behind, and both decisions below are about the workout as
+        // it stands after the tap.
+        const doneAfter = (e: ExerciseEntry): boolean =>
+          // logging on a skipped exercise un-skips it (above), so the open entry
+          // is never treated as skipped here
+          (e.key in skips && e.key !== entryToLog.key) ||
+          entryMet(e, setsForEntryOf(e, next, rx, knownRxIds));
+        // Mid-superset the rest strip is a countdown to nothing: the next thing
+        // to do is the partner, not a wait. Only the STRIP is held — the clock
+        // below always starts, because `rest_seconds_actual` is data and
+        // append-only, so a rest not measured now can never be recorded later.
+        const roundOpen = supersetPartnerOf(entries, entryToLog.key, doneAfter);
+
+        // The clock always starts MEASURING (rest_seconds_actual is data, and
+        // append-only means it can never be added later); auto-start governs only
+        // whether the strip appears.
+        const now = Date.now();
+        restRef.current = { startedAt: now };
+        const forLabel = `${entryToLog.name} set ${nextIndex + 1}`;
+        const targetRestSeconds = getExerciseRestSeconds(
+          entryToLog.exercise_id,
+          bracket?.rest_seconds ?? null,
+        );
+        const showStrip = autoStartRest && roundOpen === null;
+        if (showStrip)
+          setRest({
+            startedAt: now,
+            targetSeconds: targetRestSeconds,
+            forLabel,
+          });
+        // The next LOG cancels the previous rest's closed-app alert whatever
+        // happens to the strip, and arms one for this rest only when a strip is
+        // shown: no strip means mid-superset or auto-start off, and neither wants
+        // a buzz.
+        disarmRestAlert();
+        if (showStrip) armRestAlert(now + targetRestSeconds * 1000, forLabel);
+        // Mirror the clock HERE, whether or not a strip appeared. With auto-start
+        // off nothing about `rest` changes, so nothing else would ever write the
+        // new startedAt — and no strip also means there is none to restore, which
+        // is the null target.
+        mirrorRest(
+          showStrip ? targetRestSeconds : null,
+          showStrip ? forLabel : null,
+        );
+        // What the NEXT set should be, from the plan rather than from a reset:
+        // this was an unconditional "working", so a coach's second prescribed
+        // warmup arrived pre-set to working and got logged as one.
+        const warmupsLogged = setsForEntryOf(
+          entryToLog,
+          next,
+          rx,
+          knownRxIds,
+        ).filter((s) => s.set_type === "warmup").length;
+        if (entryToLog.key === openEntry?.key)
+          setSetType(
+            warmupsLogged < warmupSets(entryToLog) ? "warmup" : "working",
+          );
+        // The rating does NOT carry to the next set. Load and reps do, because
+        // they are the plan repeating; how hard set 3 felt is not a prediction
+        // about set 4, and a sticky value would quietly attach one lifter's one
+        // honest answer to every row after it.
+        setRpe(null);
+      } catch (e) {
+        reportError(e, "log set");
+      } finally {
+        window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
+      }
+    })();
   };
 
   const logRound = async (round: SupersetRoundDraft) => {

@@ -49,6 +49,7 @@ vi.mock("../lib/data", async () => {
   return {
     makeFetchWithCache: actual.makeFetchWithCache,
     throwIf: actual.throwIf,
+    mergeSets: actual.mergeSets,
     getExercises: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
     getLoggedExerciseIds: vi
       .fn()

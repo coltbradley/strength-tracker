@@ -54,6 +54,14 @@ invisible there until flush.
 Done when: the screen shows a set only after the IndexedDB add; a post-add
 failure still flushes that one row; offline History shows the queued set once.
 
+Landed for A-107. `logSet` shows the set only after `enqueue` resolves, and a
+rejected add leaves the screen unchanged. `enqueue` and `enqueueBatch` still
+flush the committed row when the following count throws. `recordBodyweight`
+returns the point after the queue write and reports a cache failure instead
+of rejecting. History's open day merges `pendingSets` with the server rows
+and still hides a pending void. A session finished only on this device, with
+no server `ended_at`, is still absent from the list (the other half of N01).
+
 ## 3. One session can finish and be discarded
 
 Ledger A-91, and the Phase 2 names A-06 and A-204. Audit G03-F02, G02-F07,
