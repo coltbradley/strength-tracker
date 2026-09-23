@@ -251,8 +251,11 @@ export interface OutboxEntry {
   created_at: string | null;
   retries: number;
   last_error: string | null;
-  /** who queued it; undefined on items queued before multi-user */
-  user_id: string | undefined;
+  /**
+   * Who queued it. Null means identity was unknown at enqueue. Undefined
+   * means the row predates the field. Neither is shown or sent.
+   */
+  user_id: string | null | undefined;
   /**
    * 'waiting' goes on the next flush. 'held' was queued by another account
    * (or before identity resolved) and this device must not send it. 'dead'
@@ -310,13 +313,19 @@ export function createOutbox({
    * be signed in. One person's set, permanently recorded against another, in
    * an append-only table with no correction path.
    *
-   * Nothing is lost by waiting: the item stays pending, and start() re-runs
-   * the queue the moment identity arrives.
+   * Nothing attributed is lost by waiting: a stamped item stays pending, and
+   * start() re-runs the queue the moment identity arrives.
+   *
+   * A missing owner is not a legacy free pass. `undefined` (the field was
+   * never written) and `null` (queued while getCurrentUserId() was null) are
+   * the same fact: this row has no owner. Sending it lets Postgres stamp
+   * auth.uid() of the live token. That includes the boot window, where
+   * enqueue used to omit the field and the very next flush treated the
+   * omission as permission. A later sign-in does not adopt the row.
    */
   function replayable(item: OutboxItem): boolean {
     const owner = item.user_id;
-    if (owner === undefined) return true; // pre-multi-user item
-    return whoAmI() === owner;
+    return typeof owner === "string" && owner.length > 0 && whoAmI() === owner;
   }
 
   function setStatus(patch: Partial<OutboxStatus>): void {
@@ -380,7 +389,10 @@ export function createOutbox({
       retries: 0,
       last_error: null,
       status: "pending",
-      ...(owner === null ? {} : { user_id: owner }),
+      // Explicit null, not an omitted key. An omitted key is what replay
+      // used to treat as "send it". Null is held until it is discarded by
+      // time, and it is never rewritten onto a later account.
+      user_id: owner,
     };
   }
 
@@ -563,6 +575,9 @@ export function createOutbox({
       let stuck = 0;
       for (const row of await readAll(db)) {
         if (row.item.status !== "dead") continue;
+        // Another account's dead row stays dead. Re-queueing it would only
+        // move their payload through a flush this device must not send.
+        if (!replayable(row.item)) continue;
         // A row the server rejected on its own merits comes back refused, and
         // a retry that re-queues it only moves it from FAILED to FAILED via a
         // moment of false hope. It stays dead and stays exportable.
@@ -582,21 +597,27 @@ export function createOutbox({
     async inspect() {
       const db = await getDb();
       const rows = await readAll(db);
-      return rows.map(({ key, item }): OutboxEntry => {
-        const dead = item.status === "dead";
-        return {
-          key,
-          op: item.op,
-          table: item.op.table,
-          created_at: item.created_at ?? null,
-          retries: item.retries ?? 0,
-          last_error: item.last_error ?? null,
-          user_id: item.user_id,
-          state: dead ? "dead" : replayable(item) ? "waiting" : "held",
-          cause: dead ? deadKind(item.last_code, item.last_status) : null,
-          retryable: dead && isRetryable(item),
-        };
-      });
+      // Foreign rows stay in IndexedDB — they may be the only copy — and
+      // stay out of this list. The sheet and the export both read inspect(),
+      // so a payload that is not here cannot be rendered or downloaded.
+      // status.held still counts them.
+      return rows
+        .filter(({ item }) => replayable(item))
+        .map(({ key, item }): OutboxEntry => {
+          const dead = item.status === "dead";
+          return {
+            key,
+            op: item.op,
+            table: item.op.table,
+            created_at: item.created_at ?? null,
+            retries: item.retries ?? 0,
+            last_error: item.last_error ?? null,
+            user_id: item.user_id,
+            state: dead ? "dead" : replayable(item) ? "waiting" : "held",
+            cause: dead ? deadKind(item.last_code, item.last_status) : null,
+            retryable: dead && isRetryable(item),
+          };
+        });
     },
 
     getStatus: () => status,

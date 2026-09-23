@@ -3086,3 +3086,20 @@ change that would lock the owner out on a deploy that forgot the secret.
 
 Merged to `main` as PR #8 (`c25e3ad`, 2026-09-21). A-02 remains
 `needs live proof` until the production secret is set.
+
+## 2026-09-23 An ownerless queued write is held, not adopted
+
+`sets` is append-only. A row queued while `getCurrentUserId()` is null used
+to omit `user_id`, and the flusher treated a missing owner as a pre-multi-user
+row it was allowed to send. Postgres then stamped `auth.uid()` of whoever
+held the token. A legacy row with the field absent is the same shape, so it
+cannot be told apart from that bug.
+
+Decision: new rows always store `user_id`, and null means "queued before
+identity resolved". `undefined` and null are not replayable, and a later
+sign-in does not adopt them. The boot path seeds the current user from
+`sb-<project-ref>-auth-token` for `VITE_SUPABASE_URL` only, so a normal open
+still stamps the person this device already knows. `inspect` and the outbox
+export return that person's rows; other accounts stay in IndexedDB and show
+up as a held count. Pre-multi-user rows that were still unsynced on upgrade
+stay on the device. Sending them was the permanent wrong-owner write.

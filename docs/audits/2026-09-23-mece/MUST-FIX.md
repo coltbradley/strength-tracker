@@ -33,6 +33,13 @@ only the configured project's storage key is read; the sheet and export show
 the current owner's payloads; a two-account test on one origin sends nothing
 across the boundary.
 
+Landed for A-90, A-158, and A-148. A write queued with no owner is stored as
+`user_id: null` and held, including after a later sign-in. A legacy row with
+the field missing is held too. The persisted session is read only from
+`sb-<project-ref>-auth-token`. `inspect` and the sheet export omit another
+account's payloads; the held count remains. The cache-claim race named above
+(G02-F04) is still open.
+
 ## 2. A set is shown before it is the only copy, and a retry can write it twice
 
 Ledger A-107. Audit G03-F01, G02-F11, G02-F15. History half is N01.

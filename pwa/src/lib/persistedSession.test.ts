@@ -3,10 +3,13 @@
 // every unreadable store, must come back null and put the app on its old
 // behaviour rather than on a half-parsed session.
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readPersistedSession, readPersistedUserId } from "./persistedSession";
 
-const KEY = "sb-abcdefghijklmnop-auth-token";
+const REF = "abcdefghijklmnop";
+const KEY = `sb-${REF}-auth-token`;
+const OURS = "00000000-0000-4000-8000-000000000001";
+const THEIRS = "00000000-0000-4000-8000-000000000002";
 
 /** The smallest thing that behaves like Storage. Injected rather than using a
  *  jsdom global, because jsdom only grants localStorage to a real origin and
@@ -36,38 +39,37 @@ const session = (over: Record<string, unknown> = {}) => ({
 let store: Storage;
 beforeEach(() => {
   store = fakeStore();
+  vi.unstubAllEnvs();
 });
 
 describe("readPersistedSession", () => {
-  it("finds the session under the auth library's key", () => {
+  it("finds the session under the configured project's key", () => {
     store.setItem(KEY, JSON.stringify(session()));
-    expect(readPersistedSession(store)?.user.id).toBe(
-      "00000000-0000-4000-8000-000000000001",
-    );
-    expect(readPersistedUserId(store)).toBe("00000000-0000-4000-8000-000000000001");
+    expect(readPersistedSession(store, REF)?.user.id).toBe(OURS);
+    expect(readPersistedUserId(store, REF)).toBe(OURS);
   });
 
   it("is null when nothing is stored", () => {
-    expect(readPersistedSession(store)).toBeNull();
+    expect(readPersistedSession(store, REF)).toBeNull();
     expect(readPersistedUserId(store)).toBeNull();
   });
 
   it("ignores keys that are not the auth token", () => {
     store.setItem("cacheOwner", JSON.stringify(session()));
     store.setItem("settings.v1", JSON.stringify(session()));
-    expect(readPersistedSession(store)).toBeNull();
+    expect(readPersistedSession(store, REF)).toBeNull();
   });
 
   it("survives a value that is not JSON", () => {
     store.setItem(KEY, "{not json");
-    expect(readPersistedSession(store)).toBeNull();
+    expect(readPersistedSession(store, REF)).toBeNull();
   });
 
   it("rejects a session with no user id, which is not an identity", () => {
     store.setItem(KEY, JSON.stringify(session({ user: {} })));
-    expect(readPersistedSession(store)).toBeNull();
+    expect(readPersistedSession(store, REF)).toBeNull();
     store.setItem(KEY, JSON.stringify(session({ user: { id: "" } })));
-    expect(readPersistedSession(store)).toBeNull();
+    expect(readPersistedSession(store, REF)).toBeNull();
   });
 
   it("rejects a session with no refresh token, which cannot recover", () => {
@@ -76,14 +78,14 @@ describe("readPersistedSession", () => {
     // a gap.
     const { refresh_token: _drop, ...rest } = session();
     store.setItem(KEY, JSON.stringify(rest));
-    expect(readPersistedSession(store)).toBeNull();
+    expect(readPersistedSession(store, REF)).toBeNull();
   });
 
   it("rejects a stored primitive", () => {
     store.setItem(KEY, JSON.stringify("signed-out"));
-    expect(readPersistedSession(store)).toBeNull();
+    expect(readPersistedSession(store, REF)).toBeNull();
     store.setItem(KEY, JSON.stringify(null));
-    expect(readPersistedSession(store)).toBeNull();
+    expect(readPersistedSession(store, REF)).toBeNull();
   });
 
   it("returns null rather than throwing when storage itself throws", () => {
@@ -94,13 +96,15 @@ describe("readPersistedSession", () => {
         throw new Error("SecurityError");
       },
       key: () => null,
-      getItem: () => null,
+      getItem: () => {
+        throw new Error("SecurityError");
+      },
       setItem: () => undefined,
       removeItem: () => undefined,
       clear: () => undefined,
     } as unknown as Storage;
-    expect(() => readPersistedSession(hostile)).not.toThrow();
-    expect(readPersistedSession(hostile)).toBeNull();
+    expect(() => readPersistedSession(hostile, REF)).not.toThrow();
+    expect(readPersistedSession(hostile, REF)).toBeNull();
   });
 
   it("returns null where there is no storage at all", () => {
@@ -108,8 +112,52 @@ describe("readPersistedSession", () => {
     expect(readPersistedUserId(undefined)).toBeNull();
   });
 
-  it("still reads the pre-2.x key name", () => {
+  it("does not read an unscoped pre-2.x key", () => {
+    // `supabase.auth.token` names no project. A leftover from another app on
+    // this origin is not an identity this deployment may adopt.
     store.setItem("supabase.auth.token", JSON.stringify(session()));
-    expect(readPersistedUserId(store)).toBe("00000000-0000-4000-8000-000000000001");
+    expect(readPersistedUserId(store, REF)).toBeNull();
+  });
+
+  it("returns only the configured project's user, in either storage order", () => {
+    const ours = session();
+    const theirs = session({ user: { id: THEIRS, email: "c@d.test" } });
+    const otherKey = "sb-otherprojectref-auth-token";
+
+    store.setItem(otherKey, JSON.stringify(theirs));
+    store.setItem(KEY, JSON.stringify(ours));
+    expect(readPersistedUserId(store, REF)).toBe(OURS);
+
+    const reversed = fakeStore();
+    reversed.setItem(KEY, JSON.stringify(ours));
+    reversed.setItem(otherKey, JSON.stringify(theirs));
+    expect(readPersistedUserId(reversed, REF)).toBe(OURS);
+    expect(readPersistedSession(reversed, REF)?.user.id).toBe(OURS);
+  });
+
+  it("returns null when no project is configured", () => {
+    store.setItem(KEY, JSON.stringify(session()));
+    expect(readPersistedUserId(store, null)).toBeNull();
+    expect(readPersistedUserId(store, "")).toBeNull();
+    expect(readPersistedSession(store, "placeholder")).toBeNull();
+  });
+
+  it("reads the project ref from VITE_SUPABASE_URL and ignores every other key", () => {
+    vi.stubEnv("VITE_SUPABASE_URL", `https://${REF}.supabase.co`);
+    store.setItem(
+      "sb-otherprojectref-auth-token",
+      JSON.stringify(session({ user: { id: THEIRS, email: "c@d.test" } })),
+    );
+    store.setItem(KEY, JSON.stringify(session()));
+    expect(readPersistedUserId(store)).toBe(OURS);
+  });
+
+  it("ignores the placeholder client used when env is unset", () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://placeholder.supabase.co");
+    store.setItem(
+      "sb-placeholder-auth-token",
+      JSON.stringify(session()),
+    );
+    expect(readPersistedUserId(store)).toBeNull();
   });
 });

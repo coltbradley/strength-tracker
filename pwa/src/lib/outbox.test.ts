@@ -98,6 +98,8 @@ function makeSet(
 }
 
 const setA = makeSet("22222222-2222-4222-8222-222222222222", 0);
+/** Owner for tests that are not about identity. A missing owner is held. */
+const FIXTURE_USER = "ffffffff-1111-4111-8111-111111111111";
 const setB = makeSet("33333333-3333-4333-8333-333333333333", 1);
 const roundOps: readonly OutboxOp[] = [
   { kind: "insert", table: "sets", payload: setA },
@@ -115,7 +117,12 @@ describe("outbox", () => {
   });
 
   function build(transport: OutboxTransport) {
-    return createOutbox({ getDb, transport, isOnline: () => online });
+    return createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => FIXTURE_USER,
+    });
   }
 
   /** enqueue while offline, then drain the enqueue-triggered flushes */
@@ -788,16 +795,57 @@ describe("outbox identity", () => {
     expect((await db.getAll("outbox"))[0].user_id).toBe(ALICE);
   });
 
-  it("treats an item queued before multi-user as the current user's", async () => {
-    // Items already in the outbox on the day this shipped carry no owner.
-    // Refusing to flush them would strand real sets forever.
+  it("holds a write queued before identity resolves and never sends it as the next account", async () => {
+    // The null-at-enqueue case. Omitting user_id made the row look like a
+    // legacy item, and replayable() sent it. The payload has no owner, so
+    // Postgres stamps auth.uid() of whoever holds the token. sets is
+    // append-only: that owner cannot be corrected.
+    let who: string | null = null;
+    const { calls, transport } = makeTransport();
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+    });
+    const id = "aaaa6666-1111-4111-8111-111111111111";
+    await box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: makeSet(id, 5),
+    });
+
+    const db = await getDb();
+    const [row] = await db.getAll("outbox");
+    expect(Object.prototype.hasOwnProperty.call(row, "user_id")).toBe(true);
+    expect(row.user_id).toBeNull();
+    expect(calls).toHaveLength(0);
+
+    who = BOB;
+    await box.flush();
+    expect(calls).toHaveLength(0);
+    expect(await db.getAll("outbox")).toHaveLength(1);
+
+    // A later sign-in does not adopt the row. It was never attributed.
+    who = ALICE;
+    await box.flush();
+    expect(calls).toHaveLength(0);
+    expect((await db.getAll("outbox"))[0].user_id).toBeNull();
+  });
+
+  it("does not replay an ownerless legacy row as the current user", async () => {
+    // A row with no user_id is indistinguishable from one queued in the
+    // auth-null window. Sending it stamps whoever is signed in. Holding it
+    // strands a pre-multi-user write; sending it can write the wrong account
+    // permanently.
+    const id = "aaaa4444-1111-4111-8111-111111111111";
     const { calls, transport } = makeTransport();
     const db = await getDb();
     await db.add("outbox", {
       op: {
         kind: "insert",
         table: "sets",
-        payload: makeSet("aaaa4444-1111-4111-8111-111111111111", 3),
+        payload: makeSet(id, 3),
       },
       created_at: "2026-08-25T10:00:00.000Z",
       retries: 0,
@@ -811,7 +859,12 @@ describe("outbox identity", () => {
       currentUserId: () => BOB,
     });
     await box.flush();
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(0);
+    const rows = await db.getAll("outbox");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].user_id).toBeUndefined();
+    expect(JSON.stringify(calls)).not.toContain(id);
+    expect(box.getStatus()).toMatchObject({ pending: 1, held: 1, dead: 0 });
   });
 });
 
@@ -882,29 +935,69 @@ describe("outbox visibility", () => {
     expect(box.getStatus()).toMatchObject({ pending: 2, held: 1, dead: 1 });
 
     const entries = await box.inspect();
-    expect(entries.map((e) => e.state)).toEqual(["dead", "held", "waiting"]);
+    // Bob's held set stays in the queue and in the count. Its payload does
+    // not: inspect is what the sheet and the export read.
+    expect(entries.map((e) => e.state)).toEqual(["dead", "waiting"]);
+    expect(entries.map((e) => e.user_id)).toEqual([ALICE, ALICE]);
     expect(entries[0]).toMatchObject({
       cause: "rejected",
       retryable: false,
       last_error: checkErr.message,
       user_id: ALICE,
     });
-    expect(entries[1]).toMatchObject({
-      cause: null,
-      retryable: false,
-      user_id: BOB,
-    });
-    expect(entries[2]).toMatchObject({ cause: null, user_id: ALICE });
-    // Replay order is the queue order, and the view shows it that way.
+    const dumped = JSON.stringify(entries);
+    expect(dumped).not.toContain(setB.id);
+    expect(dumped).not.toContain(BOB);
     expect(entries.map((e) => e.key)).toEqual(
       [...entries.map((e) => e.key)].sort((a, b) => a - b),
     );
   });
 
+  it("omits another account's dead row, including its error text", async () => {
+    const bobId = "bbbb9999-2222-4222-8222-222222222222";
+    const db = await getDb();
+    await db.add("outbox", {
+      op: { kind: "insert", table: "sets", payload: makeSet(bobId, 8) },
+      created_at: "2026-08-25T10:00:00.000Z",
+      retries: 1,
+      last_error: "bob-private-failure",
+      status: "dead",
+      user_id: BOB,
+    });
+    await db.add("outbox", {
+      op: { kind: "insert", table: "sets", payload: setA },
+      created_at: "2026-08-25T10:01:00.000Z",
+      retries: 1,
+      last_error: "alice-own-failure",
+      status: "dead",
+      user_id: ALICE,
+    });
+    const box = createOutbox({
+      getDb,
+      transport: makeTransport().transport,
+      isOnline: () => false,
+      currentUserId: () => ALICE,
+    });
+    await box.flush();
+    const entries = await box.inspect();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].user_id).toBe(ALICE);
+    expect(entries[0].last_error).toBe("alice-own-failure");
+    const dumped = JSON.stringify(entries);
+    expect(dumped).not.toContain(bobId);
+    expect(dumped).not.toContain("bob-private-failure");
+    expect(box.getStatus()).toMatchObject({ dead: 2, held: 0 });
+  });
+
   it("retryDead re-queues only the failures whose answer can change", async () => {
     let online = false;
     const { calls, transport } = makeTransport([rlsErr, checkErr]);
-    const box = createOutbox({ getDb, transport, isOnline: () => online });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => FIXTURE_USER,
+    });
 
     await box.enqueue({ kind: "insert", table: "sets", payload: setA });
     await box.enqueue({ kind: "insert", table: "sets", payload: setB });
@@ -972,8 +1065,14 @@ describe("outbox visibility", () => {
       retries: 4,
       last_error: "permission denied for table sets",
       status: "dead",
+      user_id: FIXTURE_USER,
     });
-    const box = createOutbox({ getDb, transport, isOnline: () => true });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => FIXTURE_USER,
+    });
 
     const entries = await box.inspect();
     expect(entries[0]).toMatchObject({ cause: "unknown", retryable: true });
@@ -996,6 +1095,7 @@ describe("outbox visibility", () => {
         getDb,
         transport,
         isOnline: () => online,
+        currentUserId: () => FIXTURE_USER,
         onSynced: (op) => synced.push(op),
       });
       await box.enqueue({ kind: "insert", table: "sets", payload: setA });
@@ -1016,6 +1116,7 @@ describe("outbox visibility", () => {
         getDb,
         transport,
         isOnline: () => online,
+        currentUserId: () => FIXTURE_USER,
         onSynced: (op) => synced.push(op),
       });
       await box.enqueue({ kind: "insert", table: "sets", payload: setA });
@@ -1033,6 +1134,7 @@ describe("outbox visibility", () => {
         getDb,
         transport,
         isOnline: () => online,
+        currentUserId: () => FIXTURE_USER,
         onSynced: (op) => synced.push(op),
       });
       await box.enqueue({ kind: "insert", table: "sets", payload: setA });
@@ -1050,6 +1152,7 @@ describe("outbox visibility", () => {
         getDb,
         transport,
         isOnline: () => online,
+        currentUserId: () => FIXTURE_USER,
         onSynced: (op) => {
           if (op.kind === "insert" && op.table === "sets") {
             synced.push((op.payload as SetInsert).id);

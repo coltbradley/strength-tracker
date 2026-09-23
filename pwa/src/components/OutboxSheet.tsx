@@ -30,6 +30,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Sheet } from "./Sheet";
 import { outbox } from "../lib/sync";
+import { getCurrentUserId } from "../lib/currentUser";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
 import { getExercises } from "../lib/data";
 import { buildQueueExport, downloadText, exportFilename } from "../lib/export";
@@ -162,11 +163,17 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  const dead = entries.filter((e) => e.state === "dead");
-  const held = entries.filter((e) => e.state === "held");
-  const waiting = entries.filter((e) => e.state === "waiting");
+  // inspect() already drops other accounts. Filter again here so a row that
+  // arrives with someone else's user_id cannot be rendered or exported.
+  const me = getCurrentUserId();
+  const own = entries.filter((e) => me !== null && e.user_id === me);
+  const dead = own.filter((e) => e.state === "dead");
+  const waiting = own.filter((e) => e.state === "waiting");
+  // The count includes rows inspect() withheld. Their payloads stay off
+  // this screen.
+  const heldCount = status.held;
   const retryable = dead.filter((e) => e.retryable);
-  const oldest = entries.reduce<number | null>((acc, e) => {
+  const oldest = own.reduce<number | null>((acc, e) => {
     if (e.created_at === null) return acc;
     const t = Date.parse(e.created_at);
     if (Number.isNaN(t)) return acc;
@@ -195,7 +202,10 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
     outbox
       .inspect()
       .then((rows) => {
-        const bundle = buildQueueExport(rows, names, APP_VERSION);
+        const owner = getCurrentUserId();
+        const mine = rows.filter((e) => owner !== null && e.user_id === owner);
+        if (mine.length === 0) return;
+        const bundle = buildQueueExport(mine, names, APP_VERSION);
         downloadText(
           exportFilename("json", "unsynced"),
           "application/json",
@@ -216,11 +226,11 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
           <span>Waiting to sync</span>
           <span className="sheet-row-value">{waiting.length}</span>
         </div>
-        {held.length > 0 && (
+        {heldCount > 0 && (
           <div className="sheet-row">
             <span>Held for another account</span>
             <span className="sheet-row-value queue-state-held">
-              {held.length}
+              {heldCount}
             </span>
           </div>
         )}
@@ -242,9 +252,9 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="microcopy">
-          {entries.length === 0
+          {own.length === 0 && heldCount === 0
             ? "Nothing is waiting. Everything you have logged is on the server."
-            : dead.length === 0 && held.length === 0
+            : dead.length === 0 && heldCount === 0
               ? "Queued on this phone until it can reach the server. This is the normal state offline, and nothing is lost while it waits."
               : "These writes are on this phone and nowhere else. Nothing below is deleted by leaving this screen, by signing out, or by an app update."}
         </div>
@@ -265,10 +275,9 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
         </section>
       )}
 
-      {held.length > 0 && (
+      {heldCount > 0 && (
         <section className="settings-group">
-          <div className="field-label">HELD ({held.length})</div>
-          <QueueList entries={held} names={names} now={now} />
+          <div className="field-label">HELD ({heldCount})</div>
           <div className="microcopy">
             {/* This is the invariant, said out loud. A logged set takes its
                 owner from whoever is signed in when it lands, and `sets` is
@@ -312,14 +321,13 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
           type="button"
           className="btn btn-ghost"
           onClick={runExport}
-          disabled={busy || entries.length === 0}
+          disabled={busy || own.length === 0}
         >
           {busy ? "Working…" : "Export queue as JSON"}
         </button>
         <div className="microcopy">
-          Every queued write with its exercise, load, reps and time, in
-          kilograms. Enough to type a session back in by hand if it comes to
-          that.
+          Your queued writes, with exercise, load, reps and time, in kilograms.
+          Enough to type a session back in by hand if it comes to that.
         </div>
       </section>
     </Sheet>

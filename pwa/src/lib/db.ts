@@ -128,16 +128,17 @@ export interface OutboxItem {
   last_status?: number | null;
   /**
    * Who queued this. Payloads leave `user_id` to the database default
-   * (auth.uid()), which was safe while one person could ever be signed in and
-   * became a data-integrity hazard the moment two could: a set queued offline
-   * by one user and flushed after a different user signed in would be stamped,
-   * permanently and append-only, with the wrong owner.
+   * (auth.uid()), so this field is what stops a flush from sending the row
+   * as whoever holds the token. `sets` is append-only: a wrong owner cannot
+   * be corrected.
    *
-   * Optional because items queued before multi-user have no owner recorded.
-   * Those are treated as belonging to whoever is signed in, which is exactly
-   * what they already were.
+   * Null means the write was queued while identity was unknown. Undefined
+   * means the row predates the field. Neither is sent. They are
+   * indistinguishable from a write that was never attributed, and adopting
+   * one for the next signed-in account is the mis-stamp this field exists
+   * to prevent.
    */
-  user_id?: string;
+  user_id?: string | null;
 }
 
 interface StrengthDB extends DBSchema {

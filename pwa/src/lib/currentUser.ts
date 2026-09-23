@@ -14,7 +14,11 @@ import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import { readPersistedUserId } from "./persistedSession";
 
-let userId: string | null = null;
+// Seeded from this project's stored session so the first enqueue of boot,
+// which runs during module evaluation, is stamped before getSession()
+// resolves. A later answer from auth-js overwrites it. A missing key stays
+// null and the outbox holds the write rather than sending it unstamped.
+let userId: string | null = readPersistedUserId();
 const listeners = new Set<(id: string | null) => void>();
 
 function set(next: string | null): void {

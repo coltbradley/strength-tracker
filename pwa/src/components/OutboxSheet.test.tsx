@@ -26,9 +26,14 @@ const h = vi.hoisted(() => ({
     lastError: null,
   },
   entries: [] as OutboxEntry[],
+  userId: "me" as string | null,
   retryDead: vi.fn(async () => ({ requeued: 0, stuck: 0 })),
   buildQueueExport: vi.fn(() => ({ items: [] })),
   downloadText: vi.fn(),
+}));
+
+vi.mock("../lib/currentUser", () => ({
+  getCurrentUserId: () => h.userId,
 }));
 
 vi.mock("../lib/sync", () => ({
@@ -82,7 +87,7 @@ function entry(over: Partial<OutboxEntry> & { key: number }): OutboxEntry {
     created_at: AGES_AGO,
     retries: 0,
     last_error: null,
-    user_id: undefined,
+    user_id: "me",
     state: "waiting",
     cause: null,
     retryable: false,
@@ -181,7 +186,12 @@ describe("OutboxSheet", () => {
   it("counts waiting, held and failed apart and says why each is parked", async () => {
     await show([
       entry({ key: 1 }),
-      entry({ key: 2, state: "held", user_id: "someone-else" }),
+      entry({
+        key: 2,
+        state: "held",
+        user_id: "someone-else",
+        last_error: "foreign-private-note",
+      }),
       entry({
         key: 3,
         state: "dead",
@@ -203,6 +213,8 @@ describe("OutboxSheet", () => {
       "1",
     );
 
+    // The count is visible. The other account's row is not.
+    expect(screen.queryByText("foreign-private-note")).toBeNull();
     // The reason a held item is held is the invariant, not an apology.
     expect(screen.getByText(/cannot be reassigned once it lands/)).toBeTruthy();
     expect(screen.getByText(/rejected the row itself/)).toBeTruthy();
@@ -240,24 +252,53 @@ describe("OutboxSheet", () => {
     expect(h.retryDead).not.toHaveBeenCalled();
   });
 
-  it("exports every queued write, held and failed ones included", async () => {
-    const entries = [
-      entry({ key: 1 }),
-      entry({ key: 2, state: "held", user_id: "someone-else" }),
-      entry({ key: 3, state: "dead", cause: "rejected", retryable: false }),
-    ];
-    await show(entries);
+  it("exports this account's queued writes and leaves another account's out", async () => {
+    const ownWaiting = entry({ key: 1 });
+    const foreign = entry({
+      key: 2,
+      state: "held",
+      user_id: "someone-else",
+      last_error: "foreign-private-note",
+    });
+    const ownDead = entry({
+      key: 3,
+      state: "dead",
+      cause: "rejected",
+      retryable: false,
+    });
+    await show([ownWaiting, foreign, ownDead]);
 
     fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
     await waitFor(() => expect(h.downloadText).toHaveBeenCalledTimes(1));
 
     expect(h.buildQueueExport).toHaveBeenCalledWith(
-      entries,
+      [ownWaiting, ownDead],
       { Barbell_Squat: "Barbell Squat" },
       expect.any(String),
     );
     expect(h.downloadText.mock.calls[0][0]).toBe(
       "strength-log-unsynced-20260904.json",
+    );
+  });
+
+  it("offers no export when the only queued writes belong to another account", async () => {
+    await show([
+      entry({
+        key: 2,
+        state: "held",
+        user_id: "someone-else",
+        last_error: "foreign-private-note",
+      }),
+    ]);
+
+    expect(screen.getByText("Held for another account")).toBeTruthy();
+    expect(screen.queryByText("foreign-private-note")).toBeNull();
+    expect(
+      screen.queryByText(/Everything you have logged is on the server/),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: /Export queue/ })).toHaveProperty(
+      "disabled",
+      true,
     );
   });
 

@@ -39,9 +39,9 @@ numbers. Line numbers below are the current file.
 
 | Claim | What the source actually does |
 | --- | --- |
-| G02-F01, P0 | `makePendingItem` omits `user_id` when `getCurrentUserId()` is null (`pwa/src/lib/outbox.ts`). `replayable` treats a missing `user_id` as a pre-multi-user row and returns true. The next flush sends it. The payload has no owner, so Postgres stamps `auth.uid()` of whoever holds the token. The test at `outbox.test.ts` ("treats an item queued before multi-user as the current user's") locks this in. |
-| G02-F05 | `readPersistedSession` returns the first `sb-*-auth-token` (or legacy `supabase.auth.token`) that has a user id and a refresh token (`pwa/src/lib/persistedSession.ts`). It does not compare the key to `VITE_SUPABASE_URL`. `currentUser.ts` uses that id when `getSession()` fails with a retryable error. |
-| G02-F06 | `inspect()` maps every outbox row. `OutboxSheet` renders and exports that list. `cacheClearAll` keeps the outbox on purpose. |
+| G02-F01, P0 | Fixed. `makePendingItem` stores `user_id: null` when `getCurrentUserId()` is null. `replayable` sends a row only when its owner is a non-empty string equal to the current user. A missing owner and a legacy row with the field omitted are held. `currentUser` seeds that id from this project's persisted session before `getSession()` resolves. |
+| G02-F05 | Fixed. `readPersistedSession` reads only `sb-<project-ref>-auth-token` for `VITE_SUPABASE_URL`. Another project's key and the unscoped `supabase.auth.token` name return null. |
+| G02-F06 | Fixed for disclosure. `inspect()` returns only the current user's rows. The sheet counts `status.held` and does not render or export another account's payload. `cacheClearAll` still keeps the outbox. |
 | G02-F07 | `sync.ts` `update` returns success when PostgREST returns no error. A zero-row update is not an error. `doFlush` then deletes the queue row. |
 | G02-F08 | `makeFetchWithCache` puts `cacheSet` in the same `try` as the fetch. A thrown cache write returns the previous cache entry with `fromCache: true`. |
 | G02-F11 / G02-F15 | `enqueue` awaits `refreshCounts()` after `db.add` and only then calls `flush`. `recordBodyweight` awaits the cache write after a successful enqueue. |
