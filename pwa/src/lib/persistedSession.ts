@@ -15,20 +15,47 @@
 // actual request still carries the real token and is still refused by the
 // server if that token is no good. Nothing here grants access to anything.
 //
-// It reads the auth library's private storage key, which is a coupling. It is
-// deliberately loose about it — any `sb-*-auth-token`, any parse failure, any
-// unexpected shape returns null — so the worst an SDK change can do is put us
-// back on today's behaviour.
+// It reads the auth library's private storage key, which is a coupling. The
+// key is exactly `sb-<project-ref>-auth-token` for THIS deployment's
+// `VITE_SUPABASE_URL`. Scanning every `sb-*-auth-token` on the origin adopts
+// another project's user, and the outbox then stamps that id onto writes the
+// live token does not own. A missing or unreadable key returns null — the
+// same answer as a genuine sign-out — rather than a guess.
 
 import type { Session } from "@supabase/supabase-js";
 
-/** `sb-<project-ref>-auth-token`, plus the pre-2.x name. */
-const KEY = /^(sb-.+-auth-token|supabase\.auth\.token)$/;
+/** First hostname label, the same slice supabase-js uses for its storage key. */
+const PROJECT_REF = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 interface Stored {
   user?: { id?: unknown };
   access_token?: unknown;
   refresh_token?: unknown;
+}
+
+/** Project ref from a Supabase URL, or null when the URL is missing or not one. */
+function projectRefFromSupabaseUrl(
+  url: string | null | undefined,
+): string | null {
+  if (typeof url !== "string" || url.length === 0) return null;
+  try {
+    return normalizeProjectRef(new URL(url).hostname.split(".")[0] ?? "");
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProjectRef(ref: string | null): string | null {
+  if (ref === null) return null;
+  const normalized = ref.trim().toLowerCase();
+  // The placeholder client in supabase.ts is not a project. Adopting
+  // `sb-placeholder-auth-token` would stamp a key this deployment does not use.
+  if (normalized.length === 0 || normalized === "placeholder") return null;
+  return PROJECT_REF.test(normalized) ? normalized : null;
+}
+
+function configuredProjectRef(): string | null {
+  return projectRefFromSupabaseUrl(import.meta.env.VITE_SUPABASE_URL);
 }
 
 /**
@@ -39,27 +66,31 @@ interface Stored {
  * `store` is injectable for tests only; production always reads the real
  * localStorage, and reads it lazily so a context without one (a worker, a
  * thumbnail renderer) is a null rather than a module-load crash.
+ *
+ * `projectRef` defaults to the configured Supabase project. Pass null to
+ * fail closed when the caller already knows there is no project.
  */
 export function readPersistedSession(
   store: Storage | undefined = globalThis.localStorage,
+  projectRef?: string | null,
 ): Session | null {
+  const ref = normalizeProjectRef(
+    projectRef === undefined ? configuredProjectRef() : projectRef,
+  );
+  if (ref === null) return null;
   try {
     if (!store) return null;
-    for (let i = 0; i < store.length; i++) {
-      const key = store.key(i);
-      if (key === null || !KEY.test(key)) continue;
-      const raw = store.getItem(key);
-      if (raw === null || raw.length === 0) continue;
+    const raw = store.getItem(`sb-${ref}-auth-token`);
+    if (raw === null || raw.length === 0) return null;
 
-      const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed !== "object" || parsed === null) continue;
-      const s = parsed as Stored;
-      // A refresh token is what makes this recoverable rather than a relic; a
-      // user id is what the callers actually need.
-      if (typeof s.user?.id !== "string" || s.user.id.length === 0) continue;
-      if (typeof s.refresh_token !== "string") continue;
-      return parsed as Session;
-    }
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const s = parsed as Stored;
+    // A refresh token is what makes this recoverable rather than a relic; a
+    // user id is what the callers actually need.
+    if (typeof s.user?.id !== "string" || s.user.id.length === 0) return null;
+    if (typeof s.refresh_token !== "string") return null;
+    return parsed as Session;
   } catch {
     // unreadable storage is the same as no session
   }
@@ -69,6 +100,7 @@ export function readPersistedSession(
 /** The persisted user id, or null. */
 export function readPersistedUserId(
   store: Storage | undefined = globalThis.localStorage,
+  projectRef?: string | null,
 ): string | null {
-  return readPersistedSession(store)?.user?.id ?? null;
+  return readPersistedSession(store, projectRef)?.user?.id ?? null;
 }

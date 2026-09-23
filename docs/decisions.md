@@ -3086,3 +3086,56 @@ change that would lock the owner out on a deploy that forgot the secret.
 
 Merged to `main` as PR #8 (`c25e3ad`, 2026-09-21). A-02 remains
 `needs live proof` until the production secret is set.
+
+## 2026-09-23 An ownerless queued write is held, not adopted
+
+`sets` is append-only. A row queued while `getCurrentUserId()` is null used
+to omit `user_id`, and the flusher treated a missing owner as a pre-multi-user
+row it was allowed to send. Postgres then stamped `auth.uid()` of whoever
+held the token. A legacy row with the field absent is the same shape, so it
+cannot be told apart from that bug.
+
+Decision: new rows always store `user_id`, and null means "queued before
+identity resolved". `undefined` and null are not replayable, and a later
+sign-in does not adopt them. The boot path seeds the current user from
+`sb-<project-ref>-auth-token` for `VITE_SUPABASE_URL` only, so a normal open
+still stamps the person this device already knows. `inspect` and the outbox
+export return that person's rows; other accounts stay in IndexedDB and show
+up as a held count. Pre-multi-user rows that were still unsynced on upgrade
+stay on the device. Sending them was the permanent wrong-owner write.
+
+## 2026-09-23 A logged set is shown only after it is the queued row
+
+`logSet` painted the set, then called `enqueue` without waiting. A failure
+after the IndexedDB add — the count refresh, or the bodyweight cache write —
+rejected a call that had already stored one UUID, and a retry stored a second.
+History's open day read the server sets and pending voids, so the queued set
+was missing until flush.
+
+Decision: the IndexedDB add is the commit. The session screen updates only
+after that promise resolves, and a rejection leaves the set off the screen.
+`enqueue` and `enqueueBatch` still schedule a flush when the following count
+throws. `recordBodyweight` returns after the queue write and reports a cache
+failure. History merges pending sets into the open day; the same id shows
+once, and a pending void still hides the set. A session that has not reached
+`ended_at` on the server is still absent from that list.
+
+## 2026-09-23 A session closes once, and a close that changes nothing stays queued
+
+Finish and discard on the End screen could both enqueue. The transport treated
+a session update with no PostgREST error as success, and the outbox deleted
+the item when the update matched zero rows. An open-session discard matched
+by id, so this phone could set `discarded_at` on a session another phone had
+just finished. `complete` could stamp `ended_at` on a row that was already
+discarded.
+
+Decision: End uses one close lock. The second tap is a no-op, and the buttons
+show disabled until the enqueue fails, which is the only case that releases
+the lock. Every outbox update asks which ids changed. Zero rows is a 409.
+That item stays in the queue as dead and stays visible; the same bytes get
+the same answer, so Retry does not requeue it. A finish, and a discard from
+End, the orphan card, or the overnight sweep, match a session whose
+`ended_at` and `discarded_at` are still null. History's discard of a finished
+session matches `discarded_at is null`, so that day can still leave the log.
+Rating a finished session still writes `session_rpe` on a closed row. A
+zero-row sweep does not throw, so the rest of reconciliation continues.

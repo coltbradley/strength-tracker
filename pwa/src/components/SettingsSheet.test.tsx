@@ -38,7 +38,17 @@ vi.mock("../lib/sync", () => ({
 }));
 
 vi.mock("../lib/supabase", () => ({
-  supabase: { auth: { signOut: () => Promise.resolve({ error: null }) } },
+  supabase: {
+    auth: {
+      signOut: () => Promise.resolve({ error: null }),
+      // OutboxSheet reads the synchronous identity mirror, which asks auth
+      // once on import. This sheet's tests never sign in.
+      getSession: () => Promise.resolve({ data: { session: null }, error: null }),
+      onAuthStateChange: () => ({
+        data: { subscription: { unsubscribe() {} } },
+      }),
+    },
+  },
   supabaseConfigured: true,
 }));
 

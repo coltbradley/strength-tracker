@@ -12,6 +12,7 @@ import {
   type OutboxTransport,
   type TransportError,
 } from "./outbox";
+import { guardedUpdate, outboxUpdateResult } from "./sessionUpdate";
 
 function toTransportError(
   error: { message: string; code?: string } | null,
@@ -39,12 +40,16 @@ const transport: OutboxTransport = {
       });
     return toTransportError(error, status ?? null);
   },
-  async update(table, id, patch) {
-    const { error, status } = await supabase
-      .from(table)
-      .update(patch as Record<string, unknown>)
-      .eq("id", id);
-    return toTransportError(error, status ?? null);
+  async update(table, id, patch, options) {
+    return outboxUpdateResult(
+      await guardedUpdate(
+        supabase,
+        table,
+        id,
+        patch as Record<string, unknown>,
+        options,
+      ),
+    );
   },
   async refreshAuth() {
     // getSession() refreshes an expired token when a refresh token exists.
