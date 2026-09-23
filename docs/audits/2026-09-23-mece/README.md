@@ -1,9 +1,8 @@
 # MECE codebase review, 2026-09-23
 
-`ASSESSMENT.md` re-checks these reports against the source they cite, corrects
-the claims that do not hold as written, adds findings the reports handed off
-without an id, and groups the rest into fix clusters. Read that before turning
-this package into tickets.
+`MUST-FIX.md` is the short list: eight defects that can mis-attribute, lose,
+hide, or rewrite training, plus the release receipt. `ASSESSMENT.md` is the
+source re-check and the wider grouping. Read the short list first.
 
 This review started from the `docs/phase-1-plans` checkout at `38e32d0` and
 was reconciled against remote source changes through `e74b91d`. G01-F01 was

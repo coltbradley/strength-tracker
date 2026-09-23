@@ -8,7 +8,7 @@ the original report already said that, this note does not upgrade it.
 
 The audit is a triage package. This note is the working plan: which claims
 hold, which are mis-stated, what else is wrong, and which defects should be
-fixed together.
+fixed together. The eight items that cannot wait are in `MUST-FIX.md`.
 
 ## Verdict
 
