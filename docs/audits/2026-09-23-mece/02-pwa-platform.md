@@ -6,7 +6,7 @@ Read `AGENTS.md`, the audit instructions, active roadmap, release ledger, and th
 
 ## Executive summary
 
-Confirmed findings: **1 P0, 11 P1, 2 P2**. The highest risks are a newly queued write with unknown identity being replayable under whichever account is signed in, another account's queued data being visible/exportable from the outbox, and successful-looking update replies removing session-close operations that changed no server row. The auth/cache transition races also deserve priority because they can briefly expose or clear another account's local data.
+Confirmed findings: **1 P0, 11 P1, 3 P2**. The highest risks are a newly queued write with unknown identity being replayable under whichever account is signed in, another account's queued data being visible/exportable from the outbox, and successful-looking update replies removing session-close operations that changed no server row. The auth/cache transition races also deserve priority because they can briefly expose or clear another account's local data.
 
 ## Findings
 
@@ -121,6 +121,14 @@ Confirmed findings: **1 P0, 11 P1, 2 P2**. The highest risks are a newly queued 
 - **Evidence and impact:** `main.tsx` calls `outbox.start()` during module evaluation (`pwa/src/main.tsx:10-12`), and `start()` immediately refreshes counts and flushes (`pwa/src/lib/outbox.ts:699-723`). `App.tsx` says the consent route renders without an outbox flush (`pwa/src/App.tsx:190-199`), but that route check happens after startup. Pending PWA writes may be sent while the page is asking whether to authorize an MCP client, contrary to the route's stated behavior. This path uses the user's existing PWA auth and is not evidence that the MCP client received access.
 - **Fix boundary:** Align outbox startup behavior and consent-route contract, with route-aware startup if consent is meant to remain side-effect-free.
 - **Verification needed:** Route-level test with pending work proving the documented behavior and that ordinary app routes still start the outbox.
+
+### G02-F15. Bodyweight cache failure makes a durable write look rejected
+
+- **Severity:** P2. **Confidence:** high. **Existing lead:** none found.
+- **Trigger:** The bodyweight outbox insert succeeds, then its local cache read or write fails.
+- **Evidence and impact:** `recordBodyweight` awaits `outbox.enqueue` and then `cacheBodyweightPoint` before returning (`pwa/src/lib/data.ts:1987-2020`). `BodyweightRow` treats any rejection as failure (`pwa/src/components/BodyweightRow.tsx:91-100`). The measurement is already durable in the queue, but the screen reports failure; a retry can enqueue a second UUID for the same weigh-in.
+- **Fix boundary:** Treat post-enqueue cache maintenance as best effort or return a result that distinguishes a committed queue write from cache-refresh failure.
+- **Verification needed:** Fail cache read/write after successful enqueue; confirm the UI reports one saved measurement and retry cannot duplicate it.
 
 ## Opportunities
 
