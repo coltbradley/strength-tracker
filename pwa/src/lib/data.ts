@@ -14,6 +14,7 @@ import {
 } from "./db";
 import { reportError } from "./errors";
 import { outbox } from "./sync";
+import { guardedUpdate } from "./sessionUpdate";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
 import type {
@@ -1486,19 +1487,24 @@ const supabaseOpenSessions: OpenSessionPort = {
     return (data?.[0]?.performed_at as string | undefined) ?? null;
   },
   async complete(sessionId, endedAt) {
-    const { error } = await supabase
-      .from("sessions")
-      .update({ ended_at: endedAt })
-      .eq("id", sessionId)
-      .is("ended_at", null);
-    throwIf(error);
+    const result = await guardedUpdate(
+      supabase,
+      "sessions",
+      sessionId,
+      { ended_at: endedAt },
+      { onlyIfOpen: true },
+    );
+    throwIf(result.error);
   },
   async discard(sessionId, discardedAt) {
-    const { error } = await supabase
-      .from("sessions")
-      .update({ discarded_at: discardedAt })
-      .eq("id", sessionId);
-    throwIf(error);
+    const result = await guardedUpdate(
+      supabase,
+      "sessions",
+      sessionId,
+      { discarded_at: discardedAt },
+      { onlyIfOpen: true },
+    );
+    throwIf(result.error);
   },
   async closedState(sessionId) {
     const { data, error } = await supabase

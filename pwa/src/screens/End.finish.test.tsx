@@ -108,4 +108,63 @@ describe("End: finishing a session", () => {
     expect(summary?.setCount).toBe(1);
     expect(summary?.durationSeconds).toBeGreaterThanOrEqual(0);
   });
+
+  it("queues one terminal action when discard is tapped while finish is in flight", async () => {
+    let release: () => void = () => undefined;
+    enqueue.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    render(<End />);
+    const finishBtn = await screen.findByRole("button", { name: "End session" });
+    await screen.findByText(/SET.*LOGGED/);
+    fireEvent.click(finishBtn);
+    fireEvent.click(screen.getByRole("button", { name: "Discard session" }));
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue.mock.calls[0]?.[0]).toMatchObject({
+      kind: "update",
+      table: "sessions",
+      patch: { ended_at: expect.any(String) },
+    });
+    expect(
+      (screen.getByRole("button", { name: "End session" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Discard session" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.queryByRole("button", { name: "Discard session?" })).toBeNull();
+
+    release();
+    await vi.waitFor(() => expect(navigateMock).toHaveBeenCalled());
+  });
+
+  it("queues one terminal action when finish is tapped while discard is in flight", async () => {
+    let release: () => void = () => undefined;
+    enqueue.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    render(<End />);
+    await screen.findByText(/SET.*LOGGED/);
+    fireEvent.click(screen.getByRole("button", { name: "Discard session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard session?" }));
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue.mock.calls[0]?.[0]).toMatchObject({
+      kind: "update",
+      table: "sessions",
+      patch: { discarded_at: expect.any(String) },
+      onlyIfOpen: true,
+    });
+    release();
+    await vi.waitFor(() => expect(navigateMock).toHaveBeenCalled());
+  });
 });

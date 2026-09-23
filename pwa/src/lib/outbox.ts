@@ -74,6 +74,7 @@ export interface OutboxTransport {
     table: "sessions" | "symptom_episodes",
     id: string,
     patch: unknown,
+    options?: { onlyIfOpen?: boolean },
   ): Promise<TransportError | null>;
   /** try to refresh the auth session; true if a valid session exists after */
   refreshAuth?(): Promise<boolean>;
@@ -546,7 +547,12 @@ export function createOutbox({
     try {
       if (op.kind === "insert")
         return await transport.insert(op.table, op.payload);
-      return await transport.update(op.table, op.id, op.patch);
+      return await transport.update(op.table, op.id, op.patch, {
+        onlyIfOpen:
+          op.kind === "update" &&
+          op.table === "sessions" &&
+          op.onlyIfOpen === true,
+      });
     } catch (e) {
       return {
         message: e instanceof Error ? e.message : String(e),

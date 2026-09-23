@@ -3119,3 +3119,23 @@ throws. `recordBodyweight` returns after the queue write and reports a cache
 failure. History merges pending sets into the open day; the same id shows
 once, and a pending void still hides the set. A session that has not reached
 `ended_at` on the server is still absent from that list.
+
+## 2026-09-23 A session closes once, and a close that changes nothing stays queued
+
+Finish and discard on the End screen could both enqueue. The transport treated
+a session update with no PostgREST error as success, and the outbox deleted
+the item when the update matched zero rows. An open-session discard matched
+by id, so this phone could set `discarded_at` on a session another phone had
+just finished. `complete` could stamp `ended_at` on a row that was already
+discarded.
+
+Decision: End uses one close lock. The second tap is a no-op, and the buttons
+show disabled until the enqueue fails, which is the only case that releases
+the lock. Every outbox update asks which ids changed. Zero rows is a 409.
+That item stays in the queue as dead and stays visible; the same bytes get
+the same answer, so Retry does not requeue it. A finish, and a discard from
+End, the orphan card, or the overnight sweep, match a session whose
+`ended_at` and `discarded_at` are still null. History's discard of a finished
+session matches `discarded_at is null`, so that day can still leave the log.
+Rating a finished session still writes `session_rpe` on a closed row. A
+zero-row sweep does not throw, so the rest of reconciliation continues.

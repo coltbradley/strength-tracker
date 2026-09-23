@@ -659,6 +659,75 @@ describe("outbox", () => {
     expect(await outbox.pendingVoidIds()).toEqual(new Set());
   });
 
+  it("keeps a zero-row session update visible instead of dropping it", async () => {
+    const { transport } = makeTransport([
+      {
+        message: "update matched no rows",
+        code: null,
+        status: 409,
+      },
+    ]);
+    const outbox = build(transport);
+
+    await seed(outbox, [
+      {
+        kind: "update",
+        table: "sessions",
+        id: session.id,
+        patch: { discarded_at: "2026-08-25T11:05:00.000Z" },
+      },
+    ]);
+    online = true;
+    await outbox.flush();
+
+    const db = await getDb();
+    expect(await db.count("outbox")).toBe(1);
+    const visible = await outbox.inspect();
+    expect(visible).toHaveLength(1);
+    expect(visible[0]).toMatchObject({
+      state: "dead",
+      last_error: "update matched no rows",
+    });
+  });
+
+  it("forwards onlyIfOpen for an open-session discard and not for history", async () => {
+    const updates: Array<{ options?: { onlyIfOpen?: boolean } }> = [];
+    const transport: OutboxTransport = {
+      async insert() {
+        return null;
+      },
+      async update(_table, _id, _patch, options) {
+        updates.push({ options });
+        return null;
+      },
+    };
+    const outbox = build(transport);
+    const other = "99999999-9999-4999-8999-999999999999";
+
+    await seed(outbox, [
+      {
+        kind: "update",
+        table: "sessions",
+        id: session.id,
+        patch: { discarded_at: "2026-08-25T11:05:00.000Z" },
+        onlyIfOpen: true,
+      },
+      {
+        kind: "update",
+        table: "sessions",
+        id: other,
+        patch: { discarded_at: "2026-08-25T11:06:00.000Z" },
+      },
+    ]);
+    online = true;
+    await outbox.flush();
+
+    expect(updates).toEqual([
+      { options: { onlyIfOpen: true } },
+      { options: { onlyIfOpen: false } },
+    ]);
+  });
+
   it("pendingDiscardIds counts discards but not ends", async () => {
     const { transport } = makeTransport();
     const outbox = build(transport);

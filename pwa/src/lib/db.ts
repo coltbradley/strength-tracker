@@ -58,6 +58,15 @@ export type OutboxOp =
       // untypeable, and widening the END patch instead would let a prompt on
       // Today blank a note typed on the End screen.
       patch: SessionPatch | SessionRatePatch;
+      /**
+       * This close is of a session that must still be open. A finish always
+       * has that requirement from `ended_at` on the patch. A discard from
+       * the End screen, an orphan card, or the overnight sweep sets this so
+       * a session another phone already completed does not gain
+       * `discarded_at`. History's discard of a finished session leaves it
+       * unset.
+       */
+      onlyIfOpen?: boolean;
     }
   // Subjective capture rides the SAME queue as sets, which is safe in the one
   // direction that matters: the flusher dead-letters a permanently failing item

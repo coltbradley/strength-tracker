@@ -78,6 +78,16 @@ Done when: one terminal action is queued; a zero-row update stays in the
 queue and is visible; discard and complete both no-op once the session is
 already closed; a completed session never gains `discarded_at`.
 
+Landed for A-91. A-06 and A-204 are Phase 2 names, not ledger rows, and the
+same tests cover them. End shares one close lock, so a second tap while
+finish or discard is in flight does not enqueue. A session update that
+matches zero rows stays in the queue as dead and visible. Finish, and a
+discard from End, the orphan card, or the overnight sweep, match only a
+session that is still open, so a completed session does not gain
+`discarded_at` and a discarded one does not gain `ended_at`. History can
+still discard a finished session: that write matches `discarded_at is null`
+and leaves `ended_at` alone.
+
 ## 4. The plan editor can save a different day than the one on screen
 
 Ledger lead A-05. Audit G04-F01.

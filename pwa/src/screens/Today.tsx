@@ -1000,6 +1000,7 @@ export function Today({
         table: "sessions",
         id: s.id,
         patch: { discarded_at: new Date().toISOString() },
+        onlyIfOpen: true,
       });
       await invalidateForSessionClose();
       setOrphan(null);

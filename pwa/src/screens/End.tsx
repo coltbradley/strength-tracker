@@ -112,8 +112,23 @@ export function End() {
   const discardArmed = armed === "discard";
   // the draft is persisted on unmount, but not once the session is closed
   const closedRef = useRef(false);
-  /** re-entrancy guard for end(); a ref, because state is batched */
-  const endingRef = useRef(false);
+  /**
+   * One close at a time. A ref, because state is batched: the second tap of
+   * a double-tap still reads the old render. `closing` is what the buttons
+   * show.
+   */
+  const closingRef = useRef(false);
+  const [closing, setClosing] = useState(false);
+  const beginClose = (): boolean => {
+    if (closingRef.current) return false;
+    closingRef.current = true;
+    setClosing(true);
+    return true;
+  };
+  const abandonClose = () => {
+    closingRef.current = false;
+    setClosing(false);
+  };
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = active?.id ?? null;
   const draftRef = useRef<EndDraft | null>(null);
@@ -327,8 +342,7 @@ export function End() {
     // (or a tap that lands twice through a slow frame) reads the old value and
     // runs the whole close twice — two queued updates, markPlannedDayDone
     // twice, two navigations.
-    if (endingRef.current) return;
-    endingRef.current = true;
+    if (!beginClose()) return;
     try {
       const endedAtMs = Math.max(
         Date.now(),
@@ -399,7 +413,7 @@ export function End() {
     } catch (e) {
       // let them try again: the failure may be transient, and the session is
       // still open
-      endingRef.current = false;
+      abandonClose();
       reportError(e, "end session");
     }
   };
@@ -424,12 +438,16 @@ export function End() {
   /** Soft delete: the session and its sets leave every chart and history
    *  list. Nothing is destroyed — recoverable in the database if ever needed. */
   const discard = async () => {
+    if (!beginClose()) return;
     try {
       await outbox.enqueue({
         kind: "update",
         table: "sessions",
         id: active.id,
         patch: { discarded_at: new Date().toISOString() },
+        // Still open. A session another phone already finished must not
+        // gain discarded_at when this flush lands.
+        onlyIfOpen: true,
       });
       closedRef.current = true;
       await cacheDelete(cacheKeys.activeSession);
@@ -439,6 +457,7 @@ export function End() {
       toast("Session discarded");
       navigate("/", { replace: true });
     } catch (e) {
+      abandonClose();
       reportError(e, "discard session");
     }
   };
@@ -596,6 +615,7 @@ export function End() {
           <button
             type="button"
             className="btn btn-primary btn-block"
+            disabled={closing}
             onClick={() => void discard()}
           >
             Discard empty session
@@ -603,6 +623,7 @@ export function End() {
           <button
             type="button"
             className="btn btn-ghost btn-block"
+            disabled={closing}
             onClick={() => void end()}
           >
             End anyway (counts as done)
@@ -612,6 +633,7 @@ export function End() {
         <button
           type="button"
           className="btn btn-primary btn-block"
+          disabled={closing}
           onClick={() => void end()}
         >
           End session
@@ -637,9 +659,12 @@ export function End() {
           <button
             type="button"
             className={`btn btn-block ${discardArmed ? "btn-danger" : "btn-ghost"}`}
-            onClick={() =>
-              discardArmed ? void discard() : setArmed("discard")
-            }
+            disabled={closing}
+            onClick={() => {
+              if (closingRef.current) return;
+              if (discardArmed) void discard();
+              else setArmed("discard");
+            }}
           >
             {discardArmed ? "Discard session?" : "Discard session"}
           </button>

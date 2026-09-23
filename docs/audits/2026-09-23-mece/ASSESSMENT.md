@@ -42,12 +42,12 @@ numbers. Line numbers below are the current file.
 | G02-F01, P0 | Fixed. `makePendingItem` stores `user_id: null` when `getCurrentUserId()` is null. `replayable` sends a row only when its owner is a non-empty string equal to the current user. A missing owner and a legacy row with the field omitted are held. `currentUser` seeds that id from this project's persisted session before `getSession()` resolves. |
 | G02-F05 | Fixed. `readPersistedSession` reads only `sb-<project-ref>-auth-token` for `VITE_SUPABASE_URL`. Another project's key and the unscoped `supabase.auth.token` name return null. |
 | G02-F06 | Fixed for disclosure. `inspect()` returns only the current user's rows. The sheet counts `status.held` and does not render or export another account's payload. `cacheClearAll` still keeps the outbox. |
-| G02-F07 | `sync.ts` `update` returns success when PostgREST returns no error. A zero-row update is not an error. `doFlush` then deletes the queue row. |
+| G02-F07 | Fixed. `guardedUpdate` returns the updated ids. Zero rows become status 409, and the outbox keeps that item as dead. `inspect` still lists it. |
 | G02-F08 | `makeFetchWithCache` puts `cacheSet` in the same `try` as the fetch. A thrown cache write returns the previous cache entry with `fromCache: true`. |
 | G02-F11 / G02-F15 | Fixed. After the IndexedDB add, a thrown count is recorded on the outbox status and `flush` still runs. `recordBodyweight` returns once the queue write lands; a later cache failure is reported and does not reject. |
-| G02-F12 | `complete` adds `.is("ended_at", null)`. `discard` updates by id only (`data.ts`). `syncOpenSessions` decides from an earlier `listOpen()` snapshot. |
+| G02-F12 | Fixed for the write. Open-session `complete` and `discard` both require `ended_at` and `discarded_at` null. A zero-row sweep does not throw. `syncOpenSessions` still chooses candidates from an earlier `listOpen()` snapshot; the filter makes a stale close a no-op. |
 | G03-F01 | Fixed. `logSet` awaits `enqueue` before React state, the cache, and the rest clock, matching the paired-round path. A rejected add is reported and the set is not shown. |
-| G03-F02 | `End.tsx` guards finish with `endingRef`. `discard` has no shared lock, and both buttons stay enabled. |
+| G03-F02 | Fixed. `End.tsx` shares `closingRef` between finish and discard. Both buttons disable, and a second tap returns before enqueue. |
 | G03-F03 | `SetEditor` accepts only `"reps" \| "done"`. The normal insert does not write `duration_seconds`. `Session.focus.test.tsx` says duration tracking is unavailable. |
 | G04-F01 | `Plan.tsx` `reload` applies `setList` and `setRx` from promises that do not check that `id` is still the route they started for. `reload` is recreated when `id` changes, so the old request is not cancelled. |
 | G04-F02 | `Today.useTemplate`, when no program exists, calls `createPlannedWorkout` (an empty dated day) and then `applyTemplate` (a second dated day). |
@@ -236,15 +236,13 @@ today (nothing schedules them).
 
 ### N04. `complete` does not notice a session that was discarded
 
-`complete` filters `ended_at is null` and does not filter `discarded_at is null`
-(`data.ts`). Views hide a row once `discarded_at` is set, so this does not put
-the session back on the calendar. It does write `ended_at` onto a discarded
-row, and it shares the zero-row blindness of G02-F07: the caller cannot tell
-that the update matched nothing. Fold the predicate into the terminal-state
-fix. Do not ship a discard guard that leaves complete able to stamp a
-discarded session.
+Fixed with the terminal-state guard. `complete` and an open-session `discard`
+both match `ended_at is null` and `discarded_at is null`
+(`pwa/src/lib/sessionUpdate.ts`). A finish does not stamp `ended_at` on a
+discarded row, and that close does not gain `discarded_at`. History's discard
+of a finished session still matches `discarded_at is null`.
 
-Severity P2. Confidence high.
+Severity was P2. Confidence high.
 
 ### N05. Allowlisted push hosts accept a non-default port
 
@@ -333,13 +331,15 @@ Fix:
   `enqueue` / `enqueueBatch` treat the add as the result and schedule flush
   even if the count read fails. `recordBodyweight` does the same for its
   cache write. History's open day merges the queued set once.
-- One synchronous terminal lock for finish and discard. The buttons show it.
-- `update` asks for a count or a returning row. Zero rows stay in the queue
-  with a visible cause, not a delete. `discard` and `complete` both require
-  the session still open (`ended_at` and `discarded_at` null). Zero rows mean
-  the other device won.
+- Landed: one synchronous terminal lock for finish and discard. The buttons
+  show it.
+- Landed: `update` returns the changed ids. Zero rows stay in the queue as
+  dead, with the cause visible. Finish, and a discard from End, the orphan
+  card, or the overnight sweep, require the session still open (`ended_at`
+  and `discarded_at` null). History's discard of a finished session matches
+  `discarded_at is null` only.
 - Session bootstrap includes `pendingVoidIds()` even when the void cache write
-  failed.
+  failed. This one (G03-F06) is still open.
 
 Verification: fault the add, the post-add read, and the cache write separately.
 Interleave finish and discard. Interleave another device's complete between
