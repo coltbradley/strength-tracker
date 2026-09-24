@@ -18,12 +18,16 @@ references a day, late-set session restore, and durable-first set logging
 
 - **A-02:** `COACH_ALLOWED_USERS` is not set, so the fail-closed coach answers
   503 for everyone, including its one intended user.
-- **A-137/A-138:** no `SWEEP_SECRET`, so the prompt sweep delivers nothing.
+- **A-137/A-138: deferred to Phase 5 (Colt, 2026-09-24).** No `SWEEP_SECRET`,
+  so the prompt sweep delivers nothing while the app is closed. That is
+  acceptable for now: the daily prompt ships switched off, rest alerts do not
+  use the sweep, and the app still asks in-app on foreground. They stay
+  `needs live proof` on the ledger but no longer block Phase 1's gate.
 - **A-135:** the deploy receipt prints the intended SHA but does not read it
   back from the served app (MECE G13-F02).
-- **A-134:** deploy still ships past a red CI run by policy. `HEAD`'s one CI
-  failure (`Today.plan-changed.test.tsx`) looks flaky: the identical tree
-  passed at `ed65677` and passed 3/3 locally.
+- **A-134:** deploy still ships past a red CI run by policy. The one CI
+  failure at `4da2c7d` was a test race (Start clicked before it was enabled),
+  fixed in the test on 2026-09-24.
 
 **Next:** close the Phase 1 items above, then finish Phase 2 (A-91, A-84 and
 the rest of its list, plus the seeded browser E2E suite and a phone run).
@@ -219,8 +223,9 @@ and the coach cannot spend money for an unapproved account.
 ### Phase 1: Make release and identity safety real
 
 **State:** Code merged and deployed (PR #10, PR #12). Exit gate open on
-production evidence: A-02, A-137 and A-138 `needs live proof`, A-135 lacks
-served-SHA readback, A-134 stays `open`. See `release-ledger.md`.
+production evidence: A-02 `needs live proof` and A-135 lacks served-SHA
+readback. A-134 stays `open` by policy. A-137/A-138 are deferred to Phase 5
+(2026-09-24). See `release-ledger.md`.
 
 **Starts after:** Phase 0's ledger and coach boundary are complete.
 

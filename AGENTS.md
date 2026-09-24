@@ -114,6 +114,25 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   after user approval); logged sessions/sets always survive it.
 - Programs written by Claude land unconfirmed (`confirmed_at IS NULL`) and
   require a separate `confirm_program` call after user approval in chat.
+- Plan writes are locked, atomic and historical (20260924*, `docs/decisions.md`
+  2026-09-24). Every plan mutation from the PWA (patch, section, reorder,
+  delete, day-order swap) and MCP's whole-day replacement goes through a
+  database function that locks the parent `planned_workouts` row first and
+  lands or rolls back as one transaction. Starting a session takes the same
+  lock. Once ANY session points at a day, that day's structure and
+  prescriptions are locked for good, including after Finish or Discard:
+  another phone may still hold sets for it in an offline outbox, so an ended or
+  empty-looking session is not proof the day is unused. Once a set exists, the
+  day's prescription list is immutable, which is what keeps `v_adherence` from
+  rewriting history. `sessions.planned_workout_id` is immutable once set. Do not
+  add a path that edits a plan row with bare PostgREST updates, and do not
+  relax these triggers to make an edit "work"; edit a future day instead.
+  Postgres refuses to discard a session that has sets (SQLSTATE 23514, which
+  the outbox treats as a permanent rejection). A set that arrives from another
+  device's outbox for a discarded, empty session restores that session before
+  the append-only insert, under the same row lock, so the workout reappears in
+  `v_live_sets` (`restore_session_for_late_set`). Clearing `discarded_at` here
+  is deliberate: losing a real set is worse than resurrecting an empty session.
 - A PostgREST BULK insert fills a row's missing key with NULL, not with the
   column default: the array is inserted with the union of every row's keys.
   So a row builder must emit every defaulted column on EVERY row
@@ -141,11 +160,11 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   sections and ramps are all adjacency between rows, so a per-row patch would
   let a caller tear a superset in half without ever naming it. An empty list is
   legal, because the wholesale rewrite could not restate a day with no
-  prescriptions and silently dropped every empty day it touched. New rows are
-  parked above the old ones and land after the delete — PostgREST has no
-  transactions, and a failure mid-write should leave a visible duplicate rather
-  than an emptied day. A day with logged sets against it is refused, matching
-  the trigger that guards the same thing in Postgres. Editing a day of a
+  prescriptions and silently dropped every empty day it touched. Since
+  20260924 the replacement is one owner-scoped database function
+  (`replace_planned_workout_prescriptions`), so it lands or rolls back whole.
+  A day any session references is refused, matching the triggers that guard
+  the same thing in Postgres (see the plan-lock rule below). Editing a day of a
   CONFIRMED program takes `confirm_change=true` after approval in chat and is
   live the moment it lands; there is no confirm step after it.
 - A `load_pct_tm` prescription with NO current training max is WRITTEN, not

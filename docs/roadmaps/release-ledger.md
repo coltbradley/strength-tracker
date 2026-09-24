@@ -11,7 +11,8 @@ Reconciled 2026-09-24 against `main` at `4da2c7d` and the live project.
 A-92 and A-107 closed with tests. A-02, A-137 and A-138 were checked in
 production and their proof is still missing. A-91 is unchanged in
 `pwa/src/lib/sync.ts` and stays open. A-84 (`set_training_plan`) is untouched
-by the plan-edit work and stays open.
+by the plan-edit work and stays open. A-137 and A-138 are deferred to Phase 5 and
+no longer block Phase 1's gate.
 
 States: `open` · `fixed with test` · `needs live proof` · `not reproducible`.
 A finding is not closed because the audit is old. Close only with a regression
