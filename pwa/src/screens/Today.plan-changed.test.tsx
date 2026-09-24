@@ -137,6 +137,15 @@ const rxRow = (name: string) => ({
 
 afterEach(cleanup);
 
+// The preview keeps Start disabled until the day's prescriptions have loaded,
+// and a click on a disabled button does nothing. Clicking straight after Go
+// raced that fetch and failed under CI load with enqueue never called.
+async function clickStartWhenReady() {
+  const start = screen.getByRole("button", { name: "Start workout" });
+  await waitFor(() => expect(start.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(start);
+}
+
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
   resetDbForTests();
@@ -260,7 +269,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     render(<Today presentation="train" userId="u1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Go" }));
-    fireEvent.click(screen.getByRole("button", { name: "Start workout" }));
+    await clickStartWhenReady();
 
     await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
     expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
@@ -279,7 +288,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
       render(<Today presentation="train" userId="u1" />);
 
       fireEvent.click(await screen.findByRole("button", { name: "Go" }));
-      fireEvent.click(screen.getByRole("button", { name: "Start workout" }));
+      await clickStartWhenReady();
 
       await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
       await waitFor(async () =>
@@ -305,7 +314,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
       render(<Today presentation="train" userId="u1" />);
 
       fireEvent.click(await screen.findByRole("button", { name: "Go" }));
-      fireEvent.click(screen.getByRole("button", { name: "Start workout" }));
+      await clickStartWhenReady();
 
       await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
       expect((await screen.findByRole("alert")).textContent).toMatch(
