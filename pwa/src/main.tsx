@@ -5,6 +5,7 @@ import { App } from "./App";
 import { cacheGet, cacheKeys } from "./lib/db";
 import { installGlobalHandlers, initSentry } from "./lib/errors";
 import { outbox } from "./lib/sync";
+import { createUpdateGate } from "./lib/swUpdate";
 import "./styles.css";
 
 installGlobalHandlers();
@@ -73,8 +74,9 @@ void navigator.storage?.persist?.().catch(() => undefined);
 // Two halves. NOTICE: ask the browser to look for a new worker whenever the
 // app comes back to the foreground, and hourly while it is open. APPLY: if
 // there is no session in progress, take it immediately — reloading Today or
-// History costs nothing. Only mid-session does it wait, and then only until
-// the app is next hidden.
+// History costs nothing. Mid-session it waits until the session closes, not
+// merely until the app is next hidden: a phone locked between sets is hidden,
+// and that rule reloaded workouts mid-set (A-04). See lib/swUpdate.ts.
 async function sessionInProgress(): Promise<boolean> {
   try {
     return (await cacheGet(cacheKeys.activeSession)) != null;
@@ -84,6 +86,13 @@ async function sessionInProgress(): Promise<boolean> {
     return true;
   }
 }
+
+// APPLY, decided in lib/swUpdate.ts: immediately when no session is open, and
+// never while one is, not even on the lock screen between sets (A-04).
+const updateGate = createUpdateGate({
+  sessionInProgress,
+  apply: () => void applyUpdate(true),
+});
 
 const applyUpdate = registerSW({
   immediate: true,
@@ -96,20 +105,7 @@ const applyUpdate = registerSW({
     window.setInterval(check, 60 * 60 * 1000);
   },
   onNeedRefresh() {
-    void (async () => {
-      if (!(await sessionInProgress())) {
-        void applyUpdate(true);
-        return;
-      }
-      const onHidden = () => {
-        if (document.visibilityState !== "hidden") return;
-        document.removeEventListener("visibilitychange", onHidden);
-        void applyUpdate(true);
-      };
-      document.addEventListener("visibilitychange", onHidden);
-      // already backgrounded when the update landed
-      onHidden();
-    })();
+    updateGate.onNeedRefresh();
   },
 });
 

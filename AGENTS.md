@@ -398,9 +398,12 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   moment a build lands — mid-set that takes the staged reps, the load and any
   half-typed note. But a waiting worker also has to be NOTICED: the browser
   only looks on registration, so main.tsx checks on every return to the
-  foreground and hourly, and applies immediately when no session is open,
-  deferring to the next hidden only when one is. Deferring without checking
-  is how a shipped build sits unnoticed for days; that has happened once.
+  foreground and hourly, and applies immediately when no session is open.
+  While one is open it waits for the session to CLOSE, re-checking on every
+  visibility change and every minute (`pwa/src/lib/swUpdate.ts`). It used to
+  apply on the next hide, and a phone locked between sets is a hide, so that
+  reloaded workouts mid-set (A-04). Deferring without checking is how a
+  shipped build sits unnoticed for days; that has happened once.
 - The outbox is the only copy of an unsynced set, and WebKit clears IndexedDB
   after about a week idle, so `navigator.storage.persist()` is requested at
   startup. Best-effort and never awaited on the boot path.
