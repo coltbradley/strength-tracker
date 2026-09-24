@@ -391,6 +391,13 @@ describe("per-exercise preferences", () => {
     expect(getExerciseStepKg(null, "kg", false)).toBe(2.5);
   });
 
+  it("stores a per-exercise authored load unit preference", () => {
+    setExercisePref("squat", { loadUnit: "lb" });
+    expect(getExercisePref("squat").loadUnit).toBe("lb");
+    reloadSettings();
+    expect(getExercisePref("squat").loadUnit).toBe("lb");
+  });
+
   it("falls back to the unit bar for barbell movements only", () => {
     expect(getExerciseBarKg("squat", "kg", "barbell")).toBe(20);
     expect(getExerciseBarKg("leg-press", "kg", "machine")).toBe(0);

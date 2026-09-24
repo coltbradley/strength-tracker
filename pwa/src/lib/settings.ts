@@ -34,7 +34,7 @@
 // top-level call to `lbToKg` (or any other units.ts value) in this file.
 
 import { reportError } from "./errors";
-import type { LoadEntry } from "./types";
+import type { LoadEntry, LoadUnit } from "./types";
 import type { LoadStyle } from "./loadStyle";
 import { lbToKg, type Unit } from "./units";
 
@@ -68,6 +68,8 @@ export interface ExercisePref {
   restSeconds?: number;
   /** coarse stepper increment in kg (the fine step stays global) */
   loadStepKg?: number;
+  /** authored load unit for this movement, independent of the device default */
+  loadUnit?: LoadUnit;
   /** whether this movement's load is typed per side or as the whole system;
    *  absent = fall back to the prescription, then to the equipment guess
    *  (lib/loadEntry.ts). Storage stays kg TOTAL either way. */
@@ -214,6 +216,8 @@ function parseExercisePrefs(raw: unknown): ExercisePrefs | null {
     if (rest !== null) pref.restSeconds = rest;
     const step = num(value.loadStepKg, EPS, MAX_PLATE_KG);
     if (step !== null) pref.loadStepKg = step;
+    if (value.loadUnit === "kg" || value.loadUnit === "lb")
+      pref.loadUnit = value.loadUnit;
     if (value.loadEntry === "total" || value.loadEntry === "per_side")
       pref.loadEntry = value.loadEntry;
     if (value.loadStyle === "plates" || value.loadStyle === "stack")

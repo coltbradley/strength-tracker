@@ -7,6 +7,7 @@ import {
   pinnedOverviewEntryKey,
   railState,
   remainingProgress,
+  supersetGroupEntries,
   transitionPresentation,
 } from "./sessionFocus";
 
@@ -41,6 +42,14 @@ const entries = [entry("squat", 2), entry("deadlift", 3), entry("press", 1)];
 const isDone = (candidate: ExerciseEntry) => candidate.key === "squat";
 
 describe("session focus derivations", () => {
+  it("exposes an entire superset group so larger groups can render overview explicitly", () => {
+    const a = entry("a", 2);
+    const b = entry("b", 2);
+    const c = entry("c", 2);
+    for (const item of [a, b, c]) item.brackets[0]!.superset_group = 1;
+    expect(supersetGroupEntries([a, b, c], "b")).toEqual([a, b, c]);
+  });
+
   it("returns the first incomplete entry when no active entry is restored", () => {
     expect(focusEntryKey(entries, isDone, null)).toBe("deadlift");
   });
