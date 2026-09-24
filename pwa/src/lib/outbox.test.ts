@@ -362,6 +362,46 @@ describe("outbox", () => {
     expect(deadKind("PGRST116", 406)).toBe("blocked");
   });
 
+  it("retries a transient failure on its own while the app stays open and online (A-143)", async () => {
+    // Only the timers: fake-indexeddb schedules its own work with setImmediate.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { calls, transport } = makeTransport([netErr(), netErr()]);
+      const outbox = createOutbox({
+        getDb,
+        transport,
+        isOnline: () => true,
+        retryDelaysMs: [1_000, 5_000],
+      });
+      // Let IndexedDB (setImmediate, not faked) settle the flush enqueue fires.
+      const drain = async () => {
+        for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+      };
+      await outbox.enqueue({ kind: "insert", table: "sets", payload: setA });
+      await drain();
+      expect(calls).toHaveLength(1); // the enqueue's own flush, failed
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await drain();
+      expect(calls).toHaveLength(2); // first backoff, failed again
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      await drain();
+      expect(calls).toHaveLength(2); // the second delay is longer
+      await vi.advanceTimersByTimeAsync(1);
+      await drain();
+      expect(calls).toHaveLength(3); // and succeeds
+      expect(outbox.getStatus().pending).toBe(0);
+
+      // Nothing left to retry, so nothing else is scheduled.
+      await vi.advanceTimersByTimeAsync(60_000);
+      await drain();
+      expect(calls).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("replays after a network failure without dropping or duplicating (idempotent upsert)", async () => {
     // first call (session) succeeds, second (setA) fails with a network error
     const { calls, transport } = makeTransport([null, netErr()]);

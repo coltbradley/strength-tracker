@@ -177,6 +177,14 @@ interface Deps {
    * successful sync into a failed one.
    */
   onSynced?: (op: OutboxOp) => void;
+  /**
+   * Delays before retrying after a RETRYABLE failure while online, one per
+   * consecutive failure, the last repeating. Without it a timeout on gym wifi
+   * left the queue stuck until the next write, an `online` event or a return
+   * to the foreground, none of which happens while someone rests between
+   * sets with the app open (A-143).
+   */
+  retryDelaysMs?: readonly number[];
 }
 
 type ErrorClass = "retry" | "dead" | "auth" | "fk-prescription";
@@ -302,6 +310,7 @@ export function createOutbox({
   stampUserId,
   onIdentityChange,
   onSynced,
+  retryDelaysMs = [5_000, 15_000, 60_000, 300_000],
 }: Deps): Outbox {
   let status: OutboxStatus = {
     pending: 0,
@@ -452,17 +461,40 @@ export function createOutbox({
     return chain;
   }
 
+  // Backoff after a retryable failure (A-143). One timer at a time; reset
+  // once a flush leaves nothing retryable behind.
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryAttempt = 0;
+  function scheduleRetry(): void {
+    if (retryTimer !== null || retryDelaysMs.length === 0) return;
+    const delay =
+      retryDelaysMs[Math.min(retryAttempt, retryDelaysMs.length - 1)];
+    retryAttempt += 1;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void flush();
+    }, delay);
+  }
+  function clearRetry(): void {
+    retryAttempt = 0;
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
   async function doFlush(): Promise<void> {
     try {
       const db = await getDb();
       const rows = await readAll(db);
       const c = counts(rows);
       if (c.pending === 0) {
+        clearRetry();
         setStatus({ ...c, state: "idle" });
         return;
       }
       if (!online()) {
-        // offline: keep everything queued, no retries burned
+        // offline: keep everything queued, no retries burned; the `online`
+        // event flushes again, so no timer is needed
+        clearRetry();
         setStatus({ ...c, state: "idle" });
         return;
       }
@@ -542,6 +574,7 @@ export function createOutbox({
                 state: "error",
                 lastError: err.message,
               });
+              scheduleRetry();
               return;
             }
             // refresh answered, and the answer was no: park below
@@ -565,10 +598,13 @@ export function createOutbox({
             state: "error",
             lastError: err.message,
           });
+          scheduleRetry();
           return;
         }
       }
 
+      // Nothing retryable is left (sent, dead or held), so stop backing off.
+      clearRetry();
       const final = counts(await readAll(db));
       setStatus({ ...final, state: "idle" });
     } catch (e) {
