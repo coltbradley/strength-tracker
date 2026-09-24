@@ -176,7 +176,7 @@ describe("FocusDeck", () => {
     ).toEqual(["done", "current", "upcoming"]);
   });
 
-  it("uses the focused consecutive pair when another pair reuses its group number", () => {
+  it("does not present a local pair when its group number is reused later", () => {
     const a1 = entry("a1", "Bench Press", 3);
     const a2 = entry("a2", "Barbell Row", 4);
     const gap = entry("gap", "Overhead Press", 1);
@@ -207,7 +207,7 @@ describe("FocusDeck", () => {
       [...container.querySelectorAll(".focus-set-progress [data-state]")].map(
         (segment) => segment.getAttribute("data-state"),
       ),
-    ).toEqual(["current", "upcoming", "upcoming"]);
+    ).toEqual(["done", "current", "upcoming"]);
   });
 
   it("keeps the supplied tick-only editor and shows a progress rail dot per entry", () => {

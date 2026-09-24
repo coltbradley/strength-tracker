@@ -3,12 +3,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const { getPlannedWorkouts, getResolvedPrescriptions, getExercises, updatePlannedWorkout, updatePrescription, cacheGet, toast } = vi.hoisted(() => ({
+const { getPlannedWorkouts, getResolvedPrescriptions, getExercises, updatePlannedWorkout, updatePrescription, addPrescriptionGroups, cacheGet, toast } = vi.hoisted(() => ({
   getPlannedWorkouts: vi.fn(),
   getResolvedPrescriptions: vi.fn(),
   getExercises: vi.fn(),
   updatePlannedWorkout: vi.fn(),
   updatePrescription: vi.fn(),
+  addPrescriptionGroups: vi.fn(),
   cacheGet: vi.fn(),
   toast: vi.fn(),
 }));
@@ -24,7 +25,7 @@ vi.mock("../lib/data", () => ({
   getExercises: (...args: unknown[]) => getExercises(...args),
   updatePlannedWorkout: (...args: unknown[]) => updatePlannedWorkout(...args),
   updatePrescription: (...args: unknown[]) => updatePrescription(...args),
-  addPrescriptionGroups: vi.fn(),
+  addPrescriptionGroups: (...args: unknown[]) => addPrescriptionGroups(...args),
   reorderPrescriptions: vi.fn(),
   saveWorkoutAsTemplate: vi.fn(),
   deletePlannedWorkout: vi.fn(),
@@ -60,9 +61,30 @@ vi.mock("../components/Stepper", () => ({
 }));
 vi.mock("../components/NumberPad", () => ({ NumberPad: () => null }));
 vi.mock("../components/NewExerciseSheet", () => ({ NewExerciseSheet: () => null }));
-vi.mock("../components/SetSchemeSheet", () => ({ SetSchemeSheet: () => null }));
+vi.mock("../components/SetSchemeSheet", () => ({
+  SetSchemeSheet: ({ onSave }: { onSave: (groups: unknown[]) => void }) => (
+    <button type="button" onClick={() => onSave([{
+      sets: 3,
+      reps_min: 8,
+      reps_max: 8,
+      load_kg: 20,
+      set_type: "working",
+      rest_seconds: 90,
+      superset_group: 1,
+      section: null,
+      tracking: "reps",
+      load_entry: "total",
+      entered_load: 20,
+      entered_unit: "kg",
+    }])}>Save scheme</button>
+  ),
+}));
 vi.mock("../components/Note", () => ({ Note: () => null }));
-vi.mock("../components/ExercisePicker", () => ({ ExercisePicker: () => null }));
+vi.mock("../components/ExercisePicker", () => ({
+  ExercisePicker: ({ onPick }: { onPick: (exercise: { id: string; name: string; equipment: string }) => void }) => (
+    <button type="button" onClick={() => onPick({ id: "cable-row", name: "Cable Row", equipment: "cable" })}>Pick Cable Row</button>
+  ),
+}));
 
 import { Plan } from "./Plan";
 
@@ -178,6 +200,78 @@ describe("Plan with an active session", () => {
       );
     });
     expect(updatePrescription).not.toHaveBeenCalled();
+  });
+
+  it("refuses adding to a separated superset before inserting any rows", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [
+        prescription("bench", "Bench Press", 0, 1),
+        prescription("row", "Barbell Row", 1, 1),
+        prescription("plank", "Plank", 2, null),
+      ],
+    });
+    render(<Plan />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add exercise" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pick Cable Row" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save scheme" }));
+
+    await waitFor(() => {
+      expect(toast).toHaveBeenCalledWith(
+        "Superset A must be contiguous in workout order.",
+        "error",
+      );
+    });
+    expect(addPrescriptionGroups).not.toHaveBeenCalled();
+  });
+
+  it("allows a valid third member without imposing a group-size cap", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [
+        prescription("bench", "Bench Press", 0, 1),
+        prescription("row", "Barbell Row", 1, 1),
+      ],
+    });
+    addPrescriptionGroups.mockResolvedValue("cable-row-rx");
+    render(<Plan />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add exercise" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pick Cable Row" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save scheme" }));
+
+    await waitFor(() => expect(addPrescriptionGroups).toHaveBeenCalled());
+    expect(addPrescriptionGroups).toHaveBeenCalledWith(
+      "workout-1",
+      "cable-row",
+      [expect.objectContaining({ superset_group: 1 })],
+      expect.arrayContaining([
+        expect.objectContaining({ exercise_id: "bench", superset_group: 1 }),
+        expect.objectContaining({ exercise_id: "row", superset_group: 1 }),
+      ]),
+    );
+  });
+
+  it("does not describe malformed legacy groups as alternated pairs", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [
+        prescription("bench", "Bench Press", 0, 1),
+        prescription("row", "Barbell Row", 1, 1),
+        prescription("plank", "Plank", 2, null),
+        prescription("curl", "Cable Curl", 3, 1),
+      ],
+    });
+    render(<Plan />);
+
+    const groupHeading = await screen.findByText("SUPERSET A");
+    expect(groupHeading.parentElement?.textContent).toContain(
+      "malformed group, fix its order before paired rounds",
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Bench Press/ }));
+    expect(screen.queryByText("Alternates with Barbell Row, Cable Curl.")).toBeNull();
+    expect(screen.getByText(/Superset A must be fixed before paired rounds\./)).toBeTruthy();
   });
 
   it("labels a three-member group as an overview-only circuit", async () => {

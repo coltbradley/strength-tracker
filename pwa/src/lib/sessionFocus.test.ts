@@ -8,6 +8,7 @@ import {
   railState,
   remainingProgress,
   supersetGroupEntries,
+  twoMemberSuperset,
   transitionPresentation,
 } from "./sessionFocus";
 
@@ -48,6 +49,16 @@ describe("session focus derivations", () => {
     const c = entry("c", 2);
     for (const item of [a, b, c]) item.brackets[0]!.superset_group = 1;
     expect(supersetGroupEntries([a, b, c], "b")).toEqual([a, b, c]);
+  });
+
+  it("does not treat a reused separated letter as a valid paired Focus group", () => {
+    const a = entry("a", 2);
+    const b = entry("b", 2);
+    const gap = entry("gap", 2);
+    const c = entry("c", 2);
+    for (const item of [a, b, c]) item.brackets[0]!.superset_group = 1;
+
+    expect(twoMemberSuperset([a, b, gap, c], "a")).toBeNull();
   });
 
   it("returns the first incomplete entry when no active entry is restored", () => {

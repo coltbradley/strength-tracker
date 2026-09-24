@@ -62,7 +62,7 @@ export function normalizeSection(s: string | null | undefined): string | null {
  * with two different accounts of what the coach wrote.
  */
 export function supersetRunIssues(
-  rows: readonly ResolvedPrescriptionRow[],
+  rows: readonly Pick<ResolvedPrescriptionRow, "exercise_id" | "superset_group">[],
 ): string[] {
   const groups = new Map<
     number,

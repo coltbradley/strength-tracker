@@ -379,6 +379,7 @@ export function Plan() {
    * pick up half of it. See lib/sections.ts.
    */
   const blocks = useMemo(() => planBlocks(rx ?? []), [rx]);
+  const supersetIssues = useMemo(() => supersetRunIssues(rx ?? []), [rx]);
 
   /** Long-press to drag, at both levels a day actually has: a whole part of
    *  the day (its heading, or a lone exercise), and one exercise inside a
@@ -682,6 +683,20 @@ export function Plan() {
    */
   const saveScheme = (ex: ExerciseRow, groups: SetGroup[]) =>
     void run("add exercise", async () => {
+      const proposed = [
+        ...(rx ?? []),
+        ...groups.map((group) => ({
+          exercise_id: ex.id,
+          superset_group:
+            group.superset_group === 0 ? null : group.superset_group,
+        })),
+      ];
+      const issues = supersetRunIssues(proposed);
+      if (issues.length > 0) {
+        toast(issues.join(" "), "error");
+        return;
+      }
+
       // Consecutive prescriptions for the SAME exercise are a ramp: Today
       // renders them as one grouped entry ("3×5 · 3×3"), while this editor
       // keeps them as separate rows. That is deliberate — it is how a warmup
@@ -1046,7 +1061,13 @@ export function Plan() {
                       {supersetName(entry.supersetGroup)}
                       <span className="ss-head-note">
                         {" · "}
-                        {entry.exercises > 1
+                        {supersetIssues.some((issue) =>
+                          issue.startsWith(
+                            `Superset ${String.fromCharCode(64 + entry.supersetGroup!)} `,
+                          ),
+                        )
+                          ? "malformed group, fix its order before paired rounds"
+                          : entry.exercises > 1
                           ? entry.exercises > 2
                             ? `${entry.exercises} exercises, overview-only circuit`
                             : `${entry.exercises} exercises, alternated`
@@ -1443,7 +1464,13 @@ export function Plan() {
                       const letter = String.fromCharCode(64 + draft.superset);
                       return (
                         <div className="ss-pairing">
-                          {mates.length === 0
+                          {supersetIssues.some((issue) =>
+                            issue.startsWith(
+                              `Superset ${String.fromCharCode(64 + draft.superset)} `,
+                            ),
+                          )
+                            ? `Superset ${String.fromCharCode(64 + draft.superset)} must be fixed before paired rounds.`
+                          : mates.length === 0
                             ? `Group ${letter} — nothing else is in it yet. Put another exercise in ${letter} to pair them.`
                           : mates.length > 1
                             ? `This group has ${mates.length + 1} exercises and stays in the workout overview until circuit Focus is available.`

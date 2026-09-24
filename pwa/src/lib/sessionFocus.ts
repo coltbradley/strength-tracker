@@ -25,7 +25,14 @@ export function supersetGroupEntries(
     entries[end + 1].brackets[0]?.superset_group === group
   )
     end++;
-  return entries.slice(start, end + 1);
+  const run = entries.slice(start, end + 1);
+  // A reused letter after a gap is malformed day structure, not a second
+  // independent pair. Keep it out of paired Focus even when the local run
+  // happens to contain exactly two exercises.
+  const allMembers = entries.filter(
+    (entry) => entry.brackets[0]?.superset_group === group,
+  );
+  return allMembers.length === run.length ? run : [];
 }
 
 /** Only a consecutive ordinary two-member run can use the paired round UI. */
