@@ -3106,13 +3106,22 @@ Any session reference refuses plan changes. Once a session points at a planned
 day, that day's structure and prescriptions stay locked permanently, including
 after Finish or Discard. Another device may still have sets in its offline
 outbox, so an ended or discarded session with no visible rows is not proof that
-its day is unused. The session's `planned_workout_id` is also immutable once
-set, so a caller cannot retarget the session to release the original day.
-Finishing, adding session notes, and discarding remain allowed; those actions do
-not erase the historical link. This is enforced in Postgres for the PWA, direct
-Data API calls, and the service-role MCP path. The PWA explains that the
-original day must stay intact so queued sets can attach to the right
-prescription.
+its day is unused. Finishing and adding session notes remain allowed; those
+actions do not erase the historical link. Discard is only for a
+server-confirmed empty session.
+Postgres refuses to discard a session with any set rows. A set arriving later
+from another device's outbox locks and restores the empty discarded session
+before inserting the append-only row, so the workout appears in `v_live_sets`
+and the other derived views again. The same row lock orders a late insert
+against a concurrent discard: either the discard sees the set and fails, or
+the set arrives after discard and restores the session. The PWA offers discard
+only for a confirmed zero and says logged sessions stay in history.
+
+The session's `planned_workout_id` is immutable once set, so a caller cannot
+retarget the session to release the original day. Plan-reference protection
+is enforced in Postgres for the PWA, direct Data API calls, and the service-role
+MCP path. The PWA explains that the original day must stay intact so queued
+sets can attach to the right prescription.
 
 Separately, once a set exists for a day, that day's prescription list is
 immutable, including an unlogged neighbour or a new exercise: changing the plan

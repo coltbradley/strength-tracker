@@ -66,6 +66,14 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe("End: finishing a session", () => {
+  it("does not offer discard when the session has logged sets", async () => {
+    render(<End />);
+    await screen.findByRole("button", { name: "End session" });
+    await screen.findByText(/SET.*LOGGED/);
+    expect(screen.queryByRole("button", { name: "Discard session" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Discard session?" })).toBeNull();
+  });
+
   it("flushes the queue before leaving, so Today's next read is not racing our own write", async () => {
     render(<End />);
     // Wait for the set-count summary to settle (several cacheGet round trips

@@ -24,7 +24,6 @@ import {
 import { outbox } from "../lib/sync";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
-import { useArmed } from "../hooks/useArmed";
 import {
   fromDisplay,
   MAX_BODYWEIGHT_KG,
@@ -108,8 +107,6 @@ export function End() {
   const [exercisesTotal, setExercisesTotal] = useState(0);
   // ticks so a summary left open while writing a note stays honest
   const [now, setNow] = useState(() => Date.now());
-  const [armed, setArmed] = useArmed();
-  const discardArmed = armed === "discard";
   // the draft is persisted on unmount, but not once the session is closed
   const closedRef = useRef(false);
   /** re-entrancy guard for end(); a ref, because state is batched */
@@ -421,8 +418,7 @@ export function End() {
     }
   };
 
-  /** Soft delete: the session and its sets leave every chart and history
-   *  list. Nothing is destroyed — recoverable in the database if ever needed. */
+  /** Soft delete an accidental, server-confirmed empty session. */
   const discard = async () => {
     try {
       await outbox.enqueue({
@@ -617,12 +613,18 @@ export function End() {
           End session
         </button>
       )}
-      {!countKnown && (
+      {!countKnown ? (
         <div className="microcopy">
           Couldn’t reach the server to check this session’s sets, so nothing
-          here is offered as empty. Ending is safe — discard stays below.
+          here is offered as empty. Ending is safe. Discard is available only
+          when the server confirms there are no sets.
         </div>
-      )}
+      ) : setCount > 0 ? (
+        <div className="microcopy">
+          Sessions with logged sets stay in your training history. End the
+          session to keep this workout recorded.
+        </div>
+      ) : null}
       <button
         type="button"
         className="btn btn-ghost btn-block"
@@ -631,29 +633,6 @@ export function End() {
         Back to session
       </button>
 
-      {/* the confirmed-empty variant already leads with discard — no duplicate */}
-      {!confirmedEmpty && (
-        <section className="rule-section">
-          <button
-            type="button"
-            className={`btn btn-block ${discardArmed ? "btn-danger" : "btn-ghost"}`}
-            onClick={() =>
-              discardArmed ? void discard() : setArmed("discard")
-            }
-          >
-            {discardArmed ? "Discard session?" : "Discard session"}
-          </button>
-          {discardArmed && (
-            <div className="microcopy">
-              {countKnown
-                ? `Removes this session and its ${setCount} ${
-                    setCount === 1 ? "set" : "sets"
-                  } from history and charts.`
-                : "Removes this session and everything logged in it from history and charts. This device could not confirm how much that is."}
-            </div>
-          )}
-        </section>
-      )}
 
       {bwPadReq && <NumberPad req={bwPadReq} />}
     </div>

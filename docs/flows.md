@@ -100,8 +100,13 @@ Supabase sends the stock link email and the paste path is the working one.
   accidental start must not mark the day done), with "End anyway (counts as
   done)" as a ghost action. A count this device could not confirm is never
   treated as empty: the screen says so and offers only End, with the
-  ordinary two-tap discard below.
-- **Discard active** — End screen, two-tap. Soft delete.
+  ordinary discard unavailable. Sessions with logged sets stay in history and
+  only offer End.
+- **Discard active** — only a server-confirmed empty session can be discarded.
+  Postgres refuses the discard if a set has already arrived. If another
+  device's queued set arrives after the empty session was discarded, Postgres
+  restores the session before accepting the append-only set, so the workout
+  returns to history and derived views.
 - **Recover an orphan** — a same-day open session this device has no cache
   for (other device, restored phone) surfaces as a card on Today:
   Resume / Finish / Discard (two-tap). Adoption rebuilds the session caches:

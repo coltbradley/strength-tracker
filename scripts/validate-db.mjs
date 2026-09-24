@@ -513,21 +513,26 @@ await check("set notes are indexed newest-first per owner", async () => {
     throw new Error(`the order matters: ${r.rows[0].indexdef}`);
 });
 
-await check("discarded session leaves every view, rows survive", async () => {
-  await asUser(
-    OWNER,
-    `update sessions set discarded_at = now() where id = '44444444-0000-4000-8000-000000000002'`,
+await check("a session with existing sets cannot be discarded", async () => {
+  let rejected = false;
+  try {
+    await asUser(
+      OWNER,
+      `update sessions set discarded_at = now() where id = '44444444-0000-4000-8000-000000000001'`,
+    );
+  } catch (e) {
+    rejected = e.message.includes("sets") || e.message.includes("discard");
+    if (!rejected) throw e;
+  }
+  if (!rejected) throw new Error("a session with existing sets was discarded");
+  const visible = await db.query(
+    `select count(*)::int as n from v_live_sets where session_id = '44444444-0000-4000-8000-000000000001'`,
   );
-  const vol = await db.query(
-    `select count(*)::int as n from v_weekly_volume where user_id = $1 and exercise_id = 'Barbell_Deadlift'`,
-    [OWNER],
-  );
-  assertEq(vol.rows[0].n, 0, "volume gone from views");
+  assertEq(visible.rows[0].n, 4, "all unvoided sets remain visible in the live view");
   const raw = await db.query(
-    `select count(*)::int as n from sets where session_id = '44444444-0000-4000-8000-000000000002'`,
+    `select count(*)::int as n from sets where session_id = '44444444-0000-4000-8000-000000000001'`,
   );
-  assertEq(raw.rows[0].n, 1, "raw set row still present");
-  await db.exec(`update sessions set discarded_at = null where id = '44444444-0000-4000-8000-000000000002'`);
+  assertEq(raw.rows[0].n, 5, "all append-only set rows remain present");
 });
 
 await check("owner can edit planning fields on planned_workouts", async () => {
@@ -967,6 +972,19 @@ await check("any session reference keeps its plan locked after end or discard", 
     where id = '${emptySession}'`);
   await asUser(OWNER, `update sessions set discarded_at = now() where id = '${emptySession}'`);
 
+  let crossUserSetRejected = false;
+  try {
+    await asUser(OTHER, `insert into sets (id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps, performed_at)
+      values ('55555555-0000-4000-8000-000000000053', '${OTHER}', '${emptySession}', 'Barbell_Deadlift', 0, 'working', 100, 5, now())`);
+  } catch {
+    crossUserSetRejected = true;
+  }
+  if (!crossUserSetRejected) throw new Error("another user inserted a set into the discarded session");
+  const stillDiscarded = await db.query(
+    `select discarded_at is not null as discarded from sessions where id = $1`, [emptySession],
+  );
+  assertEq(stillDiscarded.rows, [{ discarded: true }], "cross-user replay does not restore another owner's session");
+
   for (const [name, target] of [["another workout", `'${peer}'`], ["no workout", "null"]]) {
     let retargetRejected = false;
     try {
@@ -1019,6 +1037,14 @@ await check("any session reference keeps its plan locked after end or discard", 
     `select prescription_id::text from sets where id = $1`, [lateDiscardedSet],
   );
   assertEq(lateDiscardedSetLink.rows, [{ prescription_id: emptyRx }], "a late set still links after the session was discarded");
+  const restoredSession = await db.query(
+    `select discarded_at is null as live from sessions where id = $1`, [emptySession],
+  );
+  assertEq(restoredSession.rows, [{ live: true }], "same-owner late set restores an empty discarded session");
+  const lateSetInView = await db.query(
+    `select count(*)::int as n from v_live_sets where id = $1`, [lateDiscardedSet],
+  );
+  assertEq(lateSetInView.rows, [{ n: 1 }], "late set becomes visible in the live history");
 
   const stillLocked = await db.query(`select reps_min from prescriptions where id = $1`, [emptyRx]);
   assertEq(stillLocked.rows, [{ reps_min: 5 }], "discarding an empty session keeps its prescription intact");
