@@ -88,7 +88,17 @@ describe("summarizeTrainWorkout", () => {
 });
 
 describe("TrainHome", () => {
-  it("shows a planned workout's shape and starts it without plan controls", () => {
+  it("opens a read-only preview from Go without starting a session", () => {
+    const { onStart } = renderHome();
+
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+
+    expect(screen.getByRole("dialog", { name: "Upper strength preview" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start workout" })).toBeTruthy();
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("shows a planned workout's shape and starts it only from the preview", () => {
     const { onStart } = renderHome();
 
     expect(screen.getByText("Upper strength")).toBeTruthy();
@@ -103,7 +113,9 @@ describe("TrainHome", () => {
     expect(screen.queryByText(/calendar/i)).toBeNull();
     expect(screen.queryByText(/5–8/)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    expect(onStart).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Start workout" }));
     expect(onStart).toHaveBeenCalledWith(workout);
   });
 

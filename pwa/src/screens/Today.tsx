@@ -46,6 +46,7 @@ import {
 } from "../lib/data";
 import { doneSummaryKey, formatDuration, type DoneSummary } from "./End";
 import { groupRamps } from "../lib/entries";
+import { nextActionableWorkout } from "../lib/trainingScene";
 import { openCoach } from "../lib/coachOpen";
 import { onPlanChanged } from "../lib/planChanges";
 import {
@@ -1166,7 +1167,11 @@ export function Today({
    *  from the UI. */
   const canStart = startGateOpen && !active && !orphan && !startRecovery;
 
-  const trainWorkout = trainWorkoutForToday(workouts, states, today);
+  const trainWorkoutToday = trainWorkoutForToday(workouts, states, today);
+  const nextTrainWorkout = nextActionableWorkout(workouts, states, today);
+  const trainWorkout =
+    trainWorkoutToday ??
+    (nextTrainWorkout ? { workout: nextTrainWorkout, state: "UPCOMING" as const } : null);
   const trainWorkoutId = trainWorkout?.workout.id ?? null;
   const trainPrescriptions = trainWorkout
     ? (rx[trainWorkout.workout.id] ?? null)
@@ -1261,6 +1266,7 @@ export function Today({
           active={active}
           recovery={recovery}
           startEnabled={canStart}
+          unit={unit}
           onStart={(workout) => void start(workout)}
           onOpenCoach={() => openCoach()}
           onCheckIn={userId ? () => setCheckInOpen(true) : undefined}

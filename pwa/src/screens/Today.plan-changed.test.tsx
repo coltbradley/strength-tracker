@@ -165,13 +165,52 @@ beforeEach(() => {
 });
 
 describe("Today + coach plan changes (onPlanChanged)", () => {
+  it("shows the earliest actionable future workout from Rest day", async () => {
+    const draft = { ...WORKOUT, id: "draft", label: "Unwritten", scheduled_date: "2099-01-01", exercise_count: 0 };
+    const next = { ...WORKOUT, id: "next", label: "Lower strength", scheduled_date: "2099-01-02" };
+    getPlannedWorkouts.mockResolvedValue({
+      data: { programs: [PROGRAM], workouts: [draft, next] },
+      fromCache: false,
+      stale: null,
+    });
+
+    render(<Today presentation="train" userId="u1" />);
+
+    expect(await screen.findByRole("button", { name: "Go" })).toBeTruthy();
+    expect(screen.getByText("Rest day")).toBeTruthy();
+    expect(screen.getByText("Lower strength")).toBeTruthy();
+    expect(screen.queryByText("Unwritten")).toBeNull();
+    expect(screen.getByRole("button", { name: "Go" })).toBeTruthy();
+  });
+
+  it("keeps Go and every preview dismissal read-only", async () => {
+    render(<Today presentation="train" userId="u1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Go" }));
+    expect(screen.getByRole("dialog", { name: "Day 1 preview" })).toBeTruthy();
+    expect(outbox.enqueue).not.toHaveBeenCalled();
+    expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    fireEvent.click(screen.getByRole("dialog").parentElement!);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(outbox.enqueue).not.toHaveBeenCalled();
+    expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
+  });
+
   it("does not publish an active session when durable session enqueue fails", async () => {
     vi.mocked(outbox.enqueue).mockRejectedValueOnce(
       new Error("IndexedDB unavailable"),
     );
     render(<Today presentation="train" userId="u1" />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Go" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start workout" }));
 
     await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
     expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
@@ -189,7 +228,8 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     try {
       render(<Today presentation="train" userId="u1" />);
 
-      fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Go" }));
+      fireEvent.click(screen.getByRole("button", { name: "Start workout" }));
 
       await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
       await waitFor(async () =>
@@ -214,7 +254,8 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     try {
       render(<Today presentation="train" userId="u1" />);
 
-      fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Go" }));
+      fireEvent.click(screen.getByRole("button", { name: "Start workout" }));
 
       await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
       expect((await screen.findByRole("alert")).textContent).toMatch(
@@ -223,7 +264,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
       expect(
         screen.getByRole("button", { name: "Retry opening session" }),
       ).toBeTruthy();
-      expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Go" })).toBeNull();
     } finally {
       cacheSet.mockRestore();
     }
