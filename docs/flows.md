@@ -111,8 +111,10 @@ Supabase sends the stock link email and the paste path is the working one.
   local day complete at their last set's time; empty ones auto-discard; a
   stale local pointer to a session closed elsewhere is cleared. Sessions
   with queued outbox writes are excluded, so a finish or discard done
-  offline is never misread as abandonment. "Pause" is deliberately not a
-  feature: leaving a session open is the pause, and this sweep bounds it.
+  offline is never misread as abandonment. Even when an empty session is
+  discarded, its planned day stays linked and locked because another device
+  may still have queued sets. "Pause" is deliberately not a feature: leaving
+  a session open is the pause, and this sweep bounds it.
 - **A day reads DONE only once its session has ended.** An open session
   leaves its day unfinished, so the same day can never show RESUME and
   "Start again" at once.

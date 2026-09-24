@@ -878,7 +878,7 @@ await check("logged prescriptions cannot be rewritten or removed after a session
   assertEq(remaining.rows, [], "an untrained finished day still allows prescription removal");
 });
 
-await check("a non-discarded session keeps its plan locked after end, including before offline sets sync", async () => {
+await check("any session reference keeps its plan locked after end or discard", async () => {
   const day = "22222222-0000-4000-8000-000000000050";
   const peer = "22222222-0000-4000-8000-000000000051";
   const rx = "33333333-0000-4000-8000-000000000150";
@@ -947,7 +947,9 @@ await check("a non-discarded session keeps its plan locked after end, including 
   );
   assertEq(lateSetStillLinked.rows, [{ prescription_id: rx }], "late set retains its prescription link");
 
-  // An explicitly discarded empty session no longer owns the planned day.
+  // Notes, finishing, and discarding remain valid session edits. Discarding
+  // does not erase the historical reference or unlock the plan: another
+  // device may still replay queued sets for this session.
   const emptyDay = "22222222-0000-4000-8000-000000000052";
   const emptyRx = "33333333-0000-4000-8000-000000000152";
   const emptySession = "44444444-0000-4000-8000-000000000052";
@@ -959,18 +961,67 @@ await check("a non-discarded session keeps its plan locked after end, including 
     insert into sessions (id, user_id, planned_workout_id, started_at, ended_at)
     values ('${emptySession}', '${OWNER}', '${emptyDay}', now() - interval '1 hour', now());
   `);
-  let emptyDayStillLocked = false;
-  try {
-    await asUser(OWNER, `update prescriptions set reps_min = 6, reps_max = 6 where id = '${emptyRx}'`);
-  } catch (e) {
-    emptyDayStillLocked = e.message.includes("session");
-    if (!emptyDayStillLocked) throw e;
-  }
-  if (!emptyDayStillLocked) throw new Error("an ended empty session did not retain its lock");
+  await asUser(OWNER, `update sessions set notes = 'done without sets'
+    where id = '${emptySession}'`);
+  await asUser(OWNER, `update sessions set ended_at = now()
+    where id = '${emptySession}'`);
   await asUser(OWNER, `update sessions set discarded_at = now() where id = '${emptySession}'`);
-  await asUser(OWNER, `update prescriptions set reps_min = 6, reps_max = 6 where id = '${emptyRx}'`);
-  const editableAfterDiscard = await db.query(`select reps_min from prescriptions where id = $1`, [emptyRx]);
-  assertEq(editableAfterDiscard.rows, [{ reps_min: 6 }], "discarding an empty session restores plan editing");
+
+  for (const [name, target] of [["another workout", `'${peer}'`], ["no workout", "null"]]) {
+    let retargetRejected = false;
+    try {
+      await asUser(OWNER, `update sessions set planned_workout_id = ${target} where id = '${emptySession}'`);
+    } catch (e) {
+      retargetRejected = e.message.includes("retarget");
+      if (!retargetRejected) throw e;
+    }
+    if (!retargetRejected) throw new Error(`a discarded session reference was changed to ${name}`);
+  }
+
+  for (const [name, sql] of [
+    ["discarded-session prescription update", `update prescriptions set reps_min = 6, reps_max = 6 where id = '${emptyRx}'`],
+    ["discarded-session prescription deletion", `delete from prescriptions where id = '${emptyRx}'`],
+    ["discarded-session day update", `update planned_workouts set label = 'Changed' where id = '${emptyDay}'`],
+    ["discarded-session program move", `update planned_workouts set program_id = (select program_id from planned_workouts where id = '${day}') where id = '${emptyDay}'`],
+    ["discarded-session day soft delete", `update planned_workouts set discarded_at = now() where id = '${emptyDay}'`],
+    ["discarded-session plan edit RPC", `select apply_plan_edit_with_delete('${emptyDay}', '${emptyRx}', '{\"reps_min\":6,\"reps_max\":6}'::jsonb, array[]::uuid[], null, false, array['${emptyRx}']::uuid[], null)`],
+    ["discarded-session day-order swap", `select swap_planned_workout_order('${emptyDay}', '${peer}')`],
+  ]) {
+    let rejected = false;
+    try {
+      await asUser(OWNER, sql);
+    } catch (e) {
+      rejected = e.message.includes("session");
+      if (!rejected) throw new Error(`${name}: ${e.message}`);
+    }
+    if (!rejected) throw new Error(`${name} was allowed after the referencing session was discarded`);
+  }
+
+  await db.exec("set role service_role");
+  let discardedMcpRejected = false;
+  try {
+    await db.query(
+      `select replace_planned_workout_prescriptions($1, $2, '[]'::jsonb, '{}'::jsonb)`,
+      [OWNER, emptyDay],
+    );
+  } catch (e) {
+    discardedMcpRejected = e.message.includes("session references");
+    if (!discardedMcpRejected) throw e;
+  } finally {
+    await db.exec("reset role");
+  }
+  if (!discardedMcpRejected) throw new Error("MCP replacement changed a day after its session was discarded");
+
+  const lateDiscardedSet = "55555555-0000-4000-8000-000000000052";
+  await asUser(OWNER, `insert into sets (id, user_id, session_id, exercise_id, prescription_id, set_index, set_type, load_kg, reps, performed_at)
+    values ('${lateDiscardedSet}', '${OWNER}', '${emptySession}', 'Barbell_Deadlift', '${emptyRx}', 0, 'working', 100, 5, now() - interval '30 minutes')`);
+  const lateDiscardedSetLink = await db.query(
+    `select prescription_id::text from sets where id = $1`, [lateDiscardedSet],
+  );
+  assertEq(lateDiscardedSetLink.rows, [{ prescription_id: emptyRx }], "a late set still links after the session was discarded");
+
+  const stillLocked = await db.query(`select reps_min from prescriptions where id = $1`, [emptyRx]);
+  assertEq(stillLocked.rows, [{ reps_min: 5 }], "discarding an empty session keeps its prescription intact");
 });
 
 await check("set_notes: upsert own, reject cross-user, view exposes superset", async () => {
@@ -1288,11 +1339,8 @@ await check("a planned day is soft-deleted, and logged sets keep their plan", as
   // sets.prescription_id is ON DELETE SET NULL, so hard-deleting one planned
   // day silently severed every set ever logged against it from the plan it
   // fulfilled. `sets` is append-only, so v_adherence lost that history for good.
-  // The soft-delete invariant is independent of session ownership. This
-  // fixture's finished session is detached so the test can exercise the
-  // historical-set safeguard on its own.
-  await db.exec(`update sessions set planned_workout_id = null
-    where id = '44444444-0000-4000-8000-000000000001'`);
+  // A finished session reference is historical, so the same day used by the
+  // set fixture must remain available for late outbox writes.
   const pw = (await db.query(
     `select w.id from planned_workouts w
       where not w.is_template and w.discarded_at is null
@@ -1306,23 +1354,29 @@ await check("a planned day is soft-deleted, and logged sets keep their plan", as
   );
   assert(before.rows[0].n > 0, "the day has prescriptions to begin with");
 
-  await db.exec(`update planned_workouts set discarded_at = now() where id = '${pw}'`);
+  let refused = false;
+  try {
+    await asUser(OWNER, `update planned_workouts set discarded_at = now() where id = '${pw}'`);
+  } catch (e) {
+    refused = e.message.includes("session references");
+    if (!refused) throw e;
+  }
+  assertEq(refused, true, "a session-linked plan cannot be soft-deleted");
   const after = await db.query(
     `select count(*)::int as n from v_resolved_prescriptions where planned_workout_id = $1`,
     [pw],
   );
-  assertEq(after.rows[0].n, 0, "a discarded day leaves every plan read");
+  assertEq(after.rows[0].n > 0, true, "the referenced prescriptions remain in plan reads");
   const gone = await db.query(
     `select count(*)::int as n from v_plan_workouts where id = $1`,
     [pw],
   );
-  assertEq(gone.rows[0].n, 0, "and leaves the calendar");
+  assertEq(gone.rows[0].n, 1, "the referenced day remains on the calendar");
   const rows = await db.query(
     `select count(*)::int as n from prescriptions where planned_workout_id = $1`,
     [pw],
   );
   assert(rows.rows[0].n > 0, "but the rows themselves survive in Postgres");
-  await db.exec(`update planned_workouts set discarded_at = null where id = '${pw}'`);
 });
 
 await check("a prescription with logged sets against it refuses to be deleted", async () => {
@@ -1352,8 +1406,7 @@ await check("a prescription nothing was logged against still deletes freely", as
       where not w.is_template and w.discarded_at is null
         and not exists (select 1 from prescriptions p join sets s on s.prescription_id = p.id
                          where p.planned_workout_id = w.id)
-        and not exists (select 1 from sessions s where s.planned_workout_id = w.id
-                         and s.discarded_at is null)
+        and not exists (select 1 from sessions s where s.planned_workout_id = w.id)
       order by w.id limit 1`,
   )).rows[0].id;
   await db.exec(
@@ -1490,8 +1543,7 @@ await check("a prescription can be marked warmup", async () => {
       where not exists (select 1 from sets s where s.prescription_id = p.id)
         and not exists (select 1 from prescriptions p2 join sets s on s.prescription_id = p2.id
                          where p2.planned_workout_id = p.planned_workout_id)
-        and not exists (select 1 from sessions s where s.planned_workout_id = p.planned_workout_id
-                          and s.discarded_at is null)
+        and not exists (select 1 from sessions s where s.planned_workout_id = p.planned_workout_id)
       order by p.id limit 1`,
   );
   if (!candidate.rows[0]) throw new Error("no unlogged prescription is available for the edit check");
@@ -1513,8 +1565,7 @@ await check("set_type on a prescription is constrained to the enum", async () =>
       where not exists (select 1 from sets s where s.prescription_id = p.id)
         and not exists (select 1 from prescriptions p2 join sets s on s.prescription_id = p2.id
                          where p2.planned_workout_id = p.planned_workout_id)
-        and not exists (select 1 from sessions s where s.planned_workout_id = p.planned_workout_id
-                          and s.discarded_at is null)
+        and not exists (select 1 from sessions s where s.planned_workout_id = p.planned_workout_id)
       order by p.id limit 1`,
   );
   if (!candidate.rows[0]) throw new Error("no unlogged prescription is available for the constraint check");
@@ -1539,8 +1590,7 @@ await check("adherence still gates on the ACTUAL set, not the plan", async () =>
       where not exists (select 1 from sets s where s.prescription_id = p.id)
         and not exists (select 1 from prescriptions p2 join sets s on s.prescription_id = p2.id
                          where p2.planned_workout_id = p.planned_workout_id)
-        and not exists (select 1 from sessions s where s.planned_workout_id = p.planned_workout_id
-                          and s.discarded_at is null)
+        and not exists (select 1 from sessions s where s.planned_workout_id = p.planned_workout_id)
       order by p.id limit 1`,
   );
   if (!candidate.rows[0]) throw new Error("no unlogged prescription is available for the adherence check");
