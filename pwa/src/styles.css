@@ -116,6 +116,7 @@
     --completed-set: #665f71;
     --control-outline: #766e7b;
     --brick: #a8321f;
+    --rest-orange: #a64b00;
 
     /* Competition plate colours. These are INFORMATION, not decoration: a
      * lifter reads the stack by colour before reading any number, which is the
@@ -2117,11 +2118,20 @@
 
   /* READY has one text/color transition at expiry; the timer never blinks. */
   .rest-timer-ready {
-    border-top-color: var(--accent);
+    border-top-color: var(--rest-orange);
   }
 
+  .rest-timer-rest {
+    border-top-color: var(--rest-orange);
+  }
+
+  .rest-timer-enter {
+    animation: set-entering-enter var(--motion-med) var(--ease-out);
+  }
+
+  .rest-timer-rest .rest-label,
   .rest-timer-ready .rest-label {
-    color: var(--accent);
+    color: var(--rest-orange);
   }
 
   .rest-row {
@@ -2153,7 +2163,7 @@
   }
 
   .rest-timer-ready .rest-timer-time {
-    color: var(--accent-dim);
+    color: var(--rest-orange);
   }
 
   .rest-track {
@@ -2166,13 +2176,13 @@
     display: block;
     height: var(--bw-thick);
     width: 100%;
-    background: var(--accent);
+    background: var(--rest-orange);
     transform-origin: left;
     transition: none;
   }
 
   .rest-timer-ready .rest-fill {
-    background: var(--accent-dim);
+    background: var(--rest-orange);
   }
 
   .rest-actions {
@@ -3843,7 +3853,6 @@
 
   .focus-top-slot {
     margin-inline: calc(-1 * var(--gutter));
-    animation: mode-cross-fade var(--motion-med) var(--ease-out);
   }
 
   .focus-nearby-loads {

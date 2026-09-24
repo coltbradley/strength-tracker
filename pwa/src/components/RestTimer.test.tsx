@@ -61,6 +61,50 @@ describe("RestTimer", () => {
     expect(container.querySelector(".rest-timer")).toBeNull();
   });
 
+  it("marks the active rest state for its distinct orange treatment", () => {
+    const { container, rerender } = render(
+      <RestTimer
+        rest={{ startedAt: Date.now(), targetSeconds: 60, forLabel: "Squat set 2" }}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+      />,
+    );
+
+    expect(container.querySelector(".rest-timer")?.classList.contains("rest-timer-rest")).toBe(true);
+    rerender(
+      <RestTimer rest={overdue()} onAdjust={noop} onEdit={noop} onDone={noop} />,
+    );
+    const ready = container.querySelector(".rest-timer");
+    expect(ready?.classList.contains("rest-timer-ready")).toBe(true);
+    expect(ready?.classList.contains("rest-timer-rest")).toBe(false);
+  });
+
+  it("re-enters the rest animation for each newly logged rest identity", () => {
+    const firstRest = {
+      startedAt: Date.now(),
+      targetSeconds: 60,
+      forLabel: "Squat set 2",
+    };
+    const { container, rerender } = render(
+      <RestTimer rest={firstRest} onAdjust={noop} onEdit={noop} onDone={noop} />,
+    );
+    const firstNode = container.querySelector(".rest-timer");
+
+    rerender(
+      <RestTimer
+        rest={{ ...firstRest, startedAt: firstRest.startedAt + 1_000 }}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+      />,
+    );
+
+    const nextNode = container.querySelector(".rest-timer");
+    expect(nextNode).not.toBe(firstNode);
+    expect(nextNode?.classList.contains("rest-timer-enter")).toBe(true);
+  });
+
   it("announces an overdue rest exactly once", () => {
     const rest = overdue();
     const { rerender } = render(

@@ -134,7 +134,8 @@ export function RestTimer({
        implicit aria-live="off": the value is reachable on demand, and a
        four-times-a-second countdown never interrupts anyone mid-set. */
     <div
-      className={`rest-timer ${ready ? "rest-timer-ready" : ""}`}
+      key={rest.startedAt}
+      className={`rest-timer ${ready ? "rest-timer-ready" : "rest-timer-rest rest-timer-enter"}`}
       role="timer"
       aria-label={ready ? "rest timer ready" : "rest timer"}
     >
