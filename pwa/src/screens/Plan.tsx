@@ -15,6 +15,7 @@ import { getSetting } from "../lib/settings";
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { Note } from "../components/Note";
 import {
+  applyPlanEdit,
   addPrescriptionGroups,
   reorderPrescriptions,
   saveWorkoutAsTemplate,
@@ -25,7 +26,6 @@ import {
   getExercises,
   getPlannedWorkouts,
   getResolvedPrescriptions,
-  setPrescriptionSection,
   swapWorkoutOrder,
   updatePlannedWorkout,
   updatePrescription,
@@ -604,13 +604,18 @@ export function Plan() {
     );
     const issues = supersetRunIssues(proposed);
     if (issues.length > 0) throw new PlanEditRefused(issues.join(" "));
-    await updatePrescription(r.id, workout.id, patch);
-    await setPrescriptionSection(mates, workout.id, next);
-    // A section or a letter says which PART of the day this belongs to, and
-    // the editor has already redrawn it there. Land it, or Today would still
-    // read the old order.
-    if (moved || group !== (r.superset_group ?? null))
-      await settle(proposed);
+    if (moved || group !== (r.superset_group ?? null)) {
+      const { section: _section, ...rowPatch } = patch;
+      await applyPlanEdit(workout.id, canonicalRowIds(proposed), {
+        targetId: r.id,
+        patch: rowPatch,
+        sectionIds: moved ? [r.id, ...mates] : [],
+        section: next,
+        applySection: moved,
+      });
+    } else {
+      await updatePrescription(r.id, workout.id, patch);
+    }
   };
 
   /**
@@ -772,14 +777,17 @@ export function Plan() {
         return;
       }
       const ids = block.entries.flatMap((e) => e.rows.map((o) => o.id));
-      await setPrescriptionSection(ids, workout.id, next);
       // A rename can change where the part runs — "Abs" renamed to "Cooldown"
       // belongs at the end now.
-      await settle(
+      const rows =
         (rx ?? []).map((o) =>
           ids.includes(o.id) ? { ...o, section: next } : o,
-        ),
-      );
+        );
+      await applyPlanEdit(workout.id, canonicalRowIds(rows), {
+        sectionIds: ids,
+        section: next,
+        applySection: true,
+      });
       setSectionOpen(null);
       toast(`Renamed to ${next}`);
       reload();
@@ -789,12 +797,15 @@ export function Plan() {
   const dissolveSection = (block: PlanBlock) =>
     void run("remove section", async () => {
       const ids = block.entries.flatMap((e) => e.rows.map((o) => o.id));
-      await setPrescriptionSection(ids, workout.id, null);
-      await settle(
+      const rows =
         (rx ?? []).map((o) =>
           ids.includes(o.id) ? { ...o, section: null } : o,
-        ),
-      );
+        );
+      await applyPlanEdit(workout.id, canonicalRowIds(rows), {
+        sectionIds: ids,
+        section: null,
+        applySection: true,
+      });
       setSectionOpen(null);
       setConfirming(null);
       toast(`${block.section} removed — its exercises stay`);

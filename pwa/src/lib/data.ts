@@ -485,23 +485,31 @@ export async function updatePrescription(
 }
 
 /**
- * Put a set of rows in one section, or take them out of every section.
- *
- * A section is not a row's private property — it is the name of a part of the
- * day, and renaming it, emptying it or moving a whole exercise into it all
- * touch several rows at once. One statement, so a section is never half
- * renamed.
+ * Commit a structural planned-day edit in one Postgres transaction. The
+ * section membership, optional prescription patch, and every row's final
+ * position form one description of the workout, so they must not land as
+ * separate PostgREST requests.
  */
-export async function setPrescriptionSection(
-  ids: string[],
+export async function applyPlanEdit(
   plannedWorkoutId: string,
-  section: string | null,
+  orderedIds: string[],
+  edit: {
+    targetId?: string;
+    patch?: Omit<PrescriptionPatch, "position" | "section">;
+    sectionIds?: string[];
+    section?: string | null;
+    applySection?: boolean;
+  } = {},
 ): Promise<void> {
-  if (ids.length === 0) return;
-  const { error } = await supabase
-    .from("prescriptions")
-    .update({ section })
-    .in("id", ids);
+  const { error } = await supabase.rpc("apply_plan_edit", {
+    p_planned_workout_id: plannedWorkoutId,
+    p_target_id: edit.targetId ?? null,
+    p_patch: edit.patch ?? {},
+    p_section_ids: edit.sectionIds ?? [],
+    p_section: edit.section ?? null,
+    p_apply_section: edit.applySection ?? false,
+    p_ordered_ids: orderedIds,
+  });
   throwIf(error);
   await invalidatePlanCaches(plannedWorkoutId);
 }
@@ -877,32 +885,15 @@ export async function reorderPrescriptions(
   orderedIds: string[],
   existing: ResolvedPrescriptionRow[],
 ): Promise<void> {
-  const byId = new Map(existing.map((r) => [r.id, r]));
-  const target = orderedIds
-    .map((id, index) => ({ row: byId.get(id), index }))
-    .filter((x): x is { row: ResolvedPrescriptionRow; index: number } =>
-      Boolean(x.row),
-    )
-    .filter((x) => x.row.position !== x.index);
-  if (target.length === 0) return;
-
-  const park = existing.reduce((m, r) => Math.max(m, r.position), 0) + 1;
-  const step = async (id: string, position: number) => {
-    const { error } = await supabase
-      .from("prescriptions")
-      .update({ position })
-      .eq("id", id);
-    throwIf(error);
-  };
-
-  // Park everything that moves, then land it. Two passes, never a collision.
-  for (let i = 0; i < target.length; i++) {
-    await step(target[i]!.row.id, park + i);
-  }
-  for (const t of target) {
-    await step(t.row.id, t.index);
-  }
-  await invalidatePlanCaches(plannedWorkoutId);
+  const current = [...existing]
+    .sort((a, b) => a.position - b.position)
+    .map((r) => r.id);
+  if (
+    orderedIds.length === current.length &&
+    orderedIds.every((id, i) => id === current[i])
+  )
+    return;
+  await applyPlanEdit(plannedWorkoutId, orderedIds);
 }
 
 /**

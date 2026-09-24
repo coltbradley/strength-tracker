@@ -537,6 +537,93 @@ await check("owner can edit planning fields on planned_workouts", async () => {
   assertEq(upd.affectedRows ?? 0, 1, "planning update allowed");
 });
 
+await check("planned prescription edits roll back as one request on reorder failure", async () => {
+  const day = "22222222-0000-4000-8000-000000000010";
+  const ids = [
+    "33333333-0000-4000-8000-000000000101",
+    "33333333-0000-4000-8000-000000000102",
+    "33333333-0000-4000-8000-000000000103",
+  ];
+  await db.exec(`
+    insert into planned_workouts (id, user_id, program_id, day_index, label)
+    values ('${day}', '${OWNER}', '11111111-0000-4000-8000-000000000001', 10, 'Atomic edit');
+    insert into prescriptions (id, user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_kg)
+    values
+      ('${ids[0]}', '${OWNER}', '${day}', 'Barbell_Squat', 0, 3, 5, 5, 100),
+      ('${ids[1]}', '${OWNER}', '${day}', 'Barbell_Deadlift', 1, 3, 5, 5, 100),
+      ('${ids[2]}', '${OWNER}', '${day}', 'Pullups', 2, 3, 5, 5, 100);
+    create function fail_plan_landing() returns trigger language plpgsql as $$
+    begin
+      if new.id = '${ids[1]}'::uuid and new.position = 0 then
+        raise exception 'simulated mid-save request failure';
+      end if;
+      return new;
+    end $$;
+    create trigger fail_plan_landing before update of position on prescriptions
+    for each row execute function fail_plan_landing();
+  `);
+
+  const installed = await db.query(
+    `select to_regprocedure('apply_plan_edit(uuid,uuid,jsonb,uuid[],text,boolean,uuid[])') as signature`,
+  );
+  assertEq(
+    installed.rows[0].signature,
+    "apply_plan_edit(uuid,uuid,jsonb,uuid[],text,boolean,uuid[])",
+    "atomic plan-edit function is installed",
+  );
+
+  let rejected = false;
+  try {
+    await asUser(
+      OWNER,
+      `select apply_plan_edit(
+         '${day}', '${ids[0]}', '{"reps_min":6,"reps_max":6}'::jsonb,
+         array['${ids[0]}','${ids[1]}','${ids[2]}']::uuid[], 'Activation', true,
+         array['${ids[1]}','${ids[2]}','${ids[0]}']::uuid[]
+       )`,
+    );
+  } catch (e) {
+    rejected = e.message.includes("simulated mid-save request failure");
+    if (!rejected) throw e;
+  }
+  if (!rejected) throw new Error("the simulated mid-save failure did not occur");
+
+  const rolledBack = await db.query(
+    `select id::text, position, reps_min, section from prescriptions
+      where planned_workout_id = $1 order by id`,
+    [day],
+  );
+  assertEq(
+    rolledBack.rows,
+    ids.map((id, i) => ({ id, position: i, reps_min: 5, section: null })),
+    "patch, section and order all roll back",
+  );
+
+  await db.exec(`drop trigger fail_plan_landing on prescriptions; drop function fail_plan_landing();`);
+  await asUser(
+    OWNER,
+    `select apply_plan_edit(
+       '${day}', '${ids[0]}', '{"reps_min":6,"reps_max":6}'::jsonb,
+       array['${ids[0]}','${ids[1]}','${ids[2]}']::uuid[], 'Activation', true,
+       array['${ids[1]}','${ids[2]}','${ids[0]}']::uuid[]
+     )`,
+  );
+  const landed = await db.query(
+    `select id::text, position, reps_min, section from prescriptions
+      where planned_workout_id = $1 order by position`,
+    [day],
+  );
+  assertEq(
+    landed.rows,
+    [
+      { id: ids[1], position: 0, reps_min: 5, section: "Activation" },
+      { id: ids[2], position: 1, reps_min: 5, section: "Activation" },
+      { id: ids[0], position: 2, reps_min: 6, section: "Activation" },
+    ],
+    "successful edit lands patch, section and order together",
+  );
+});
+
 await check("set_notes: upsert own, reject cross-user, view exposes superset", async () => {
   await asUser(
     OWNER,

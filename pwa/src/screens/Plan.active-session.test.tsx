@@ -3,13 +3,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const { getPlannedWorkouts, getResolvedPrescriptions, getExercises, updatePlannedWorkout, updatePrescription, addPrescriptionGroups, cacheGet, toast } = vi.hoisted(() => ({
+const { getPlannedWorkouts, getResolvedPrescriptions, getExercises, updatePlannedWorkout, updatePrescription, addPrescriptionGroups, applyPlanEdit, cacheGet, toast } = vi.hoisted(() => ({
   getPlannedWorkouts: vi.fn(),
   getResolvedPrescriptions: vi.fn(),
   getExercises: vi.fn(),
   updatePlannedWorkout: vi.fn(),
   updatePrescription: vi.fn(),
   addPrescriptionGroups: vi.fn(),
+  applyPlanEdit: vi.fn(),
   cacheGet: vi.fn(),
   toast: vi.fn(),
 }));
@@ -20,6 +21,7 @@ vi.mock("react-router-dom", () => ({
 }));
 
 vi.mock("../lib/data", () => ({
+  applyPlanEdit: (...args: unknown[]) => applyPlanEdit(...args),
   getPlannedWorkouts: (...args: unknown[]) => getPlannedWorkouts(...args),
   getResolvedPrescriptions: (...args: unknown[]) => getResolvedPrescriptions(...args),
   getExercises: (...args: unknown[]) => getExercises(...args),
@@ -32,7 +34,6 @@ vi.mock("../lib/data", () => ({
   deletePrescription: vi.fn(),
   PlanEditRefused: class PlanEditRefused extends Error {},
   duplicatePlannedWorkout: vi.fn(),
-  setPrescriptionSection: vi.fn(),
   swapWorkoutOrder: vi.fn(),
   weekOrder: (a: { day_index: number }, b: { day_index: number }) => a.day_index - b.day_index,
 }));
@@ -111,6 +112,7 @@ beforeEach(() => {
   getResolvedPrescriptions.mockResolvedValue({ data: [] });
   getExercises.mockResolvedValue({ data: [] });
   updatePlannedWorkout.mockResolvedValue(undefined);
+  applyPlanEdit.mockResolvedValue(undefined);
   cacheGet.mockResolvedValue({
     id: "session-1",
     planned_workout_id: "workout-1",
@@ -146,6 +148,35 @@ describe("Plan with an active session", () => {
       entered_load: 225.25,
       entered_unit: "lb",
     });
+  });
+
+  it("saves section changes with their rendered order in one plan edit", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [prescription("bench", "Bench Press", 0, null)],
+    });
+    render(<Plan />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Edit planned sets for Bench Press",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "ACTIVATIONS" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save planned sets" }));
+
+    await waitFor(() => expect(applyPlanEdit).toHaveBeenCalledTimes(1));
+    expect(applyPlanEdit).toHaveBeenCalledWith(
+      "workout-1",
+      ["bench-rx"],
+      expect.objectContaining({
+        targetId: "bench-rx",
+        sectionIds: ["bench-rx"],
+        section: "Activations",
+        applySection: true,
+      }),
+    );
+    expect(updatePrescription).not.toHaveBeenCalled();
   });
 
   it("shows why edits are locked and disables workout fields", async () => {
