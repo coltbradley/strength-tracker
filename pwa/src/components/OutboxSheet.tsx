@@ -65,10 +65,15 @@ export function formatAge(ms: number): string {
 export function describeOp(
   op: OutboxOp,
   exerciseNames: Record<string, string>,
+  state?: OutboxEntry["state"],
 ): string {
   if (op.kind === "update") {
     if (op.table === "symptom_episodes") return "Injury cleared up";
-    if ("discarded_at" in op.patch) return "Session discarded";
+    if ("discarded_at" in op.patch) {
+      if (state === "dead") return "Discard refused";
+      if (state) return "Discard pending";
+      return "Session discarded";
+    }
     // A rating given from Today carries session_rpe and nothing else. A finish
     // carries ended_at and MAY carry a rating alongside it, and what that write
     // did was end the session — so ended_at decides, not the rating.
@@ -340,7 +345,9 @@ function QueueList({
     <ul className="queue-list">
       {shown.map((e) => (
         <li key={e.key} className="queue-item">
-          <span className="queue-item-name">{describeOp(e.op, names)}</span>
+          <span className="queue-item-name">
+            {describeOp(e.op, names, e.state)}
+          </span>
           <span className="queue-item-age">
             {e.created_at === null
               ? ""

@@ -156,6 +156,18 @@ describe("describeOp", () => {
     );
     expect(ended).toBe("Session ended");
     expect(gone).toBe("Session discarded");
+    expect(
+      describeOp(
+        {
+          kind: "update",
+          table: "sessions",
+          id: "s",
+          patch: { discarded_at: "2026-09-01T10:00:00.000Z" },
+        },
+        {},
+        "dead",
+      ),
+    ).toBe("Discard refused");
   });
 });
 

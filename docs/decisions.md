@@ -3117,6 +3117,14 @@ against a concurrent discard: either the discard sees the set and fails, or
 the set arrives after discard and restores the session. The PWA offers discard
 only for a confirmed zero and says logged sessions stay in history.
 
+The discard refusal uses SQLSTATE `23514`, which the outbox already treats as
+a permanent row rejection. End waits for the queued write's outcome before
+clearing the active pointer or navigating. A still-pending write remains
+queued and visible as pending; a refusal leaves the session on screen with a
+specific explanation. Rejected discard rows no longer optimistically hide the
+session from History, though the failed row remains in the outbox for review
+or export.
+
 The session's `planned_workout_id` is immutable once set, so a caller cannot
 retarget the session to release the original day. Plan-reference protection
 is enforced in Postgres for the PWA, direct Data API calls, and the service-role

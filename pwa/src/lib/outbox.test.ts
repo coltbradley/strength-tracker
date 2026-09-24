@@ -681,6 +681,37 @@ describe("outbox", () => {
       new Set(["99999999-9999-4999-8999-999999999999"]),
     );
   });
+
+  it("does not hide a session after the server rejects its discard", async () => {
+    const discardErr: TransportError = {
+      message: "cannot discard a session that contains sets",
+      code: "23514",
+      status: 400,
+    };
+    const { transport } = makeTransport([discardErr]);
+    const outbox = build(transport);
+    const id = "99999999-9999-4999-8999-999999999999";
+
+    await seed(outbox, [
+      {
+        kind: "update",
+        table: "sessions",
+        id,
+        patch: { discarded_at: "2026-08-25T11:05:00.000Z" },
+      },
+    ]);
+    online = true;
+    await outbox.flush();
+
+    expect(outbox.getStatus().dead).toBe(1);
+    expect(await outbox.pendingDiscardIds()).toEqual(new Set());
+    const entry = (await outbox.inspect())[0];
+    expect(entry).toMatchObject({
+      state: "dead",
+      cause: "rejected",
+      retryable: false,
+    });
+  });
 });
 
 // Multi-user. Queued payloads leave `user_id` to the database default

@@ -103,10 +103,14 @@ Supabase sends the stock link email and the paste path is the working one.
   ordinary discard unavailable. Sessions with logged sets stay in history and
   only offer End.
 - **Discard active** — only a server-confirmed empty session can be discarded.
-  Postgres refuses the discard if a set has already arrived. If another
-  device's queued set arrives after the empty session was discarded, Postgres
-  restores the session before accepting the append-only set, so the workout
-  returns to history and derived views.
+  The PWA waits for the outbox result before clearing the active session or
+  navigating away. Offline, discard remains queued and the screen says it is
+  waiting for sync. If another device's set arrives first, Postgres refuses
+  the discard as a permanent row rejection; the screen keeps the session open
+  and explains that the workout should be ended instead. If a queued set
+  arrives after the empty session was discarded, Postgres restores the
+  session before accepting the append-only set, so the workout returns to
+  history and derived views.
 - **Recover an orphan** — a same-day open session this device has no cache
   for (other device, restored phone) surfaces as a card on Today:
   Resume / Finish / Discard (two-tap). Adoption rebuilds the session caches:

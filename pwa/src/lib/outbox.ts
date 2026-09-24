@@ -677,6 +677,10 @@ export function createOutbox({
       const rows = await readAll(db);
       return new Set(
         rows
+          // A failed discard has been refused by the server. Keeping it in
+          // this optimistic-hide set would make the session disappear from
+          // this device's history even though Postgres kept it live.
+          .filter((r) => r.item.status !== "dead")
           .map((r) => r.item.op)
           .filter(
             (

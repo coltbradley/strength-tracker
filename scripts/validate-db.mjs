@@ -521,7 +521,9 @@ await check("a session with existing sets cannot be discarded", async () => {
       `update sessions set discarded_at = now() where id = '44444444-0000-4000-8000-000000000001'`,
     );
   } catch (e) {
-    rejected = e.message.includes("sets") || e.message.includes("discard");
+    rejected =
+      e.code === "23514" &&
+      e.message.includes("cannot discard a session that contains sets");
     if (!rejected) throw e;
   }
   if (!rejected) throw new Error("a session with existing sets was discarded");
