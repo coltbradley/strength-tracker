@@ -3136,3 +3136,24 @@ immutable, including an unlogged neighbour or a new exercise: changing the plan
 later would rewrite what the recorded set was measured against. The person can
 still correct a logged set by the existing void-and-relog path, or edit a
 future day.
+
+## 2026-09-24 A write with no known owner is held, never claimed
+
+The outbox stamps each write with its owner so one person's set is never sent
+as another's. A write queued while the app did not yet know who was signed in
+used to get no owner at all, which the flusher read as a pre-multi-user item and
+replayed as whoever signed in next (A-90). In `sets`, which is append-only, that
+misattribution is permanent.
+
+Enqueue now falls back to the account whose session is saved on the device,
+which is the account the app's UI is already showing in that boot window. That
+is identity only: replay still waits until the live identity matches. If even
+that is unknown, the write records its owner as null and stays held. No later
+sign-in may claim it, because nothing records whose it is. It stays visible as
+a held count in Sync status. We accept that such a write needs manual recovery;
+the path should be unreachable in practice, since logging needs a signed-in
+shell, and a stuck write is recoverable where a misattributed set is not.
+
+The same pass stopped the Sync sheet and the queue export from showing a held
+write's contents (A-148). On a shared phone those are another person's sets.
+

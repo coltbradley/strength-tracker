@@ -275,17 +275,18 @@ Re-verified against `main` at `33cbd8f` on 2026-09-24:
 | A-205 | fixed with test | `restore_session_for_late_set`; validate-db late-set restore checks |
 | A-206 / G02-F11 | fixed with test | `outbox.test.ts` "resolves a single/batch enqueue after commit when the count refresh fails" |
 | A-143 | partially fixed | Flushes on `visibilitychange` (`outbox.visibility.test.ts`); no backoff retry while the app stays visible and online |
-| A-204 / G02-F12 | partially fixed | The sets trigger blocks the audited path; `discard()` in `data.ts` still lacks `ended_at is null` and ignores a zero-row result |
-| A-90 / G02-F01 | open | A write queued while identity is unknown gets no `user_id` and `replayable()` treats it as a legacy row, so it replays as whoever signs in |
-| A-148 / G02-F06 | open | `OutboxSheet` and export show held rows' payloads for another account |
-| A-06 / G03-F02 | open | End and Discard have separate guards; both can queue for one empty session |
+| A-204 / G02-F12 | fixed with test | Sweep discard is conditional on the session still being open and reports a lost race (`openSessions.test.ts`, A-204) |
+| A-90 / G02-F01 | fixed with test | Unknown owner is recorded as null and held; enqueue stamps the device's saved account in the boot window (`outbox.test.ts`, A-90) |
+| A-148 / G02-F06 | fixed with test | Held rows are a count only; export counts them and omits contents and owner (`OutboxSheet.test.tsx`, `export.queue.test.ts`) |
+| A-06 / G03-F02 | fixed with test | One synchronous lock covers End and Discard (`End.finish.test.tsx`, A-06) |
 | A-04 | open | `main.tsx` unchanged; an update still applies on the next hide during a workout, and staged input is memory-only |
 | A-05 / G04-F01 | open | Plan `reload` sets prescriptions with no route or generation guard |
 | A-13 | open | Today and History reloads apply results with no generation guard |
 | A-203 | open | `deleteTrainingMax` is unconditional and `v_adherence` resolves %TM dynamically |
 
-Fix order: A-90, A-148, A-06 with A-204, A-203, A-04, A-05 with A-13,
-A-143. Then the seeded browser E2E suite and a phone run.
+A-90, A-148, A-06 and A-204 were fixed on 2026-09-24. Remaining fix order:
+A-203, A-04, A-05 with A-13, A-143. Then the seeded browser E2E suite and a
+phone run.
 
 **Starts after:** Phase 1's deployment and tenant-boundary gates pass. (This
 ordering was crossed on 2026-09-24; the exit gate below still applies.)

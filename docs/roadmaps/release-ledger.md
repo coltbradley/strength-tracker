@@ -12,7 +12,8 @@ A-92 and A-107 closed with tests. A-02 closed the same day once its
 production proof existed. A-137 and A-138 were checked in production and
 their proof is still missing. Later the same day A-135 (served-SHA
 readback), A-91 (zero-row close) and A-84 (atomic plan replacement) were fixed
-with tests; see `docs/superpowers/plans/2026-09-24-a135-a91-a84-release-and-record.md`. A-137 and A-138 are deferred to Phase 5 and
+with tests; see `docs/superpowers/plans/2026-09-24-a135-a91-a84-release-and-record.md`. A-90 and A-148 followed with tests (with A-06 and A-204, which
+are not ledger rows); see `docs/superpowers/plans/2026-09-24-phase-2-record-safety.md`. A-137 and A-138 are deferred to Phase 5 and
 no longer block Phase 1's gate.
 
 States: `open` · `fixed with test` · `needs live proof` · `not reproducible`.
@@ -34,7 +35,7 @@ test and the evidence layer the roadmap names.
 | A-75  | Endurance pagination            | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-76  | Invalid provider payload        | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-84  | Training-plan replacement | Engineering | fixed with test | scripts/validate-db.mjs replace_training_plan checks (atomic replace, whole rollback on a bad phase, confirm_change gate, service role only) | Migration 20260924190000 applied by run 36046324530; production grants: service_role only (2026-09-24) | Forward-only migration; revert training_plan.ts to the multi-request write |
-| A-90  | Prefetch auth attribution       | Engineering | open             | —                                                                                         | —                                                 | —                                        |
+| A-90  | Prefetch auth attribution | Engineering | fixed with test | pwa/src/lib/outbox.test.ts "holds a write queued while NO identity was known, even after one arrives (A-90)" and "stamps the device's persisted owner when live identity is not known yet (A-90)" | — | Revert outbox.ts stamping; legacy items were never affected |
 | A-91  | Session close zero-row | Engineering | fixed with test | pwa/src/lib/outbox.test.ts "keeps a session close that matched no row visible and retryable (A-91)" | — | Revert the .select("id").single() in sync.ts |
 | A-92  | Prescription edit adherence | Engineering | fixed with test | scripts/validate-db.mjs "logged prescriptions cannot be rewritten or removed after a session ends" | Migrations through 20260924052445 applied (2026-09-24) | Forward-only migration |
 | A-94  | Health prompt responded_at      | Engineering | open             | —                                                                                         | —                                                 | Phase 1+ ; do not stamp from this plan   |
@@ -50,7 +51,7 @@ test and the evidence layer the roadmap names.
 | A-140 | Endurance sync scheduler        | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-141 | Endurance connect/revoke        | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-143 | Online outbox retry             | Engineering | open             | —                                                                                         | —                                                 | —                                        |
-| A-148 | Held outbox disclosure          | Engineering | open             | —                                                                                         | —                                                 | —                                        |
+| A-148 | Held outbox disclosure | Engineering | fixed with test | pwa/src/components/OutboxSheet.test.tsx "counts another account's held writes without showing what they are (A-148)"; pwa/src/lib/export.queue.test.ts | — | Restore the held QueueList and export rows |
 | A-149 | Legacy MCP_SECRET               | Engineering | fixed with test  | protocol.test.ts (legacy 401)                                                             | —                                                 | —                                        |
 | A-150 | Fabricated assistant history    | Engineering | fixed with test  | thread.test.ts                                                                            | —                                                 | —                                        |
 | A-151 | Caller-controlled confirm flags | Engineering | fixed with test  | ephemeral.test.ts                                                                         | —                                                 | —                                        |
