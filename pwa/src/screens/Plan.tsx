@@ -17,6 +17,7 @@ import { Note } from "../components/Note";
 import {
   applyPlanEdit,
   addPrescriptionGroups,
+  addSupersetGroups,
   reorderPrescriptions,
   saveWorkoutAsTemplate,
   deletePlannedWorkout,
@@ -80,6 +81,15 @@ import type {
 } from "../lib/types";
 
 type LoadMode = "kg" | "pct" | "feel";
+
+/** The first member of a new superset stays in memory until its partner has a
+ * complete scheme too. Persisting either one first would leave the workout in
+ * the malformed one-exercise group the editor correctly refuses elsewhere. */
+interface PendingSuperset {
+  exercise: ExerciseRow;
+  groups: SetGroup[];
+  group: number;
+}
 
 interface RxDraft {
   sets: number;
@@ -237,6 +247,7 @@ export function Plan() {
   const [searchOpen, setSearchOpen] = useState(false);
   /** Exercise chosen in the picker, awaiting its set scheme. */
   const [adding, setAdding] = useState<ExerciseRow | null>(null);
+  const [pendingSuperset, setPendingSuperset] = useState<PendingSuperset | null>(null);
   /** The section an add started from, so "Add to ACTIVATIONS" adds INTO it
    *  rather than dropping the exercise in the main body to be filed later. */
   const [addingTo, setAddingTo] = useState<string | null>(null);
@@ -683,6 +694,68 @@ export function Plan() {
    */
   const saveScheme = (ex: ExerciseRow, groups: SetGroup[]) =>
     void run("add exercise", async () => {
+      const selectedGroup = groups[0]?.superset_group ?? 0;
+      const paired = pendingSuperset;
+      if (paired !== null) {
+        if (
+          ex.id === paired.exercise.id ||
+          groups.some((group) => group.superset_group !== paired.group)
+        ) {
+          toast("Choose a different exercise for this superset.", "error");
+          return;
+        }
+        const proposed = [
+          ...(rx ?? []),
+          ...paired.groups.map((group) => ({
+            exercise_id: paired.exercise.id,
+            superset_group: group.superset_group === 0 ? null : group.superset_group,
+          })),
+          ...groups.map((group) => ({
+            exercise_id: ex.id,
+            superset_group: group.superset_group === 0 ? null : group.superset_group,
+          })),
+        ];
+        const issues = supersetRunIssues(proposed);
+        if (issues.length > 0) {
+          toast(issues.join(" "), "error");
+          return;
+        }
+        const ids = await addSupersetGroups(
+          workout.id,
+          [
+            { exerciseId: paired.exercise.id, groups: paired.groups },
+            { exerciseId: ex.id, groups },
+          ],
+          rx ?? [],
+        );
+        openAfterReload.current = ids[0];
+        setPendingSuperset(null);
+        setAdding(null);
+        setAddingTo(null);
+        const total = [...paired.groups, ...groups].reduce(
+          (n, group) => n + group.sets,
+          0,
+        );
+        const letter = String.fromCharCode(64 + paired.group);
+        toast(
+          `${paired.exercise.name} + ${ex.name}: ${total} sets in Superset ${letter}`,
+        );
+        reload();
+        return;
+      }
+
+      // A new group needs both movements before it can exist. Hold A1 only in
+      // memory, then return to the picker for A2; the next save inserts both
+      // rows in the same request.
+      if (selectedGroup !== 0 && (supersetMembers[selectedGroup]?.length ?? 0) === 0) {
+        setPendingSuperset({ exercise: ex, groups, group: selectedGroup });
+        setAdding(null);
+        setAddingTo(groups[0]?.section ?? null);
+        setSearchOpen(true);
+        toast(`Choose another exercise for Superset ${String.fromCharCode(64 + selectedGroup)}.`);
+        return;
+      }
+
       const proposed = [
         ...(rx ?? []),
         ...groups.map((group) => ({
@@ -732,6 +805,12 @@ export function Plan() {
       );
       reload();
     });
+
+  const cancelSupersetPair = () => {
+    setPendingSuperset(null);
+    setAdding(null);
+    setAddingTo(null);
+  };
 
   /**
    * ↑/↓ move a whole EXERCISE, never a row.
@@ -1822,10 +1901,18 @@ export function Plan() {
 
       {searchOpen && (
         <ExercisePicker
-          title="ADD EXERCISE"
+          title={
+            pendingSuperset === null
+              ? "ADD EXERCISE"
+              : `CHOOSE A2 · SUPERSET ${String.fromCharCode(64 + pendingSuperset.group)}`
+          }
           exercises={allExercises}
           failed={exercisesFailed}
           onPick={(ex) => {
+            if (pendingSuperset !== null && ex.id === pendingSuperset.exercise.id) {
+              toast("Choose a different exercise for this superset.", "error");
+              return;
+            }
             setSearchOpen(false);
             setAdding(ex);
           }}
@@ -1833,7 +1920,10 @@ export function Plan() {
             setSearchOpen(false);
             setNewName(q);
           }}
-          onClose={() => setSearchOpen(false)}
+          onClose={() => {
+            setSearchOpen(false);
+            cancelSupersetPair();
+          }}
         />
       )}
 
@@ -1854,6 +1944,10 @@ export function Plan() {
           initialName={newName}
           exercises={allExercises}
           onPickExisting={(ex) => {
+            if (pendingSuperset !== null && ex.id === pendingSuperset.exercise.id) {
+              toast("Choose a different exercise for this superset.", "error");
+              return;
+            }
             setNewName(null);
             setAdding(ex);
           }}
@@ -1864,7 +1958,10 @@ export function Plan() {
             // day, not to curate a library.
             setAdding(ex);
           }}
-          onClose={() => setNewName(null)}
+          onClose={() => {
+            setNewName(null);
+            if (pendingSuperset !== null) cancelSupersetPair();
+          }}
         />
       )}
 
@@ -1875,12 +1972,17 @@ export function Plan() {
           supersetMembers={supersetMembers}
           knownSections={knownSections}
           initialSection={addingTo}
+          lockedSupersetGroup={pendingSuperset?.group}
+          supersetPartnerName={pendingSuperset?.exercise.name}
           unit={unit}
           startKg={startKgFor(adding.id)}
           busy={busy}
           onCancel={() => {
-            setAdding(null);
-            setAddingTo(null);
+            if (pendingSuperset !== null) cancelSupersetPair();
+            else {
+              setAdding(null);
+              setAddingTo(null);
+            }
           }}
           onSave={(groups) => saveScheme(adding, groups)}
         />

@@ -799,10 +799,7 @@ export async function deleteTemplate(id: string): Promise<void> {
  *
  * Inserted as a single statement so a day never ends up holding half a scheme.
  */
-export async function addPrescriptionGroups(
-  plannedWorkoutId: string,
-  exerciseId: string,
-  groups: {
+export type PrescriptionGroups = {
     sets: number;
     reps_min: number;
     reps_max: number;
@@ -815,37 +812,81 @@ export async function addPrescriptionGroups(
     load_entry: LoadEntry | null;
     entered_load: number | null;
     entered_unit: "kg" | "lb" | null;
-  }[],
+  }[];
+
+type PrescriptionGroupAdd = {
+  exerciseId: string;
+  groups: PrescriptionGroups;
+};
+
+/** Build every row before writing any of them. A superset pair has no useful
+ * half-state, so both exercises must be present in the one PostgREST insert. */
+function prescriptionGroupRows(
+  plannedWorkoutId: string,
+  additions: PrescriptionGroupAdd[],
+  existing: ResolvedPrescriptionRow[],
+): PrescriptionInsert[] {
+  let position = existing.reduce((m, r) => Math.max(m, r.position), -1) + 1;
+  return additions.flatMap(({ exerciseId, groups }) =>
+    groups.map((g) => ({
+      id: uuid(),
+      planned_workout_id: plannedWorkoutId,
+      exercise_id: exerciseId,
+      position: position++,
+      sets: g.sets,
+      reps_min: g.reps_min,
+      reps_max: g.reps_max,
+      load_kg: g.load_kg,
+      load_pct_tm: null,
+      rest_seconds: g.rest_seconds,
+      notes: null,
+      set_type: g.set_type,
+      superset_group: g.superset_group === 0 ? null : g.superset_group,
+      section: g.section,
+      tracking: g.tracking,
+      // load_kg is the TOTAL; this says how the person typed it, so the session
+      // screen can hand back "30 x 2" instead of prefilling half the weight.
+      load_entry: g.load_entry,
+      entered_load: g.entered_load,
+      entered_unit: g.entered_unit,
+    })),
+  );
+}
+
+export async function addPrescriptionGroups(
+  plannedWorkoutId: string,
+  exerciseId: string,
+  groups: PrescriptionGroups,
   existing: ResolvedPrescriptionRow[],
 ): Promise<string | null> {
   if (groups.length === 0) return null;
-  const base = existing.reduce((m, r) => Math.max(m, r.position), -1) + 1;
-  const rows: PrescriptionInsert[] = groups.map((g, i) => ({
-    id: uuid(),
-    planned_workout_id: plannedWorkoutId,
-    exercise_id: exerciseId,
-    position: base + i,
-    sets: g.sets,
-    reps_min: g.reps_min,
-    reps_max: g.reps_max,
-    load_kg: g.load_kg,
-    load_pct_tm: null,
-    rest_seconds: g.rest_seconds,
-    notes: null,
-    set_type: g.set_type,
-    superset_group: g.superset_group === 0 ? null : g.superset_group,
-    section: g.section,
-    tracking: g.tracking,
-    // load_kg is the TOTAL; this says how the person typed it, so the session
-    // screen can hand back "30 x 2" instead of prefilling half the weight.
-    load_entry: g.load_entry,
-    entered_load: g.entered_load,
-    entered_unit: g.entered_unit,
-  }));
+  const rows = prescriptionGroupRows(
+    plannedWorkoutId,
+    [{ exerciseId, groups }],
+    existing,
+  );
   const { error } = await supabase.from("prescriptions").insert(rows);
   throwPlanEditError(error);
   await invalidatePlanCaches(plannedWorkoutId);
   return rows[0]!.id;
+}
+
+/**
+ * Add the first two members of a new superset as one insert. The plan editor
+ * deliberately refuses a lone group, so serial inserts could never get past
+ * the first member without storing a malformed plan between requests.
+ */
+export async function addSupersetGroups(
+  plannedWorkoutId: string,
+  additions: [PrescriptionGroupAdd, PrescriptionGroupAdd],
+  existing: ResolvedPrescriptionRow[],
+): Promise<[string, string]> {
+  const rows = prescriptionGroupRows(plannedWorkoutId, additions, existing);
+  const { error } = await supabase.from("prescriptions").insert(rows);
+  throwPlanEditError(error);
+  await invalidatePlanCaches(plannedWorkoutId);
+  const first = additions[0].groups.length;
+  return [rows[0]!.id, rows[first]!.id];
 }
 
 /**

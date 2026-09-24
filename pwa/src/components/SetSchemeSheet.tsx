@@ -135,6 +135,10 @@ interface SetSchemeSheetProps {
   /** Names already in each superset group, so picking a letter can say who it
    *  pairs with rather than leaving the letter to mean nothing. */
   supersetMembers?: Record<number, string[]>;
+  /** The second member of a brand-new pair inherits A-D from its staged first
+   * member. The editor writes both together, never a lone group. */
+  lockedSupersetGroup?: number;
+  supersetPartnerName?: string;
   unit: Unit;
   /** Best guess at a starting weight — last time's top set, or the fallback. */
   startKg: number;
@@ -149,6 +153,8 @@ export function SetSchemeSheet({
   knownSections = [],
   initialSection = null,
   supersetMembers,
+  lockedSupersetGroup,
+  supersetPartnerName,
   unit,
   startKg,
   busy,
@@ -190,7 +196,7 @@ export function SetSchemeSheet({
   // adding "A2" has the pairing in mind at the moment they add it; making them
   // add the exercise, find the row, expand it and set a letter is three steps
   // for a decision they had already made.
-  const [superset, setSuperset] = useState(0);
+  const [superset, setSuperset] = useState(lockedSupersetGroup ?? 0);
   // A session is not a flat list — it is activations, then the main lift, then
   // abs. Naming the part this belongs to is what turns a wall of exercises
   // into a workout someone recognises.
@@ -373,19 +379,26 @@ export function SetSchemeSheet({
         Put two exercises in the same group to alternate between them, resting
         once at the end rather than after each.
       </div>
-      <div className="seg">
-        {[0, 1, 2, 3, 4].map((g) => (
-          <button
-            key={g}
-            type="button"
-            className={`seg-btn ${superset === g ? "seg-on" : ""}`}
-            onClick={() => setSuperset(g)}
-          >
-            {g === 0 ? "NONE" : String.fromCharCode(64 + g)}
-          </button>
-        ))}
-      </div>
-      {superset !== 0 && (
+      {lockedSupersetGroup === undefined ? (
+        <div className="seg">
+          {[0, 1, 2, 3, 4].map((g) => (
+            <button
+              key={g}
+              type="button"
+              className={`seg-btn ${superset === g ? "seg-on" : ""}`}
+              onClick={() => setSuperset(g)}
+            >
+              {g === 0 ? "NONE" : String.fromCharCode(64 + g)}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="ss-pairing">
+          Superset {String.fromCharCode(64 + lockedSupersetGroup)} with {supersetPartnerName}.
+          Both exercises save together.
+        </div>
+      )}
+      {superset !== 0 && lockedSupersetGroup === undefined && (
         <div className="ss-pairing">
           {supersetMates.length === 0
             ? `Group ${String.fromCharCode(64 + superset)} — nothing else is in it yet.`
