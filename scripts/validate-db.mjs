@@ -220,6 +220,48 @@ await check("v_adherence: hit / missed / exceeded vs prescription", async () => 
   assertEq(r.rows[0].rx, 120, "prescribed load from TM at performance date");
 });
 
+// v_adherence resolves a %TM prescription against the max that was in force
+// on the day the set was performed. Deleting or rewriting that max changed a
+// past set's prescribed load and outcome (A-203), the same history rewrite the
+// prescription lock refuses.
+await check("a training max that logged %TM sets depended on cannot be deleted or rewritten", async () => {
+  const inForce = await db.query(
+    `select id from training_maxes where user_id = $1 and exercise_id = 'Barbell_Squat' and value_kg = 150`,
+    [OWNER],
+  );
+  const id = inForce.rows[0].id;
+  for (const [what, sql] of [
+    ["delete", `delete from training_maxes where id = '${id}'`],
+    ["value change", `update training_maxes set value_kg = 155 where id = '${id}'`],
+    ["date change", `update training_maxes set effective_date = current_date + 1 where id = '${id}'`],
+  ]) {
+    let code = null;
+    try {
+      await db.exec(sql);
+    } catch (e) {
+      code = e.code ?? e.message;
+    }
+    assertEq(code, "23514", `${what} refused`);
+  }
+  const r = await db.query(
+    `select prescribed_load_kg::float as rx from v_adherence where user_id = $1 order by set_index limit 1`,
+    [OWNER],
+  );
+  assertEq(r.rows[0].rx, 120, "past adherence still reads 80% of 150");
+});
+
+await check("a training max no logged set depended on still deletes and edits freely", async () => {
+  // The future-dated 160 was never in force for any set.
+  const future = await db.query(
+    `select id, effective_date from training_maxes where user_id = $1 and exercise_id = 'Barbell_Squat' and value_kg = 160`,
+    [OWNER],
+  );
+  await db.exec(`update training_maxes set value_kg = 161 where id = '${future.rows[0].id}'`);
+  await db.exec(`delete from training_maxes where id = '${future.rows[0].id}'`);
+  await db.exec(`insert into training_maxes (user_id, exercise_id, value_kg, effective_date)
+                   values ('${OWNER}', 'Barbell_Squat', 160, current_date + 10)`);
+});
+
 await check("v_rest computes lag within session+exercise", async () => {
   const r = await db.query(
     `select rest_seconds_before from v_rest
