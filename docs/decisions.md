@@ -3157,3 +3157,22 @@ shell, and a stuck write is recoverable where a misattributed set is not.
 The same pass stopped the Sync sheet and the queue export from showing a held
 write's contents (A-148). On a shared phone those are another person's sets.
 
+## 2026-09-24 A training max logged sets used is history
+
+`v_adherence` resolves a %TM set against the max in force on the day it was
+performed, so deleting or editing that max rewrote past prescribed loads and
+outcomes (A-203). A trigger now refuses changing or removing a max that logged
+%TM sets depended on, the same rule as the prescription lock. The fix for a
+wrong max is a new one dated from today. Inserting stays free, including a
+first max after a calibration session, because a new max only resolves sets on
+or after its own date.
+
+## 2026-09-24 An update waits for the session to close
+
+A waiting service worker used to apply on the next hide during a session, and a
+phone locked between sets is a hide, so the reload dropped staged input (A-04).
+It now waits until no session is open (`pwa/src/lib/swUpdate.ts`), re-checking
+on every visibility change and every minute. A session left open for days
+delays the update that long unless the app is closed, which activates the
+waiting worker on the next launch; the overnight sweep closes stale sessions.
+

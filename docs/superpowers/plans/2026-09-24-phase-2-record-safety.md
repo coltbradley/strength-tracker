@@ -82,3 +82,12 @@ when a still-open row changed. Supabase impl adds
 - [ ] Failing test: fake port whose `discard` reports false (the session was
       completed elsewhere after the snapshot): `autoDiscarded` is 0.
 - [ ] Implement and commit `fix: discard only a session that is still open (A-204)`.
+
+## Follow-on (same day): A-203, A-04, A-05, A-13, A-143
+
+Done test-first, one commit each: a `training_maxes` history trigger
+(`20260924200000`, validate-db checks); `lib/swUpdate.ts` gate with
+`swUpdate.test.ts`; generation guards in Plan (`Plan.navigation.test.tsx`),
+Today (`Today.plan-changed.test.tsx`) and History; an outbox retry backoff
+(`outbox.test.ts`). History's index guard has no dedicated test.
+

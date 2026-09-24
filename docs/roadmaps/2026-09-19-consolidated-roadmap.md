@@ -274,19 +274,18 @@ Re-verified against `main` at `33cbd8f` on 2026-09-24:
 | G04-F04 | fixed with test | Plan edits, section rename/dissolve and reorder all call `apply_plan_edit_with_delete`; validate-db "planned prescription edits roll back as one request on reorder failure" |
 | A-205 | fixed with test | `restore_session_for_late_set`; validate-db late-set restore checks |
 | A-206 / G02-F11 | fixed with test | `outbox.test.ts` "resolves a single/batch enqueue after commit when the count refresh fails" |
-| A-143 | partially fixed | Flushes on `visibilitychange` (`outbox.visibility.test.ts`); no backoff retry while the app stays visible and online |
+| A-143 | fixed with test | Backoff retry at 5 s, 15 s, 1 min, then 5 min while online (`outbox.test.ts`, A-143) |
 | A-204 / G02-F12 | fixed with test | Sweep discard is conditional on the session still being open and reports a lost race (`openSessions.test.ts`, A-204) |
 | A-90 / G02-F01 | fixed with test | Unknown owner is recorded as null and held; enqueue stamps the device's saved account in the boot window (`outbox.test.ts`, A-90) |
 | A-148 / G02-F06 | fixed with test | Held rows are a count only; export counts them and omits contents and owner (`OutboxSheet.test.tsx`, `export.queue.test.ts`) |
 | A-06 / G03-F02 | fixed with test | One synchronous lock covers End and Discard (`End.finish.test.tsx`, A-06) |
-| A-04 | open | `main.tsx` unchanged; an update still applies on the next hide during a workout, and staged input is memory-only |
-| A-05 / G04-F01 | open | Plan `reload` sets prescriptions with no route or generation guard |
-| A-13 | open | Today and History reloads apply results with no generation guard |
-| A-203 | open | `deleteTrainingMax` is unconditional and `v_adherence` resolves %TM dynamically |
+| A-04 | fixed with test | An update waits for the open session to close, not the next hide (`lib/swUpdate.ts`, `swUpdate.test.ts`) |
+| A-05 / G04-F01 | fixed with test | Plan drops the old day's rows on a route change and ignores superseded reads (`Plan.navigation.test.tsx`) |
+| A-13 | fixed (Today with test) | Today's plan and DONE reads and History's index ignore superseded reads (`Today.plan-changed.test.tsx`, A-13); History has no dedicated test |
+| A-203 | fixed with test | Trigger refuses changing or deleting a max logged %TM sets depended on (validate-db, 20260924200000) |
 
-A-90, A-148, A-06 and A-204 were fixed on 2026-09-24. Remaining fix order:
-A-203, A-04, A-05 with A-13, A-143. Then the seeded browser E2E suite and a
-phone run.
+Every item above was fixed on 2026-09-24. What remains for Phase 2's exit gate
+is the seeded browser E2E suite and a phone run.
 
 **Starts after:** Phase 1's deployment and tenant-boundary gates pass. (This
 ordering was crossed on 2026-09-24; the exit gate below still applies.)

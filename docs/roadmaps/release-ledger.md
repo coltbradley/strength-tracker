@@ -13,7 +13,8 @@ production proof existed. A-137 and A-138 were checked in production and
 their proof is still missing. Later the same day A-135 (served-SHA
 readback), A-91 (zero-row close) and A-84 (atomic plan replacement) were fixed
 with tests; see `docs/superpowers/plans/2026-09-24-a135-a91-a84-release-and-record.md`. A-90 and A-148 followed with tests (with A-06 and A-204, which
-are not ledger rows); see `docs/superpowers/plans/2026-09-24-phase-2-record-safety.md`. A-137 and A-138 are deferred to Phase 5 and
+are not ledger rows); see `docs/superpowers/plans/2026-09-24-phase-2-record-safety.md`. A-143 followed the same day,
+with A-203, A-04, A-05 and A-13 (not ledger rows). A-137 and A-138 are deferred to Phase 5 and
 no longer block Phase 1's gate.
 
 States: `open` · `fixed with test` · `needs live proof` · `not reproducible`.
@@ -50,7 +51,7 @@ test and the evidence layer the roadmap names.
 | A-139 | PWA endurance-sync URL          | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-140 | Endurance sync scheduler        | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-141 | Endurance connect/revoke        | Engineering | open             | —                                                                                         | —                                                 | —                                        |
-| A-143 | Online outbox retry             | Engineering | open             | —                                                                                         | —                                                 | —                                        |
+| A-143 | Online outbox retry | Engineering | fixed with test | pwa/src/lib/outbox.test.ts "retries a transient failure on its own while the app stays open and online (A-143)"; outbox.visibility.test.ts | — | Remove the retry timer in outbox.ts |
 | A-148 | Held outbox disclosure | Engineering | fixed with test | pwa/src/components/OutboxSheet.test.tsx "counts another account's held writes without showing what they are (A-148)"; pwa/src/lib/export.queue.test.ts | — | Restore the held QueueList and export rows |
 | A-149 | Legacy MCP_SECRET               | Engineering | fixed with test  | protocol.test.ts (legacy 401)                                                             | —                                                 | —                                        |
 | A-150 | Fabricated assistant history    | Engineering | fixed with test  | thread.test.ts                                                                            | —                                                 | —                                        |
