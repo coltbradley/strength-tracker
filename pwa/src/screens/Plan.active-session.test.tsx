@@ -3,12 +3,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const { getPlannedWorkouts, getResolvedPrescriptions, getExercises, updatePlannedWorkout, addPrescriptionGroups, applyPlanEdit, cacheGet, toast } = vi.hoisted(() => ({
+const { getPlannedWorkouts, getResolvedPrescriptions, getExercises, updatePlannedWorkout, addPrescriptionGroups, addSupersetGroups, applyPlanEdit, cacheGet, toast } = vi.hoisted(() => ({
   getPlannedWorkouts: vi.fn(),
   getResolvedPrescriptions: vi.fn(),
   getExercises: vi.fn(),
   updatePlannedWorkout: vi.fn(),
   addPrescriptionGroups: vi.fn(),
+  addSupersetGroups: vi.fn(),
   applyPlanEdit: vi.fn(),
   cacheGet: vi.fn(),
   toast: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("../lib/data", () => ({
   getExercises: (...args: unknown[]) => getExercises(...args),
   updatePlannedWorkout: (...args: unknown[]) => updatePlannedWorkout(...args),
   addPrescriptionGroups: (...args: unknown[]) => addPrescriptionGroups(...args),
+  addSupersetGroups: (...args: unknown[]) => addSupersetGroups(...args),
   reorderPrescriptions: vi.fn(),
   saveWorkoutAsTemplate: vi.fn(),
   deletePlannedWorkout: vi.fn(),
@@ -80,9 +82,10 @@ vi.mock("../components/SetSchemeSheet", () => ({
 }));
 vi.mock("../components/Note", () => ({ Note: () => null }));
 vi.mock("../components/ExercisePicker", () => ({
-  ExercisePicker: ({ onPick }: { onPick: (exercise: { id: string; name: string; equipment: string }) => void }) => (
+  ExercisePicker: ({ onPick }: { onPick: (exercise: { id: string; name: string; equipment: string }) => void }) => <>
+    <button type="button" onClick={() => onPick({ id: "barbell-row", name: "Barbell Row", equipment: "barbell" })}>Pick Barbell Row</button>
     <button type="button" onClick={() => onPick({ id: "cable-row", name: "Cable Row", equipment: "cable" })}>Pick Cable Row</button>
-  ),
+  </>,
 }));
 
 import { Plan } from "./Plan";
@@ -354,6 +357,35 @@ describe("Plan with an active session", () => {
         expect.objectContaining({ exercise_id: "row", superset_group: 1 }),
       ]),
     );
+  });
+
+  it("writes both new superset members together instead of persisting an unpaired first member", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    addSupersetGroups.mockResolvedValue(["barbell-row-rx", "cable-row-rx"]);
+    render(<Plan />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pick Barbell Row" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save scheme" }));
+
+    // Saving A1 changes the next question to the movement that pairs with it;
+    // it must not write the temporary one-member superset.
+    expect(await screen.findByRole("button", { name: "Pick Cable Row" })).toBeTruthy();
+    expect(addPrescriptionGroups).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Pick Cable Row" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save scheme" }));
+
+    await waitFor(() => expect(addSupersetGroups).toHaveBeenCalledTimes(1));
+    expect(addSupersetGroups).toHaveBeenCalledWith(
+      "workout-1",
+      expect.arrayContaining([
+        expect.objectContaining({ exerciseId: "barbell-row" }),
+        expect.objectContaining({ exerciseId: "cable-row" }),
+      ]),
+      [],
+    );
+    expect(addPrescriptionGroups).not.toHaveBeenCalled();
   });
 
   it("does not describe malformed legacy groups as alternated pairs", async () => {
