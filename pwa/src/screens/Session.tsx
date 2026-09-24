@@ -1293,6 +1293,10 @@ export function Session() {
       performed_at: new Date().toISOString(),
       rest_seconds_actual: actualRest,
       load_entry: loadEntryForSet(entryMode, storedLoad),
+      entered_load: tick || storedLoad <= 0
+        ? null
+        : toDisplay(draft.entryKg, unit),
+      entered_unit: tick || storedLoad <= 0 ? null : unit,
       rpe: tick ? null : draft.rpe,
     };
   };
@@ -1703,6 +1707,14 @@ export function Session() {
       reps,
       set_type: setType,
       load_entry: loadEntryForSet(loadEntry, totalLoadKg),
+      entered_load: Math.round(totalLoadKg * 100) / 100 === old.load_kg
+        ? old.entered_load ?? null
+        : totalLoadKg > 0
+          ? toDisplay(enteredKg(totalLoadKg, loadEntry), unit)
+          : null,
+      entered_unit: Math.round(totalLoadKg * 100) / 100 === old.load_kg
+        ? old.entered_unit ?? null
+        : (totalLoadKg > 0 ? unit : null),
       rpe,
     };
     if (isNoopCorrection(old, correction)) {

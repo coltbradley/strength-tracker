@@ -3025,5 +3025,72 @@ await check("all six new indexes exist with the expected leading column", async 
   }
 });
 
+console.log("\nnative authored load units:");
+
+await check("lb, per-side lb, kg, percent, and legacy values stay distinct", async () => {
+  await db.exec(`
+    insert into prescriptions (
+      id, user_id, planned_workout_id, exercise_id, position, sets, reps_min,
+      reps_max, load_kg, load_entry, entered_load, entered_unit
+    ) values
+      ('33333333-0000-4000-8000-000000000020', '${OWNER}', '22222222-0000-4000-8000-000000000001', 'Barbell_Deadlift', 3, 3, 5, 5, 102.06, 'total', 225, 'lb'),
+      ('33333333-0000-4000-8000-000000000021', '${OWNER}', '22222222-0000-4000-8000-000000000001', 'Barbell_Deadlift', 4, 3, 5, 5, 27.22, 'per_side', 30, 'lb'),
+      ('33333333-0000-4000-8000-000000000022', '${OWNER}', '22222222-0000-4000-8000-000000000001', 'Barbell_Deadlift', 5, 3, 5, 5, 100, 'total', 100, 'kg');
+    insert into sets (
+      id, user_id, session_id, exercise_id, prescription_id, set_index,
+      set_type, load_kg, reps, load_entry, entered_load, entered_unit
+    ) values
+      ('55555555-0000-4000-8000-000000000030', '${OWNER}', '44444444-0000-4000-8000-000000000001', 'Barbell_Deadlift', '33333333-0000-4000-8000-000000000020', 5, 'working', 102.06, 5, 'total', 225, 'lb'),
+      ('55555555-0000-4000-8000-000000000031', '${OWNER}', '44444444-0000-4000-8000-000000000001', 'Barbell_Deadlift', '33333333-0000-4000-8000-000000000021', 6, 'working', 27.22, 5, 'per_side', 30, 'lb'),
+      ('55555555-0000-4000-8000-000000000032', '${OWNER}', '44444444-0000-4000-8000-000000000001', 'Barbell_Deadlift', '33333333-0000-4000-8000-000000000022', 7, 'working', 100, 5, 'total', 100, 'kg');
+  `);
+  const rows = await db.query(`
+    select load_kg::float as total, entered_load::float as entered,
+      entered_unit::text as unit, load_entry::text as entry
+      from v_live_sets where id in (
+        '55555555-0000-4000-8000-000000000030',
+        '55555555-0000-4000-8000-000000000031',
+        '55555555-0000-4000-8000-000000000032'
+      ) order by set_index
+  `);
+  assertEq(rows.rows, [
+    { total: 102.06, entered: 225, unit: "lb", entry: "total" },
+    { total: 27.22, entered: 30, unit: "lb", entry: "per_side" },
+    { total: 100, entered: 100, unit: "kg", entry: "total" },
+  ], "canonical totals and authored entries");
+  const rx = await db.query(`
+    select entered_load::float as entered, entered_unit::text as unit
+      from v_resolved_prescriptions where id = '33333333-0000-4000-8000-000000000020'
+  `);
+  assertEq([rx.rows[0].entered, rx.rows[0].unit], [225, "lb"], "resolved prescription");
+  const adherence = await db.query(`
+    select actual_load_kg::float as actual, prescribed_load_kg::float as target,
+      actual_entered_load::float as actual_typed,
+      prescribed_entered_load::float as target_typed
+      from v_adherence where set_id = '55555555-0000-4000-8000-000000000030'
+  `);
+  assertEq([adherence.rows[0].actual, adherence.rows[0].target,
+    adherence.rows[0].actual_typed, adherence.rows[0].target_typed],
+  [102.06, 102.06, 225, 225], "adherence keeps totals and authored values");
+  const legacy = await db.query(`
+    select entered_load, entered_unit from v_live_sets
+      where id = '55555555-0000-4000-8000-000000000002'
+  `);
+  assertEq([legacy.rows[0].entered_load, legacy.rows[0].entered_unit],
+    [null, null], "legacy values stay unknown");
+});
+
+await check("authored-load trigger refuses disagreement and partial provenance", async () => {
+  const invalids = [
+    `insert into prescriptions (user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_kg, load_entry, entered_load, entered_unit) values ('${OWNER}', '22222222-0000-4000-8000-000000000001', 'Barbell_Deadlift', 6, 3, 5, 5, 100, 'total', 225, 'lb')`,
+    `insert into prescriptions (user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_kg, load_entry, entered_load) values ('${OWNER}', '22222222-0000-4000-8000-000000000001', 'Barbell_Deadlift', 6, 3, 5, 5, 100, 'total', 225)`,
+  ];
+  for (const sql of invalids) {
+    let rejected = false;
+    try { await db.exec(sql); } catch { rejected = true; }
+    if (!rejected) throw new Error("invalid authored load was accepted");
+  }
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

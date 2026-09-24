@@ -7,6 +7,8 @@ import {
   stepKgFor,
   toDisplay,
   fromDisplay,
+  loadToKg,
+  kgToEnteredLoad,
 } from "./units";
 
 describe("units", () => {
@@ -22,6 +24,18 @@ describe("units", () => {
   it("uses the exact conversion factor", () => {
     expect(lbToKg(1)).toBeCloseTo(0.45359237, 10);
     expect(kgToLb(1)).toBeCloseTo(1 / KG_PER_LB, 10);
+  });
+
+  it("converts authored units into total-system kg without rounding", () => {
+    expect(loadToKg(225, "lb", "total")).toBeCloseTo(102.05828325, 10);
+    expect(loadToKg(30, "lb", "per_side")).toBeCloseTo(27.2155422, 10);
+    expect(loadToKg(100, "kg", "total")).toBe(100);
+  });
+
+  it("converts canonical totals back to the authored value", () => {
+    expect(kgToEnteredLoad(lbToKg(225), "lb", "total")).toBeCloseTo(225, 10);
+    expect(kgToEnteredLoad(loadToKg(30, "lb", "per_side"), "lb", "per_side"))
+      .toBeCloseTo(30, 10);
   });
 
   it("display conversion rounds to 1 decimal", () => {

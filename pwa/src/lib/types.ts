@@ -30,6 +30,7 @@ export type TrackingMode = "reps" | "done" | "time";
  *                and their ambiguity is permanent.
  */
 export type LoadEntry = "total" | "per_side";
+export type LoadUnit = "kg" | "lb";
 
 /** The exercise library as the PWA reads it. `primary_muscles` exists on the
  *  table (and the MCP server selects it) but nothing in the app renders it,
@@ -90,6 +91,8 @@ export interface PrescriptionInsert {
   notes: string | null;
   /** total-vs-per-side convention for load_kg; omit when not asserted */
   load_entry?: LoadEntry | null;
+  entered_load?: number | null;
+  entered_unit?: LoadUnit | null;
   /** warmup / working / backoff; omit to take the column default ('working') */
   set_type?: SetType;
   /** 1=A … 4=D; null = not part of a superset */
@@ -110,6 +113,8 @@ export interface PrescriptionPatch {
   position?: number;
   superset_group?: number | null;
   load_entry?: LoadEntry | null;
+  entered_load?: number | null;
+  entered_unit?: LoadUnit | null;
   section?: string | null;
   tracking?: TrackingMode;
 }
@@ -137,6 +142,9 @@ export interface ResolvedPrescriptionRow {
    *  Optional because prescriptions cached offline before this field, and
    *  select lists that predate it, simply omit it. */
   load_entry?: LoadEntry | null;
+  /** Durable typed number/unit. Both absent/null identify a legacy row. */
+  entered_load?: number | null;
+  entered_unit?: LoadUnit | null;
   /** warmup / working / backoff. Optional for the same reason as load_entry:
    *  rows cached before the column existed simply omit it, and an absent
    *  value must read as 'working', never as unknown. */
@@ -214,6 +222,9 @@ export interface SetInsert {
    *  (and reads whose column list predates it) simply carry no assertion.
    *  DB rejects "per_side" on a 0 kg bodyweight set. */
   load_entry?: LoadEntry | null;
+  /** Durable typed number/unit. Both absent/null identify a legacy row. */
+  entered_load?: number | null;
+  entered_unit?: LoadUnit | null;
   /**
    * How hard the set felt: 5 to 10 in half points, the scale in lib/rpe.ts.
    *
@@ -307,6 +318,10 @@ export interface AdherenceRow {
   rep_outcome: "hit" | "missed" | "exceeded";
   actual_load_entry: LoadEntry | null;
   prescribed_load_entry: LoadEntry | null;
+  actual_entered_load: number | null;
+  actual_entered_unit: LoadUnit | null;
+  prescribed_entered_load: number | null;
+  prescribed_entered_unit: LoadUnit | null;
 }
 
 export interface SessionBestE1rmRow {

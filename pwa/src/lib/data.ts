@@ -16,6 +16,7 @@ import { reportError } from "./errors";
 import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
+import { kgToEnteredLoad } from "./units";
 import type {
   AdherenceRow,
   ExerciseRow,
@@ -51,7 +52,7 @@ import type {
  *  screen on the next reload even though Postgres still holds it. Null here
  *  means unrated, which is the ordinary case and never an error. */
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,rpe";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,rpe,entered_load,entered_unit";
 
 /** Why a read came back from the device cache rather than the server. */
 export type StaleReason = "offline" | "error";
@@ -432,7 +433,7 @@ export async function duplicatePlannedWorkout(
   const { data: rx, error: rErr } = await supabase
     .from("prescriptions")
     .select(
-      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,superset_group",
+      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,superset_group,load_entry,entered_load,entered_unit",
     )
     .eq("planned_workout_id", workout.id);
   throwIf(rErr);
@@ -685,6 +686,9 @@ export async function saveWorkoutAsTemplate(
       rest_seconds: r.rest_seconds,
       notes: r.notes,
       set_type: r.set_type ?? "working",
+      load_entry: r.load_entry ?? null,
+      entered_load: r.entered_load ?? null,
+      entered_unit: r.entered_unit ?? null,
     }));
     const { error: rxErr } = await supabase.from("prescriptions").insert(rows);
     throwIf(rxErr);
@@ -730,7 +734,7 @@ export async function applyTemplate(
   const { data: rxRows, error: rErr } = await supabase
     .from("prescriptions")
     .select(
-      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,set_type,superset_group,load_entry",
+      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,set_type,superset_group,load_entry,entered_load,entered_unit",
     )
     .eq("planned_workout_id", templateId)
     .order("position");
@@ -772,6 +776,10 @@ export async function applyTemplate(
     id: uuid(),
     planned_workout_id: workoutId,
     load_kg: next[i] ?? r.load_kg,
+    entered_load: next[i] != null && r.entered_unit != null && r.load_entry != null
+      ? kgToEnteredLoad(next[i], r.entered_unit, r.load_entry)
+      : r.entered_load ?? null,
+    entered_unit: r.entered_load == null ? null : r.entered_unit ?? null,
   }));
   if (rows.length > 0) {
     const { error: iErr } = await supabase.from("prescriptions").insert(rows);
@@ -818,6 +826,8 @@ export async function addPrescriptionGroups(
     section: string | null;
     tracking: TrackingMode;
     load_entry: LoadEntry | null;
+    entered_load: number | null;
+    entered_unit: "kg" | "lb" | null;
   }[],
   existing: ResolvedPrescriptionRow[],
 ): Promise<string | null> {
@@ -842,6 +852,8 @@ export async function addPrescriptionGroups(
     // load_kg is the TOTAL; this says how the person typed it, so the session
     // screen can hand back "30 x 2" instead of prefilling half the weight.
     load_entry: g.load_entry,
+    entered_load: g.entered_load,
+    entered_unit: g.entered_unit,
   }));
   const { error } = await supabase.from("prescriptions").insert(rows);
   throwIf(error);
@@ -1824,7 +1836,7 @@ export async function getAdherence(
     const { data, error } = await supabase
       .from("v_adherence")
       .select(
-        "set_id,session_id,exercise_id,prescription_id,set_index,performed_at,actual_load_kg,actual_reps,reps_min,reps_max,prescribed_load_kg,load_delta_kg,rep_outcome,actual_load_entry,prescribed_load_entry",
+        "set_id,session_id,exercise_id,prescription_id,set_index,performed_at,actual_load_kg,actual_reps,reps_min,reps_max,prescribed_load_kg,load_delta_kg,rep_outcome,actual_load_entry,prescribed_load_entry,actual_entered_load,actual_entered_unit,prescribed_entered_load,prescribed_entered_unit",
       )
       .eq("exercise_id", exerciseId)
       .in("session_id", sessionIds);

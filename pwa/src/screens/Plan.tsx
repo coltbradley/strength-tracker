@@ -71,6 +71,7 @@ import {
 } from "../lib/loadEntry";
 import type {
   LoadEntry,
+  LoadUnit,
   ExerciseRow,
   TrackingMode,
   PlannedWorkoutRow,
@@ -92,6 +93,7 @@ interface RxDraft {
   load_kg: number;
   /** How this row's weight is expressed. */
   load_entry: LoadEntry;
+  entered_unit: LoadUnit | null;
   load_pct: number; // meaningful in pct mode
   rest_seconds: number;
   hasRest: boolean;
@@ -145,8 +147,11 @@ function draftFrom(
     reps_min: r.reps_min,
     reps_max: r.reps_max,
     mode: r.load_kg !== null ? "kg" : r.load_pct_tm !== null ? "pct" : "feel",
-    load_kg: Math.round(enteredKg(storedTotal, entry) * 100) / 100,
+    load_kg: r.entered_load != null && r.entered_unit != null
+      ? fromDisplay(r.entered_load, r.entered_unit)
+      : Math.round(enteredKg(storedTotal, entry) * 100) / 100,
     load_entry: entry,
+    entered_unit: r.entered_load != null ? r.entered_unit ?? null : null,
     load_pct: r.load_pct_tm ?? 75,
     rest_seconds: r.rest_seconds ?? 180,
     hasRest: r.rest_seconds !== null,
@@ -164,6 +169,8 @@ function unchanged(r: ResolvedPrescriptionRow, p: PrescriptionPatch): boolean {
     p.reps_max === r.reps_max &&
     (p.load_kg ?? null) === (r.load_kg ?? null) &&
     (p.load_entry ?? null) === (r.load_entry ?? null) &&
+    (p.entered_load ?? null) === (r.entered_load ?? null) &&
+    (p.entered_unit ?? null) === (r.entered_unit ?? null) &&
     (p.load_pct_tm ?? null) === (r.load_pct_tm ?? null) &&
     (p.rest_seconds ?? null) === (r.rest_seconds ?? null) &&
     (p.superset_group ?? null) === (r.superset_group ?? null) &&
@@ -173,6 +180,7 @@ function unchanged(r: ResolvedPrescriptionRow, p: PrescriptionPatch): boolean {
 }
 
 function patchFrom(d: RxDraft): PrescriptionPatch {
+  const hasDirectLoad = d.mode === "kg" && d.load_kg > 0 && d.entered_unit !== null;
   return {
     sets: d.sets,
     reps_min: d.reps_min,
@@ -188,6 +196,8 @@ function patchFrom(d: RxDraft): PrescriptionPatch {
         ? Math.round(Math.max(0, totalKg(d.load_kg, d.load_entry)) * 100) / 100
         : null,
     load_entry: d.mode === "kg" ? d.load_entry : null,
+    entered_load: hasDirectLoad ? toDisplay(d.load_kg, d.entered_unit!) : null,
+    entered_unit: hasDirectLoad ? d.entered_unit : null,
     load_pct_tm: d.mode === "pct" ? d.load_pct : null,
     rest_seconds: d.hasRest ? d.rest_seconds : null,
     superset_group: d.superset === 0 ? null : d.superset,
@@ -1190,7 +1200,13 @@ export function Plan() {
                         key={mode}
                         type="button"
                         className={`seg-btn ${draft.mode === mode ? "seg-on" : ""}`}
-                        onClick={() => setDraft({ ...draft, mode })}
+                        onClick={() => setDraft({
+                          ...draft,
+                          mode,
+                          entered_unit: mode === "kg"
+                            ? draft.entered_unit ?? unit
+                            : null,
+                        })}
                       >
                         {label}
                       </button>
@@ -1258,6 +1274,7 @@ export function Plan() {
                                 999,
                                 Math.max(0, fromDisplay(v, unit)),
                               ),
+                              entered_unit: unit,
                             }),
                           onCancel: () => setPad(null),
                         })
@@ -1267,7 +1284,11 @@ export function Plan() {
                       value={draft.load_kg}
                       min={0}
                       max={999}
-                      onChange={(v) => setDraft({ ...draft, load_kg: v })}
+                      onChange={(v) => setDraft({
+                        ...draft,
+                        load_kg: v,
+                        entered_unit: unit,
+                      })}
                       snap
                       steps={[
                         {

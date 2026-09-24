@@ -38,6 +38,8 @@ interface PrescriptionRow {
   load_pct_tm: number | null;
   resolved_load_kg: number | null;
   load_entry: string | null;
+  entered_load: number | null;
+  entered_unit: string | null;
   rest_seconds: number | null;
   superset_group: number | null;
   notes: string | null;
@@ -200,7 +202,8 @@ export function registerGetProgram(
                   .select(
                     "id, planned_workout_id, position, exercise_id, exercise_name, " +
                       "set_type, section, tracking, sets, reps_min, reps_max, load_kg, load_pct_tm, " +
-                      "resolved_load_kg, load_entry, rest_seconds, superset_group, notes",
+                      "resolved_load_kg, load_entry, rest_seconds, superset_group, notes, " +
+                      "entered_load, entered_unit",
                   )
                   .eq("user_id", db.ownerId)
                   .in(
@@ -247,9 +250,9 @@ export function registerGetProgram(
             prescription_count: rx.length,
             note:
               "load_kg is always the TOTAL load moved in one rep; load_entry " +
-              "records how it was typed ('per_side' means the lifter entered " +
-              "the per-hand number and it was doubled). Quote it back the way " +
-              "it was entered, not the stored total.",
+              "records total vs per-side expression. entered_load and " +
+              "entered_unit preserve the authored number and unit when known. " +
+              "Null provenance means legacy or %TM, never implied kg.",
           },
         });
       }),

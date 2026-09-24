@@ -6,6 +6,7 @@
 // call here.
 
 import { getExerciseStepKg, getLoadStepKg } from "./settings";
+import type { LoadEntry } from "./types";
 
 export type Unit = "kg" | "lb";
 
@@ -28,6 +29,26 @@ export function toDisplay(kg: number, unit: Unit): number {
 /** value entered/shown in the display unit -> kg (unrounded). */
 export function fromDisplay(value: number, unit: Unit): number {
   return unit === "kg" ? value : lbToKg(value);
+}
+
+/** Convert an authored entry into the canonical total-system kg value. */
+export function loadToKg(
+  value: number,
+  unit: Unit,
+  entry: LoadEntry,
+): number {
+  const total = fromDisplay(value, unit);
+  return entry === "per_side" ? total * 2 : total;
+}
+
+/** Convert a canonical total-system kg value into its authored entry value. */
+export function kgToEnteredLoad(
+  totalKg: number,
+  unit: Unit,
+  entry: LoadEntry,
+): number {
+  const value = entry === "per_side" ? totalKg / 2 : totalKg;
+  return unit === "kg" ? value : kgToLb(value);
 }
 
 /**

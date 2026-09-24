@@ -306,6 +306,10 @@ const adh = (over: Partial<AdherenceRow>): AdherenceRow => ({
   rep_outcome: "hit",
   actual_load_entry: "total",
   prescribed_load_entry: "total",
+  actual_entered_load: null,
+  actual_entered_unit: null,
+  prescribed_entered_load: null,
+  prescribed_entered_unit: null,
   ...over,
 });
 

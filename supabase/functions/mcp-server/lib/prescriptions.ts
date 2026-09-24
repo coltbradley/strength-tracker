@@ -80,19 +80,32 @@ export const prescriptionSchema = z
       .describe(
         "Top of the rep range. Must be >= reps_min. Equal for a fixed rep count.",
       ),
+    load: z.object({
+      value: z.number().positive(),
+      unit: z.enum(["kg", "lb"]),
+      entry: z.enum(["total", "per_side"]),
+    }).optional().describe(
+      "Direct load exactly as authored: {value, unit, entry}. For example, " +
+        "225 lb barbell is {value:225,unit:'lb',entry:'total'}; 30 lb " +
+        "dumbbells each is {value:30,unit:'lb',entry:'per_side'}. Do not " +
+        "convert to unitless values. Omit for %TM or by-feel.",
+    ),
     load_kg: z
       .number()
       .positive()
       .optional()
-      .describe("Absolute load in kg. Mutually exclusive with load_pct_tm."),
+      .describe(
+        "Temporary, unit-labeled compatibility input for older MCP clients. " +
+          "New screenshot parses must use load:{value,unit,entry}.",
+      ),
     load_pct_tm: z
       .number()
       .positive()
       .max(200)
       .optional()
       .describe(
-        "Load as a percent of training max (e.g. 72.5). Mutually exclusive with " +
-          "load_kg. Write it whenever the coach wrote a percentage, whether or " +
+          "Load as a percent of training max (e.g. 72.5). Mutually exclusive with " +
+          "a direct load object. Write it whenever the coach wrote a percentage, whether or " +
           "not a training max exists yet: with none, the app shows the " +
           "percentage and 'no TM set', and the tool result lists the exercise " +
           "under unresolved_pct so you can propose a TM from the first session " +
@@ -103,15 +116,11 @@ export const prescriptionSchema = z
       .enum(["total", "per_side"])
       .optional()
       .describe(
-        "How the load is EXPRESSED. load_kg (and any %TM it resolves to) is " +
-          "ALWAYS the TOTAL system load — the whole weight moved in one rep. " +
-          "When the coach writes a per-hand number ('DB bench 3x10 @ 30', " +
-          "'30s', '30 each'), DOUBLE it into load_kg and set " +
-          "load_entry: 'per_side' so the app shows the lifter 30 x 2. Use " +
-          "'total' for a barbell, a machine stack, or single-arm work where " +
-          "one implement IS the whole system (a one-arm row at 30 kg is " +
-          "total 30, not 60). Omit only when the coach's programming genuinely " +
-          "does not say — omitted means UNKNOWN, not total.",
+        "Compatibility-only convention for legacy load_kg input. For new " +
+          "parses, put it in load.entry. load_kg and resolved analytics remain " +
+          "TOTAL system kg; per_side means the authored value is one hand and " +
+          "must be doubled when producing load_kg. Null remains UNKNOWN, never " +
+          "implied total.",
       ),
     rest_seconds: z
       .number()
@@ -150,15 +159,22 @@ export const prescriptionSchema = z
           "together and leave unrelated rows ungrouped.",
       ),
   })
-  .refine((p) => !(p.load_kg != null && p.load_pct_tm != null), {
-    message: "load_kg and load_pct_tm are mutually exclusive",
+  .refine((p) => !(p.load != null && p.load_kg != null), {
+    message: "load and the compatibility load_kg input are mutually exclusive",
+  })
+  .refine((p) => p.load == null || p.load_entry == null || p.load.entry === p.load_entry, {
+    message: "load.entry and load_entry cannot disagree",
+  })
+  .refine((p) => !((p.load != null || p.load_kg != null) && p.load_pct_tm != null), {
+    message: "direct load and load_pct_tm are mutually exclusive",
   })
   .refine((p) => p.reps_max >= p.reps_min, {
     message: "reps_max must be >= reps_min",
   })
   .refine(
     (p) =>
-      p.load_entry !== "per_side" || p.load_kg != null || p.load_pct_tm != null,
+      p.load?.entry === "per_side" ||
+        (p.load_entry !== "per_side" || p.load_kg != null || p.load_pct_tm != null),
     {
       message:
         "load_entry 'per_side' needs a load; a 'by feel' prescription has no " +
@@ -364,9 +380,16 @@ export function prescriptionRows(
     sets: p.sets,
     reps_min: p.reps_min,
     reps_max: p.reps_max,
-    load_kg: p.load_kg ?? null,
+    load_kg: p.load
+      ? Math.round(
+        ((p.load.unit === "lb" ? p.load.value * 0.45359237 : p.load.value) *
+          (p.load.entry === "per_side" ? 2 : 1)) * 100,
+      ) / 100
+      : p.load_kg ?? null,
     load_pct_tm: p.load_pct_tm ?? null,
-    load_entry: p.load_entry ?? null,
+    load_entry: p.load?.entry ?? p.load_entry ?? null,
+    entered_load: p.load?.value ?? null,
+    entered_unit: p.load?.unit ?? null,
     rest_seconds: p.rest_seconds ?? null,
     notes: p.notes ?? null,
     superset_group: p.superset_group ?? null,

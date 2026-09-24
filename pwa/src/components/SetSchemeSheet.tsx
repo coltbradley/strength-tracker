@@ -26,7 +26,7 @@ import {
   resolveLoadEntry,
   totalKg,
 } from "../lib/loadEntry";
-import type { LoadEntry, SetType, TrackingMode } from "../lib/types";
+import type { LoadEntry, LoadUnit, SetType, TrackingMode } from "../lib/types";
 
 /** One prescription row to be written: N identical sets at one load. */
 export interface SetGroup {
@@ -45,6 +45,8 @@ export interface SetGroup {
   /** how load_kg was ENTERED. load_kg is always the total; this is what the
    *  person typed, so the app can show "30 x 2" back to them. */
   load_entry: LoadEntry | null;
+  entered_load: number | null;
+  entered_unit: LoadUnit | null;
 }
 
 /**
@@ -80,6 +82,7 @@ export function groupSets(
   section: string | null = null,
   tracking: TrackingMode = "reps",
   loadEntry: LoadEntry = "total",
+  unit: Unit = "kg",
 ): SetGroup[] {
   const out: SetGroup[] = [];
   for (const s of sets) {
@@ -110,6 +113,8 @@ export function groupSets(
       tracking,
       // "by feel" has no side to halve, so it asserts nothing.
       load_entry: load === null ? null : loadEntry,
+      entered_load: load === null ? null : toDisplay(s.loadKg, unit),
+      entered_unit: load === null ? null : unit,
     });
   }
   return out;
@@ -224,6 +229,7 @@ export function SetSchemeSheet({
     section.trim() === "" ? null : section.trim(),
     tracking,
     loadEntry,
+    unit,
   );
   const supersetMates = supersetMembers?.[superset] ?? [];
   const working = sets.filter((s) => !s.warmup).length;

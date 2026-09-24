@@ -81,6 +81,8 @@ export interface RxRow {
   load_kg: number | null;
   load_pct_tm: number | null;
   load_entry: "total" | "per_side" | null;
+  entered_load?: number | null;
+  entered_unit?: "kg" | "lb" | null;
   rest_seconds: number | null;
   notes: string | null;
   superset_group: number | null;
@@ -96,6 +98,8 @@ export interface LoggedSet {
   set_type: string;
   load_kg: number;
   load_entry: string | null;
+  entered_load?: number | null;
+  entered_unit?: "kg" | "lb" | null;
   reps: number;
   performed_at: string;
   note?: string;

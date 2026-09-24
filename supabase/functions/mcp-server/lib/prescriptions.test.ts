@@ -62,6 +62,8 @@ Deno.test("absent optional fields become null, not undefined", () => {
       "load_kg",
       "load_pct_tm",
       "load_entry",
+      "entered_load",
+      "entered_unit",
       "rest_seconds",
       "notes",
       "superset_group",
@@ -106,6 +108,33 @@ Deno.test(
     assertEquals(row.load_entry, "per_side");
   },
 );
+
+Deno.test("authored load objects become canonical totals and keep provenance", () => {
+  prescriptionSchema.parse({
+    ...base,
+    load: { value: 30, unit: "lb", entry: "per_side" },
+  });
+  const [bar] = prescriptionRows(OWNER, DAY, [
+    { ...base, load: { value: 225, unit: "lb", entry: "total" } },
+  ]);
+  assertEquals(bar.load_kg, 102.06);
+  assertEquals(bar.entered_load, 225);
+  assertEquals(bar.entered_unit, "lb");
+  assertEquals(bar.load_entry, "total");
+
+  const [pair] = prescriptionRows(OWNER, DAY, [
+    { ...base, load: { value: 30, unit: "lb", entry: "per_side" } },
+  ]);
+  assertEquals(pair.load_kg, 27.22);
+  assertEquals(pair.entered_load, 30);
+  assertEquals(pair.entered_unit, "lb");
+  assertEquals(pair.load_entry, "per_side");
+});
+
+Deno.test("a parsed load number cannot omit its unit or entry convention", () => {
+  assertThrows(() => prescriptionSchema.parse({ ...base, load: 225 }));
+  assertThrows(() => prescriptionSchema.parse({ ...base, load: { value: 225, unit: "lb" } }));
+});
 
 // A superset group of one. Not a schema question -- "is anything else in
 // group A" is a fact about the whole day, so it is checked over the list.

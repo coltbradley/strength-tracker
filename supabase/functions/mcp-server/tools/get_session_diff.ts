@@ -35,6 +35,8 @@ interface PrescriptionRow {
   set_type: string;
   reps_min: number;
   reps_max: number;
+  entered_load: number | null;
+  entered_unit: string | null;
   exercises: { name: string } | { name: string }[] | null;
 }
 
@@ -47,6 +49,8 @@ interface LiveSetRow {
   load_kg: number;
   reps: number;
   performed_at: string;
+  entered_load: number | null;
+  entered_unit: string | null;
 }
 
 interface AdherenceRow {
@@ -57,6 +61,10 @@ interface AdherenceRow {
   prescribed_load_kg: number | null;
   load_delta_kg: number | null;
   rep_outcome: string;
+  actual_entered_load: number | null;
+  actual_entered_unit: string | null;
+  prescribed_entered_load: number | null;
+  prescribed_entered_unit: string | null;
 }
 
 interface SkipRow {
@@ -126,7 +134,7 @@ export function registerGetSessionDiff(
                 await db.client
                   .from("prescriptions")
                   .select(
-                    "id, exercise_id, set_type, reps_min, reps_max, exercises(name)",
+                    "id, exercise_id, set_type, reps_min, reps_max, entered_load, entered_unit, exercises(name)",
                   )
                   .eq("planned_workout_id", session.planned_workout_id)
                   .eq("user_id", db.ownerId),
@@ -136,7 +144,7 @@ export function registerGetSessionDiff(
             await db.client
               .from("v_live_sets")
               .select(
-                "id, exercise_id, prescription_id, set_index, set_type, load_kg, reps, performed_at",
+                "id, exercise_id, prescription_id, set_index, set_type, load_kg, reps, performed_at, entered_load, entered_unit",
               )
               .eq("user_id", db.ownerId)
               .eq("session_id", args.session_id)
@@ -147,7 +155,7 @@ export function registerGetSessionDiff(
             await db.client
               .from("v_adherence")
               .select(
-                "set_id, prescription_id, actual_load_kg, actual_reps, prescribed_load_kg, load_delta_kg, rep_outcome",
+                "set_id, prescription_id, actual_load_kg, actual_reps, prescribed_load_kg, load_delta_kg, rep_outcome, actual_entered_load, actual_entered_unit, prescribed_entered_load, prescribed_entered_unit",
               )
               .eq("user_id", db.ownerId)
               .eq("session_id", args.session_id),
@@ -202,6 +210,8 @@ export function registerGetSessionDiff(
             prescribed_set_type: p.set_type,
             reps_min: p.reps_min,
             reps_max: p.reps_max,
+            prescribed_entered_load: p.entered_load,
+            prescribed_entered_unit: p.entered_unit,
             performed: actual.length > 0,
             exercise_swapped: swappedTo
               ? { to_exercise_id: swappedTo.exercise_id }
@@ -213,10 +223,16 @@ export function registerGetSessionDiff(
               return {
                 set_id: s.id,
                 load_kg: s.load_kg,
+                entered_load: s.entered_load,
+                entered_unit: s.entered_unit,
                 reps: s.reps,
                 prescribed_load_kg: a?.prescribed_load_kg ?? null,
                 load_delta_kg: a?.load_delta_kg ?? null,
                 rep_outcome: a?.rep_outcome ?? null,
+                actual_entered_load: a?.actual_entered_load ?? s.entered_load,
+                actual_entered_unit: a?.actual_entered_unit ?? s.entered_unit,
+                prescribed_entered_load: a?.prescribed_entered_load ?? p.entered_load,
+                prescribed_entered_unit: a?.prescribed_entered_unit ?? p.entered_unit,
               };
             }),
           };
@@ -232,6 +248,8 @@ export function registerGetSessionDiff(
               exercise_id: s.exercise_id,
               set_type: s.set_type,
               load_kg: s.load_kg,
+              entered_load: s.entered_load,
+              entered_unit: s.entered_unit,
               reps: s.reps,
             })),
             skips,
