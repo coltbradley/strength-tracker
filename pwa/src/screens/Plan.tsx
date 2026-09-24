@@ -28,7 +28,6 @@ import {
   getResolvedPrescriptions,
   swapWorkoutOrder,
   updatePlannedWorkout,
-  updatePrescription,
   weekOrder,
   type WorkoutList,
 } from "../lib/data";
@@ -604,18 +603,14 @@ export function Plan() {
     );
     const issues = supersetRunIssues(proposed);
     if (issues.length > 0) throw new PlanEditRefused(issues.join(" "));
-    if (moved || group !== (r.superset_group ?? null)) {
-      const { section: _section, ...rowPatch } = patch;
-      await applyPlanEdit(workout.id, canonicalRowIds(proposed), {
-        targetId: r.id,
-        patch: rowPatch,
-        sectionIds: moved ? [r.id, ...mates] : [],
-        section: next,
-        applySection: moved,
-      });
-    } else {
-      await updatePrescription(r.id, workout.id, patch);
-    }
+    const { section: _section, ...rowPatch } = patch;
+    await applyPlanEdit(workout.id, canonicalRowIds(proposed), {
+      targetId: r.id,
+      patch: rowPatch,
+      sectionIds: moved ? [r.id, ...mates] : [],
+      section: next,
+      applySection: moved,
+    });
   };
 
   /**

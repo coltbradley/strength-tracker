@@ -28,6 +28,7 @@ async function standUpSchema(db) {
       as $$ select nullif(current_setting('app.user_id', true), '')::uuid $$;
     create role authenticated login;
     create role anon login;
+    create role service_role nologin bypassrls;
   `);
   const dir = join(ROOT, "supabase", "migrations");
   const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();

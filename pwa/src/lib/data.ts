@@ -201,8 +201,9 @@ export async function invalidateForSessionClose(): Promise<void> {
   ]);
 }
 
-/** Postgres `restrict_violation`: a before-delete trigger refused the row. */
+/** Postgres `restrict_violation`: a logged prescription cannot be rewritten. */
 const RESTRICT_VIOLATION = "23001";
+const PLAN_LOCKED = "55000";
 
 /**
  * The database declined an edit for a reason the PERSON can act on, as
@@ -456,17 +457,20 @@ export async function deletePlannedWorkout(id: string): Promise<void> {
   await invalidatePlanCaches(id);
 }
 
-export async function updatePrescription(
-  id: string,
-  plannedWorkoutId: string,
-  patch: PrescriptionPatch,
-): Promise<void> {
-  const { error } = await supabase
-    .from("prescriptions")
-    .update(patch)
-    .eq("id", id);
+function throwPlanEditError(error: { message: string; code?: string | null } | null): void {
+  if (!error) return;
+  if (error.code === RESTRICT_VIOLATION) {
+    throw new PlanEditRefused(
+      "You've already logged sets for this workout, so its exercise plan is " +
+        "locked. Keep the training history intact and edit a future day instead.",
+    );
+  }
+  if (error.code === PLAN_LOCKED && error.message.toLowerCase().includes("open session")) {
+    throw new PlanEditRefused(
+      "Finish or discard the active session before changing this workout or its place in the plan.",
+    );
+  }
   throwIf(error);
-  await invalidatePlanCaches(plannedWorkoutId);
 }
 
 /**
@@ -484,9 +488,10 @@ export async function applyPlanEdit(
     sectionIds?: string[];
     section?: string | null;
     applySection?: boolean;
+    deleteId?: string;
   } = {},
 ): Promise<void> {
-  const { error } = await supabase.rpc("apply_plan_edit", {
+  const { error } = await supabase.rpc("apply_plan_edit_with_delete", {
     p_planned_workout_id: plannedWorkoutId,
     p_target_id: edit.targetId ?? null,
     p_patch: edit.patch ?? {},
@@ -494,8 +499,9 @@ export async function applyPlanEdit(
     p_section: edit.section ?? null,
     p_apply_section: edit.applySection ?? false,
     p_ordered_ids: orderedIds,
+    p_delete_id: edit.deleteId ?? null,
   });
-  throwIf(error);
+  throwPlanEditError(error);
   await invalidatePlanCaches(plannedWorkoutId);
 }
 
@@ -505,27 +511,15 @@ export async function applyPlanEdit(
  * make every read filter on two nullable timestamps to spare a row nobody
  * refers to.
  *
- * The gap that leaves — deleting a prescription somebody has already trained
- * against — is closed by a `before delete` trigger in the database rather
- * than by a second column. It raises `restrict_violation`, which is a
- * SITUATION and not a failure: the person is trying to edit away an exercise
- * they have logged sets against, and the thing they actually want is to
- * discard the day. Say that, rather than showing them a Postgres string.
+ * A day with any logged prescription is immutable at the prescription level,
+ * and its DB guard covers this call as well as MCP replacements. The delete
+ * and final order land through the same parent-first transaction as edits.
  */
 export async function deletePrescription(
   id: string,
   plannedWorkoutId: string,
 ): Promise<void> {
-  const { error } = await supabase.from("prescriptions").delete().eq("id", id);
-  if (error && (error as { code?: string }).code === RESTRICT_VIOLATION) {
-    throw new PlanEditRefused(
-      "You've already logged sets against this exercise, so removing it " +
-        "would cut them loose from the day they belong to. Remove the whole " +
-        "day instead, or leave this here — what you logged stays either way.",
-    );
-  }
-  throwIf(error);
-  await invalidatePlanCaches(plannedWorkoutId);
+  await applyPlanEdit(plannedWorkoutId, [], { deleteId: id });
 }
 
 /**
@@ -849,7 +843,7 @@ export async function addPrescriptionGroups(
     entered_unit: g.entered_unit,
   }));
   const { error } = await supabase.from("prescriptions").insert(rows);
-  throwIf(error);
+  throwPlanEditError(error);
   await invalidatePlanCaches(plannedWorkoutId);
   return rows[0]!.id;
 }

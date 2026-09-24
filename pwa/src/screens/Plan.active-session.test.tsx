@@ -3,12 +3,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const { getPlannedWorkouts, getResolvedPrescriptions, getExercises, updatePlannedWorkout, updatePrescription, addPrescriptionGroups, applyPlanEdit, cacheGet, toast } = vi.hoisted(() => ({
+const { getPlannedWorkouts, getResolvedPrescriptions, getExercises, updatePlannedWorkout, addPrescriptionGroups, applyPlanEdit, cacheGet, toast } = vi.hoisted(() => ({
   getPlannedWorkouts: vi.fn(),
   getResolvedPrescriptions: vi.fn(),
   getExercises: vi.fn(),
   updatePlannedWorkout: vi.fn(),
-  updatePrescription: vi.fn(),
   addPrescriptionGroups: vi.fn(),
   applyPlanEdit: vi.fn(),
   cacheGet: vi.fn(),
@@ -26,7 +25,6 @@ vi.mock("../lib/data", () => ({
   getResolvedPrescriptions: (...args: unknown[]) => getResolvedPrescriptions(...args),
   getExercises: (...args: unknown[]) => getExercises(...args),
   updatePlannedWorkout: (...args: unknown[]) => updatePlannedWorkout(...args),
-  updatePrescription: (...args: unknown[]) => updatePrescription(...args),
   addPrescriptionGroups: (...args: unknown[]) => addPrescriptionGroups(...args),
   reorderPrescriptions: vi.fn(),
   saveWorkoutAsTemplate: vi.fn(),
@@ -141,13 +139,17 @@ describe("Plan with an active session", () => {
     fireEvent.click(screen.getByRole("button", { name: "reps min plus" }));
     fireEvent.click(screen.getByRole("button", { name: "Save planned sets" }));
 
-    await waitFor(() => expect(updatePrescription).toHaveBeenCalled());
-    expect(updatePrescription.mock.calls[0]![2]).toMatchObject({
-      reps_min: 9,
-      load_kg: 102.17,
-      entered_load: 225.25,
-      entered_unit: "lb",
+    await waitFor(() => expect(applyPlanEdit).toHaveBeenCalledTimes(1));
+    expect(applyPlanEdit.mock.calls[0]![2]).toMatchObject({
+      targetId: "curl-rx",
+      patch: expect.objectContaining({
+        reps_min: 9,
+        load_kg: 102.17,
+        entered_load: 225.25,
+        entered_unit: "lb",
+      }),
     });
+    expect(applyPlanEdit).toHaveBeenCalledTimes(1);
   });
 
   it("saves section changes with their rendered order in one plan edit", async () => {
@@ -176,7 +178,7 @@ describe("Plan with an active session", () => {
         applySection: true,
       }),
     );
-    expect(updatePrescription).not.toHaveBeenCalled();
+    expect(applyPlanEdit).toHaveBeenCalledTimes(1);
   });
 
   it("shows why edits are locked and disables workout fields", async () => {
@@ -212,7 +214,7 @@ describe("Plan with an active session", () => {
         "error",
       );
     });
-    expect(updatePrescription).not.toHaveBeenCalled();
+    expect(applyPlanEdit).not.toHaveBeenCalled();
   });
 
   it("leaves workout fields editable when no session targets the workout", async () => {
@@ -300,7 +302,7 @@ describe("Plan with an active session", () => {
         "error",
       );
     });
-    expect(updatePrescription).not.toHaveBeenCalled();
+    expect(applyPlanEdit).not.toHaveBeenCalled();
   });
 
   it("refuses adding to a separated superset before inserting any rows", async () => {
