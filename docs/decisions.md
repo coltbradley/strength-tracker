@@ -3086,3 +3086,26 @@ change that would lock the owner out on a deploy that forgot the secret.
 
 Merged to `main` as PR #8 (`c25e3ad`, 2026-09-21). A-02 remains
 `needs live proof` until the production secret is set.
+
+## 2026-09-24 Plan writes are one locked, historical record
+
+The plan editor once sent a prescription patch, its section membership, and
+its reordered positions as separate PostgREST requests. An MCP replacement had
+the same gap in a different shape. A failure could leave a partial plan, and a
+second device could change a day after its session had begun. The former
+three-request day-order swap was also non-atomic.
+
+Plan mutations now lock the parent `planned_workouts` row first. The PWA's
+patch, section, reorder, deletion, and day-order swap use database functions;
+the MCP whole-day replacement uses its own owner-scoped database function.
+Each lands or rolls back as one transaction. Starting a session takes the same
+parent lock, so a session start and a plan mutation have a defined order rather
+than relying on this device's active-session cache.
+
+Any open session refuses plan changes. Once a set exists for a day, that day's
+prescription list is immutable, including an unlogged neighbour or a new
+exercise: changing the plan later would rewrite what the recorded set was
+measured against. The person can still correct the logged set by the existing
+void-and-relog path, or edit a future day. This is enforced in Postgres for the
+PWA, direct Data API calls, and the service-role MCP path, not merely hidden in
+the screen.
