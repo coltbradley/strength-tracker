@@ -116,6 +116,7 @@
     --completed-set: #665f71;
     --control-outline: #766e7b;
     --brick: #a8321f;
+    --rest-orange: #a64b00;
 
     /* Competition plate colours. These are INFORMATION, not decoration: a
      * lifter reads the stack by colour before reading any number, which is the
@@ -1254,6 +1255,159 @@
     background: var(--accent-press);
   }
 
+  .train-next-workout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    border-top: var(--bw-hair) solid var(--control-border-color);
+    padding-top: var(--s-5);
+  }
+
+  .train-next-workout span,
+  .workout-preview-date,
+  .workout-preview-section,
+  .workout-preview-rest {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--track-2);
+    text-transform: uppercase;
+  }
+
+  .train-next-workout strong {
+    color: var(--text);
+    font-size: var(--fs-lg);
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  .workout-preview {
+    box-sizing: border-box;
+    width: min(100%, var(--column));
+    gap: var(--s-5);
+    padding-inline: max(var(--gutter), env(safe-area-inset-left))
+      max(var(--gutter), env(safe-area-inset-right));
+  }
+
+  .workout-preview .sheet-title {
+    margin: 0;
+    color: var(--text);
+    font-size: clamp(25px, 8vw, 34px);
+    letter-spacing: -0.035em;
+    line-height: 1.05;
+    overflow-wrap: anywhere;
+  }
+
+  .workout-preview .sheet-head {
+    align-items: flex-start;
+  }
+
+  .workout-preview-meta {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
+  .workout-preview-date {
+    margin: var(--s-2) 0 0;
+  }
+
+  .workout-preview-close {
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    border: var(--rule-strong);
+    border-radius: 0;
+    color: var(--text);
+    background: var(--bg-raised);
+    font-size: 26px;
+    line-height: 1;
+  }
+
+  .workout-preview-first-up {
+    padding-top: var(--s-4);
+  }
+
+  .workout-preview-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+
+  .workout-preview-entry {
+    min-width: 0;
+    border-top: var(--bw-hair) solid var(--control-border-color);
+    padding-top: var(--s-3);
+  }
+
+  .workout-preview-section {
+    margin: 0 0 var(--s-2);
+    color: var(--text-dim);
+  }
+
+  .workout-preview-row {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-2);
+  }
+
+  .workout-preview-row strong,
+  .workout-preview-target {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .workout-preview-row strong {
+    color: var(--text);
+    font-size: var(--fs-label);
+    line-height: 1.25;
+  }
+
+  .workout-preview-target {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+  }
+
+  .train-superset-tag {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-weight: 700;
+  }
+
+  .workout-preview-rest {
+    font-size: var(--fs-micro);
+    text-transform: none;
+  }
+
+  .workout-preview-actions {
+    position: sticky;
+    bottom: calc(-1 * var(--s-7));
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    margin: auto calc(-1 * var(--gutter)) calc(-1 * var(--s-7));
+    padding: var(--s-3) var(--gutter) calc(env(safe-area-inset-bottom) + 4px);
+    background: var(--bg-raised);
+  }
+
+  @media (max-width: 360px) {
+    .workout-preview {
+      gap: var(--s-4);
+      padding-inline: var(--s-4);
+    }
+
+    .workout-preview-actions {
+      margin-inline: calc(-1 * var(--s-4));
+      padding-inline: var(--s-4);
+    }
+  }
+
   /* MCP sign-in consent. Stands alone (no top bar, no nav): it is reached from
    * another app's sign-in flow, usually in a desktop browser, and has exactly
    * one decision on it. */
@@ -1962,13 +2116,27 @@
     gap: var(--s-6);
   }
 
-  /* overtime: keep counting up in the Aubergine accent */
-  .rest-timer-done {
-    border-top-color: var(--rule-strong-color);
+  /* READY has one text/color transition at expiry; the timer never blinks. */
+  .rest-timer-ready {
+    border-top-color: var(--rest-orange);
+  }
+
+  .rest-timer-rest {
+    border-top-color: var(--rest-orange);
+  }
+
+  .rest-timer-enter {
+    animation: set-entering-enter var(--motion-med) var(--ease-out);
+  }
+
+  .rest-timer-rest .rest-label,
+  .rest-timer-ready .rest-label {
+    color: var(--rest-orange);
   }
 
   .rest-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--s-6);
   }
@@ -1979,7 +2147,7 @@
     font-weight: 600;
     letter-spacing: var(--track-3);
     color: var(--accent-dim);
-    animation: blink var(--dur-blink) steps(1, end) infinite;
+    transition: color var(--motion-fast) var(--ease-out);
   }
 
   /* Tap to edit the remaining rest. Measured 43x23: the hairline under the
@@ -1994,12 +2162,12 @@
     border-bottom: var(--bw-hair) solid var(--control-border-color);
   }
 
-  .rest-timer-done .rest-timer-time {
-    color: var(--accent-dim);
+  .rest-timer-ready .rest-timer-time {
+    color: var(--rest-orange);
   }
 
   .rest-track {
-    flex: 1;
+    flex: 1 1 72px;
     height: var(--bw-thick);
     background: var(--rule-color);
   }
@@ -2008,13 +2176,34 @@
     display: block;
     height: var(--bw-thick);
     width: 100%;
-    background: var(--accent);
+    background: var(--rest-orange);
     transform-origin: left;
-    transition: transform var(--dur-tick) linear;
+    transition: none;
   }
 
-  .rest-timer-done .rest-fill {
-    background: var(--accent-dim);
+  .rest-timer-ready .rest-fill {
+    background: var(--rest-orange);
+  }
+
+  .rest-actions {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--s-5);
+  }
+
+  .rest-actions .rest-rate {
+    flex: 1;
+    margin-top: var(--s-3);
+  }
+
+  .rest-note-action {
+    min-height: var(--tap-min);
+    padding: 0 var(--s-5);
+    border: var(--rule-hair);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
   }
 
   /* -30 / +30 / DONE: the three controls in the app most likely to be hit
@@ -3495,10 +3684,7 @@
   }
 
   /* Fills the same space a plain hero editor would (see the flex chain
-   * comment above .set-editor-focus): the two compact member blocks settle
-   * into the middle of the screen with `margin: auto 0`, and LOG ROUND
-   * anchors to the bottom safe area with `margin-top: auto`, exactly like
-   * the single-exercise bottom bar — no scrolling either way needs. */
+   * comment above .set-editor-focus). */
   .superset-round-editor {
     flex: 1;
     display: flex;
@@ -3507,10 +3693,21 @@
   }
 
   .superset-round-members {
+    display: grid;
+    flex: 1;
+    grid-template-rows: repeat(2, minmax(142px, 1fr));
+    gap: var(--s-8);
+    min-height: 0;
+  }
+
+  .superset-member-card {
     display: flex;
     flex-direction: column;
-    gap: var(--s-8);
-    margin: auto 0;
+    justify-content: center;
+    min-height: 142px;
+    padding: var(--s-5) var(--s-6);
+    border: 1px solid var(--rule-strong-color);
+    background: var(--bg-raised);
   }
 
   .superset-round-actions {
@@ -3530,12 +3727,12 @@
     margin-bottom: var(--s-4);
   }
 
-  /* One member of a round: a small label, then load × reps on one line —
-   * see .superset-member-row — with no PlateBar and no bordered box, so two
-   * of these plus LOG ROUND still fit one screen without scrolling. */
-  .superset-member-compact {
-    display: flex;
-    flex-direction: column;
+  .superset-member-target {
+    margin: 0 0 var(--s-2);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
   }
 
   .superset-member-row {
@@ -3544,8 +3741,7 @@
     gap: var(--s-4);
   }
 
-  /* Half the single-exercise hero's 84px: secondary to it in weight, never
-   * competing, but still the biggest thing in its own compact block. */
+  /* The two cards share equal space and keep load and reps legible together. */
   .superset-member-row .stepper-value {
     font-size: 42px;
     border-bottom: none;
@@ -3578,6 +3774,10 @@
   .superset-round-error {
     margin: 0;
     color: var(--danger);
+  }
+
+  .superset-partial-action {
+    min-height: var(--tap-min);
   }
 
   .focus-deck .btn,
@@ -3645,6 +3845,52 @@
     align-items: center;
     justify-content: space-between;
   }
+
+  .focus-workout-menu {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-height: var(--tap-min);
+    padding: 0 var(--s-3);
+    color: var(--text);
+    font-size: var(--fs-label);
+    font-weight: 650;
+  }
+
+  .focus-hamburger {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .focus-top-slot {
+    margin-inline: calc(-1 * var(--gutter));
+  }
+
+  .focus-nearby-loads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    margin-top: var(--s-3);
+  }
+
+  .focus-nearby-loads button {
+    min-height: var(--tap-min);
+    padding: 0 var(--s-4);
+    border: var(--rule-hair);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+  }
+
+  .focus-complete-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    margin-top: auto;
+    padding-bottom: var(--s-6);
+  }
+
 
   /* Swap and Skip: visible secondary actions on the hero, not buried in
    * the ••• sheet — the lifter chooses exercise identity and skips at log
@@ -3962,6 +4208,11 @@
 
     .focus-deck,
     .focus-deck * {
+      animation: none !important;
+      transition: none !important;
+    }
+
+    .focus-top-slot {
       animation: none !important;
       transition: none !important;
     }

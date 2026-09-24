@@ -7,6 +7,8 @@ import {
   pinnedOverviewEntryKey,
   railState,
   remainingProgress,
+  supersetGroupEntries,
+  twoMemberSuperset,
   transitionPresentation,
 } from "./sessionFocus";
 
@@ -41,6 +43,24 @@ const entries = [entry("squat", 2), entry("deadlift", 3), entry("press", 1)];
 const isDone = (candidate: ExerciseEntry) => candidate.key === "squat";
 
 describe("session focus derivations", () => {
+  it("exposes an entire superset group so larger groups can render overview explicitly", () => {
+    const a = entry("a", 2);
+    const b = entry("b", 2);
+    const c = entry("c", 2);
+    for (const item of [a, b, c]) item.brackets[0]!.superset_group = 1;
+    expect(supersetGroupEntries([a, b, c], "b")).toEqual([a, b, c]);
+  });
+
+  it("does not treat a reused separated letter as a valid paired Focus group", () => {
+    const a = entry("a", 2);
+    const b = entry("b", 2);
+    const gap = entry("gap", 2);
+    const c = entry("c", 2);
+    for (const item of [a, b, c]) item.brackets[0]!.superset_group = 1;
+
+    expect(twoMemberSuperset([a, b, gap, c], "a")).toBeNull();
+  });
+
   it("returns the first incomplete entry when no active entry is restored", () => {
     expect(focusEntryKey(entries, isDone, null)).toBe("deadlift");
   });
@@ -57,15 +77,24 @@ describe("session focus derivations", () => {
     expect(pinnedOverviewEntryKey("deadlift", null)).toBe("deadlift");
   });
 
-  it("does not offer focus mode for a timed prescription", () => {
-    expect(isFocusEligible([entry("plank", 3, "time")])).toBe(false);
+  it("offers focus mode for a timed prescription", () => {
+    expect(isFocusEligible([entry("plank", 3, "time")])).toBe(true);
   });
 
-  it("does not offer focus mode when a later bracket tracks duration", () => {
+  it("keeps a superset circuit with more than two members in overview", () => {
+    const a = entry("a", 2);
+    const b = entry("b", 2);
+    const c = entry("c", 2);
+    for (const item of [a, b, c]) item.brackets[0]!.superset_group = 1;
+
+    expect(isFocusEligible([a, b, c])).toBe(false);
+  });
+
+  it("offers focus mode when a later bracket tracks duration", () => {
     const squat = entry("squat", 2);
     squat.brackets.push({ ...squat.brackets[0]!, id: "rx-squat-time", tracking: "time" });
 
-    expect(isFocusEligible([squat])).toBe(false);
+    expect(isFocusEligible([squat])).toBe(true);
   });
 
   it("counts remaining sets and exercises from incomplete canonical entries", () => {

@@ -24,7 +24,6 @@ import {
 import { outbox } from "../lib/sync";
 import { reportError, toast } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
-import { useArmed } from "../hooks/useArmed";
 import {
   fromDisplay,
   MAX_BODYWEIGHT_KG,
@@ -104,16 +103,19 @@ export function End() {
   const [setCount, setSetCount] = useState(0);
   /** false until the count is known to be right; gates Discard-as-primary */
   const [countKnown, setCountKnown] = useState(false);
+  const [discardAttemptAt, setDiscardAttemptAt] = useState<string | null>(null);
+  const [discardNotice, setDiscardNotice] = useState<string | null>(null);
   const [exercisesDone, setExercisesDone] = useState(0);
   const [exercisesTotal, setExercisesTotal] = useState(0);
   // ticks so a summary left open while writing a note stays honest
   const [now, setNow] = useState(() => Date.now());
-  const [armed, setArmed] = useArmed();
-  const discardArmed = armed === "discard";
   // the draft is persisted on unmount, but not once the session is closed
   const closedRef = useRef(false);
   /** re-entrancy guard for end(); a ref, because state is batched */
   const endingRef = useRef(false);
+  const discardResolvingRef = useRef<string | null>(null);
+  const discardResolvedRef = useRef(false);
+  const resolveDiscardRef = useRef<((attemptAt: string) => Promise<void>) | null>(null);
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = active?.id ?? null;
   const draftRef = useRef<EndDraft | null>(null);
@@ -236,6 +238,20 @@ export function End() {
     const t = setInterval(() => setNow(Date.now()), DURATION_TICK_MS);
     return () => clearInterval(t);
   }, []);
+
+  // A discard queued while offline may settle later from the global outbox
+  // online/foreground retry. Keep the End screen authoritative until that
+  // exact operation is accepted or refused.
+  useEffect(() => {
+    if (discardAttemptAt === null) return;
+    const check = () => {
+      const resolve = resolveDiscardRef.current;
+      if (resolve) void resolve(discardAttemptAt);
+    };
+    const unsubscribe = outbox.subscribe(check);
+    check();
+    return unsubscribe;
+  }, [discardAttemptAt]);
 
   // sRPE / bodyweight / note survive a "Back to session" round trip
   useEffect(
@@ -421,24 +437,85 @@ export function End() {
     }
   };
 
-  /** Soft delete: the session and its sets leave every chart and history
-   *  list. Nothing is destroyed — recoverable in the database if ever needed. */
+  /** Close locally only after the discard update has left the outbox. */
+  const finishDiscard = async () => {
+    if (discardResolvedRef.current) return;
+    discardResolvedRef.current = true;
+    closedRef.current = true;
+    setDiscardAttemptAt(null);
+    setDiscardNotice(null);
+    await cacheDelete(cacheKeys.activeSession);
+    await clearSessionCaches(active.id);
+    // history caches and week DONE state all reference this session
+    await invalidateForSessionClose();
+    toast("Session discarded");
+    navigate("/", { replace: true });
+  };
+
+  const resolveDiscard = async (attemptAt: string) => {
+    if (discardResolvingRef.current === attemptAt || discardResolvedRef.current)
+      return;
+    discardResolvingRef.current = attemptAt;
+    try {
+      const matching = (await outbox.inspect()).find(
+        (entry) =>
+          entry.op.kind === "update" &&
+          entry.op.table === "sessions" &&
+          entry.op.id === active.id &&
+          "discarded_at" in entry.op.patch &&
+          entry.op.patch.discarded_at === attemptAt,
+      );
+      if (!matching) {
+        await finishDiscard();
+        return;
+      }
+      if (matching.state === "dead") {
+        setDiscardAttemptAt(null);
+        if (/cannot discard a session that contains sets/i.test(matching.last_error ?? "")) {
+          const message =
+            "A set from another device reached this session first. The workout is staying in your history, so end the session instead.";
+          setDiscardNotice(message);
+          toast(message, "error");
+          reportError(new Error(matching.last_error ?? message), "discard session", {
+            toast: false,
+          });
+        } else {
+          const message =
+            "The server refused this discard. The session is still open; check Sync status for details.";
+          setDiscardNotice(message);
+          reportError(new Error(matching.last_error ?? message), "discard session");
+        }
+        return;
+      }
+      setDiscardNotice(
+        "Discard is waiting to sync. The session stays open until the server confirms it.",
+      );
+    } catch (e) {
+      reportError(e, "check discard status");
+    } finally {
+      if (discardResolvingRef.current === attemptAt)
+        discardResolvingRef.current = null;
+    }
+  };
+  resolveDiscardRef.current = resolveDiscard;
+
+  /** Soft delete an accidental, server-confirmed empty session. */
   const discard = async () => {
+    if (discardAttemptAt !== null) return;
+    const attemptedAt = new Date().toISOString();
     try {
       await outbox.enqueue({
         kind: "update",
         table: "sessions",
         id: active.id,
-        patch: { discarded_at: new Date().toISOString() },
+        patch: { discarded_at: attemptedAt },
       });
-      closedRef.current = true;
-      await cacheDelete(cacheKeys.activeSession);
-      await clearSessionCaches(active.id);
-      // history caches and week DONE state all reference this session
-      await invalidateForSessionClose();
-      toast("Session discarded");
-      navigate("/", { replace: true });
+      setDiscardNotice(null);
+      setDiscardAttemptAt(attemptedAt);
+      await outbox.flush();
+      await resolveDiscard(attemptedAt);
     } catch (e) {
+      setDiscardAttemptAt(null);
       reportError(e, "discard session");
     }
   };
@@ -597,13 +674,15 @@ export function End() {
             type="button"
             className="btn btn-primary btn-block"
             onClick={() => void discard()}
+            disabled={discardAttemptAt !== null}
           >
-            Discard empty session
+            {discardAttemptAt === null ? "Discard empty session" : "Discard waiting for sync…"}
           </button>
           <button
             type="button"
             className="btn btn-ghost btn-block"
             onClick={() => void end()}
+            disabled={discardAttemptAt !== null}
           >
             End anyway (counts as done)
           </button>
@@ -617,43 +696,43 @@ export function End() {
           End session
         </button>
       )}
-      {!countKnown && (
-        <div className="microcopy">
-          Couldn’t reach the server to check this session’s sets, so nothing
-          here is offered as empty. Ending is safe — discard stays below.
+      {discardNotice !== null && (
+        <div className="microcopy" role="status">
+          {discardNotice}
+          {discardAttemptAt !== null && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-block"
+              onClick={() => {
+                void outbox.flush().then(() => resolveDiscard(discardAttemptAt));
+              }}
+            >
+              Check discard sync
+            </button>
+          )}
         </div>
       )}
+      {!countKnown ? (
+        <div className="microcopy">
+          Couldn’t reach the server to check this session’s sets, so nothing
+          here is offered as empty. Ending is safe. Discard is available only
+          when the server confirms there are no sets.
+        </div>
+      ) : setCount > 0 ? (
+        <div className="microcopy">
+          Sessions with logged sets stay in your training history. End the
+          session to keep this workout recorded.
+        </div>
+      ) : null}
       <button
         type="button"
         className="btn btn-ghost btn-block"
         onClick={() => navigate("/session")}
+        disabled={discardAttemptAt !== null}
       >
         Back to session
       </button>
 
-      {/* the confirmed-empty variant already leads with discard — no duplicate */}
-      {!confirmedEmpty && (
-        <section className="rule-section">
-          <button
-            type="button"
-            className={`btn btn-block ${discardArmed ? "btn-danger" : "btn-ghost"}`}
-            onClick={() =>
-              discardArmed ? void discard() : setArmed("discard")
-            }
-          >
-            {discardArmed ? "Discard session?" : "Discard session"}
-          </button>
-          {discardArmed && (
-            <div className="microcopy">
-              {countKnown
-                ? `Removes this session and its ${setCount} ${
-                    setCount === 1 ? "set" : "sets"
-                  } from history and charts.`
-                : "Removes this session and everything logged in it from history and charts. This device could not confirm how much that is."}
-            </div>
-          )}
-        </section>
-      )}
 
       {bwPadReq && <NumberPad req={bwPadReq} />}
     </div>

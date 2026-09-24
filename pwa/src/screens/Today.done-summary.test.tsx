@@ -76,6 +76,7 @@ vi.mock("../lib/sync", () => ({
     flush: vi.fn().mockResolvedValue(undefined),
     pendingSessionUpdateIds: vi.fn().mockResolvedValue(new Set()),
     pendingRatedSessionIds: vi.fn().mockResolvedValue(new Set()),
+    inspect: vi.fn().mockResolvedValue([]),
     enqueue: vi.fn(),
   },
 }));

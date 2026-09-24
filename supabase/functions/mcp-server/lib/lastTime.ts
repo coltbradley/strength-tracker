@@ -65,6 +65,8 @@ interface SetRow {
   set_type: string;
   load_kg: number;
   load_entry: string | null;
+  entered_load: number | null;
+  entered_unit: "kg" | "lb" | null;
   reps: number;
   performed_at: string;
 }
@@ -109,7 +111,7 @@ export async function lastTimeFor(
       .from("v_live_sets")
       .select(
         "id, session_id, exercise_id, set_index, set_type, load_kg, " +
-          "load_entry, reps, performed_at",
+          "load_entry, reps, performed_at, entered_load, entered_unit",
       )
       .eq("user_id", db.ownerId)
       .in("session_id", sessionIds)
@@ -165,6 +167,8 @@ export async function lastTimeFor(
       set_type: r.set_type,
       load_kg: r.load_kg,
       load_entry: r.load_entry,
+      entered_load: r.entered_load ?? null,
+      entered_unit: r.entered_unit ?? null,
       reps: r.reps,
       performed_at: r.performed_at,
       ...(note === undefined ? {} : { note }),

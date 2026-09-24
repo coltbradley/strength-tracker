@@ -40,9 +40,10 @@ export function registerGetRecentSessions(
         "completion score. Pass " +
         "include_sets to get the sets themselves — exercise, warmup vs " +
         "working, load, reps and the lifter's per-set note — which is what " +
-        "reviewing a workout actually needs. Loads are kg and are always the " +
-        "TOTAL moved in one rep; load_entry says whether the lifter typed a " +
-        "per-side number, so quote it back the way it was entered.",
+        "reviewing a workout actually needs. load_kg is the total-system kg " +
+        "value. entered_load and entered_unit preserve the authored " +
+        "number/unit when known, while load_entry says total or per-side. " +
+        "Null authored fields mean legacy provenance, never implied kg.",
       inputSchema: {
         include_sets: z
           .boolean()
@@ -150,7 +151,8 @@ export function registerGetRecentSessions(
               .from("v_live_sets")
               .select(
                 "id, session_id, exercise_id, set_index, set_type, load_kg, " +
-                  "load_entry, reps, rpe, duration_seconds, performed_at",
+                  "load_entry, reps, rpe, duration_seconds, performed_at, " +
+                  "entered_load, entered_unit",
               )
               .eq("user_id", db.ownerId)
               .in(

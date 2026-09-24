@@ -53,6 +53,49 @@ export function normalizeSection(s: string | null | undefined): string | null {
 }
 
 /**
+ * The plan editor and active session can agree about a superset only when it
+ * occupies one uninterrupted run. A ramp may contribute several rows, but a
+ * group still needs at least two distinct movements to alternate.
+ *
+ * This intentionally reports rather than rearranges malformed legacy rows:
+ * silently healing the display would leave the stored plan and the session
+ * with two different accounts of what the coach wrote.
+ */
+export function supersetRunIssues(
+  rows: readonly Pick<ResolvedPrescriptionRow, "exercise_id" | "superset_group">[],
+): string[] {
+  const groups = new Map<
+    number,
+    { exerciseIds: string[]; positions: number[] }
+  >();
+  for (const [position, row] of rows.entries()) {
+    if (row.superset_group === null) continue;
+    const held = groups.get(row.superset_group);
+    if (held === undefined)
+      groups.set(row.superset_group, {
+        exerciseIds: [row.exercise_id],
+        positions: [position],
+      });
+    else {
+      held.exerciseIds.push(row.exercise_id);
+      held.positions.push(position);
+    }
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => a - b)
+    .flatMap(([group, held]) => {
+      const label = `Superset ${String.fromCharCode(64 + group)}`;
+      if (new Set(held.exerciseIds).size < 2)
+        return [`${label} needs two distinct exercises.`];
+      const first = held.positions[0]!;
+      const last = held.positions.at(-1)!;
+      return last - first + 1 === held.positions.length
+        ? []
+        : [`${label} must be contiguous in workout order.`];
+    });
+}
+
+/**
  * Where a named part of the day runs, relative to the main body.
  *
  * One table, matched in order, and everything it does not recognise ranks

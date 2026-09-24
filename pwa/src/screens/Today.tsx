@@ -46,6 +46,7 @@ import {
 } from "../lib/data";
 import { doneSummaryKey, formatDuration, type DoneSummary } from "./End";
 import { groupRamps } from "../lib/entries";
+import { nextActionableWorkout } from "../lib/trainingScene";
 import { openCoach } from "../lib/coachOpen";
 import { onPlanChanged } from "../lib/planChanges";
 import {
@@ -58,6 +59,7 @@ import { useOnline } from "../hooks/useFabDrag";
 import { addDays, startOfWeek, weekDates } from "../lib/calendar";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
+import type { OutboxEntry } from "../lib/outbox";
 import { uuid } from "../lib/uuid";
 import { useArmed } from "../hooks/useArmed";
 import { useLocalToday } from "../hooks/useLocalToday";
@@ -99,6 +101,46 @@ export type WorkoutState =
 
 type PrescriptionLoadState =
   "loading" | "loaded" | StaleReason | `cached-${StaleReason}`;
+
+/**
+ * A session insert can be durable in the outbox while its small active-session
+ * cache pointer failed to write. On reload, recover that local truth before
+ * offering Start again. Only a `waiting` row belongs to the current identity;
+ * held rows may belong to somebody else. A queued finish or discard wins.
+ */
+function queuedSessionRecovery(
+  entries: readonly OutboxEntry[],
+): ActiveSession | null {
+  const closed = new Set(
+    entries.flatMap((entry) => {
+      const { op } = entry;
+      return op.kind === "update" &&
+        op.table === "sessions" &&
+        ("ended_at" in op.patch || "discarded_at" in op.patch)
+        ? [op.id]
+        : [];
+    }),
+  );
+  for (const entry of [...entries].reverse()) {
+    const { op } = entry;
+    if (
+      entry.state !== "waiting" ||
+      op.kind !== "insert" ||
+      op.table !== "sessions" ||
+      closed.has(op.payload.id)
+    )
+      continue;
+    return {
+      id: op.payload.id,
+      planned_workout_id: op.payload.planned_workout_id,
+      started_at: op.payload.started_at,
+      workout_label: null,
+      plan_note: null,
+      coach_note: null,
+    };
+  }
+  return null;
+}
 
 /** How long the swipe track must sit still before we call it settled. */
 const SETTLE_MS = 120;
@@ -362,6 +404,13 @@ export function Today({
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  // A session insert can commit while the separate active-session cache write
+  // fails (for example, a large kv store hitting quota). Hold that durable
+  // session here rather than offering a second Start or navigating to Session
+  // without the pointer it needs to bootstrap.
+  const [startRecovery, setStartRecovery] = useState<ActiveSession | null>(
+    null,
+  );
   const [laterExpanded, setLaterExpanded] = useState<string | null>(null);
   // Mirrors laterExpanded for onPlanChanged, like expandedRef below.
   const laterExpandedRef = useRef<string | null>(null);
@@ -475,7 +524,15 @@ export function Today({
     void (async () => {
       const a =
         (await cacheGet<ActiveSession>(cacheKeys.activeSession)) ?? null;
+      const queuedRecovery =
+        a === null ? queuedSessionRecovery(await outbox.inspect()) : null;
       if (cancelled) return;
+      if (queuedRecovery !== null) {
+        setStartRecovery(queuedRecovery);
+        window.clearTimeout(gateTimer);
+        setStartGateOpen(true);
+        return;
+      }
       setActive(a);
       reload();
       // Reconcile open sessions with the calendar: yesterday's open session
@@ -885,7 +942,6 @@ export function Today({
             );
         }
       }
-      await cacheSet(cacheKeys.sessionRx(sessionId), prescriptions);
       const activeSession: ActiveSession = {
         id: sessionId,
         planned_workout_id: workout?.id ?? null,
@@ -894,7 +950,10 @@ export function Today({
         plan_note: workout?.plan_note ?? null,
         coach_note: workout?.notes ?? null,
       };
-      await cacheSet(cacheKeys.activeSession, activeSession);
+      // Queue the parent session before publishing any cache pointer to it.
+      // A session screen can recover an orphan whose cache was lost; it
+      // cannot recover a cache pointer to a session that never reached the
+      // durable local queue.
       await outbox.enqueue({
         kind: "insert",
         table: "sessions",
@@ -904,6 +963,23 @@ export function Today({
           started_at: startedAt,
         },
       });
+      try {
+        await cacheSet(cacheKeys.activeSession, activeSession);
+      } catch (e) {
+        reportError(e, "cache active session for start");
+        setStartRecovery(activeSession);
+        return;
+      }
+      setActive(activeSession);
+      // Targets make this session better offline, but they are not its
+      // identity. Cache the active pointer first so a quota failure while
+      // storing a large planned workout still opens a recoverable by-feel
+      // session instead of stranding the durable parent row.
+      try {
+        await cacheSet(cacheKeys.sessionRx(sessionId), prescriptions);
+      } catch (e) {
+        reportError(e, "cache session targets for start");
+      }
       // Best-effort prefetch so the session screen works fully offline.
       // Both read through the IndexedDB cache, so these only reject when
       // there is no cache at all — worth reporting, never worth swallowing.
@@ -918,6 +994,18 @@ export function Today({
       reportError(e, "start session");
     } finally {
       startingRef.current = false;
+    }
+  };
+
+  const retryOpenSavedSession = async () => {
+    if (!startRecovery) return;
+    try {
+      await cacheSet(cacheKeys.activeSession, startRecovery);
+      setActive(startRecovery);
+      setStartRecovery(null);
+      navigate("/session");
+    } catch (e) {
+      reportError(e, "retry active session cache");
     }
   };
 
@@ -1077,9 +1165,19 @@ export function Today({
    *  orphan owns it next (its card asks resume/finish/discard) — starting a
    *  second concurrent session from underneath either is not recoverable
    *  from the UI. */
-  const canStart = startGateOpen && !active && !orphan;
+  const canStart = startGateOpen && !active && !orphan && !startRecovery;
 
-  const trainWorkout = trainWorkoutForToday(workouts, states, today);
+  const trainWorkoutToday = trainWorkoutForToday(workouts, states, today);
+  const nextTrainWorkout = nextActionableWorkout(workouts, states, today);
+  const promoteNextWorkout =
+    trainWorkoutToday?.state === "DONE" && nextTrainWorkout !== null;
+  const trainWorkout =
+    promoteNextWorkout
+      ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
+      : trainWorkoutToday ??
+        (nextTrainWorkout
+          ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
+          : null);
   const trainWorkoutId = trainWorkout?.workout.id ?? null;
   const trainPrescriptions = trainWorkout
     ? (rx[trainWorkout.workout.id] ?? null)
@@ -1141,6 +1239,23 @@ export function Today({
       </div>
     </div>
   ) : null;
+  const startRecoveryCard = startRecovery ? (
+    <div className="train-recovery" role="alert">
+      <p>
+        Your session was saved locally, but we couldn’t open it because this
+        device could not save its session pointer. Do not start another
+        workout.
+      </p>
+      <button
+        type="button"
+        className="btn btn-primary"
+        onClick={() => void retryOpenSavedSession()}
+      >
+        Retry opening session
+      </button>
+    </div>
+  ) : null;
+  const recovery = startRecoveryCard ?? orphanRecovery;
 
   if (presentation === "train") {
     return (
@@ -1155,8 +1270,10 @@ export function Today({
           prescriptions={trainPrescriptions}
           prescriptionLoadState={trainPrescriptionLoadState}
           active={active}
-          recovery={orphanRecovery}
+          recovery={recovery}
           startEnabled={canStart}
+          completedToday={promoteNextWorkout}
+          unit={unit}
           onStart={(workout) => void start(workout)}
           onOpenCoach={() => openCoach()}
           onCheckIn={userId ? () => setCheckInOpen(true) : undefined}
@@ -1385,7 +1502,7 @@ export function Today({
         </div>
       )}
 
-      {!active && orphanRecovery}
+      {!active && recovery}
 
       {/* A session that ended without a rating, for a day afterwards. Gated on
           `active` for the same reason the orphan card is: someone mid-workout

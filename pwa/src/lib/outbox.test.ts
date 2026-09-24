@@ -143,6 +143,63 @@ describe("outbox", () => {
     ).toEqual([setA.id, setB.id]);
   });
 
+  it("resolves a single enqueue after commit when the count refresh fails", async () => {
+    const { transport } = makeTransport();
+    const db = await getDb();
+    const refreshFailure = new Error("count refresh failed");
+    const failingRefreshDb = {
+      add: (...args: Parameters<Database["add"]>) => db.add(...args),
+      transaction: (store: "outbox", mode?: "readonly" | "readwrite") => {
+        if (mode === undefined) throw refreshFailure;
+        return db.transaction(store, mode);
+      },
+    } as unknown as Database;
+    const outbox = createOutbox({
+      getDb: () => Promise.resolve(failingRefreshDb),
+      transport,
+      isOnline: () => false,
+    });
+
+    await expect(
+      outbox.enqueue({ kind: "insert", table: "sets", payload: setA }),
+    ).resolves.toBeUndefined();
+
+    expect((await db.getAll("outbox")).map((item) => item.op)).toEqual([
+      { kind: "insert", table: "sets", payload: setA },
+    ]);
+    expect(outbox.getStatus()).toMatchObject({
+      state: "error",
+      lastError: expect.stringContaining("count refresh failed"),
+    });
+  });
+
+  it("resolves a batch enqueue after commit when the count refresh fails", async () => {
+    const { transport } = makeTransport();
+    const db = await getDb();
+    const refreshFailure = new Error("count refresh failed");
+    const failingRefreshDb = {
+      add: (...args: Parameters<Database["add"]>) => db.add(...args),
+      transaction: (store: "outbox", mode?: "readonly" | "readwrite") => {
+        if (mode === undefined) throw refreshFailure;
+        return db.transaction(store, mode);
+      },
+    } as unknown as Database;
+    const outbox = createOutbox({
+      getDb: () => Promise.resolve(failingRefreshDb),
+      transport,
+      isOnline: () => false,
+    });
+
+    await expect(outbox.enqueueBatch(roundOps)).resolves.toBeUndefined();
+
+    expect(
+      (await db.getAll("outbox")).map((item) =>
+        (item.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>)
+          .payload.id,
+      ),
+    ).toEqual([setA.id, setB.id]);
+  });
+
   it("leaves no part of the batch when its IndexedDB transaction aborts", async () => {
     const { transport } = makeTransport();
     const rows: OutboxItem[] = [];
@@ -623,6 +680,37 @@ describe("outbox", () => {
     expect(await outbox.pendingDiscardIds()).toEqual(
       new Set(["99999999-9999-4999-8999-999999999999"]),
     );
+  });
+
+  it("does not hide a session after the server rejects its discard", async () => {
+    const discardErr: TransportError = {
+      message: "cannot discard a session that contains sets",
+      code: "23514",
+      status: 400,
+    };
+    const { transport } = makeTransport([discardErr]);
+    const outbox = build(transport);
+    const id = "99999999-9999-4999-8999-999999999999";
+
+    await seed(outbox, [
+      {
+        kind: "update",
+        table: "sessions",
+        id,
+        patch: { discarded_at: "2026-08-25T11:05:00.000Z" },
+      },
+    ]);
+    online = true;
+    await outbox.flush();
+
+    expect(outbox.getStatus().dead).toBe(1);
+    expect(await outbox.pendingDiscardIds()).toEqual(new Set());
+    const entry = (await outbox.inspect())[0];
+    expect(entry).toMatchObject({
+      state: "dead",
+      cause: "rejected",
+      retryable: false,
+    });
   });
 });
 

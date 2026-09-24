@@ -40,6 +40,21 @@ describe("correctedSet", () => {
     expect(next.reps).toBe(4);
   });
 
+  it("writes new authored provenance when a correction changes load", () => {
+    const next = correctedSet(old, {
+      load_kg: 102.06,
+      reps: 5,
+      set_type: "working",
+      load_entry: "total",
+      entered_load: 225,
+      entered_unit: "lb",
+      rpe: null,
+    });
+    expect(next.load_kg).toBe(102.06);
+    expect(next.entered_load).toBe(225);
+    expect(next.entered_unit).toBe("lb");
+  });
+
   it("can retype a set as a warmup, and record how the load was entered", () => {
     const next = correctedSet(old, {
       load_kg: 60,

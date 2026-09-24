@@ -6,15 +6,15 @@ import type { ProgressState } from "../components/session/StateGlyph";
 
 export type SessionPresentation = "focus" | "overview";
 
-/** Only a consecutive ordinary two-member run can use the paired round UI. */
-export function twoMemberSuperset(
+/** All consecutive entries in the selected entry's superset group. */
+export function supersetGroupEntries(
   entries: readonly ExerciseEntry[],
   key: string | null,
-): readonly [ExerciseEntry, ExerciseEntry] | null {
-  if (key === null) return null;
+): readonly ExerciseEntry[] {
+  if (key === null) return [];
   const index = entries.findIndex((entry) => entry.key === key);
   const group = entries[index]?.brackets[0]?.superset_group ?? null;
-  if (index < 0 || group === null) return null;
+  if (index < 0 || group === null) return [];
 
   let start = index;
   let end = index;
@@ -25,9 +25,24 @@ export function twoMemberSuperset(
     entries[end + 1].brackets[0]?.superset_group === group
   )
     end++;
-  if (end - start !== 1) return null;
+  const run = entries.slice(start, end + 1);
+  // A reused letter after a gap is malformed day structure, not a second
+  // independent pair. Keep it out of paired Focus even when the local run
+  // happens to contain exactly two exercises.
+  const allMembers = entries.filter(
+    (entry) => entry.brackets[0]?.superset_group === group,
+  );
+  return allMembers.length === run.length ? run : [];
+}
 
-  const pair = [entries[start], entries[end]] as const;
+/** Only a consecutive ordinary two-member run can use the paired round UI. */
+export function twoMemberSuperset(
+  entries: readonly ExerciseEntry[],
+  key: string | null,
+): readonly [ExerciseEntry, ExerciseEntry] | null {
+  const members = supersetGroupEntries(entries, key);
+  if (members.length !== 2) return null;
+  const pair = [members[0], members[1]] as const;
   return pair.every(
     (entry) => (entry.brackets[0]?.tracking ?? "reps") === "reps",
   )
@@ -73,11 +88,9 @@ export function remainingProgress(
   };
 }
 
-/** Timed prescriptions use a different logging surface, so can't use focus mode. */
 export function isFocusEligible(entries: readonly ExerciseEntry[]): boolean {
-  return entries.every((entry) =>
-    entry.brackets.every((bracket) => bracket.tracking !== "time"),
-  );
+  if (entries.length === 0) return false;
+  return !entries.some((entry) => supersetGroupEntries(entries, entry.key).length > 2);
 }
 
 export function transitionPresentation(

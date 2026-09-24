@@ -41,6 +41,9 @@ export interface ExportSet {
    *  load_kg is always the total, so without this a pair of 30 kg dumbbells
    *  and a 60 kg barbell are indistinguishable in the user's own archive. */
   load_entry: string | null;
+  /** Exact authored value and unit. Null marks a legacy set. */
+  entered_load: number | null;
+  entered_unit: "kg" | "lb" | null;
 }
 
 export interface ExportBundle {
@@ -62,7 +65,7 @@ const SESSION_COLUMNS =
 // archive; dropping it makes that unrecoverable, and `sets` is append-only so
 // it can never be reconstructed.
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,entered_load,entered_unit";
 
 /** Page through a PostgREST relation until it stops returning full pages.
  *

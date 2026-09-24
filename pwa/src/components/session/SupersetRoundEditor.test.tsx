@@ -138,11 +138,51 @@ describe("SupersetRoundEditor", () => {
     });
   });
 
-  it("offers Log A1 only and never claims A2 is complete", () => {
+  it("renders equal member cards with their own target, authored unit, and history", () => {
+    const a1Draft: SetDraft = {
+      entryKg: 102.17,
+      enteredLoad: 225.25,
+      enteredUnit: "lb",
+      reps: 8,
+      setType: "working",
+      rpe: null,
+    };
+    const { container } = render(
+      <SupersetRoundEditor
+        label="SUPERSET A · ROUND 1 OF 3"
+        a1={{
+          tag: "A1",
+          target: "3 × 8 @ 225.25 lb · REST 1:20",
+          editor: { ...editorProps(a1Entry, a1Draft), unit: "lb", lastPerformance: "Last time · 220 lb × 8" },
+        }}
+        a2={{
+          tag: "A2",
+          target: "3 × 10 @ 50 kg · REST 1:20",
+          editor: { ...editorProps(a2Entry, { entryKg: 50, reps: 10, setType: "working", rpe: null }), lastPerformance: "Last time · 48 kg × 10" },
+        }}
+        onLogRound={vi.fn()}
+        onLogA1Only={vi.fn()}
+        onLogA2Only={vi.fn()}
+      />,
+    );
+
+    const cards = container.querySelectorAll(".superset-member-card");
+    expect(cards).toHaveLength(2);
+    expect(cards[0]?.textContent).toContain("3 × 8 @ 225.25 lb · REST 1:20");
+    expect(cards[0]?.textContent).toContain("Last time · 220 lb × 8");
+    expect(cards[0]?.textContent).toContain("225.25");
+    expect(cards[1]?.textContent).toContain("3 × 10 @ 50 kg · REST 1:20");
+    expect(cards[1]?.textContent).toContain("Last time · 48 kg × 10");
+    expect(cards[1]?.textContent).toContain("50");
+  });
+
+  it("labels partial recovery with the full member name and keeps it secondary", () => {
     const onLogA1Only = vi.fn();
     render(<Harness onLogRound={vi.fn()} onLogA1Only={onLogA1Only} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+    const partial = screen.getByRole("button", { name: "Log Bench Press only" });
+    expect(partial.className).toContain("btn-ghost");
+    fireEvent.click(partial);
 
     expect(onLogA1Only).toHaveBeenCalledTimes(1);
     // The round no longer spells out A2's remaining state in a sentence —
@@ -163,7 +203,7 @@ describe("SupersetRoundEditor", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Log A2 only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log Barbell Row only" }));
     expect(onLogA2Only).toHaveBeenCalledTimes(1);
   });
 

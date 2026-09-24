@@ -100,8 +100,17 @@ Supabase sends the stock link email and the paste path is the working one.
   accidental start must not mark the day done), with "End anyway (counts as
   done)" as a ghost action. A count this device could not confirm is never
   treated as empty: the screen says so and offers only End, with the
-  ordinary two-tap discard below.
-- **Discard active** — End screen, two-tap. Soft delete.
+  ordinary discard unavailable. Sessions with logged sets stay in history and
+  only offer End.
+- **Discard active** — only a server-confirmed empty session can be discarded.
+  The PWA waits for the outbox result before clearing the active session or
+  navigating away. Offline, discard remains queued and the screen says it is
+  waiting for sync. If another device's set arrives first, Postgres refuses
+  the discard as a permanent row rejection; the screen keeps the session open
+  and explains that the workout should be ended instead. If a queued set
+  arrives after the empty session was discarded, Postgres restores the
+  session before accepting the append-only set, so the workout returns to
+  history and derived views.
 - **Recover an orphan** — a same-day open session this device has no cache
   for (other device, restored phone) surfaces as a card on Today:
   Resume / Finish / Discard (two-tap). Adoption rebuilds the session caches:
@@ -111,8 +120,10 @@ Supabase sends the stock link email and the paste path is the working one.
   local day complete at their last set's time; empty ones auto-discard; a
   stale local pointer to a session closed elsewhere is cleared. Sessions
   with queued outbox writes are excluded, so a finish or discard done
-  offline is never misread as abandonment. "Pause" is deliberately not a
-  feature: leaving a session open is the pause, and this sweep bounds it.
+  offline is never misread as abandonment. Even when an empty session is
+  discarded, its planned day stays linked and locked because another device
+  may still have queued sets. "Pause" is deliberately not a feature: leaving
+  a session open is the pause, and this sweep bounds it.
 - **A day reads DONE only once its session has ended.** An open session
   leaves its day unfinished, so the same day can never show RESUME and
   "Start again" at once.

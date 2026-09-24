@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatMonth,
+  formatAuthoredLoad,
   formatPlate,
   formatRxTarget,
   formatSessionDate,
@@ -86,6 +87,36 @@ describe("formatRxTarget is the one prescription formatter", () => {
     ).toBe("3×5 @ 220.5 lb");
   });
 
+  it("preserves the authored unit and value even when display unit differs", () => {
+    expect(
+      formatRxTarget(
+        rx({
+          load_kg: lbToKg(225),
+          resolved_load_kg: lbToKg(225),
+          entered_load: 225,
+          entered_unit: "lb",
+          load_entry: "total",
+        }),
+        "kg",
+      ),
+    ).toBe("3×5 @ 225 lb");
+  });
+
+  it("preserves per-side authored values while analytics keep the total", () => {
+    expect(
+      formatRxTarget(
+        rx({
+          load_kg: 2 * lbToKg(30),
+          resolved_load_kg: 2 * lbToKg(30),
+          entered_load: 30,
+          entered_unit: "lb",
+          load_entry: "per_side",
+        }),
+        "kg",
+      ),
+    ).toBe("3×5 @ 30 lb/side");
+  });
+
   // The column has existed since August and nothing rendered it, so a
   // coach's warmup and the working sets under it read as the same
   // instruction twice at two different weights.
@@ -146,6 +177,20 @@ describe("formatStoredTwin", () => {
   it("gives the lb equivalent when the user is typing kg", () => {
     expect(formatStoredTwin(100, "kg")).toBe("220.5 lb");
     expect(formatStoredTwin(0, "kg")).toBe("0 lb");
+  });
+});
+
+describe("formatAuthoredLoad", () => {
+  it("prefers persisted entered load over a converted kg display", () => {
+    expect(formatAuthoredLoad(lbToKg(225), "total", 225, "lb", "kg"))
+      .toBe("225 lb");
+  });
+
+  it("uses current conversion only when authored provenance is absent", () => {
+    expect(formatAuthoredLoad(100, "total", null, null, "lb"))
+      .toBe("220.5 lb");
+    expect(formatAuthoredLoad(60, "per_side", undefined, undefined, "kg"))
+      .toBe("30 kg/side");
   });
 });
 

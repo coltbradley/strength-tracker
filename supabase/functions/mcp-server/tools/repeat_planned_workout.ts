@@ -44,6 +44,7 @@ import {
 } from "../lib/loop.ts";
 import {
   assertExercisesExist,
+  assertSupersetGroups,
   type Prescription,
   prescriptionRows,
   resolveTrainingMaxes,
@@ -65,7 +66,9 @@ function toPrescription(r: RxRow): Prescription {
     sets: r.sets,
     reps_min: r.reps_min,
     reps_max: r.reps_max,
-    ...(r.load_kg === null ? {} : { load_kg: r.load_kg }),
+    ...(r.entered_load != null && r.entered_unit != null && r.load_entry != null
+      ? { load: { value: r.entered_load, unit: r.entered_unit, entry: r.load_entry } }
+      : r.load_kg === null ? {} : { load_kg: r.load_kg }),
     ...(r.load_pct_tm === null ? {} : { load_pct_tm: r.load_pct_tm }),
     ...(r.load_entry === null ? {} : { load_entry: r.load_entry }),
     ...(r.rest_seconds === null ? {} : { rest_seconds: r.rest_seconds }),
@@ -183,7 +186,7 @@ export function registerRepeatPlannedWorkout(
             .select(
               "exercise_id, position, sets, reps_min, reps_max, load_kg, " +
                 "load_pct_tm, load_entry, rest_seconds, notes, superset_group, " +
-                "section, set_type, tracking",
+                "section, set_type, tracking, entered_load, entered_unit",
             )
             .eq("user_id", db.ownerId)
             .eq("planned_workout_id", day.id)
@@ -229,13 +232,24 @@ export function registerRepeatPlannedWorkout(
             from_kg: r.load_kg,
             to_kg: kg,
           });
-          return { ...r, load_kg: kg };
+          const enteredLoad = r.entered_unit == null || r.load_entry == null
+            ? null
+            : (kg / (r.load_entry === "per_side" ? 2 : 1)) /
+              (r.entered_unit === "lb" ? 0.45359237 : 1);
+          return {
+            ...r,
+            load_kg: kg,
+            entered_load: enteredLoad === null
+              ? null
+              : Math.round(enteredLoad * 1000) / 1000,
+          };
         });
 
         const prescriptions = finalRows.map(toPrescription);
         // The same gates as the other two doors. A day that was writable once
         // is almost always still writable, but "almost" is not a reason to
         // skip the check that makes the three tools agree.
+        assertSupersetGroups(prescriptions, "the repeated day");
         await assertExercisesExist(db, prescriptions);
         const tmRes = await resolveTrainingMaxes(db, prescriptions);
 
@@ -337,6 +351,9 @@ export function registerRepeatPlannedWorkout(
             load_kg: p.load_kg,
             load_pct_tm: p.load_pct_tm,
             load_entry: p.load_entry,
+            load: p.entered_load != null && p.entered_unit != null && p.load_entry != null
+              ? { value: p.entered_load, unit: p.entered_unit, entry: p.load_entry }
+              : null,
             set_type: p.set_type,
             tracking: p.tracking,
             superset:

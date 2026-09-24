@@ -10,7 +10,7 @@
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const navigateMock = vi.fn();
 vi.mock("react-router-dom", () => ({ useNavigate: () => navigateMock }));
@@ -20,11 +20,33 @@ vi.mock("../lib/errors", () => ({ reportError: vi.fn(), toast: vi.fn() }));
 const flush = vi.fn().mockResolvedValue(undefined);
 const pendingSets = vi.fn().mockResolvedValue([]);
 const enqueue = vi.fn().mockResolvedValue(undefined);
+const inspect = vi.fn().mockResolvedValue([]);
+const listeners = new Set<() => void>();
+const subscribe = vi.fn((fn: () => void) => {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+});
+const countServerSessionSets = vi.fn().mockResolvedValue(0);
+vi.mock("../lib/data", () => ({
+  countServerSessionSets: () => countServerSessionSets(),
+  invalidateForSessionClose: vi.fn().mockResolvedValue(undefined),
+  invalidateForSetChange: vi.fn().mockResolvedValue(undefined),
+  resolveSessionSetCount: (local: number, server: number | null) =>
+    local > 0
+      ? { count: local, authoritative: true }
+      : server === null
+        ? { count: 0, authoritative: false }
+        : { count: server, authoritative: true },
+}));
 vi.mock("../lib/sync", () => ({
   outbox: {
     enqueue: (...a: unknown[]) => enqueue(...a),
     flush: (...a: unknown[]) => flush(...a),
     pendingSets: (...a: unknown[]) => pendingSets(...a),
+    inspect: () => inspect(),
+    subscribe: (fn: () => void) => subscribe(fn),
   },
 }));
 
@@ -46,6 +68,15 @@ beforeEach(async () => {
   vi.clearAllMocks();
   flush.mockResolvedValue(undefined);
   enqueue.mockResolvedValue(undefined);
+  inspect.mockResolvedValue([]);
+  listeners.clear();
+  subscribe.mockImplementation((fn: () => void) => {
+    listeners.add(fn);
+    return () => {
+      listeners.delete(fn);
+    };
+  });
+  countServerSessionSets.mockResolvedValue(0);
   pendingSets.mockResolvedValue([
     {
       id: "set-1",
@@ -66,6 +97,14 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe("End: finishing a session", () => {
+  it("does not offer discard when the session has logged sets", async () => {
+    render(<End />);
+    await screen.findByRole("button", { name: "End session" });
+    await screen.findByText(/SET.*LOGGED/);
+    expect(screen.queryByRole("button", { name: "Discard session" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Discard session?" })).toBeNull();
+  });
+
   it("flushes the queue before leaving, so Today's next read is not racing our own write", async () => {
     render(<End />);
     // Wait for the set-count summary to settle (several cacheGet round trips
@@ -107,5 +146,86 @@ describe("End: finishing a session", () => {
     }>("doneSummary:w-1");
     expect(summary?.setCount).toBe(1);
     expect(summary?.durationSeconds).toBeGreaterThanOrEqual(0);
+  });
+
+  it("keeps the active session open while an offline discard is pending", async () => {
+    pendingSets.mockResolvedValue([]);
+    let accepted = false;
+    inspect.mockImplementation(async () => {
+      if (accepted) return [];
+      const op = enqueue.mock.calls[0]?.[0] as {
+        id: string;
+        patch: { discarded_at: string };
+      } | undefined;
+      return op
+        ? [{
+            key: 1,
+            op: { kind: "update", table: "sessions", ...op },
+            table: "sessions",
+            created_at: op.patch.discarded_at,
+            retries: 0,
+            last_error: null,
+            user_id: "user-1",
+            state: "waiting",
+            cause: null,
+            retryable: false,
+          }]
+        : [];
+    });
+
+    render(<End />);
+    fireEvent.click(await screen.findByRole("button", { name: "Discard empty session" }));
+
+    await screen.findByText(/waiting to sync/i);
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(await cacheGet(cacheKeys.activeSession)).toEqual(ACTIVE);
+
+    accepted = true;
+    await act(async () => {
+      for (const listener of listeners) listener();
+    });
+    await vi.waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/", { replace: true }));
+  });
+
+  it("clears the active session only after the discard leaves the outbox", async () => {
+    pendingSets.mockResolvedValue([]);
+    render(<End />);
+    fireEvent.click(await screen.findByRole("button", { name: "Discard empty session" }));
+
+    await vi.waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/", { replace: true }));
+    expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
+  });
+
+  it("explains a late remote set and keeps the session active when discard is rejected", async () => {
+    pendingSets.mockResolvedValue([]);
+    inspect.mockImplementation(async () => {
+      const op = enqueue.mock.calls[0]?.[0] as {
+        id: string;
+        patch: { discarded_at: string };
+      } | undefined;
+      return op
+        ? [{
+            key: 1,
+            op: { kind: "update", table: "sessions", ...op },
+            table: "sessions",
+            created_at: op.patch.discarded_at,
+            retries: 1,
+            last_error: "cannot discard a session that contains sets",
+            last_code: "23514",
+            last_status: 400,
+            user_id: "user-1",
+            state: "dead",
+            cause: "rejected",
+            retryable: false,
+          }]
+        : [];
+    });
+
+    render(<End />);
+    fireEvent.click(await screen.findByRole("button", { name: "Discard empty session" }));
+
+    await screen.findByText(/set from another device.*reached/i);
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(await cacheGet(cacheKeys.activeSession)).toEqual(ACTIVE);
   });
 });

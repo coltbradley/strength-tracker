@@ -13,8 +13,16 @@ import {
   within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { cacheGet, cacheKeys, cacheSet, resetDbForTests } from "../lib/db";
-import { resetAllSettings } from "../lib/settings";
+import {
+  cacheGet,
+  cacheKeys,
+  cacheSet,
+  getDb,
+  resetDbForTests,
+  type Database,
+} from "../lib/db";
+import { createOutbox, type OutboxTransport } from "../lib/outbox";
+import { resetAllSettings, setSetting } from "../lib/settings";
 import type {
   ActiveSession,
   ResolvedPrescriptionRow,
@@ -93,6 +101,26 @@ async function seed(
   await cacheSet(cacheKeys.activeSession, active);
   await cacheSet(cacheKeys.sessionRx(active.id), rows);
   await cacheSet(cacheKeys.sessionSets(active.id), sets);
+}
+
+async function outboxWithFailedCountRefresh() {
+  const db = await getDb();
+  const failingReadDb = {
+    add: (...args: Parameters<Database["add"]>) => db.add(...args),
+    transaction: (store: "outbox", mode?: "readonly" | "readwrite") => {
+      if (mode === undefined) throw new Error("count refresh failed");
+      return db.transaction(store, mode);
+    },
+  } as unknown as Database;
+  const transport: OutboxTransport = {
+    insert: async () => null,
+    update: async () => null,
+  };
+  return createOutbox({
+    getDb: () => Promise.resolve(failingReadDb),
+    transport,
+    isOnline: () => false,
+  });
 }
 
 beforeEach(async () => {
@@ -193,9 +221,42 @@ describe("Session focus presentation", () => {
       await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
 
+    expect(
+      screen.getByRole("button", { name: "reps value — tap to type" })
+        .textContent,
+    ).toBe("9");
+  });
+
+  it("asks before Home can discard an ordinary staged set and Stay keeps it", async () => {
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "reps value — tap to type" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "9" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "back to Today — session keeps running",
+      }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Unlogged set changes",
+    });
+    expect(dialog.textContent).toMatch(/held only on this screen/i);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Stay in session" }),
+    );
+
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(
       screen.getByRole("button", { name: "reps value — tap to type" })
         .textContent,
@@ -224,13 +285,13 @@ describe("Session focus presentation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
     fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(
       await screen.findByRole("heading", { name: "Back Squat" }),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(
       await screen.findByRole("heading", { name: "Bench Press" }),
     ).toBeTruthy();
@@ -245,7 +306,7 @@ describe("Session focus presentation", () => {
     ).toBe("22.5");
   });
 
-  it("keeps a timed session in overview and explains why focus is unavailable", async () => {
+  it("opens timed work in focus with duration as the hero and logs seconds", async () => {
     resetDbForTests();
     await seed("time");
     render(
@@ -254,14 +315,12 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    expect(
-      await screen.findByText(
-        /duration tracking is not available in focus mode/i,
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: /— current — view full workout$/ }),
-    ).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "duration value — tap to type" }).textContent).toBe("60");
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { exercise_id: "bench-press", reps: 0, duration_seconds: 60 },
+    });
   });
 
   it("keeps normal focus navigation and logging on the same entry", async () => {
@@ -280,14 +339,7 @@ describe("Session focus presentation", () => {
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
     });
-    expect(
-      screen.queryByRole("button", { name: "Next · Back Squat" }),
-    ).toBeNull();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Next exercise" }),
-    );
-
-    expect(screen.getByRole("heading", { name: "Back Squat" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Back Squat" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
@@ -311,6 +363,139 @@ describe("Session focus presentation", () => {
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
     });
+  });
+
+  it("requires local intent and a second tap before logging an extra set", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
+    ]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+    await screen.findByRole("button", { name: "Finish workout" });
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add extra set" }));
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    fireEvent.click(screen.getByRole("button", { name: "Log extra set" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
+      table: "sets",
+      payload: { exercise_id: "bench-press", set_index: 1 },
+    });
+  });
+
+  it("shows and logs a prescription in its durable authored unit", async () => {
+    resetDbForTests();
+    const bench = prescription();
+    bench.load_kg = 102.17;
+    bench.resolved_load_kg = 102.17;
+    bench.entered_load = 225.25;
+    bench.entered_unit = "lb";
+    await seed("reps", [bench]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { entered_load: 225.25, entered_unit: "lb" },
+    });
+  });
+
+  it("routes Note last set to the set_notes outbox row", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+    ]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+    await screen.findByRole("button", { name: "Note last set" });
+    fireEvent.click(screen.getByRole("button", { name: "Note last set" }));
+    const note = await screen.findByPlaceholderText("Note on this set…");
+    fireEvent.change(note, { target: { value: "Grip felt uneven" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
+      table: "set_notes",
+      payload: { note: "Grip felt uneven" },
+    });
+  });
+
+  it("keeps an ordinary set editable when its local queue write fails", async () => {
+    let rejectQueue!: (reason?: unknown) => void;
+    vi.mocked(outbox.enqueue).mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectQueue = reject;
+        }),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      render(
+        <MemoryRouter>
+          <Session />
+        </MemoryRouter>,
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+      await vi.waitFor(() =>
+        expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
+      );
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByText("LOGGED")).toBeNull();
+      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
+      expect(
+        await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id)),
+      ).toEqual([]);
+
+      await act(async () => {
+        rejectQueue(new Error("IndexedDB unavailable"));
+        await Promise.resolve();
+      });
+
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /could not be saved locally.*retry/i,
+      );
+      expect(screen.getByRole("button", { name: "LOG SET" })).toBeTruthy();
+      expect(screen.queryByText("LOGGED")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "reps value — tap to type" })
+          .textContent,
+      ).toBe("8");
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("treats an ordinary set as saved when only the count refresh fails", async () => {
+    const durableOutbox = await outboxWithFailedCountRefresh();
+    vi.mocked(outbox.enqueue).mockImplementationOnce((op) =>
+      durableOutbox.enqueue(op),
+    );
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+
+    expect(
+      await screen.findByText("Last: 20 kg × 8 working"),
+    ).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    expect(await (await getDb()).getAll("outbox")).toHaveLength(1);
   });
 
   it("logs a bodyweight movement with no load at zero, never the hidden bar fallback", async () => {
@@ -408,11 +593,7 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Next exercise" }),
-    );
-
-    expect(screen.getByRole("heading", { name: "Farmer Carry" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Farmer Carry" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
     fireEvent.click(screen.getByRole("button", { name: "DONE" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
@@ -470,6 +651,34 @@ describe("Session focus presentation", () => {
     expect(screen.getByText("Last time · 50 kg × 10")).toBeTruthy();
   });
 
+  it("keeps each member's authored load and unit in its round draft", async () => {
+    resetDbForTests();
+    const authoredBench = {
+      ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      load_kg: 102.17,
+      resolved_load_kg: 102.17,
+      entered_load: 225.25,
+      entered_unit: "lb" as const,
+    };
+    await seed("reps", [
+      authoredBench,
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("round 1 of 2");
+    const a1 = await screen.findByLabelText("A1 Bench Press");
+    await vi.waitFor(() =>
+      expect(within(a1).getByRole("button", { name: /load value/ }).textContent)
+        .toBe("225.25"),
+    );
+    expect(a1.textContent).toContain("lb");
+  });
+
   it("logs both members of a superset round through one ordered local batch", async () => {
     resetDbForTests();
     await seed("reps", [
@@ -518,12 +727,74 @@ describe("Session focus presentation", () => {
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
   });
 
+  it("rests only after full non-final rounds and names the next A1 round", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 3),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 3),
+      { ...prescription("curl", "cable-curl", "Cable Curl"), position: 2 },
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("round 1 of 3");
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    await vi.waitFor(() =>
+      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
+    );
+    const rest = await screen.findByRole("timer", { name: "rest timer" });
+    expect(rest.textContent).toContain("Next: Superset A, round 2 of 3");
+
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    await vi.waitFor(() =>
+      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(2),
+    );
+    await vi.waitFor(() =>
+      expect(screen.getByRole("timer", { name: "rest timer" }).textContent)
+        .toContain("Next: Superset A, round 3 of 3"),
+    );
+
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    await vi.waitFor(() =>
+      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(3),
+    );
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull(),
+    );
+    expect(await screen.findByRole("heading", { name: "Cable Curl" })).toBeTruthy();
+  });
+
+  it("keeps three-member circuits in overview and explains why paired Focus is unavailable", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      { ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 2), position: 0 },
+      { ...prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2), position: 1 },
+      { ...prescription("curl", "cable-curl", "Cable Curl", "reps", 1, 2), position: 2 },
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(
+      "3-member Superset A is an overview-only circuit. Paired Focus supports exactly two members.",
+    )).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Superset A" })).toBeNull();
+  });
+
   it("keeps both drafts visible when the local round batch fails", async () => {
     resetDbForTests();
     await seed("reps", [
       prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
       prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
     ]);
+    await cacheSet(cacheKeys.sessionSkips(active.id), ["row"]);
     vi.mocked(outbox.enqueueBatch).mockRejectedValueOnce(
       new Error("disk full"),
     );
@@ -549,10 +820,257 @@ describe("Session focus presentation", () => {
       expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
         "22.5",
       );
+      expect(
+        await cacheGet<string[] | Record<string, unknown>>(
+          cacheKeys.sessionSkips(active.id),
+        ),
+      ).toEqual(["row"]);
       expect(screen.queryByText("LOGGED")).toBeNull();
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("keeps both member drafts when saving a single-member set fails", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    let rejectQueue!: (reason?: unknown) => void;
+    vi.mocked(outbox.enqueue).mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectQueue = reject;
+        }),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      render(
+        <MemoryRouter>
+          <Session />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText("round 1 of 2")).toBeTruthy();
+      const increaseLoad = screen.getAllByRole("button", {
+        name: "increase load by 2.5 kg",
+      });
+      fireEvent.click(increaseLoad[0]!);
+      fireEvent.click(increaseLoad[1]!);
+      fireEvent.click(increaseLoad[1]!);
+      fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
+      await vi.waitFor(() =>
+        expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
+      );
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByText("LOGGED")).toBeNull();
+      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
+      expect(screen.getByRole("button", { name: "Log Bench Press only" })).toBeTruthy();
+      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
+        "22.5",
+      );
+      expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+        "25",
+      );
+      expect(
+        await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id)),
+      ).toEqual([]);
+
+      await act(async () => {
+        rejectQueue(new Error("IndexedDB unavailable"));
+        await Promise.resolve();
+      });
+
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /could not be saved locally.*retry/i,
+      );
+      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
+        "22.5",
+      );
+      expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+        "25",
+      );
+      expect(screen.getByText("round 1 of 2")).toBeTruthy();
+      expect(screen.queryByText("LOGGED")).toBeNull();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("does not offer a duplicate retry for an A1-only write with a count refresh failure", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    const durableOutbox = await outboxWithFailedCountRefresh();
+    vi.mocked(outbox.enqueue).mockImplementationOnce((op) =>
+      durableOutbox.enqueue(op),
+    );
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
+    const loadButtons = screen.getAllByRole("button", {
+      name: "increase load by 2.5 kg",
+    });
+    fireEvent.click(loadButtons[0]!);
+    fireEvent.click(loadButtons[1]!);
+    fireEvent.click(loadButtons[1]!);
+    fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
+
+    await vi.waitFor(async () => {
+      expect(await (await getDb()).getAll("outbox")).toHaveLength(1);
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen.getByLabelText("A1 Bench Press").textContent,
+      ).not.toContain("22.5"),
+    );
+    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+      "25",
+    );
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    const [queued] = await (await getDb()).getAll("outbox");
+    expect(queued?.op).toMatchObject({
+      kind: "insert",
+      table: "sets",
+      payload: { exercise_id: "bench-press", load_kg: 22.5 },
+    });
+  });
+
+  it("clears the old rest strip when auto-rest is turned off before a round", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 3),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 3),
+      prescription("db-row", "dumbbell-row", "Dumbbell Row", "reps", 1, 3),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() =>
+      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
+    );
+    expect(await screen.findByRole("timer", { name: /^rest timer/ })).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /— current — view full workout$/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    expect(await screen.findByText("round 1 of 3")).toBeTruthy();
+
+    act(() => setSetting("autoStartRest", false));
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("timer", { name: /^rest timer/ }),
+      ).toBeNull(),
+    );
+    // The first ordinary log holds the duplicate-tap lock briefly. The rest
+    // assertion above is the behavior under test; wait for the independent
+    // lock before starting the next round.
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    await vi.waitFor(() =>
+      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("timer", { name: /^rest timer/ }),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps paired drafts when switching through overview and back to Focus", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: "increase load by 2.5 kg",
+      })[0]!,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: "increase load by 2.5 kg",
+      })[1]!,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: /— current — view full workout$/,
+      })[0]!,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+
+    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
+      "22.5",
+    );
+    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+      "22.5",
+    );
+  });
+
+  it("warns before Home can discard paired member drafts", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
+    const loadButtons = screen.getAllByRole("button", {
+      name: "increase load by 2.5 kg",
+    });
+    fireEvent.click(loadButtons[0]!);
+    fireEvent.click(loadButtons[1]!);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "back to Today — session keeps running",
+      }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Unlogged set changes",
+    });
+    expect(dialog.textContent).toMatch(/held only on this screen/i);
+    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
+      "22.5",
+    );
+    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+      "22.5",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Leave and discard drafts" }),
+    ).toBeTruthy();
   });
 
   it("does not advance either member when the local round batch cannot be saved", async () => {
@@ -615,7 +1133,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(increaseLoad[0]);
     fireEvent.click(increaseLoad[1]);
     fireEvent.click(increaseLoad[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
 
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
@@ -640,17 +1158,19 @@ describe("Session focus presentation", () => {
     );
 
     await screen.findByText("round 1 of 2");
-    fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
     );
+    expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
 
     expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Log A2 only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log Barbell Row only" }));
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2),
     );
+    expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
 
     expect(
       vi.mocked(outbox.enqueue).mock.calls.map((call) => call[0]),
@@ -696,7 +1216,7 @@ describe("Session focus presentation", () => {
       )[0]!,
     );
     fireEvent.click(screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
 
     expect(await screen.findByText("round 1 of 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Log round" })).toBeTruthy();
@@ -716,9 +1236,9 @@ describe("Session focus presentation", () => {
       fireEvent.click(logSet);
       await Promise.resolve();
     });
-    expect(screen.getByRole("timer", { name: "rest timer" })).toBeTruthy();
+    expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     act(() => vi.advanceTimersByTime(30_000));
 
     expect(screen.getByText("0:30")).toBeTruthy();
@@ -808,7 +1328,7 @@ describe("Session focus presentation", () => {
       await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(
       await screen.findByRole("button", { name: "Next exercise" }),
     ).toBeTruthy();
@@ -816,7 +1336,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "more options for Bench Press" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "correct set 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Correct logged set 1" }));
 
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
   });
@@ -861,7 +1381,7 @@ describe("Session focus presentation", () => {
       await screen.findByRole("button", { name: "expand details" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "correct set 1" }),
+      await screen.findByRole("button", { name: "Correct logged set 1" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
     expect(
@@ -873,7 +1393,7 @@ describe("Session focus presentation", () => {
     // Focus mode. The correction in progress must win: Bench stays open with
     // its staged edit, not Squat with a fresh prefill.
     fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
 
     expect(
       await screen.findByRole("heading", { name: "Bench Press" }),
@@ -908,12 +1428,7 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Next exercise" }),
-    );
-    expect(
-      await screen.findByRole("heading", { name: "Back Squat" }),
-    ).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Back Squat" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     // past LOG_LOCK_MS, or the correction's own Save below is a no-op tap on
@@ -924,7 +1439,7 @@ describe("Session focus presentation", () => {
       screen.getByRole("button", { name: "more options for Back Squat" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "correct set 1" }),
+      await screen.findByRole("button", { name: "Correct logged set 1" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
     expect(
@@ -1005,11 +1520,11 @@ describe("Session focus presentation", () => {
     resetDbForTests();
     vi.mocked(getServerSessionSets).mockResolvedValue([]);
     const benchRx: ResolvedPrescriptionRow = {
-      ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 1),
+      ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
       rest_seconds: 90,
     };
     const rowRx: ResolvedPrescriptionRow = {
-      ...prescription("row", "barbell-row", "Barbell Row", "reps", 1, 1),
+      ...prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
       rest_seconds: 45,
     };
     await seed("reps", [benchRx, rowRx]);
@@ -1020,14 +1535,15 @@ describe("Session focus presentation", () => {
     );
 
     // Focus opens on Bench (the round's first, canonical member), so the
-    // top-level `restSeconds` hook value reflects Bench's own 90s bracket —
-    // the wrong number for a strip that starts after Row, the round's last
-    // performed exercise, whose own bracket says 45s.
-    await screen.findByText("round 1 of 1");
+    // top-level `restSeconds` hook value reflects Bench's own 90s bracket.
+    // The round's inter-round rest belongs to the next A1 and uses the
+    // current round's A2 prescription, 45 seconds.
+    await screen.findByText("round 1 of 2");
     fireEvent.click(screen.getByRole("button", { name: "Log round" }));
 
     expect(await screen.findByText("0:45")).toBeTruthy();
     expect(screen.queryByText("1:30")).toBeNull();
+    expect(screen.getByText("Next: Superset A, round 2 of 2")).toBeTruthy();
   });
 
   it("flips a superset member's staged type from warmup to working after logging it, like logSet does", async () => {
@@ -1086,9 +1602,9 @@ describe("Session focus presentation", () => {
 
     // Bench's warmup is done and Row already met its target — only Bench's
     // real working set remains.
-    await screen.findByRole("button", { name: "Log A1 only" });
+    await screen.findByRole("button", { name: "Log Bench Press only" });
     await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
 
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
@@ -1151,11 +1667,11 @@ describe("Session focus presentation", () => {
     expect(await screen.findByText("round 2 of 2")).toBeTruthy();
     expect(screen.queryByText(/round 2 of 1/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Log A1 only" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Log A2 only" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Log Bench Press only" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Log Barbell Row only" })).toBeTruthy();
 
     await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "Log A2 only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Log Barbell Row only" }));
 
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
@@ -1163,5 +1679,8 @@ describe("Session focus presentation", () => {
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "barbell-row", set_index: 1 },
     });
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull(),
+    );
   });
 });

@@ -15,6 +15,7 @@ import { getSetting } from "../lib/settings";
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { Note } from "../components/Note";
 import {
+  applyPlanEdit,
   addPrescriptionGroups,
   reorderPrescriptions,
   saveWorkoutAsTemplate,
@@ -25,10 +26,8 @@ import {
   getExercises,
   getPlannedWorkouts,
   getResolvedPrescriptions,
-  setPrescriptionSection,
   swapWorkoutOrder,
   updatePlannedWorkout,
-  updatePrescription,
   weekOrder,
   type WorkoutList,
 } from "../lib/data";
@@ -45,6 +44,7 @@ import {
   reorderEntries,
   moveBlock,
   sectionUnit,
+  supersetRunIssues,
   type PlanBlock,
   type PlanEntry,
 } from "../lib/sections";
@@ -60,6 +60,7 @@ import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
 import { useDragList } from "../hooks/useDragList";
 import { ExercisePicker } from "../components/ExercisePicker";
+import { cacheGet, cacheKeys } from "../lib/db";
 import { fromDisplay, stepKg, toDisplay } from "../lib/units";
 import {
   enteredKg,
@@ -69,11 +70,13 @@ import {
 } from "../lib/loadEntry";
 import type {
   LoadEntry,
+  LoadUnit,
   ExerciseRow,
   TrackingMode,
   PlannedWorkoutRow,
   PrescriptionPatch,
   ResolvedPrescriptionRow,
+  ActiveSession,
 } from "../lib/types";
 
 type LoadMode = "kg" | "pct" | "feel";
@@ -89,6 +92,9 @@ interface RxDraft {
   load_kg: number;
   /** How this row's weight is expressed. */
   load_entry: LoadEntry;
+  entered_unit: LoadUnit | null;
+  /** Exact authored number, retained until the load itself is edited. */
+  entered_load: number | null;
   load_pct: number; // meaningful in pct mode
   rest_seconds: number;
   hasRest: boolean;
@@ -142,8 +148,12 @@ function draftFrom(
     reps_min: r.reps_min,
     reps_max: r.reps_max,
     mode: r.load_kg !== null ? "kg" : r.load_pct_tm !== null ? "pct" : "feel",
-    load_kg: Math.round(enteredKg(storedTotal, entry) * 100) / 100,
+    load_kg: r.entered_load != null && r.entered_unit != null
+      ? fromDisplay(r.entered_load, r.entered_unit)
+      : Math.round(enteredKg(storedTotal, entry) * 100) / 100,
     load_entry: entry,
+    entered_unit: r.entered_load != null ? r.entered_unit ?? null : null,
+    entered_load: r.entered_load ?? null,
     load_pct: r.load_pct_tm ?? 75,
     rest_seconds: r.rest_seconds ?? 180,
     hasRest: r.rest_seconds !== null,
@@ -161,6 +171,8 @@ function unchanged(r: ResolvedPrescriptionRow, p: PrescriptionPatch): boolean {
     p.reps_max === r.reps_max &&
     (p.load_kg ?? null) === (r.load_kg ?? null) &&
     (p.load_entry ?? null) === (r.load_entry ?? null) &&
+    (p.entered_load ?? null) === (r.entered_load ?? null) &&
+    (p.entered_unit ?? null) === (r.entered_unit ?? null) &&
     (p.load_pct_tm ?? null) === (r.load_pct_tm ?? null) &&
     (p.rest_seconds ?? null) === (r.rest_seconds ?? null) &&
     (p.superset_group ?? null) === (r.superset_group ?? null) &&
@@ -170,6 +182,7 @@ function unchanged(r: ResolvedPrescriptionRow, p: PrescriptionPatch): boolean {
 }
 
 function patchFrom(d: RxDraft): PrescriptionPatch {
+  const hasDirectLoad = d.mode === "kg" && d.load_kg > 0 && d.entered_unit !== null;
   return {
     sets: d.sets,
     reps_min: d.reps_min,
@@ -185,6 +198,10 @@ function patchFrom(d: RxDraft): PrescriptionPatch {
         ? Math.round(Math.max(0, totalKg(d.load_kg, d.load_entry)) * 100) / 100
         : null,
     load_entry: d.mode === "kg" ? d.load_entry : null,
+    entered_load: hasDirectLoad
+      ? d.entered_load ?? toDisplay(d.load_kg, d.entered_unit!)
+      : null,
+    entered_unit: hasDirectLoad ? d.entered_unit : null,
     load_pct_tm: d.mode === "pct" ? d.load_pct : null,
     rest_seconds: d.hasRest ? d.rest_seconds : null,
     superset_group: d.superset === 0 ? null : d.superset,
@@ -236,6 +253,8 @@ export function Plan() {
   const [exercisesFailed, setExercisesFailed] = useState(false);
   const [duplicateDate, setDuplicateDate] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [activeForWorkout, setActiveForWorkout] =
+    useState<ActiveSession | null>(null);
   const [labelValue, setLabelValue] = useState("");
   const [labelDirty, setLabelDirty] = useState(false);
   /** Set by addExercise so the reload that follows can open the new row's
@@ -256,6 +275,7 @@ export function Plan() {
         : [],
     [list, workout],
   );
+  const workoutLocked = activeForWorkout?.planned_workout_id === workout?.id;
 
   const reload = useCallback(() => {
     getPlannedWorkouts()
@@ -268,6 +288,21 @@ export function Plan() {
   }, [id]);
 
   useEffect(() => reload(), [reload]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void cacheGet<ActiveSession>(cacheKeys.activeSession)
+      .then((active) => {
+        if (!cancelled)
+          setActiveForWorkout(
+            active != null && active.planned_workout_id === id ? active : null,
+          );
+      })
+      .catch((e: unknown) => reportError(e, "check active workout"));
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   useEffect(() => {
     if (workout && !noteDirty) setPlanNote(workout.plan_note ?? "");
@@ -343,6 +378,7 @@ export function Plan() {
    * pick up half of it. See lib/sections.ts.
    */
   const blocks = useMemo(() => planBlocks(rx ?? []), [rx]);
+  const supersetIssues = useMemo(() => supersetRunIssues(rx ?? []), [rx]);
 
   /** Long-press to drag, at both levels a day actually has: a whole part of
    *  the day (its heading, or a lone exercise), and one exercise inside a
@@ -394,13 +430,37 @@ export function Plan() {
       </div>
     );
 
-  const run = async (what: string, fn: () => Promise<void>) => {
+  const run = async (
+    what: string,
+    fn: () => Promise<void>,
+    affectedWorkoutIds: readonly string[] | false = [workout.id],
+  ) => {
     if (busy) return;
     setBusy(true);
     try {
+      if (affectedWorkoutIds !== false) {
+        const active = await cacheGet<ActiveSession>(cacheKeys.activeSession);
+        if (
+          active?.planned_workout_id != null &&
+          affectedWorkoutIds.includes(active.planned_workout_id)
+        )
+          throw new PlanEditRefused(
+            "Finish the active session before changing this workout or its place in the plan.",
+          );
+      }
       await fn();
     } catch (e) {
-      reportError(e, what);
+      if (e instanceof PlanEditRefused) {
+        toast(e.message, "error");
+        setLabelValue(workout.label ?? "");
+        setLabelDirty(false);
+        setDateValue(workout.scheduled_date ?? "");
+        setDateDirty(false);
+        setPlanNote(workout.plan_note ?? "");
+        setNoteDirty(false);
+      } else {
+        reportError(e, what);
+      }
     } finally {
       setBusy(false);
     }
@@ -490,7 +550,7 @@ export function Plan() {
       await swapWorkoutOrder(workout, other);
       toast("Order updated");
       reload();
-    });
+    }, [workout.id, other.id]);
   };
 
   const duplicate = () =>
@@ -503,7 +563,7 @@ export function Plan() {
       );
       setDuplicateDate("");
       reload();
-    });
+    }, false);
 
   const removeWorkout = () =>
     void run("delete workout", async () => {
@@ -534,21 +594,23 @@ export function Plan() {
           .filter((o) => o.id !== r.id && normalizeSection(o.section) !== next)
           .map((o) => o.id)
       : [];
-    await updatePrescription(r.id, workout.id, patch);
-    await setPrescriptionSection(mates, workout.id, next);
-    // A section or a letter says which PART of the day this belongs to, and
-    // the editor has already redrawn it there. Land it, or Today would still
-    // read the old order.
-    if (moved || group !== (r.superset_group ?? null))
-      await settle(
-        rows.map((o) =>
-          o.id === r.id
-            ? { ...o, section: next, superset_group: group }
-            : mates.includes(o.id)
-              ? { ...o, section: next }
-              : o,
-        ),
-      );
+    const proposed = rows.map((o) =>
+      o.id === r.id
+        ? { ...o, section: next, superset_group: group }
+        : mates.includes(o.id)
+          ? { ...o, section: next }
+          : o,
+    );
+    const issues = supersetRunIssues(proposed);
+    if (issues.length > 0) throw new PlanEditRefused(issues.join(" "));
+    const { section: _section, ...rowPatch } = patch;
+    await applyPlanEdit(workout.id, canonicalRowIds(proposed), {
+      targetId: r.id,
+      patch: rowPatch,
+      sectionIds: moved ? [r.id, ...mates] : [],
+      section: next,
+      applySection: moved,
+    });
   };
 
   /**
@@ -575,7 +637,15 @@ export function Plan() {
       return Promise.resolve();
     }
     return run("save exercise", async () => {
-      await commitRx(r, patch);
+      try {
+        await commitRx(r, patch);
+      } catch (e) {
+        if (e instanceof PlanEditRefused) {
+          toast(e.message, "error");
+          return;
+        }
+        throw e;
+      }
       if (!keepOpen) {
         setEditingRx(null);
         setDraft(null);
@@ -613,6 +683,20 @@ export function Plan() {
    */
   const saveScheme = (ex: ExerciseRow, groups: SetGroup[]) =>
     void run("add exercise", async () => {
+      const proposed = [
+        ...(rx ?? []),
+        ...groups.map((group) => ({
+          exercise_id: ex.id,
+          superset_group:
+            group.superset_group === 0 ? null : group.superset_group,
+        })),
+      ];
+      const issues = supersetRunIssues(proposed);
+      if (issues.length > 0) {
+        toast(issues.join(" "), "error");
+        return;
+      }
+
       // Consecutive prescriptions for the SAME exercise are a ramp: Today
       // renders them as one grouped entry ("3×5 · 3×3"), while this editor
       // keeps them as separate rows. That is deliberate — it is how a warmup
@@ -688,14 +772,17 @@ export function Plan() {
         return;
       }
       const ids = block.entries.flatMap((e) => e.rows.map((o) => o.id));
-      await setPrescriptionSection(ids, workout.id, next);
       // A rename can change where the part runs — "Abs" renamed to "Cooldown"
       // belongs at the end now.
-      await settle(
+      const rows =
         (rx ?? []).map((o) =>
           ids.includes(o.id) ? { ...o, section: next } : o,
-        ),
-      );
+        );
+      await applyPlanEdit(workout.id, canonicalRowIds(rows), {
+        sectionIds: ids,
+        section: next,
+        applySection: true,
+      });
       setSectionOpen(null);
       toast(`Renamed to ${next}`);
       reload();
@@ -705,12 +792,15 @@ export function Plan() {
   const dissolveSection = (block: PlanBlock) =>
     void run("remove section", async () => {
       const ids = block.entries.flatMap((e) => e.rows.map((o) => o.id));
-      await setPrescriptionSection(ids, workout.id, null);
-      await settle(
+      const rows =
         (rx ?? []).map((o) =>
           ids.includes(o.id) ? { ...o, section: null } : o,
-        ),
-      );
+        );
+      await applyPlanEdit(workout.id, canonicalRowIds(rows), {
+        sectionIds: ids,
+        section: null,
+        applySection: true,
+      });
       setSectionOpen(null);
       setConfirming(null);
       toast(`${block.section} removed — its exercises stay`);
@@ -723,7 +813,7 @@ export function Plan() {
       await saveWorkoutAsTemplate(workout, name, rx ?? []);
       setTemplateName(null);
       toast(`Saved "${name}" — add it to any day from Today`);
-    });
+    }, false);
 
   const saveLabel = () =>
     void run("rename workout", async () => {
@@ -755,12 +845,18 @@ export function Plan() {
         value={labelValue}
         placeholder={workoutName(workout)}
         aria-label="workout name"
+        disabled={busy || workoutLocked}
         onChange={(e) => {
           setLabelValue(e.target.value);
           setLabelDirty(true);
         }}
         onBlur={() => labelDirty && saveLabel()}
       />
+      {workoutLocked && (
+        <p className="microcopy" role="alert">
+          Finish the active session before changing this workout or its place in the plan.
+        </p>
+      )}
       {workout.notes && <Note label="COACH" text={workout.notes} />}
 
       <section className="rule-section">
@@ -904,7 +1000,7 @@ export function Plan() {
                           if (next) storeLayout(next);
                         }}
                       >
-                        ↑ Move up
+                        ↑ Move section up
                       </button>
                       <button
                         type="button"
@@ -917,7 +1013,7 @@ export function Plan() {
                           if (next) storeLayout(next);
                         }}
                       >
-                        ↓ Move down
+                        ↓ Move section down
                       </button>
                       <button
                         type="button"
@@ -945,6 +1041,9 @@ export function Plan() {
             )}
             {block.entries.map((entry) => {
               const ei = entries.findIndex((e) => e.key === entry.key);
+              const entryName = [
+                ...new Set(entry.rows.map((row) => row.exercise_name)),
+              ].join(" and ");
               return (
                 <div
                   key={entry.key}
@@ -971,8 +1070,16 @@ export function Plan() {
                       {supersetName(entry.supersetGroup)}
                       <span className="ss-head-note">
                         {" · "}
-                        {entry.exercises > 1
-                          ? `${entry.exercises} exercises, alternated`
+                        {supersetIssues.some((issue) =>
+                          issue.startsWith(
+                            `Superset ${String.fromCharCode(64 + entry.supersetGroup!)} `,
+                          ),
+                        )
+                          ? "malformed group, fix its order before paired rounds"
+                          : entry.exercises > 1
+                          ? entry.exercises > 2
+                            ? `${entry.exercises} exercises, overview-only circuit`
+                            : `${entry.exercises} exercises, alternated`
                           : "nothing else in it yet"}
                       </span>
                     </div>
@@ -984,6 +1091,7 @@ export function Plan() {
               <button
                 type="button"
                 className="week-row week-row-rx"
+                aria-label={`${editingRx === r.id ? "Save planned sets for" : "Edit planned sets for"} ${r.exercise_name}`}
                 onClick={() => {
                   if (editingRx === r.id) {
                     void saveRx(r);
@@ -1130,7 +1238,13 @@ export function Plan() {
                         key={mode}
                         type="button"
                         className={`seg-btn ${draft.mode === mode ? "seg-on" : ""}`}
-                        onClick={() => setDraft({ ...draft, mode })}
+                        onClick={() => setDraft({
+                          ...draft,
+                          mode,
+                          entered_unit: mode === "kg"
+                            ? draft.entered_unit ?? unit
+                            : null,
+                        })}
                       >
                         {label}
                       </button>
@@ -1198,6 +1312,8 @@ export function Plan() {
                                 999,
                                 Math.max(0, fromDisplay(v, unit)),
                               ),
+                              entered_unit: unit,
+                              entered_load: v,
                             }),
                           onCancel: () => setPad(null),
                         })
@@ -1207,7 +1323,12 @@ export function Plan() {
                       value={draft.load_kg}
                       min={0}
                       max={999}
-                      onChange={(v) => setDraft({ ...draft, load_kg: v })}
+                      onChange={(v) => setDraft({
+                        ...draft,
+                        load_kg: v,
+                        entered_unit: unit,
+                        entered_load: toDisplay(v, unit),
+                      })}
                       snap
                       steps={[
                         {
@@ -1339,16 +1460,31 @@ export function Plan() {
                   </div>
                   {draft.superset !== 0 &&
                     (() => {
-                      const mates = (rx ?? []).filter(
-                        (o) =>
-                          o.id !== r.id && o.superset_group === draft.superset,
+                      const mates = Array.from(
+                        new Map(
+                          (rx ?? [])
+                            .filter(
+                              (o) =>
+                                o.exercise_id !== r.exercise_id &&
+                                o.superset_group === draft.superset,
+                            )
+                            .map((o) => [o.exercise_id, o.exercise_name]),
+                        ).values(),
                       );
                       const letter = String.fromCharCode(64 + draft.superset);
                       return (
                         <div className="ss-pairing">
-                          {mates.length === 0
+                          {supersetIssues.some((issue) =>
+                            issue.startsWith(
+                              `Superset ${String.fromCharCode(64 + draft.superset)} `,
+                            ),
+                          )
+                            ? `Superset ${String.fromCharCode(64 + draft.superset)} must be fixed before paired rounds.`
+                          : mates.length === 0
                             ? `Group ${letter} — nothing else is in it yet. Put another exercise in ${letter} to pair them.`
-                            : `Alternates with ${mates.map((m) => m.exercise_name).join(", ")}.`}
+                          : mates.length > 1
+                            ? `This group has ${mates.length + 1} exercises and stays in the workout overview until circuit Focus is available.`
+                            : `Alternates with ${mates.join(", ")}.`}
                         </div>
                       );
                     })()}
@@ -1400,22 +1536,24 @@ export function Plan() {
                     <button
                       type="button"
                       className="chip"
+                      aria-label={`Move exercise block up: ${entryName}`}
                       disabled={
                         busy || moveEntry(shownBlocks, entry.key, -1) === null
                       }
                       onClick={() => moveExercise(entry, r, -1)}
                     >
-                      ↑ Move up
+                      ↑ Move exercise block up
                     </button>
                     <button
                       type="button"
                       className="chip"
+                      aria-label={`Move exercise block down: ${entryName}`}
                       disabled={
                         busy || moveEntry(shownBlocks, entry.key, 1) === null
                       }
                       onClick={() => moveExercise(entry, r, 1)}
                     >
-                      ↓ Move down
+                      ↓ Move exercise block down
                     </button>
                   </div>
                   {block.section !== null && (
@@ -1434,7 +1572,7 @@ export function Plan() {
                       disabled={busy}
                       onClick={() => void saveRx(r)}
                     >
-                      Done
+                      Save planned sets
                     </button>
                     <button
                       type="button"
@@ -1446,10 +1584,9 @@ export function Plan() {
                     >
                       Discard changes
                     </button>
-                    {/* DELETE, not Remove: this drops the prescription from
-                        the database. Session's UNDO ADD is the reversible one. */}
                     <button
                       type="button"
+                      aria-label="Remove planned exercise"
                       className={`btn ${confirming === `rx:${r.id}` ? "btn-danger" : "btn-ghost"}`}
                       disabled={busy}
                       onClick={() =>
@@ -1459,8 +1596,8 @@ export function Plan() {
                       }
                     >
                       {confirming === `rx:${r.id}`
-                        ? "Delete exercise?"
-                        : "Delete exercise"}
+                        ? "Remove planned exercise?"
+                        : "Remove planned exercise"}
                     </button>
                   </div>
                   {confirming === `rx:${r.id}` && (
@@ -1518,6 +1655,7 @@ export function Plan() {
             className="input date-input"
             type="date"
             value={dateValue}
+            disabled={busy || workoutLocked}
             onChange={(e) => {
               setDateValue(e.target.value);
               setDateDirty(true);
@@ -1528,7 +1666,7 @@ export function Plan() {
             <button
               type="button"
               className="chip"
-              disabled={busy}
+              disabled={busy || workoutLocked}
               onClick={() => {
                 setDateValue(todayLocalIso());
                 saveDate(todayLocalIso());
@@ -1576,6 +1714,7 @@ export function Plan() {
           placeholder="What's the intent for this one? Cues, targets, context…"
           rows={3}
           value={planNote}
+          disabled={busy || workoutLocked}
           onChange={(e) => {
             setPlanNote(e.target.value);
             setNoteDirty(true);

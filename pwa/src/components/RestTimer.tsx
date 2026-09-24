@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatClock } from "../lib/format";
 import { playRestCue } from "../lib/restCue";
 import { getRestSound } from "../lib/settings";
+import { RpeChips } from "./RpeChips";
 
 /** "2 min 30 sec" — "2:30" is read as a ratio or a date by most screen
  *  readers, and this string is the only way the remaining time is spoken. */
@@ -44,6 +45,9 @@ interface RestTimerProps {
    *  the workout, or a by-feel entry with no scheme to quote) -- the rest
    *  strip falls back to naming what it was recorded against, as before. */
   nextSetLabel?: string | null;
+  lastSetRpe?: number | null;
+  onRateLastSet?(rpe: number | null): void;
+  onNoteLastSet?(): void;
 }
 
 export function RestTimer({
@@ -52,6 +56,9 @@ export function RestTimer({
   onEdit,
   onDone,
   nextSetLabel = null,
+  lastSetRpe = null,
+  onRateLastSet,
+  onNoteLastSet,
 }: RestTimerProps) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -68,7 +75,7 @@ export function RestTimer({
 
   const elapsed = rest ? Math.max(0, (now - rest.startedAt) / 1000) : 0;
   const remaining = rest ? rest.targetSeconds - elapsed : 0;
-  const over = rest !== null && remaining < 0;
+  const ready = rest !== null && remaining <= 0;
 
   // Notifying is a side effect, so it belongs in an effect. Raised from the
   // render body, React could fire a system notification for a render it went
@@ -83,7 +90,7 @@ export function RestTimer({
   const announcedFor = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!over || startedAt === null) return;
+    if (!ready || startedAt === null) return;
     if (announcedFor.current === startedAt) return;
     // Marked announced BEFORE either cue is attempted, and for the rest as a
     // whole rather than per channel. Previously this line sat after the
@@ -112,11 +119,11 @@ export function RestTimer({
     } catch {
       // cosmetic
     }
-  }, [over, startedAt]);
+  }, [ready, startedAt]);
 
   if (!rest) return null;
 
-  const pct = over
+  const pct = ready
     ? 100
     : Math.round(
         Math.max(0, remaining / Math.max(1, rest.targetSeconds)) * 100,
@@ -127,23 +134,24 @@ export function RestTimer({
        implicit aria-live="off": the value is reachable on demand, and a
        four-times-a-second countdown never interrupts anyone mid-set. */
     <div
-      className={`rest-timer ${over ? "rest-timer-done" : ""}`}
+      key={rest.startedAt}
+      className={`rest-timer ${ready ? "rest-timer-ready" : "rest-timer-rest rest-timer-enter"}`}
       role="timer"
-      aria-label="rest timer"
+      aria-label={ready ? "rest timer ready" : "rest timer"}
     >
       <div className="rest-row">
-        <span className="rest-label">{over ? "OVER" : "REST"}</span>
+        <span className="rest-label">{ready ? "READY" : "REST"}</span>
         <button
           type="button"
           className="rest-timer-time"
           onClick={onEdit}
           /* the label ADDS to the visible time rather than replacing it —
              "edit remaining rest" alone left the clock unreadable */
-          aria-label={`${
-            over ? "over by" : "rest remaining"
-          } ${spokenClock(remaining)} — tap to change`}
+          aria-label={ready
+            ? "ready, rest complete — tap to change"
+            : `rest remaining ${spokenClock(remaining)} — tap to change`}
         >
-          {over ? `+${formatClock(-remaining)}` : formatClock(remaining)}
+          {ready ? "0:00" : formatClock(remaining)}
         </button>
         <span className="rest-track">
           <span
@@ -177,12 +185,26 @@ export function RestTimer({
         </button>
       </div>
       <div className="rest-foot">
-        {over
-          ? `Past the prescribed ${formatClock(rest.targetSeconds)} — still counting, still recorded.`
+          {ready
+          ? nextSetLabel ?? "Ready when you are."
           : nextSetLabel
             ? nextSetLabel
             : `Tap to change. Recorded against ${rest.forLabel}.`}
       </div>
+      {(onRateLastSet || onNoteLastSet) && (
+        <div className="rest-actions">
+          {onRateLastSet && (
+            <div className="rest-rate">
+              <RpeChips shown value={lastSetRpe} onChange={onRateLastSet} />
+            </div>
+          )}
+          {onNoteLastSet && (
+            <button type="button" className="rest-note-action" onClick={onNoteLastSet}>
+              Note last set
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

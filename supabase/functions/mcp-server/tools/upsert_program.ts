@@ -102,6 +102,9 @@ function loadLabel(
   rx: Program["workouts"][number]["prescriptions"][number],
   tms: Map<string, number>,
 ): string {
+  if (rx.load != null) {
+    return `${rx.load.value} ${rx.load.unit}${rx.load.entry === "per_side" ? "/side" : ""}`;
+  }
   if (rx.load_kg != null) return kgLabel(rx.load_kg, rx.load_entry);
   if (rx.load_pct_tm != null) {
     const tm = tms.get(rx.exercise_id);
@@ -184,9 +187,12 @@ export function registerUpsertProgram(
       title: "Upsert program",
       description:
         "Write a training program (workouts + prescriptions) parsed from coach " +
-        "programming. All loads are kg and are TOTAL system loads: a per-hand " +
-        "dumbbell number must be doubled into load_kg with load_entry " +
-        "'per_side' (see that field). The program lands UNCONFIRMED and is not " +
+        "programming. For each direct load, use load:{value,unit,entry} with " +
+        "the coach's exact number and unit. Examples: 225 lb barbell is " +
+        "{value:225,unit:'lb',entry:'total'}, 100 kg cable stack is " +
+        "{value:100,unit:'kg',entry:'total'}, and 30 lb dumbbells each is " +
+        "{value:30,unit:'lb',entry:'per_side'}. Never convert screenshot loads " +
+        "to unitless numbers. Use load_pct_tm for 60% TM. The program lands UNCONFIRMED and is not " +
         "used by the app until confirm_program is called after the user approves " +
         "it in chat. If an unconfirmed program with the same name already exists " +
         "it is replaced (safe to iterate on a parse); confirmed programs are " +

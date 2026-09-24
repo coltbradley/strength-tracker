@@ -124,7 +124,7 @@ describe("Session corrections", () => {
       await screen.findByRole("button", { name: "expand details" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "correct set 1" }),
+      await screen.findByRole("button", { name: "Correct logged set 1" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
 
@@ -217,7 +217,7 @@ describe("Session log lock", () => {
       screen.getByRole("button", { name: "more options for Back Squat" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "correct set 1" }),
+      await screen.findByRole("button", { name: "Correct logged set 1" }),
     );
     // No jest-dom in this project (see CheckInSheet.render.test.tsx) -- read
     // the DOM state toBeDisabled() would, without adding a dependency.

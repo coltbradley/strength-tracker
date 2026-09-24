@@ -389,6 +389,25 @@ export function createOutbox({
     setStatus(counts(await readAll(db)));
   }
 
+  /**
+   * Once an enqueue transaction commits, a count refresh is only a status
+   * update. Letting that read reject the enqueue promise makes callers treat
+   * a durable write as unsaved and can make them append the same training set
+   * again under a new id. Keep the read failure visible without changing the
+   * successful commit result.
+   */
+  async function refreshCountsAfterCommit(): Promise<void> {
+    try {
+      await refreshCounts();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setStatus({
+        state: "error",
+        lastError: `Write saved locally, but queue status refresh failed: ${message}`,
+      });
+    }
+  }
+
   function flush(): Promise<void> {
     chain = chain.then(doFlush, doFlush);
     return chain;
@@ -538,7 +557,7 @@ export function createOutbox({
     async enqueue(op) {
       const db = await getDb();
       await db.add("outbox", makePendingItem(op, whoAmI()));
-      await refreshCounts();
+      await refreshCountsAfterCommit();
       void flush();
     },
 
@@ -551,7 +570,7 @@ export function createOutbox({
         await tx.store.add(makePendingItem(op, owner));
       }
       await tx.done;
-      await refreshCounts();
+      await refreshCountsAfterCommit();
       void flush();
     },
 
@@ -658,6 +677,10 @@ export function createOutbox({
       const rows = await readAll(db);
       return new Set(
         rows
+          // A failed discard has been refused by the server. Keeping it in
+          // this optimistic-hide set would make the session disappear from
+          // this device's history even though Postgres kept it live.
+          .filter((r) => r.item.status !== "dead")
           .map((r) => r.item.op)
           .filter(
             (

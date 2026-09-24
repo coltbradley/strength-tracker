@@ -113,12 +113,19 @@ describe("WorkoutOverview", () => {
     expect(onLog).not.toHaveBeenCalled();
   });
 
-  it("announces the selected exercise and exposes Focus mode", () => {
+  it("announces the selected exercise and exposes a return to current work", () => {
     render(<WorkoutOverview {...props({ selectedEntryKey: "bench" })} />);
 
-    expect(screen.getByRole("button", { name: "Focus mode" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Go to current exercise" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Bench Press, selected" }),
+    ).toBeTruthy();
+  });
+
+  it("labels the return action for the current focused exercise", () => {
+    render(<WorkoutOverview {...props({ selectedEntryKey: "bench" })} />);
+    expect(
+      screen.getByRole("button", { name: "Go to current exercise" }),
     ).toBeTruthy();
   });
 

@@ -16,6 +16,7 @@ import { reportError } from "./errors";
 import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
+import { kgToEnteredLoad } from "./units";
 import type {
   AdherenceRow,
   ExerciseRow,
@@ -51,7 +52,7 @@ import type {
  *  screen on the next reload even though Postgres still holds it. Null here
  *  means unrated, which is the ordinary case and never an error. */
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,rpe";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,rpe,entered_load,entered_unit";
 
 /** Why a read came back from the device cache rather than the server. */
 export type StaleReason = "offline" | "error";
@@ -200,8 +201,9 @@ export async function invalidateForSessionClose(): Promise<void> {
   ]);
 }
 
-/** Postgres `restrict_violation`: a before-delete trigger refused the row. */
+/** Postgres `restrict_violation`: a logged prescription cannot be rewritten. */
 const RESTRICT_VIOLATION = "23001";
+const PLAN_LOCKED = "55000";
 
 /**
  * The database declined an edit for a reason the PERSON can act on, as
@@ -367,7 +369,7 @@ export async function updatePlannedWorkout(
     .from("planned_workouts")
     .update(patch)
     .eq("id", id);
-  throwIf(error);
+  throwPlanEditError(error);
   await invalidatePlanCaches(id);
 }
 
@@ -379,26 +381,11 @@ export async function swapWorkoutOrder(
   a: PlannedWorkoutRow,
   b: PlannedWorkoutRow,
 ): Promise<void> {
-  const temp = 10000 + b.day_index;
-  const step = async (
-    id: string,
-    patch: { day_index: number; scheduled_date?: string | null },
-  ) => {
-    const { error } = await supabase
-      .from("planned_workouts")
-      .update(patch)
-      .eq("id", id);
-    throwIf(error);
-  };
-  await step(a.id, { day_index: temp });
-  await step(b.id, {
-    day_index: a.day_index,
-    scheduled_date: a.scheduled_date,
+  const { error } = await supabase.rpc("swap_planned_workout_order", {
+    p_first_id: a.id,
+    p_second_id: b.id,
   });
-  await step(a.id, {
-    day_index: b.day_index,
-    scheduled_date: b.scheduled_date,
-  });
+  throwPlanEditError(error);
   await invalidatePlanCaches();
 }
 
@@ -432,7 +419,7 @@ export async function duplicatePlannedWorkout(
   const { data: rx, error: rErr } = await supabase
     .from("prescriptions")
     .select(
-      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,superset_group",
+      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,superset_group,load_entry,entered_load,entered_unit",
     )
     .eq("planned_workout_id", workout.id);
   throwIf(rErr);
@@ -466,42 +453,55 @@ export async function deletePlannedWorkout(id: string): Promise<void> {
     .from("planned_workouts")
     .update({ discarded_at: new Date().toISOString() })
     .eq("id", id);
-  throwIf(error);
+  throwPlanEditError(error);
   await invalidatePlanCaches(id);
 }
 
-export async function updatePrescription(
-  id: string,
-  plannedWorkoutId: string,
-  patch: PrescriptionPatch,
-): Promise<void> {
-  const { error } = await supabase
-    .from("prescriptions")
-    .update(patch)
-    .eq("id", id);
+function throwPlanEditError(error: { message: string; code?: string | null } | null): void {
+  if (!error) return;
+  if (error.code === RESTRICT_VIOLATION) {
+    throw new PlanEditRefused(
+      "You've already logged sets for this workout, so its exercise plan is " +
+        "locked. Keep the training history intact and edit a future day instead.",
+    );
+  }
+  if (error.code === PLAN_LOCKED && error.message.toLowerCase().includes("session")) {
+    throw new PlanEditRefused(
+      "This workout's plan is locked because a session refers to it. Keep the day intact so sets still queued on another device can sync against the right exercises, or edit a future day.",
+    );
+  }
   throwIf(error);
-  await invalidatePlanCaches(plannedWorkoutId);
 }
 
 /**
- * Put a set of rows in one section, or take them out of every section.
- *
- * A section is not a row's private property — it is the name of a part of the
- * day, and renaming it, emptying it or moving a whole exercise into it all
- * touch several rows at once. One statement, so a section is never half
- * renamed.
+ * Commit a structural planned-day edit in one Postgres transaction. The
+ * section membership, optional prescription patch, and every row's final
+ * position form one description of the workout, so they must not land as
+ * separate PostgREST requests.
  */
-export async function setPrescriptionSection(
-  ids: string[],
+export async function applyPlanEdit(
   plannedWorkoutId: string,
-  section: string | null,
+  orderedIds: string[],
+  edit: {
+    targetId?: string;
+    patch?: Omit<PrescriptionPatch, "position" | "section">;
+    sectionIds?: string[];
+    section?: string | null;
+    applySection?: boolean;
+    deleteId?: string;
+  } = {},
 ): Promise<void> {
-  if (ids.length === 0) return;
-  const { error } = await supabase
-    .from("prescriptions")
-    .update({ section })
-    .in("id", ids);
-  throwIf(error);
+  const { error } = await supabase.rpc("apply_plan_edit_with_delete", {
+    p_planned_workout_id: plannedWorkoutId,
+    p_target_id: edit.targetId ?? null,
+    p_patch: edit.patch ?? {},
+    p_section_ids: edit.sectionIds ?? [],
+    p_section: edit.section ?? null,
+    p_apply_section: edit.applySection ?? false,
+    p_ordered_ids: orderedIds,
+    p_delete_id: edit.deleteId ?? null,
+  });
+  throwPlanEditError(error);
   await invalidatePlanCaches(plannedWorkoutId);
 }
 
@@ -511,27 +511,15 @@ export async function setPrescriptionSection(
  * make every read filter on two nullable timestamps to spare a row nobody
  * refers to.
  *
- * The gap that leaves — deleting a prescription somebody has already trained
- * against — is closed by a `before delete` trigger in the database rather
- * than by a second column. It raises `restrict_violation`, which is a
- * SITUATION and not a failure: the person is trying to edit away an exercise
- * they have logged sets against, and the thing they actually want is to
- * discard the day. Say that, rather than showing them a Postgres string.
+ * A day with any logged prescription is immutable at the prescription level,
+ * and its DB guard covers this call as well as MCP replacements. The delete
+ * and final order land through the same parent-first transaction as edits.
  */
 export async function deletePrescription(
   id: string,
   plannedWorkoutId: string,
 ): Promise<void> {
-  const { error } = await supabase.from("prescriptions").delete().eq("id", id);
-  if (error && (error as { code?: string }).code === RESTRICT_VIOLATION) {
-    throw new PlanEditRefused(
-      "You've already logged sets against this exercise, so removing it " +
-        "would cut them loose from the day they belong to. Remove the whole " +
-        "day instead, or leave this here — what you logged stays either way.",
-    );
-  }
-  throwIf(error);
-  await invalidatePlanCaches(plannedWorkoutId);
+  await applyPlanEdit(plannedWorkoutId, [], { deleteId: id });
 }
 
 /**
@@ -685,6 +673,9 @@ export async function saveWorkoutAsTemplate(
       rest_seconds: r.rest_seconds,
       notes: r.notes,
       set_type: r.set_type ?? "working",
+      load_entry: r.load_entry ?? null,
+      entered_load: r.entered_load ?? null,
+      entered_unit: r.entered_unit ?? null,
     }));
     const { error: rxErr } = await supabase.from("prescriptions").insert(rows);
     throwIf(rxErr);
@@ -730,7 +721,7 @@ export async function applyTemplate(
   const { data: rxRows, error: rErr } = await supabase
     .from("prescriptions")
     .select(
-      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,set_type,superset_group,load_entry",
+      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,set_type,superset_group,load_entry,entered_load,entered_unit",
     )
     .eq("planned_workout_id", templateId)
     .order("position");
@@ -772,6 +763,10 @@ export async function applyTemplate(
     id: uuid(),
     planned_workout_id: workoutId,
     load_kg: next[i] ?? r.load_kg,
+    entered_load: next[i] != null && r.entered_unit != null && r.load_entry != null
+      ? kgToEnteredLoad(next[i], r.entered_unit, r.load_entry)
+      : r.entered_load ?? null,
+    entered_unit: r.entered_load == null ? null : r.entered_unit ?? null,
   }));
   if (rows.length > 0) {
     const { error: iErr } = await supabase.from("prescriptions").insert(rows);
@@ -818,6 +813,8 @@ export async function addPrescriptionGroups(
     section: string | null;
     tracking: TrackingMode;
     load_entry: LoadEntry | null;
+    entered_load: number | null;
+    entered_unit: "kg" | "lb" | null;
   }[],
   existing: ResolvedPrescriptionRow[],
 ): Promise<string | null> {
@@ -842,9 +839,11 @@ export async function addPrescriptionGroups(
     // load_kg is the TOTAL; this says how the person typed it, so the session
     // screen can hand back "30 x 2" instead of prefilling half the weight.
     load_entry: g.load_entry,
+    entered_load: g.entered_load,
+    entered_unit: g.entered_unit,
   }));
   const { error } = await supabase.from("prescriptions").insert(rows);
-  throwIf(error);
+  throwPlanEditError(error);
   await invalidatePlanCaches(plannedWorkoutId);
   return rows[0]!.id;
 }
@@ -865,32 +864,15 @@ export async function reorderPrescriptions(
   orderedIds: string[],
   existing: ResolvedPrescriptionRow[],
 ): Promise<void> {
-  const byId = new Map(existing.map((r) => [r.id, r]));
-  const target = orderedIds
-    .map((id, index) => ({ row: byId.get(id), index }))
-    .filter((x): x is { row: ResolvedPrescriptionRow; index: number } =>
-      Boolean(x.row),
-    )
-    .filter((x) => x.row.position !== x.index);
-  if (target.length === 0) return;
-
-  const park = existing.reduce((m, r) => Math.max(m, r.position), 0) + 1;
-  const step = async (id: string, position: number) => {
-    const { error } = await supabase
-      .from("prescriptions")
-      .update({ position })
-      .eq("id", id);
-    throwIf(error);
-  };
-
-  // Park everything that moves, then land it. Two passes, never a collision.
-  for (let i = 0; i < target.length; i++) {
-    await step(target[i]!.row.id, park + i);
-  }
-  for (const t of target) {
-    await step(t.row.id, t.index);
-  }
-  await invalidatePlanCaches(plannedWorkoutId);
+  const current = [...existing]
+    .sort((a, b) => a.position - b.position)
+    .map((r) => r.id);
+  if (
+    orderedIds.length === current.length &&
+    orderedIds.every((id, i) => id === current[i])
+  )
+    return;
+  await applyPlanEdit(plannedWorkoutId, orderedIds);
 }
 
 /**
@@ -1824,7 +1806,7 @@ export async function getAdherence(
     const { data, error } = await supabase
       .from("v_adherence")
       .select(
-        "set_id,session_id,exercise_id,prescription_id,set_index,performed_at,actual_load_kg,actual_reps,reps_min,reps_max,prescribed_load_kg,load_delta_kg,rep_outcome,actual_load_entry,prescribed_load_entry",
+        "set_id,session_id,exercise_id,prescription_id,set_index,performed_at,actual_load_kg,actual_reps,reps_min,reps_max,prescribed_load_kg,load_delta_kg,rep_outcome,actual_load_entry,prescribed_load_entry,actual_entered_load,actual_entered_unit,prescribed_entered_load,prescribed_entered_unit",
       )
       .eq("exercise_id", exerciseId)
       .in("session_id", sessionIds);

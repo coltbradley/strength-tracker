@@ -67,6 +67,24 @@ describe("FocusDeck", () => {
     expect(screen.queryByText(/REMAINING/)).toBeNull();
   });
 
+  it("keeps the workout menu reachable above the progress rail and hosts the scene slot", () => {
+    const onViewFullWorkout = vi.fn();
+    render(
+      <FocusDeck
+        {...props({
+          onViewFullWorkout,
+          topSlot: <div data-testid="focus-top-slot">REST 1:20</div>,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Workout")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open workout" }));
+    expect(onViewFullWorkout).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("focus-top-slot").textContent).toBe("REST 1:20");
+    expect(screen.getByRole("list", { name: "workout progress" })).toBeTruthy();
+  });
+
   it("marks completed, current, and future sets in order without another spoken status", () => {
     const { container } = render(
       <FocusDeck
@@ -158,7 +176,7 @@ describe("FocusDeck", () => {
     ).toEqual(["done", "current", "upcoming"]);
   });
 
-  it("uses the focused consecutive pair when another pair reuses its group number", () => {
+  it("does not present a local pair when its group number is reused later", () => {
     const a1 = entry("a1", "Bench Press", 3);
     const a2 = entry("a2", "Barbell Row", 4);
     const gap = entry("gap", "Overhead Press", 1);
@@ -189,7 +207,7 @@ describe("FocusDeck", () => {
       [...container.querySelectorAll(".focus-set-progress [data-state]")].map(
         (segment) => segment.getAttribute("data-state"),
       ),
-    ).toEqual(["current", "upcoming", "upcoming"]);
+    ).toEqual(["done", "current", "upcoming"]);
   });
 
   it("keeps the supplied tick-only editor and shows a progress rail dot per entry", () => {

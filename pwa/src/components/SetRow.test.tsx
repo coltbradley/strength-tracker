@@ -70,7 +70,9 @@ describe("SetRow", () => {
 
   it("keeps the rating inside the correction target", () => {
     render(<SetRow set={set(100, "total", 9)} unit="kg" onEdit={() => {}} />);
-    const target = screen.getByRole("button", { name: "correct set 1" });
+    const target = screen.getByRole("button", {
+      name: "Correct logged set 1",
+    });
     expect(target.textContent).toMatch(/RPE 9/);
   });
 
@@ -82,7 +84,9 @@ describe("SetRow", () => {
   it("makes the numbers the tap target for a correction", () => {
     const onEdit = vi.fn();
     render(<SetRow set={set(100, "total")} unit="kg" onEdit={onEdit} />);
-    fireEvent.click(screen.getByRole("button", { name: "correct set 1" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Correct logged set 1" }),
+    );
     expect(onEdit).toHaveBeenCalledTimes(1);
   });
 
@@ -93,8 +97,38 @@ describe("SetRow", () => {
     expect(container.querySelector(".logged-set-editing")).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: "correct set 1" })
+        .getByRole("button", { name: "Correct logged set 1" })
         .getAttribute("aria-pressed"),
     ).toBe("true");
+  });
+
+  it("names the historical action as voiding the logged set", () => {
+    render(
+      <SetRow
+        set={set(100, "total")}
+        unit="kg"
+        onVoid={() => {}}
+        onArmVoid={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Void logged set 1" }),
+    ).toBeTruthy();
+  });
+
+  it("makes the second historical action explicitly confirm a void", () => {
+    render(
+      <SetRow
+        set={set(100, "total")}
+        unit="kg"
+        onVoid={() => {}}
+        voidArmed
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Confirm void logged set 1" }),
+    ).toBeTruthy();
   });
 });

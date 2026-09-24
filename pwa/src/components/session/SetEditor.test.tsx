@@ -221,6 +221,27 @@ describe("SetEditor focus variant", () => {
     { label: "+ 2.5", delta: 2.5, announce: "2.5 kg" },
   ];
 
+  it("makes duration the large focus value and opens its numeric pad", () => {
+    const onOpenPad = vi.fn();
+    render(
+      <SetEditor
+        {...props({
+          tracking: "time" as unknown as SetEditorProps["tracking"],
+          draft: { ...props().draft, durationSeconds: 75 },
+          variant: "focus",
+          loadPresentation: { ...props().loadPresentation, perSide: false, totalKg: 0, noLoad: true },
+          onOpenPad: onOpenPad as SetEditorProps["onOpenPad"],
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "duration value — tap to type" }).textContent).toBe("75");
+    expect(screen.getByText("SECONDS")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "duration value — tap to type" }));
+    expect(onOpenPad).toHaveBeenCalledWith("duration");
+    expect(screen.queryByRole("button", { name: /load value/i })).toBeNull();
+  });
+
   it("makes load the hero and moves its coarse step to the bottom bar beside LOG", () => {
     render(
       <SetEditor
@@ -367,5 +388,31 @@ describe("SetEditor focus variant", () => {
       screen.getByRole("button", { name: "increase load by 2.5 kg" }),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: /log set/i })).toBeNull();
+  });
+
+  it("keeps an authored lb value in the Focus hero and offers nearby grid values", () => {
+    const onChooseNearbyLoad = vi.fn();
+    render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          unit: "lb",
+          draft: {
+            entryKg: 102.17,
+            reps: 5,
+            setType: "working",
+            rpe: null,
+            enteredLoad: 225.25,
+            enteredUnit: "lb",
+          },
+          nearbyLoads: [225, 235],
+          onChooseNearbyLoad,
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25");
+    fireEvent.click(screen.getByRole("button", { name: "Use suggested 225 lb" }));
+    expect(onChooseNearbyLoad).toHaveBeenCalledWith(225);
   });
 });

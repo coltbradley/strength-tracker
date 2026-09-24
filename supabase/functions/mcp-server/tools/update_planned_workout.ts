@@ -38,12 +38,6 @@ import {
   resolveTrainingMaxes,
 } from "../lib/prescriptions.ts";
 
-/** New rows land here first, above anything real, so the day is never empty
- *  between statements. PostgREST has no transactions and (planned_workout_id,
- *  position) is unique, so the new list cannot occupy its final positions
- *  while the old list still holds them. */
-const PARK = 10_000;
-
 interface DayRow {
   id: string;
   label: string | null;
@@ -210,6 +204,7 @@ export function registerUpdatePlannedWorkout(
         // which is also why the trained-day refusal below does not apply to
         // it: moving a day changes nothing adherence reads.
         let replaced = 0;
+        let replacementRows: Record<string, unknown>[] | null = null;
         // %TM rows with no current TM are written anyway and named here, so
         // the caller can propose the TM after the first session instead of
         // turning the percentage into prose (see resolveTrainingMaxes).
@@ -270,43 +265,7 @@ export function registerUpdatePlannedWorkout(
             }
           }
 
-          const rows = prescriptionRows(db.ownerId, day.id, prescriptions);
-
-          // Park -> delete -> land. A failure between statements leaves the day
-          // holding both lists, which is visible and fixable on the next call;
-          // deleting first would leave it empty, which is the failure this whole
-          // tool exists to stop.
-          if (rows.length > 0) {
-            const parked = rows.map((r, i) => ({ ...r, position: PARK + i }));
-            const { error } = await db.client
-              .from("prescriptions")
-              .insert(parked);
-            if (error) throw new Error(`stage prescriptions: ${error.message}`);
-          }
-
-          if (existing.length > 0) {
-            const { error } = await db.client
-              .from("prescriptions")
-              .delete()
-              .eq("user_id", db.ownerId)
-              .eq("planned_workout_id", day.id)
-              .lt("position", PARK);
-            if (error) {
-              throw new Error(`remove old prescriptions: ${error.message}`);
-            }
-          }
-
-          for (let i = 0; i < rows.length; i++) {
-            const { error } = await db.client
-              .from("prescriptions")
-              .update({ position: i })
-              .eq("user_id", db.ownerId)
-              .eq("planned_workout_id", day.id)
-              .eq("position", PARK + i);
-            if (error) {
-              throw new Error(`position prescriptions: ${error.message}`);
-            }
-          }
+          replacementRows = prescriptionRows(db.ownerId, day.id, prescriptions);
           replaced = existing.length;
         }
 
@@ -316,13 +275,17 @@ export function registerUpdatePlannedWorkout(
         if (args.scheduled_date !== undefined) {
           dayPatch.scheduled_date = args.scheduled_date;
         }
-        if (Object.keys(dayPatch).length > 0) {
-          const { error } = await db.client
-            .from("planned_workouts")
-            .update(dayPatch)
-            .eq("user_id", db.ownerId)
-            .eq("id", day.id);
-          if (error) throw new Error(`update day: ${error.message}`);
+        if (replacementRows !== null || Object.keys(dayPatch).length > 0) {
+          const { error } = await db.client.rpc(
+            "replace_planned_workout_prescriptions",
+            {
+              p_user_id: db.ownerId,
+              p_planned_workout_id: day.id,
+              p_rows: replacementRows,
+              p_workout_patch: dayPatch,
+            },
+          );
+          if (error) throw new Error(`update planned day: ${error.message}`);
         }
 
         return jsonResult({

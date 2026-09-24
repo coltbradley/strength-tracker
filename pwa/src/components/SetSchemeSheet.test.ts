@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { groupSets, snapToUnit } from "./SetSchemeSheet";
+import { fromDisplay } from "../lib/units";
 
 const w = (loadKg: number, warmup = false) => ({ loadKg, warmup });
 const REST = 120;
@@ -18,8 +19,19 @@ describe("groupSets", () => {
         section: null,
         tracking: "reps",
         load_entry: "total",
+        entered_load: 100,
+        entered_unit: "kg",
       },
     ]);
+  });
+
+  it("keeps the authored display unit on a prescription", () => {
+    const [group] = groupSets([w(fromDisplay(225, "lb"))], 5, false, REST, 0, null, "reps", "total", "lb");
+    expect(group).toMatchObject({
+      entered_load: 225,
+      entered_unit: "lb",
+    });
+    expect(group!.load_kg).toBeCloseTo(102.06, 2);
   });
 
   it("writes one rep number, never a range", () => {

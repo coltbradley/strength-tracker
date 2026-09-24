@@ -17,6 +17,9 @@ export interface Correction {
   reps: number;
   set_type: SetType;
   load_entry: LoadEntry | null;
+  /** New authored provenance when the physical load changes in the editor. */
+  entered_load?: number | null;
+  entered_unit?: "kg" | "lb" | null;
   /** how hard it felt, or null for unrated — which is an answer, not a gap.
    *  A correction is the ONLY way to rate a set after the fact. */
   rpe: number | null;
@@ -30,7 +33,15 @@ export function correctedSet(old: SetInsert, next: Correction): SetInsert {
     load_kg: next.load_kg,
     reps: next.reps,
     set_type: next.set_type,
-    load_entry: next.load_entry,
+    load_entry: next.load_kg === old.load_kg
+      ? old.load_entry ?? null
+      : next.load_entry,
+    entered_load: next.load_kg === old.load_kg
+      ? old.entered_load ?? null
+      : next.entered_load ?? null,
+    entered_unit: next.load_kg === old.load_kg
+      ? old.entered_unit ?? null
+      : next.entered_unit ?? null,
     rpe: next.rpe,
   };
 }

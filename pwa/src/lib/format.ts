@@ -34,6 +34,21 @@ export function rxLoadKg(rx: ResolvedPrescriptionRow): number | null {
   return rx.plate_load_kg ?? rx.resolved_load_kg;
 }
 
+/** Use the durable authored value when present, otherwise convert a legacy kg row. */
+export function formatAuthoredLoad(
+  loadKg: number,
+  loadEntry: "total" | "per_side" | null | undefined,
+  enteredLoad: number | null | undefined,
+  enteredUnit: Unit | null | undefined,
+  displayUnit: Unit,
+): string {
+  if (enteredLoad != null && enteredUnit != null && loadEntry != null) {
+    return `${enteredLoad} ${enteredUnit}${loadEntry === "per_side" ? "/side" : ""}`;
+  }
+  const entry = loadEntry === "per_side" ? loadKg / 2 : loadKg;
+  return `${toDisplay(entry, displayUnit)} ${displayUnit}${loadEntry === "per_side" ? "/side" : ""}`;
+}
+
 /**
  * THE prescription-target formatter. Every screen that renders a target
  * (Today's day preview, the session accordion, the plan editor) must use
@@ -67,9 +82,13 @@ export function formatRxTarget(
   const tail = rx.set_type === "warmup" ? " warmup" : "";
   const load = rxLoadKg(rx);
   if (load !== null) {
-    return rx.load_entry === "per_side"
-      ? `${base} @ ${toDisplay(load / 2, unit)} ${unit}/side${tail}`
-      : `${base} @ ${toDisplay(load, unit)} ${unit}${tail}`;
+    return `${base} @ ${formatAuthoredLoad(
+      load,
+      rx.load_entry,
+      rx.entered_load,
+      rx.entered_unit,
+      unit,
+    )}${tail}`;
   }
   if (rx.load_pct_tm !== null) return `${base} @ ${rx.load_pct_tm}% TM${tail}`;
   return `${base}${tail}`;

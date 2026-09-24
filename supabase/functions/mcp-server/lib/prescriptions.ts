@@ -80,19 +80,33 @@ export const prescriptionSchema = z
       .describe(
         "Top of the rep range. Must be >= reps_min. Equal for a fixed rep count.",
       ),
+    load: z.object({
+      value: z.number().positive(),
+      unit: z.enum(["kg", "lb"]),
+      entry: z.enum(["total", "per_side"]),
+    }).optional().describe(
+      "Direct load exactly as authored: {value, unit, entry}. For example, " +
+        "225 lb barbell is {value:225,unit:'lb',entry:'total'}; 30 lb " +
+        "dumbbells each is {value:30,unit:'lb',entry:'per_side'}. Do not " +
+        "convert to unitless values. Omit for %TM or by-feel.",
+    ),
     load_kg: z
       .number()
       .positive()
       .optional()
-      .describe("Absolute load in kg. Mutually exclusive with load_pct_tm."),
+      .describe(
+        "Temporary, unit-labeled compatibility input for older MCP clients. " +
+          "It requires load_entry and is persisted as kg-authored provenance. " +
+          "New screenshot parses must use load:{value,unit,entry}.",
+      ),
     load_pct_tm: z
       .number()
       .positive()
       .max(200)
       .optional()
       .describe(
-        "Load as a percent of training max (e.g. 72.5). Mutually exclusive with " +
-          "load_kg. Write it whenever the coach wrote a percentage, whether or " +
+          "Load as a percent of training max (e.g. 72.5). Mutually exclusive with " +
+          "a direct load object. Write it whenever the coach wrote a percentage, whether or " +
           "not a training max exists yet: with none, the app shows the " +
           "percentage and 'no TM set', and the tool result lists the exercise " +
           "under unresolved_pct so you can propose a TM from the first session " +
@@ -103,15 +117,11 @@ export const prescriptionSchema = z
       .enum(["total", "per_side"])
       .optional()
       .describe(
-        "How the load is EXPRESSED. load_kg (and any %TM it resolves to) is " +
-          "ALWAYS the TOTAL system load — the whole weight moved in one rep. " +
-          "When the coach writes a per-hand number ('DB bench 3x10 @ 30', " +
-          "'30s', '30 each'), DOUBLE it into load_kg and set " +
-          "load_entry: 'per_side' so the app shows the lifter 30 x 2. Use " +
-          "'total' for a barbell, a machine stack, or single-arm work where " +
-          "one implement IS the whole system (a one-arm row at 30 kg is " +
-          "total 30, not 60). Omit only when the coach's programming genuinely " +
-          "does not say — omitted means UNKNOWN, not total.",
+        "Compatibility-only convention for legacy load_kg input. For new " +
+          "parses, put it in load.entry. load_kg and resolved analytics remain " +
+          "TOTAL system kg; per_side means the authored value is one hand and " +
+          "must be doubled when producing load_kg. Null remains UNKNOWN, never " +
+          "implied total.",
       ),
     rest_seconds: z
       .number()
@@ -143,19 +153,33 @@ export const prescriptionSchema = z
       .optional()
       .describe(
         "Superset marker: prescriptions in the same workout sharing a group " +
-          "number are performed as a superset (1 = A, 2 = B, ...). Use when " +
-          "the coach pairs exercises ('A1/A2', 'superset with', arrows).",
+          "number are performed as a superset (1 = A, 2 = B, ...). Each " +
+          "group must be one contiguous run in prescription order with at " +
+          "least two distinct exercises. Use when the coach pairs exercises " +
+          "('A1/A2', 'superset with', arrows); keep each pair's rows " +
+          "together and leave unrelated rows ungrouped.",
       ),
   })
-  .refine((p) => !(p.load_kg != null && p.load_pct_tm != null), {
-    message: "load_kg and load_pct_tm are mutually exclusive",
+  .refine((p) => !(p.load != null && p.load_kg != null), {
+    message: "load and the compatibility load_kg input are mutually exclusive",
+  })
+  .refine((p) => p.load == null || p.load_entry == null || p.load.entry === p.load_entry, {
+    message: "load.entry and load_entry cannot disagree",
+  })
+  .refine((p) => !((p.load != null || p.load_kg != null) && p.load_pct_tm != null), {
+    message: "direct load and load_pct_tm are mutually exclusive",
   })
   .refine((p) => p.reps_max >= p.reps_min, {
     message: "reps_max must be >= reps_min",
   })
+  .refine((p) => p.load_kg == null || p.load_entry != null, {
+    message:
+      "the compatibility load_kg input requires load_entry; use load:{value,unit,entry} for new parses",
+  })
   .refine(
     (p) =>
-      p.load_entry !== "per_side" || p.load_kg != null || p.load_pct_tm != null,
+      p.load?.entry === "per_side" ||
+        (p.load_entry !== "per_side" || p.load_kg != null || p.load_pct_tm != null),
     {
       message:
         "load_entry 'per_side' needs a load; a 'by feel' prescription has no " +
@@ -166,10 +190,11 @@ export const prescriptionSchema = z
 export type Prescription = z.infer<typeof prescriptionSchema>;
 
 /**
- * A superset is exercises ALTERNATED with each other, so a group of one is not
- * a superset — it is a mis-parse. The schema cannot see it: `superset_group`
- * is validated per prescription, and "is anything else in group A" is a fact
- * about the whole day.
+ * A superset is a contiguous run of at least two DISTINCT exercises
+ * ALTERNATED with each other. A group of one is not a superset — it is a
+ * mis-parse. The schema cannot see either rule: `superset_group` is validated
+ * per prescription, while membership and adjacency are facts about the whole
+ * day.
  *
  * It matters because the group is not decoration. The app pairs the members
  * and walks the lifter between them; a lone member renders as an A with
@@ -185,29 +210,53 @@ export function assertSupersetGroups(
   prescriptions: Prescription[],
   where: string,
 ): void {
-  const members = new Map<number, string[]>();
-  for (const p of prescriptions) {
+  const members = new Map<
+    number,
+    { exerciseIds: string[]; positions: number[] }
+  >();
+  for (const [position, p] of prescriptions.entries()) {
     if (p.superset_group == null) continue;
-    const list = members.get(p.superset_group);
-    if (list === undefined) members.set(p.superset_group, [p.exercise_id]);
-    else list.push(p.exercise_id);
+    const group = members.get(p.superset_group);
+    if (group === undefined) {
+      members.set(p.superset_group, {
+        exerciseIds: [p.exercise_id],
+        positions: [position],
+      });
+    } else {
+      group.exerciseIds.push(p.exercise_id);
+      group.positions.push(position);
+    }
   }
-  const lonely = [...members.entries()]
-    .filter(([, list]) => list.length < 2)
-    .sort(([a], [b]) => a - b);
-  if (lonely.length === 0) return;
+  const invalid = [...members.entries()]
+    .sort(([a], [b]) => a - b)
+    .flatMap(([group, members]) => {
+      const errors: string[] = [];
+      const distinct = [...new Set(members.exerciseIds)];
+      if (distinct.length < 2) {
+        errors.push(
+          `superset_group ${
+            String.fromCharCode(64 + group)
+          } needs two distinct exercises, ` +
+            `not ${distinct[0] ?? "no exercises"}`,
+        );
+      }
+      const first = members.positions[0]!;
+      const last = members.positions.at(-1)!;
+      if (last - first + 1 !== members.positions.length) {
+        errors.push(
+          `superset_group ${
+            String.fromCharCode(64 + group)
+          } must be contiguous in prescription order`,
+        );
+      }
+      return errors;
+    });
+  if (invalid.length === 0) return;
 
   throw new ToolError(
-    `On ${where}, ${lonely
-      .map(
-        ([group, list]) =>
-          `superset_group ${String.fromCharCode(64 + group)} has only ` +
-          `${list[0]}`,
-      )
-      .join("; ")}. A superset is two or more exercises alternated, so a ` +
-      "group of one is either a mis-parse or a pairing whose other half went " +
-      "missing. Add the exercise it pairs with, or drop superset_group from " +
-      "it.",
+    `On ${where}, ${invalid.join("; ")}. A superset is a contiguous run of ` +
+      "two or more distinct exercises that alternate. Correct its order or " +
+      "drop superset_group from rows that are not part of the pair.",
   );
 }
 
@@ -336,9 +385,18 @@ export function prescriptionRows(
     sets: p.sets,
     reps_min: p.reps_min,
     reps_max: p.reps_max,
-    load_kg: p.load_kg ?? null,
+    load_kg: p.load
+      ? Math.round(
+        ((p.load.unit === "lb" ? p.load.value * 0.45359237 : p.load.value) *
+          (p.load.entry === "per_side" ? 2 : 1)) * 100,
+      ) / 100
+      : p.load_kg == null ? null : Math.round(p.load_kg * 100) / 100,
     load_pct_tm: p.load_pct_tm ?? null,
-    load_entry: p.load_entry ?? null,
+    load_entry: p.load?.entry ?? p.load_entry ?? null,
+    entered_load: p.load?.value ?? (p.load_kg == null
+      ? null
+      : p.load_entry === "per_side" ? p.load_kg / 2 : p.load_kg),
+    entered_unit: p.load?.unit ?? (p.load_kg == null ? null : "kg"),
     rest_seconds: p.rest_seconds ?? null,
     notes: p.notes ?? null,
     superset_group: p.superset_group ?? null,

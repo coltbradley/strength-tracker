@@ -13,6 +13,7 @@ import {
   reorderEntries,
   sectionRank,
   sectionUnit,
+  supersetRunIssues,
 } from "./sections";
 import { groupRamps } from "./entries";
 import type { ResolvedPrescriptionRow } from "./types";
@@ -121,6 +122,38 @@ describe("planEntries", () => {
       rx({ exercise_id: "squat" }),
     ];
     expect(planEntries(rows)).toHaveLength(2);
+  });
+});
+
+describe("supersetRunIssues", () => {
+  it("rejects a repeated group after an unrelated exercise", () => {
+    const rows = [
+      rx({ exercise_id: "curl", superset_group: 1 }),
+      rx({ exercise_id: "plank" }),
+      rx({ exercise_id: "pushdown", superset_group: 1 }),
+    ];
+    expect(supersetRunIssues(rows)).toEqual([
+      "Superset A must be contiguous in workout order.",
+    ]);
+  });
+
+  it("rejects a one-exercise ramp labelled as a superset", () => {
+    const rows = [
+      rx({ exercise_id: "bench", superset_group: 1 }),
+      rx({ exercise_id: "bench", superset_group: 1 }),
+    ];
+    expect(supersetRunIssues(rows)).toEqual([
+      "Superset A needs two distinct exercises.",
+    ]);
+  });
+
+  it("allows a contiguous pair with a ramp in one member", () => {
+    const rows = [
+      rx({ exercise_id: "bench", superset_group: 1 }),
+      rx({ exercise_id: "bench", superset_group: 1 }),
+      rx({ exercise_id: "row", superset_group: 1 }),
+    ];
+    expect(supersetRunIssues(rows)).toEqual([]);
   });
 });
 

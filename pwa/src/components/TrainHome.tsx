@@ -1,11 +1,14 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { groupRamps } from "../lib/entries";
+import type { Unit } from "../lib/units";
 import type {
   ActiveSession,
   PlannedWorkoutRow,
   ResolvedPrescriptionRow,
 } from "../lib/types";
+import { formatPlannedDate } from "../lib/format";
+import { WorkoutPreviewSheet } from "./WorkoutPreviewSheet";
 
 export type TrainWorkoutState =
   "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE" | "DRAFT";
@@ -51,6 +54,8 @@ export function TrainHome({
   active,
   recovery,
   startEnabled,
+  completedToday,
+  unit = "lb",
   onStart,
   onOpenCoach,
   onCheckIn,
@@ -73,10 +78,13 @@ export function TrainHome({
   /** Recovery is owned by Today because it reconciles and repairs sessions. */
   recovery: ReactNode;
   startEnabled: boolean;
+  completedToday?: boolean;
+  unit?: Unit;
   onStart: (workout: PlannedWorkoutRow) => void;
   onOpenCoach: () => void;
   onCheckIn?: () => void;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const summary =
     prescriptions === null ? null : summarizeTrainWorkout(prescriptions);
 
@@ -164,7 +172,7 @@ export function TrainHome({
             View program
           </Link>
         </div>
-      ) : workout.state !== "TODAY" ? (
+      ) : workout.state !== "TODAY" && workout.state !== "UPCOMING" ? (
         <div className="train-state">
           <h1 className="train-title">Rest day</h1>
           <p className="train-quiet">Nothing is ready to start today.</p>
@@ -174,8 +182,18 @@ export function TrainHome({
         </div>
       ) : (
         <div className="train-state">
-          <div className="train-kicker">{programName}</div>
-          <h1 className="train-title">{workout.workout.label ?? "Workout"}</h1>
+          <div className="train-kicker">
+            {workout.state === "UPCOMING" ? "REST DAY · NEXT WORKOUT" : programName}
+          </div>
+          <h1 className="train-title">
+            {workout.state === "UPCOMING" ? "Rest day" : workout.workout.label ?? "Workout"}
+          </h1>
+          {workout.state === "UPCOMING" && (
+            <div className="train-next-workout">
+              <span>{formatPlannedDate(workout.workout.scheduled_date!)}</span>
+              <strong>{workout.workout.label ?? "Workout"}</strong>
+            </div>
+          )}
           {summary === null ? (
             <p className="train-quiet">
               {prescriptionLoadState === "offline"
@@ -212,14 +230,29 @@ export function TrainHome({
             type="button"
             className="btn btn-primary btn-block"
             disabled={!startEnabled}
-            onClick={() => onStart(workout.workout)}
+            onClick={() => setPreviewOpen(true)}
           >
-            Start
+            Go
           </button>
-          <Link className="train-link" to="/program">
-            View program
+          <Link className="train-link" to={completedToday ? "/history" : "/program"}>
+            {completedToday ? "View record" : "View program"}
           </Link>
         </div>
+      )}
+      {previewOpen && workout && programName && (
+        <WorkoutPreviewSheet
+          workout={workout.workout}
+          programName={programName}
+          prescriptions={prescriptions}
+          loadState={prescriptionLoadState}
+          unit={unit}
+          startEnabled={startEnabled}
+          onClose={() => setPreviewOpen(false)}
+          onStart={(selected) => {
+            setPreviewOpen(false);
+            onStart(selected);
+          }}
+        />
       )}
     </section>
   );

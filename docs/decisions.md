@@ -3086,3 +3086,53 @@ change that would lock the owner out on a deploy that forgot the secret.
 
 Merged to `main` as PR #8 (`c25e3ad`, 2026-09-21). A-02 remains
 `needs live proof` until the production secret is set.
+
+## 2026-09-24 Plan writes are one locked, historical record
+
+The plan editor once sent a prescription patch, its section membership, and
+its reordered positions as separate PostgREST requests. An MCP replacement had
+the same gap in a different shape. A failure could leave a partial plan, and a
+second device could change a day after its session had begun. The former
+three-request day-order swap was also non-atomic.
+
+Plan mutations now lock the parent `planned_workouts` row first. The PWA's
+patch, section, reorder, deletion, and day-order swap use database functions;
+the MCP whole-day replacement uses its own owner-scoped database function.
+Each lands or rolls back as one transaction. Starting a session takes the same
+parent lock, so a session start and a plan mutation have a defined order rather
+than relying on this device's active-session cache.
+
+Any session reference refuses plan changes. Once a session points at a planned
+day, that day's structure and prescriptions stay locked permanently, including
+after Finish or Discard. Another device may still have sets in its offline
+outbox, so an ended or discarded session with no visible rows is not proof that
+its day is unused. Finishing and adding session notes remain allowed; those
+actions do not erase the historical link. Discard is only for a
+server-confirmed empty session.
+Postgres refuses to discard a session with any set rows. A set arriving later
+from another device's outbox locks and restores the empty discarded session
+before inserting the append-only row, so the workout appears in `v_live_sets`
+and the other derived views again. The same row lock orders a late insert
+against a concurrent discard: either the discard sees the set and fails, or
+the set arrives after discard and restores the session. The PWA offers discard
+only for a confirmed zero and says logged sessions stay in history.
+
+The discard refusal uses SQLSTATE `23514`, which the outbox already treats as
+a permanent row rejection. End waits for the queued write's outcome before
+clearing the active pointer or navigating. A still-pending write remains
+queued and visible as pending; a refusal leaves the session on screen with a
+specific explanation. Rejected discard rows no longer optimistically hide the
+session from History, though the failed row remains in the outbox for review
+or export.
+
+The session's `planned_workout_id` is immutable once set, so a caller cannot
+retarget the session to release the original day. Plan-reference protection
+is enforced in Postgres for the PWA, direct Data API calls, and the service-role
+MCP path. The PWA explains that the original day must stay intact so queued
+sets can attach to the right prescription.
+
+Separately, once a set exists for a day, that day's prescription list is
+immutable, including an unlogged neighbour or a new exercise: changing the plan
+later would rewrite what the recorded set was measured against. The person can
+still correct a logged set by the existing void-and-relog path, or edit a
+future day.
