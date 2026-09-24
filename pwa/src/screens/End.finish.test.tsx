@@ -187,6 +187,31 @@ describe("End: finishing a session", () => {
     await vi.waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/", { replace: true }));
   });
 
+  it("never queues both End and Discard for one empty session (A-06)", async () => {
+    pendingSets.mockResolvedValue([]);
+    // Hold the first write in flight, the way a slow IndexedDB commit does,
+    // so the second tap lands before React re-renders a disabled button.
+    let release: () => void = () => undefined;
+    enqueue.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    render(<End />);
+    const discard = await screen.findByRole("button", { name: "Discard empty session" });
+    const endAnyway = screen.getByRole("button", { name: "End anyway (counts as done)" });
+
+    fireEvent.click(endAnyway);
+    fireEvent.click(discard);
+    release();
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    const sessionWrites = enqueue.mock.calls
+      .map((c) => c[0] as { table: string; patch?: Record<string, unknown> })
+      .filter((op) => op.table === "sessions");
+    expect(sessionWrites).toHaveLength(1);
+    expect(sessionWrites[0].patch).toHaveProperty("ended_at");
+  });
+
   it("clears the active session only after the discard leaves the outbox", async () => {
     pendingSets.mockResolvedValue([]);
     render(<End />);

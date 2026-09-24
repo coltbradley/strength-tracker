@@ -111,8 +111,22 @@ export function End() {
   const [now, setNow] = useState(() => Date.now());
   // the draft is persisted on unmount, but not once the session is closed
   const closedRef = useRef(false);
-  /** re-entrancy guard for end(); a ref, because state is batched */
-  const endingRef = useRef(false);
+  /** One lock for BOTH terminal actions, End and Discard; a ref, because
+   *  state is batched. Separate guards let a fast second tap queue an
+   *  ended_at and a discarded_at for the same session (A-06). */
+  const terminalRef = useRef<"end" | "discard" | null>(null);
+  /** the same lock, for rendering disabled buttons */
+  const [terminalAction, setTerminalAction] = useState<"end" | "discard" | null>(null);
+  const takeTerminal = (action: "end" | "discard"): boolean => {
+    if (terminalRef.current !== null) return false;
+    terminalRef.current = action;
+    setTerminalAction(action);
+    return true;
+  };
+  const releaseTerminal = () => {
+    terminalRef.current = null;
+    setTerminalAction(null);
+  };
   const discardResolvingRef = useRef<string | null>(null);
   const discardResolvedRef = useRef(false);
   const resolveDiscardRef = useRef<((attemptAt: string) => Promise<void>) | null>(null);
@@ -343,8 +357,7 @@ export function End() {
     // (or a tap that lands twice through a slow frame) reads the old value and
     // runs the whole close twice — two queued updates, markPlannedDayDone
     // twice, two navigations.
-    if (endingRef.current) return;
-    endingRef.current = true;
+    if (!takeTerminal("end")) return;
     try {
       const endedAtMs = Math.max(
         Date.now(),
@@ -415,7 +428,7 @@ export function End() {
     } catch (e) {
       // let them try again: the failure may be transient, and the session is
       // still open
-      endingRef.current = false;
+      releaseTerminal();
       reportError(e, "end session");
     }
   };
@@ -471,6 +484,8 @@ export function End() {
       }
       if (matching.state === "dead") {
         setDiscardAttemptAt(null);
+        // The session is still open, so End has to be available again.
+        releaseTerminal();
         if (/cannot discard a session that contains sets/i.test(matching.last_error ?? "")) {
           const message =
             "A set from another device reached this session first. The workout is staying in your history, so end the session instead.";
@@ -501,7 +516,7 @@ export function End() {
 
   /** Soft delete an accidental, server-confirmed empty session. */
   const discard = async () => {
-    if (discardAttemptAt !== null) return;
+    if (!takeTerminal("discard")) return;
     const attemptedAt = new Date().toISOString();
     try {
       await outbox.enqueue({
@@ -516,6 +531,7 @@ export function End() {
       await resolveDiscard(attemptedAt);
     } catch (e) {
       setDiscardAttemptAt(null);
+      releaseTerminal();
       reportError(e, "discard session");
     }
   };
@@ -674,7 +690,7 @@ export function End() {
             type="button"
             className="btn btn-primary btn-block"
             onClick={() => void discard()}
-            disabled={discardAttemptAt !== null}
+            disabled={terminalAction !== null || discardAttemptAt !== null}
           >
             {discardAttemptAt === null ? "Discard empty session" : "Discard waiting for sync…"}
           </button>
@@ -682,7 +698,7 @@ export function End() {
             type="button"
             className="btn btn-ghost btn-block"
             onClick={() => void end()}
-            disabled={discardAttemptAt !== null}
+            disabled={terminalAction !== null || discardAttemptAt !== null}
           >
             End anyway (counts as done)
           </button>
