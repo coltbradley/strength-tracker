@@ -70,6 +70,15 @@ describe("session focus derivations", () => {
     expect(isFocusEligible([entry("plank", 3, "time")])).toBe(true);
   });
 
+  it("keeps a superset circuit with more than two members in overview", () => {
+    const a = entry("a", 2);
+    const b = entry("b", 2);
+    const c = entry("c", 2);
+    for (const item of [a, b, c]) item.brackets[0]!.superset_group = 1;
+
+    expect(isFocusEligible([a, b, c])).toBe(false);
+  });
+
   it("offers focus mode when a later bracket tracks duration", () => {
     const squat = entry("squat", 2);
     squat.brackets.push({ ...squat.brackets[0]!, id: "rx-squat-time", tracking: "time" });

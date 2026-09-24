@@ -268,7 +268,7 @@ describe("RestTimer", () => {
         onAdjust={noop}
         onEdit={noop}
         onDone={onDone}
-        nextSetLabel="Next: Squat set 2 of 3"
+        nextSetLabel="Next: Superset A, round 2 of 3"
       />,
     );
 
@@ -276,7 +276,7 @@ describe("RestTimer", () => {
     act(() => vi.advanceTimersByTime(2_100));
 
     expect(screen.getByText("READY")).toBeTruthy();
-    expect(screen.getByText("Next: Squat set 2 of 3")).toBeTruthy();
+    expect(screen.getByText("Next: Superset A, round 2 of 3")).toBeTruthy();
     expect(onDone).not.toHaveBeenCalled();
   });
 

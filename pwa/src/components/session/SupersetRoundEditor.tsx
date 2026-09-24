@@ -4,6 +4,7 @@ import type { SetDraft, SetEditorProps } from "./SetEditor";
 
 export interface SupersetRoundMember {
   tag: string;
+  target?: string | null;
   editor: SetEditorProps;
 }
 
@@ -43,22 +44,27 @@ function MemberRow({ member }: { member: SupersetRoundMember }) {
     onOpenPad,
   } = member.editor;
   const { perSide, totalKg } = loadPresentation;
+  const displayLoad =
+    draft.enteredLoad !== undefined && draft.enteredUnit === unit
+      ? draft.enteredLoad
+      : toDisplay(draft.entryKg, unit);
   const coarseDown: StepDef | undefined = loadSteps[0];
   const coarseUp: StepDef | undefined = loadSteps[loadSteps.length - 1];
 
   return (
     <section
-      className="superset-member-compact"
+      className="superset-member-card"
       aria-label={`${member.tag} ${entry.name}`}
     >
       <div className="superset-round-member-label">
         {member.tag} · {entry.name}
       </div>
+      {member.target && <div className="superset-member-target">{member.target}</div>}
       <div className="superset-member-row">
         <Stepper
           label="load"
           inline
-          display={String(toDisplay(draft.entryKg, unit))}
+          display={String(displayLoad)}
           subText={unit}
           onTapValue={
             onOpenPad === undefined ? undefined : () => onOpenPad("load")
@@ -67,7 +73,13 @@ function MemberRow({ member }: { member: SupersetRoundMember }) {
           value={draft.entryKg}
           min={0}
           max={maxEntryKg}
-          onChange={(entryKg) => onDraftChange({ entryKg })}
+          onChange={(entryKg) =>
+            onDraftChange({
+              entryKg,
+              enteredLoad: toDisplay(entryKg, unit),
+              enteredUnit: unit,
+            })
+          }
           steps={[coarseDown, coarseUp].filter(
             (s): s is StepDef => s !== undefined,
           )}
@@ -115,7 +127,7 @@ export function SupersetRoundEditor({
   disabled = false,
   heldPulse = false,
   error = null,
-  singleLogLabel = "Log A1 only",
+  singleLogLabel = `Log ${a1.editor.entry.name} only`,
   pendingMember = null,
   onLogRound,
   onLogA1Only,
@@ -150,7 +162,7 @@ export function SupersetRoundEditor({
             </button>
             <button
               type="button"
-              className={`btn btn-ghost btn-block${heldClass}`}
+              className={`btn btn-ghost btn-block superset-partial-action${heldClass}`}
               disabled={disabled}
               onClick={onLogA1Only}
             >
@@ -160,11 +172,11 @@ export function SupersetRoundEditor({
         ) : (
           <button
             type="button"
-            className={`btn btn-primary btn-log${heldClass}`}
+            className={`btn btn-ghost btn-block superset-partial-action${heldClass}`}
             disabled={disabled}
             onClick={pendingMember === "a1" ? onLogA1Only : onLogA2Only}
           >
-            Log {pendingMember === "a1" ? a1.tag : a2.tag} only
+            Log {pendingMember === "a1" ? a1.editor.entry.name : a2.editor.entry.name} only
           </button>
         )}
       </div>

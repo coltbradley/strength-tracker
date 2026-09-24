@@ -73,6 +73,7 @@ import {
   isLocalBracket,
   setsForEntry as setsForEntryOf,
   supersetInfo as supersetInfoOf,
+  supersetLetter,
   entryMet,
   plannedExerciseId,
   progressSets,
@@ -87,6 +88,7 @@ import {
 } from "../lib/entries";
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
+import { supersetGroupEntries } from "../lib/sessionFocus";
 import { uuid } from "../lib/uuid";
 import { correctedSet, isNoopCorrection } from "../lib/corrections";
 import { getPrefillFallback, prefillSet } from "../lib/prefill";
@@ -740,6 +742,9 @@ export function Session() {
   );
   const doneEntries = entries.filter(entryDone).length;
   const focusEligible = isFocusEligible(entries);
+  const overviewOnlyCircuit = entries
+    .map((entry) => supersetGroupEntries(entries, entry.key))
+    .find((members) => members.length > 2) ?? null;
   const selectedFocusEntry =
     entries.find((entry) => entry.key === focusKey) ?? openEntry;
   const selectedFocusPair = useMemo(
@@ -1626,13 +1631,12 @@ export function Session() {
       }
       const now = Date.now();
       restRef.current = { startedAt: now };
-      // The round names its rest after A2 (see forLabel just below); the
-      // RPE row rates the same set for the same reason.
+      // RPE belongs to the last set in the durable batch, A2. The upcoming
+      // rest belongs to the next A1 log instead.
       setLastLoggedSet(inserts[1]);
-      const forLabel = `${members[1].name} set ${inserts[1].set_index + 1}`;
+      const forLabel = `${members[0].name} set ${inserts[0].set_index + 1}`;
       const showStrip =
-        autoStartRest &&
-        supersetPartnerOf(entries, members[0].key, doneAfter) === null;
+        autoStartRest && !doneAfter(members[0]) && !doneAfter(members[1]);
       if (showStrip)
         setRest({ startedAt: now, targetSeconds: roundRestSeconds, forLabel });
       else setRest(null);
@@ -2517,16 +2521,18 @@ export function Session() {
             label={`SUPERSET ${roundLetter} · ROUND ${roundIndex} OF ${roundTotal}`}
             a1={{
               tag: roundTagA1,
+              target: scheme(focusSupersetPair[0]),
               editor: roundEditorFor(focusSupersetPair[0], roundA1),
             }}
             a2={{
               tag: roundTagA2,
+              target: scheme(focusSupersetPair[1]),
               editor: roundEditorFor(focusSupersetPair[1], roundA2),
             }}
             disabled={!setsLoaded || setsFailed}
             heldPulse={logHeld}
             error={roundError}
-            singleLogLabel={`Log ${roundTagA1} only`}
+            singleLogLabel={`Log ${focusSupersetPair[0].name} only`}
             pendingMember={pendingRoundMember}
             onLogRound={(drafts) =>
               tapLog(() =>
@@ -3187,19 +3193,28 @@ export function Session() {
       lastThisSession: last ? { load_kg: last.load_kg, reps: last.reps } : null,
       lastSession: lastActuals[entry.exercise_id] ?? null,
     }, bodyweightFallback(equipMap[entry.exercise_id] ?? null));
+    const authoredLoad = bracket?.entered_load ?? null;
+    const authoredUnit = bracket?.entered_unit ?? null;
     return {
-      entryKg: Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100,
+      entryKg: authoredLoad !== null && authoredUnit !== null
+        ? Math.round(fromDisplay(authoredLoad, authoredUnit) * 100) / 100
+        : Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100,
       reps: prefill.reps,
       setType: kind,
       rpe: null,
+      ...(authoredLoad !== null && authoredUnit !== null
+        ? { enteredLoad: authoredLoad, enteredUnit: authoredUnit }
+        : {}),
     };
   };
 
-  const roundDraftFor = (entry: ExerciseEntry): SetDraft =>
-    roundDrafts[entry.key] ??
-    (entry.key === openEntry?.key
-      ? { entryKg, reps, setType: setType as BracketKind, rpe }
-      : defaultRoundDraft(entry));
+  const roundDraftFor = (entry: ExerciseEntry): SetDraft => {
+    const staged = stagedDraftsRef.current[`${entry.key}:${entry.exercise_id}`];
+    return roundDrafts[entry.key] ??
+      (entry.key === openEntry?.key
+        ? staged ?? { entryKg, reps, setType: setType as BracketKind, rpe }
+        : defaultRoundDraft(entry));
+  };
 
   const roundEditorFor = (entry: ExerciseEntry, draft: SetDraft) => {
     const bracket = bracketFor(
@@ -3208,6 +3223,7 @@ export function Session() {
       draft.setType,
     );
     const equipment = equipMap[entry.exercise_id] ?? null;
+    const roundUnit = bracket?.entered_unit ?? unit;
     const entryMode = resolveLoadEntry({
       override: getExercisePref(entry.exercise_id).loadEntry,
       prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
@@ -3216,7 +3232,7 @@ export function Session() {
     });
     const storedLoad = totalKg(draft.entryKg, entryMode);
     const perSide = entryMode === "per_side";
-    const barKg = getExerciseBarKg(entry.exercise_id, unit, equipment);
+    const barKg = getExerciseBarKg(entry.exercise_id, roundUnit, equipment);
     const roundLoadStyleEligible =
       equipment === "barbell" || offersLoadStyle(equipment, entry.name);
     const roundLoadStyle: LoadStyle | null = roundLoadStyleEligible
@@ -3233,7 +3249,7 @@ export function Session() {
         ? plateSplit.plates
             .map(
               (plate) =>
-                `${plate.count > 1 ? `${plate.count}×` : ""}${formatPlate(plate.plate, unit)}`,
+                `${plate.count > 1 ? `${plate.count}×` : ""}${formatPlate(plate.plate, roundUnit)}`,
             )
             .join("·")
         : barKg > 0
@@ -3260,9 +3276,9 @@ export function Session() {
           name: entry.name,
         }),
       },
-      unit,
+      unit: roundUnit,
       maxEntryKg: perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG,
-      loadSteps: loadSteps(entry.exercise_id, unit),
+      loadSteps: loadSteps(entry.exercise_id, roundUnit),
       rpeShown: rpeShown(entry.exercise_id),
       logLabel: "unused",
       lastPerformance: lastTime(
@@ -3349,6 +3365,21 @@ export function Session() {
    *  nothing left -- RestTimer falls back to naming what the rest was
    *  recorded against. */
   const nextSetLabel = (): string | null => {
+    if (rest && focusSupersetPair) {
+      const [a1, a2] = focusSupersetPair;
+      const progressA1 = entryProgress(a1);
+      const progressA2 = entryProgress(a2);
+      const totalA1 = targetSets(a1);
+      const totalA2 = targetSets(a2);
+      if (
+        progressA1 === progressA2 &&
+        progressA1 < totalA1 &&
+        progressA2 < totalA2
+      ) {
+        const letter = supersetLetter(a1.brackets[0]?.superset_group ?? 1);
+        return `Next: Superset ${letter}, round ${progressA1 + 1} of ${Math.min(totalA1, totalA2)}`;
+      }
+    }
     const target = openEntry && !entryDone(openEntry) ? openEntry : advanceTo;
     if (!target) return null;
     const total = targetSets(target);
@@ -3482,8 +3513,9 @@ export function Session() {
             <>
               {!focusEligible && entries.length > 0 && (
                 <p className="microcopy focus-unavailable">
-                  Duration tracking is not available in focus mode. This workout
-                  stays in the full view.
+                  {overviewOnlyCircuit
+                    ? `${overviewOnlyCircuit.length}-member Superset ${supersetLetter(overviewOnlyCircuit[0]?.brackets[0]?.superset_group ?? 1)} is an overview-only circuit. Paired Focus supports exactly two members.`
+                    : "Duration tracking is not available in focus mode. This workout stays in the full view."}
                 </p>
               )}
               <WorkoutOverview

@@ -82,7 +82,8 @@ export function remainingProgress(
 }
 
 export function isFocusEligible(entries: readonly ExerciseEntry[]): boolean {
-  return entries.length > 0;
+  if (entries.length === 0) return false;
+  return !entries.some((entry) => supersetGroupEntries(entries, entry.key).length > 2);
 }
 
 export function transitionPresentation(

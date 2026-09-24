@@ -179,6 +179,44 @@ describe("Plan with an active session", () => {
     });
     expect(updatePrescription).not.toHaveBeenCalled();
   });
+
+  it("labels a three-member group as an overview-only circuit", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [
+        prescription("bench", "Bench Press", 0, 1),
+        prescription("row", "Barbell Row", 1, 1),
+        prescription("curl", "Cable Curl", 2, 1),
+      ],
+    });
+    render(<Plan />);
+
+    const groupHeading = await screen.findByText("SUPERSET A");
+    expect(groupHeading.parentElement?.textContent).toContain(
+      "3 exercises, overview-only circuit",
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Bench Press/ }));
+    expect(screen.getByText(/This group has 3 exercises and stays in the workout overview until circuit Focus is available\./)).toBeTruthy();
+  });
+
+  it("counts distinct exercises instead of ramp prescription rows", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [
+        prescription("bench-press", "Bench Press", 0, 1),
+        {
+          ...prescription("bench-press", "Bench Press", 1, 1),
+          id: "bench-press-ramp",
+        },
+        prescription("barbell-row", "Barbell Row", 2, 1),
+      ],
+    });
+    render(<Plan />);
+
+    await screen.findByText("SUPERSET A");
+    fireEvent.click(screen.getAllByRole("button", { name: /Bench Press/ })[0]!);
+    expect(screen.getByText("Alternates with Barbell Row.")).toBeTruthy();
+  });
 });
 
 function prescription(

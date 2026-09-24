@@ -1047,7 +1047,9 @@ export function Plan() {
                       <span className="ss-head-note">
                         {" · "}
                         {entry.exercises > 1
-                          ? `${entry.exercises} exercises, alternated`
+                          ? entry.exercises > 2
+                            ? `${entry.exercises} exercises, overview-only circuit`
+                            : `${entry.exercises} exercises, alternated`
                           : "nothing else in it yet"}
                       </span>
                     </div>
@@ -1427,16 +1429,25 @@ export function Plan() {
                   </div>
                   {draft.superset !== 0 &&
                     (() => {
-                      const mates = (rx ?? []).filter(
-                        (o) =>
-                          o.id !== r.id && o.superset_group === draft.superset,
+                      const mates = Array.from(
+                        new Map(
+                          (rx ?? [])
+                            .filter(
+                              (o) =>
+                                o.exercise_id !== r.exercise_id &&
+                                o.superset_group === draft.superset,
+                            )
+                            .map((o) => [o.exercise_id, o.exercise_name]),
+                        ).values(),
                       );
                       const letter = String.fromCharCode(64 + draft.superset);
                       return (
                         <div className="ss-pairing">
                           {mates.length === 0
                             ? `Group ${letter} — nothing else is in it yet. Put another exercise in ${letter} to pair them.`
-                            : `Alternates with ${mates.map((m) => m.exercise_name).join(", ")}.`}
+                          : mates.length > 1
+                            ? `This group has ${mates.length + 1} exercises and stays in the workout overview until circuit Focus is available.`
+                            : `Alternates with ${mates.join(", ")}.`}
                         </div>
                       );
                     })()}
