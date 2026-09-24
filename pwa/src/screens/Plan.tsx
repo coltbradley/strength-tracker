@@ -45,6 +45,7 @@ import {
   reorderEntries,
   moveBlock,
   sectionUnit,
+  supersetRunIssues,
   type PlanBlock,
   type PlanEntry,
 } from "../lib/sections";
@@ -60,6 +61,7 @@ import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
 import { useDragList } from "../hooks/useDragList";
 import { ExercisePicker } from "../components/ExercisePicker";
+import { cacheGet, cacheKeys } from "../lib/db";
 import { fromDisplay, stepKg, toDisplay } from "../lib/units";
 import {
   enteredKg,
@@ -74,6 +76,7 @@ import type {
   PlannedWorkoutRow,
   PrescriptionPatch,
   ResolvedPrescriptionRow,
+  ActiveSession,
 } from "../lib/types";
 
 type LoadMode = "kg" | "pct" | "feel";
@@ -236,6 +239,8 @@ export function Plan() {
   const [exercisesFailed, setExercisesFailed] = useState(false);
   const [duplicateDate, setDuplicateDate] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [activeForWorkout, setActiveForWorkout] =
+    useState<ActiveSession | null>(null);
   const [labelValue, setLabelValue] = useState("");
   const [labelDirty, setLabelDirty] = useState(false);
   /** Set by addExercise so the reload that follows can open the new row's
@@ -256,6 +261,7 @@ export function Plan() {
         : [],
     [list, workout],
   );
+  const workoutLocked = activeForWorkout?.planned_workout_id === workout?.id;
 
   const reload = useCallback(() => {
     getPlannedWorkouts()
@@ -268,6 +274,21 @@ export function Plan() {
   }, [id]);
 
   useEffect(() => reload(), [reload]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void cacheGet<ActiveSession>(cacheKeys.activeSession)
+      .then((active) => {
+        if (!cancelled)
+          setActiveForWorkout(
+            active != null && active.planned_workout_id === id ? active : null,
+          );
+      })
+      .catch((e: unknown) => reportError(e, "check active workout"));
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   useEffect(() => {
     if (workout && !noteDirty) setPlanNote(workout.plan_note ?? "");
@@ -394,13 +415,37 @@ export function Plan() {
       </div>
     );
 
-  const run = async (what: string, fn: () => Promise<void>) => {
+  const run = async (
+    what: string,
+    fn: () => Promise<void>,
+    affectedWorkoutIds: readonly string[] | false = [workout.id],
+  ) => {
     if (busy) return;
     setBusy(true);
     try {
+      if (affectedWorkoutIds !== false) {
+        const active = await cacheGet<ActiveSession>(cacheKeys.activeSession);
+        if (
+          active?.planned_workout_id != null &&
+          affectedWorkoutIds.includes(active.planned_workout_id)
+        )
+          throw new PlanEditRefused(
+            "Finish the active session before changing this workout or its place in the plan.",
+          );
+      }
       await fn();
     } catch (e) {
-      reportError(e, what);
+      if (e instanceof PlanEditRefused) {
+        toast(e.message, "error");
+        setLabelValue(workout.label ?? "");
+        setLabelDirty(false);
+        setDateValue(workout.scheduled_date ?? "");
+        setDateDirty(false);
+        setPlanNote(workout.plan_note ?? "");
+        setNoteDirty(false);
+      } else {
+        reportError(e, what);
+      }
     } finally {
       setBusy(false);
     }
@@ -490,7 +535,7 @@ export function Plan() {
       await swapWorkoutOrder(workout, other);
       toast("Order updated");
       reload();
-    });
+    }, [workout.id, other.id]);
   };
 
   const duplicate = () =>
@@ -503,7 +548,7 @@ export function Plan() {
       );
       setDuplicateDate("");
       reload();
-    });
+    }, false);
 
   const removeWorkout = () =>
     void run("delete workout", async () => {
@@ -534,21 +579,22 @@ export function Plan() {
           .filter((o) => o.id !== r.id && normalizeSection(o.section) !== next)
           .map((o) => o.id)
       : [];
+    const proposed = rows.map((o) =>
+      o.id === r.id
+        ? { ...o, section: next, superset_group: group }
+        : mates.includes(o.id)
+          ? { ...o, section: next }
+          : o,
+    );
+    const issues = supersetRunIssues(proposed);
+    if (issues.length > 0) throw new PlanEditRefused(issues.join(" "));
     await updatePrescription(r.id, workout.id, patch);
     await setPrescriptionSection(mates, workout.id, next);
     // A section or a letter says which PART of the day this belongs to, and
     // the editor has already redrawn it there. Land it, or Today would still
     // read the old order.
     if (moved || group !== (r.superset_group ?? null))
-      await settle(
-        rows.map((o) =>
-          o.id === r.id
-            ? { ...o, section: next, superset_group: group }
-            : mates.includes(o.id)
-              ? { ...o, section: next }
-              : o,
-        ),
-      );
+      await settle(proposed);
   };
 
   /**
@@ -575,7 +621,15 @@ export function Plan() {
       return Promise.resolve();
     }
     return run("save exercise", async () => {
-      await commitRx(r, patch);
+      try {
+        await commitRx(r, patch);
+      } catch (e) {
+        if (e instanceof PlanEditRefused) {
+          toast(e.message, "error");
+          return;
+        }
+        throw e;
+      }
       if (!keepOpen) {
         setEditingRx(null);
         setDraft(null);
@@ -723,7 +777,7 @@ export function Plan() {
       await saveWorkoutAsTemplate(workout, name, rx ?? []);
       setTemplateName(null);
       toast(`Saved "${name}" — add it to any day from Today`);
-    });
+    }, false);
 
   const saveLabel = () =>
     void run("rename workout", async () => {
@@ -755,12 +809,18 @@ export function Plan() {
         value={labelValue}
         placeholder={workoutName(workout)}
         aria-label="workout name"
+        disabled={busy || workoutLocked}
         onChange={(e) => {
           setLabelValue(e.target.value);
           setLabelDirty(true);
         }}
         onBlur={() => labelDirty && saveLabel()}
       />
+      {workoutLocked && (
+        <p className="microcopy" role="alert">
+          Finish the active session before changing this workout or its place in the plan.
+        </p>
+      )}
       {workout.notes && <Note label="COACH" text={workout.notes} />}
 
       <section className="rule-section">
@@ -1518,6 +1578,7 @@ export function Plan() {
             className="input date-input"
             type="date"
             value={dateValue}
+            disabled={busy || workoutLocked}
             onChange={(e) => {
               setDateValue(e.target.value);
               setDateDirty(true);
@@ -1528,7 +1589,7 @@ export function Plan() {
             <button
               type="button"
               className="chip"
-              disabled={busy}
+              disabled={busy || workoutLocked}
               onClick={() => {
                 setDateValue(todayLocalIso());
                 saveDate(todayLocalIso());
@@ -1576,6 +1637,7 @@ export function Plan() {
           placeholder="What's the intent for this one? Cues, targets, context…"
           rows={3}
           value={planNote}
+          disabled={busy || workoutLocked}
           onChange={(e) => {
             setPlanNote(e.target.value);
             setNoteDirty(true);

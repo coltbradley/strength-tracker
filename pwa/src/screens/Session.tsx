@@ -52,7 +52,11 @@ import { RpeChips } from "../components/RpeChips";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
-import { prefersReducedMotion, useKeyboardInset } from "../components/Sheet";
+import {
+  prefersReducedMotion,
+  Sheet,
+  useKeyboardInset,
+} from "../components/Sheet";
 import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import {
   getExercises,
@@ -290,14 +294,23 @@ export function Session() {
    *  insert — and `.is-held` (styles.css) says so instead of the button
    *  silently eating it. */
   const [logHeld, setLogHeld] = useState(false);
+  /** A normal set and a superset round have the same durable-local boundary:
+   * nothing looks logged until IndexedDB accepted it. Keep the failure next to
+   * the controlled draft so the lifter can retry without re-entering values. */
+  const [logError, setLogError] = useState<string | null>(null);
   const [roundDrafts, setRoundDrafts] = useState<Record<string, SetDraft>>({});
   const [roundError, setRoundError] = useState<string | null>(null);
+  const [leavePromptOpen, setLeavePromptOpen] = useState(false);
   /** Which paired editor owns the ephemeral pad or plate sheet, if either. */
   const [roundInputKey, setRoundInputKey] = useState<string | null>(null);
 
   const [rest, setRest] = useState<ActiveRest | null>(null);
   // survives DONE so the next log can still record elapsed rest
   const restRef = useRef<{ startedAt: number } | null>(null);
+  // A setting can change while a rest strip is already visible. Keep the
+  // previous value so the effect below acts only on the enabled -> disabled
+  // transition, rather than continually re-writing a hidden rest mirror.
+  const wasAutoStartRest = useRef(autoStartRest);
 
   // The SERVER-side "rest over" push for the strip in progress (lib/push.ts),
   // for when the app is closed or the phone is locked at the deadline.
@@ -620,6 +633,20 @@ export function Session() {
     },
     [sessionId],
   );
+
+  useEffect(() => {
+    const wasEnabled = wasAutoStartRest.current;
+    wasAutoStartRest.current = autoStartRest;
+    if (!wasEnabled || autoStartRest) return;
+
+    // Turning automatic rest off is an instruction about the currently
+    // visible cue too. Preserve the measuring clock in restRef so the next
+    // set still records actual rest, but remove this stale strip, its mirror
+    // target, and its closed-app alert immediately.
+    setRest(null);
+    disarmRestAlert();
+    mirrorRest(null, null);
+  }, [autoStartRest, mirrorRest]);
 
   // ---- exercise entries ----------------------------------------------------
 
@@ -1231,6 +1258,16 @@ export function Session() {
     action();
   };
 
+  const hasUnloggedChanges =
+    Object.keys(stagedDraftsRef.current).length > 0 ||
+    Object.keys(roundDrafts).length > 0 ||
+    editing !== null;
+
+  const goHome = () => {
+    if (hasUnloggedChanges) setLeavePromptOpen(true);
+    else navigate("/");
+  };
+
   /** Build every ordinary set shape before it reaches the durable outbox. */
   const buildSetInsert = (
     entry: ExerciseEntry,
@@ -1265,7 +1302,7 @@ export function Session() {
       .filter((set) => set.exercise_id === exerciseId)
       .reduce((max, set) => Math.max(max, set.set_index), -1) + 1;
 
-  const logSet = (
+  const logSet = async (
     loggedDraft: SetDraft = {
       entryKg,
       reps,
@@ -1273,7 +1310,7 @@ export function Session() {
       rpe,
     },
     entryToLog: ExerciseEntry | null = openEntry,
-  ) => {
+  ): Promise<boolean> => {
     // FIRST, and before every guard below: iOS only lets an AudioContext start
     // inside a user gesture, and this tap is the gesture that starts the rest
     // the cue will end. Running it ahead of the early returns keeps it tied to
@@ -1286,19 +1323,8 @@ export function Session() {
     // setsFailed: see the state declaration — an empty `setsRef` we could not
     // verify would number this set 0 on top of whatever is already logged.
     if (!entryToLog || !sessionId || logLocked || !setsLoaded || setsFailed)
-      return;
-    delete stagedDraftsRef.current[
-      `${entryToLog.key}:${entryToLog.exercise_id}`
-    ];
+      return false;
     setLogLocked(true);
-    window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
-    setVoidArm(null);
-    // logging on a skipped exercise means it's happening after all
-    if (skips[entryToLog.key]) {
-      const unskipped = { ...skips };
-      delete unskipped[entryToLog.key];
-      persistSkips(unskipped);
-    }
 
     const nextIndex = setIndexFor(entryToLog.exercise_id);
     const bracket = bracketFor(
@@ -1322,72 +1348,99 @@ export function Session() {
       nextIndex,
       recordableRest(),
     );
-    const next = applySets((prev) => [...prev, set]);
-    setLastLoggedSet(set);
-    cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
-      reportError(e, "cache session sets"),
-    );
-    outbox
-      .enqueue({ kind: "insert", table: "sets", payload: set })
-      .catch((e: unknown) => reportError(e, "log set"));
+    try {
+      // The outbox is the only durable local copy while offline. A regular
+      // set used to update React first and fire this write in the background,
+      // so a rejected IndexedDB transaction produced a convincing but false
+      // LOGGED state. Superset rounds already use this boundary.
+      await outbox.enqueue({ kind: "insert", table: "sets", payload: set });
 
-    // Done-ness read from the list that now INCLUDES this set: `sets` state
-    // is a render behind, and both decisions below are about the workout as
-    // it stands after the tap.
-    const doneAfter = (e: ExerciseEntry): boolean =>
-      // logging on a skipped exercise un-skips it (above), so the open entry
-      // is never treated as skipped here
-      (e.key in skips && e.key !== entryToLog.key) ||
-      entryMet(e, setsForEntryOf(e, next, rx, knownRxIds));
-    // Mid-superset the rest strip is a countdown to nothing: the next thing
-    // to do is the partner, not a wait. Only the STRIP is held — the clock
-    // below always starts, because `rest_seconds_actual` is data and
-    // append-only, so a rest not measured now can never be recorded later.
-    const roundOpen = supersetPartnerOf(entries, entryToLog.key, doneAfter);
+      setVoidArm(null);
+      delete stagedDraftsRef.current[
+        `${entryToLog.key}:${entryToLog.exercise_id}`
+      ];
+      // Logging on a skipped exercise means it happened after all, but only
+      // after the set has a durable local record.
+      if (skips[entryToLog.key]) {
+        const unskipped = { ...skips };
+        delete unskipped[entryToLog.key];
+        persistSkips(unskipped);
+      }
+      const next = applySets((prev) => [...prev, set]);
+      setLastLoggedSet(set);
+      setLogError(null);
+      cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
+        reportError(e, "cache session sets"),
+      );
 
-    // The clock always starts MEASURING (rest_seconds_actual is data, and
-    // append-only means it can never be added later); auto-start governs only
-    // whether the strip appears.
-    const now = Date.now();
-    restRef.current = { startedAt: now };
-    const forLabel = `${entryToLog.name} set ${nextIndex + 1}`;
-    const targetRestSeconds = getExerciseRestSeconds(
-      entryToLog.exercise_id,
-      bracket?.rest_seconds ?? null,
-    );
-    const showStrip = autoStartRest && roundOpen === null;
-    if (showStrip)
-      setRest({ startedAt: now, targetSeconds: targetRestSeconds, forLabel });
-    // The next LOG cancels the previous rest's closed-app alert whatever
-    // happens to the strip, and arms one for this rest only when a strip is
-    // shown: no strip means mid-superset or auto-start off, and neither wants
-    // a buzz.
-    disarmRestAlert();
-    if (showStrip) armRestAlert(now + targetRestSeconds * 1000, forLabel);
-    // Mirror the clock HERE, whether or not a strip appeared. With auto-start
-    // off nothing about `rest` changes, so nothing else would ever write the
-    // new startedAt — and no strip also means there is none to restore, which
-    // is the null target.
-    mirrorRest(
-      showStrip ? targetRestSeconds : null,
-      showStrip ? forLabel : null,
-    );
-    // What the NEXT set should be, from the plan rather than from a reset:
-    // this was an unconditional "working", so a coach's second prescribed
-    // warmup arrived pre-set to working and got logged as one.
-    const warmupsLogged = setsForEntryOf(
-      entryToLog,
-      next,
-      rx,
-      knownRxIds,
-    ).filter((s) => s.set_type === "warmup").length;
-    if (entryToLog.key === openEntry?.key)
-      setSetType(warmupsLogged < warmupSets(entryToLog) ? "warmup" : "working");
-    // The rating does NOT carry to the next set. Load and reps do, because
-    // they are the plan repeating; how hard set 3 felt is not a prediction
-    // about set 4, and a sticky value would quietly attach one lifter's one
-    // honest answer to every row after it.
-    setRpe(null);
+      // Done-ness read from the list that now INCLUDES this set: `sets` state
+      // is a render behind, and both decisions below are about the workout as
+      // it stands after the tap.
+      const doneAfter = (e: ExerciseEntry): boolean =>
+        // logging on a skipped exercise un-skips it (above), so the open entry
+        // is never treated as skipped here
+        (e.key in skips && e.key !== entryToLog.key) ||
+        entryMet(e, setsForEntryOf(e, next, rx, knownRxIds));
+      // Mid-superset the rest strip is a countdown to nothing: the next thing
+      // to do is the partner, not a wait. Only the STRIP is held — the clock
+      // below always starts, because `rest_seconds_actual` is data and
+      // append-only, so a rest not measured now can never be recorded later.
+      const roundOpen = supersetPartnerOf(entries, entryToLog.key, doneAfter);
+
+      // The clock always starts MEASURING (rest_seconds_actual is data, and
+      // append-only means it can never be added later); auto-start governs only
+      // whether the strip appears.
+      const now = Date.now();
+      restRef.current = { startedAt: now };
+      const forLabel = `${entryToLog.name} set ${nextIndex + 1}`;
+      const targetRestSeconds = getExerciseRestSeconds(
+        entryToLog.exercise_id,
+        bracket?.rest_seconds ?? null,
+      );
+      const showStrip = autoStartRest && roundOpen === null;
+      if (showStrip)
+        setRest({ startedAt: now, targetSeconds: targetRestSeconds, forLabel });
+      else setRest(null);
+      // The next LOG cancels the previous rest's closed-app alert whatever
+      // happens to the strip, and arms one for this rest only when a strip is
+      // shown: no strip means mid-superset or auto-start off, and neither wants
+      // a buzz.
+      disarmRestAlert();
+      if (showStrip) armRestAlert(now + targetRestSeconds * 1000, forLabel);
+      // Mirror the clock HERE, whether or not a strip appeared. With auto-start
+      // off nothing about `rest` changes, so nothing else would ever write the
+      // new startedAt — and no strip also means there is none to restore, which
+      // is the null target.
+      mirrorRest(
+        showStrip ? targetRestSeconds : null,
+        showStrip ? forLabel : null,
+      );
+      // What the NEXT set should be, from the plan rather than from a reset:
+      // this was an unconditional "working", so a coach's second prescribed
+      // warmup arrived pre-set to working and got logged as one.
+      const warmupsLogged = setsForEntryOf(
+        entryToLog,
+        next,
+        rx,
+        knownRxIds,
+      ).filter((s) => s.set_type === "warmup").length;
+      if (entryToLog.key === openEntry?.key)
+        setSetType(
+          warmupsLogged < warmupSets(entryToLog) ? "warmup" : "working",
+        );
+      // The rating does NOT carry to the next set. Load and reps do, because
+      // they are the plan repeating; how hard set 3 felt is not a prediction
+      // about set 4, and a sticky value would quietly attach one lifter's one
+      // honest answer to every row after it.
+      setRpe(null);
+      return true;
+    } catch (error) {
+      reportError(error, "queue set");
+      setLogError("This set could not be saved locally. Check storage and retry.");
+      return false;
+    } finally {
+      window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
+    }
   };
 
   const logRound = async (round: SupersetRoundDraft) => {
@@ -1402,14 +1455,6 @@ export function Session() {
 
     setLogLocked(true);
     setVoidArm(null);
-    // logging on a skipped exercise means it's happening after all — same
-    // rule as logSet, applied to whichever round member(s) were skipped.
-    if (skips[first.key] || skips[second.key]) {
-      const unskipped = { ...skips };
-      delete unskipped[first.key];
-      delete unskipped[second.key];
-      persistSkips(unskipped);
-    }
     const actualRest = recordableRest();
     const nextByExercise = new Map<string, number>();
     const nextIndex = (exerciseId: string) => {
@@ -1477,6 +1522,15 @@ export function Session() {
           payload,
         })),
       );
+      // Logging on a skipped exercise means it happened after all, but the
+      // historical skip must survive if the all-or-nothing round batch did
+      // not make a durable local commit. This mirrors logSet's ordering.
+      if (skips[first.key] || skips[second.key]) {
+        const unskipped = { ...skips };
+        delete unskipped[first.key];
+        delete unskipped[second.key];
+        persistSkips(unskipped);
+      }
       const next = applySets((prior) => [...prior, ...inserts]);
       cacheSet(cacheKeys.sessionSets(sessionId), next).catch((error: unknown) =>
         reportError(error, "cache superset round"),
@@ -1522,6 +1576,7 @@ export function Session() {
         supersetPartnerOf(entries, members[0].key, doneAfter) === null;
       if (showStrip)
         setRest({ startedAt: now, targetSeconds: roundRestSeconds, forLabel });
+      else setRest(null);
       disarmRestAlert();
       if (showStrip) armRestAlert(now + roundRestSeconds * 1000, forLabel);
       mirrorRest(
@@ -2387,22 +2442,26 @@ export function Session() {
             onLogA1Only={() =>
               tapLog(() => {
                 if (!sessionId || !setsLoaded || setsFailed) return;
-                logSet(roundA1, focusSupersetPair[0]);
-                setRoundDrafts((prior) => {
-                  const next = { ...prior };
-                  delete next[focusSupersetPair[0].key];
-                  return next;
+                void logSet(roundA1, focusSupersetPair[0]).then((saved) => {
+                  if (!saved) return;
+                  setRoundDrafts((prior) => {
+                    const next = { ...prior };
+                    delete next[focusSupersetPair[0].key];
+                    return next;
+                  });
                 });
               })
             }
             onLogA2Only={() =>
               tapLog(() => {
                 if (!sessionId || !setsLoaded || setsFailed) return;
-                logSet(roundA2, focusSupersetPair[1]);
-                setRoundDrafts((prior) => {
-                  const next = { ...prior };
-                  delete next[focusSupersetPair[1].key];
-                  return next;
+                void logSet(roundA2, focusSupersetPair[1]).then((saved) => {
+                  if (!saved) return;
+                  setRoundDrafts((prior) => {
+                    const next = { ...prior };
+                    delete next[focusSupersetPair[1].key];
+                    return next;
+                  });
                 });
               })
             }
@@ -2473,6 +2532,7 @@ export function Session() {
             }
             disabled={!setsLoaded || setsFailed}
             onDraftChange={(next) => {
+              setLogError(null);
               if (!editing) rememberStagedDraft(entry, next);
               if (next.entryKg !== undefined) setEntryKg(next.entryKg);
               if (next.reps !== undefined) setReps(next.reps);
@@ -2493,6 +2553,12 @@ export function Session() {
               setRpeAsked((prev) => new Set([...prev, entry.exercise_id]))
             }
           />
+        )}
+
+        {logError && (
+          <p className="form-error" role="alert">
+            {logError}
+          </p>
         )}
 
         {setsFailed && (
@@ -3392,7 +3458,7 @@ export function Session() {
           type="button"
           className="btn btn-ghost"
           aria-label="back to Today — session keeps running"
-          onClick={() => navigate("/")}
+          onClick={goHome}
         >
           Home
         </button>
@@ -3546,6 +3612,36 @@ export function Session() {
             </div>
           ))}
         </FocusMoreSheet>
+      )}
+
+      {leavePromptOpen && (
+        <Sheet
+          title="Unlogged set changes"
+          onClose={() => setLeavePromptOpen(false)}
+        >
+          <p className="microcopy">
+            Set values you haven’t logged, including an edit in progress, are
+            held only on this screen. Stay to keep them, or leave to discard
+            them.
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            onClick={() => setLeavePromptOpen(false)}
+          >
+            Stay in session
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger btn-block"
+            onClick={() => {
+              setLeavePromptOpen(false);
+              navigate("/");
+            }}
+          >
+            Leave and discard drafts
+          </button>
+        </Sheet>
       )}
 
       {req && <NumberPad req={req} />}

@@ -143,8 +143,11 @@ export const prescriptionSchema = z
       .optional()
       .describe(
         "Superset marker: prescriptions in the same workout sharing a group " +
-          "number are performed as a superset (1 = A, 2 = B, ...). Use when " +
-          "the coach pairs exercises ('A1/A2', 'superset with', arrows).",
+          "number are performed as a superset (1 = A, 2 = B, ...). Each " +
+          "group must be one contiguous run in prescription order with at " +
+          "least two distinct exercises. Use when the coach pairs exercises " +
+          "('A1/A2', 'superset with', arrows); keep each pair's rows " +
+          "together and leave unrelated rows ungrouped.",
       ),
   })
   .refine((p) => !(p.load_kg != null && p.load_pct_tm != null), {
@@ -166,10 +169,11 @@ export const prescriptionSchema = z
 export type Prescription = z.infer<typeof prescriptionSchema>;
 
 /**
- * A superset is exercises ALTERNATED with each other, so a group of one is not
- * a superset — it is a mis-parse. The schema cannot see it: `superset_group`
- * is validated per prescription, and "is anything else in group A" is a fact
- * about the whole day.
+ * A superset is a contiguous run of at least two DISTINCT exercises
+ * ALTERNATED with each other. A group of one is not a superset — it is a
+ * mis-parse. The schema cannot see either rule: `superset_group` is validated
+ * per prescription, while membership and adjacency are facts about the whole
+ * day.
  *
  * It matters because the group is not decoration. The app pairs the members
  * and walks the lifter between them; a lone member renders as an A with
@@ -185,29 +189,53 @@ export function assertSupersetGroups(
   prescriptions: Prescription[],
   where: string,
 ): void {
-  const members = new Map<number, string[]>();
-  for (const p of prescriptions) {
+  const members = new Map<
+    number,
+    { exerciseIds: string[]; positions: number[] }
+  >();
+  for (const [position, p] of prescriptions.entries()) {
     if (p.superset_group == null) continue;
-    const list = members.get(p.superset_group);
-    if (list === undefined) members.set(p.superset_group, [p.exercise_id]);
-    else list.push(p.exercise_id);
+    const group = members.get(p.superset_group);
+    if (group === undefined) {
+      members.set(p.superset_group, {
+        exerciseIds: [p.exercise_id],
+        positions: [position],
+      });
+    } else {
+      group.exerciseIds.push(p.exercise_id);
+      group.positions.push(position);
+    }
   }
-  const lonely = [...members.entries()]
-    .filter(([, list]) => list.length < 2)
-    .sort(([a], [b]) => a - b);
-  if (lonely.length === 0) return;
+  const invalid = [...members.entries()]
+    .sort(([a], [b]) => a - b)
+    .flatMap(([group, members]) => {
+      const errors: string[] = [];
+      const distinct = [...new Set(members.exerciseIds)];
+      if (distinct.length < 2) {
+        errors.push(
+          `superset_group ${
+            String.fromCharCode(64 + group)
+          } needs two distinct exercises, ` +
+            `not ${distinct[0] ?? "no exercises"}`,
+        );
+      }
+      const first = members.positions[0]!;
+      const last = members.positions.at(-1)!;
+      if (last - first + 1 !== members.positions.length) {
+        errors.push(
+          `superset_group ${
+            String.fromCharCode(64 + group)
+          } must be contiguous in prescription order`,
+        );
+      }
+      return errors;
+    });
+  if (invalid.length === 0) return;
 
   throw new ToolError(
-    `On ${where}, ${lonely
-      .map(
-        ([group, list]) =>
-          `superset_group ${String.fromCharCode(64 + group)} has only ` +
-          `${list[0]}`,
-      )
-      .join("; ")}. A superset is two or more exercises alternated, so a ` +
-      "group of one is either a mis-parse or a pairing whose other half went " +
-      "missing. Add the exercise it pairs with, or drop superset_group from " +
-      "it.",
+    `On ${where}, ${invalid.join("; ")}. A superset is a contiguous run of ` +
+      "two or more distinct exercises that alternate. Correct its order or " +
+      "drop superset_group from rows that are not part of the pair.",
   );
 }
 

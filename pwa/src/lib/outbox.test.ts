@@ -143,6 +143,63 @@ describe("outbox", () => {
     ).toEqual([setA.id, setB.id]);
   });
 
+  it("resolves a single enqueue after commit when the count refresh fails", async () => {
+    const { transport } = makeTransport();
+    const db = await getDb();
+    const refreshFailure = new Error("count refresh failed");
+    const failingRefreshDb = {
+      add: (...args: Parameters<Database["add"]>) => db.add(...args),
+      transaction: (store: "outbox", mode?: "readonly" | "readwrite") => {
+        if (mode === undefined) throw refreshFailure;
+        return db.transaction(store, mode);
+      },
+    } as unknown as Database;
+    const outbox = createOutbox({
+      getDb: () => Promise.resolve(failingRefreshDb),
+      transport,
+      isOnline: () => false,
+    });
+
+    await expect(
+      outbox.enqueue({ kind: "insert", table: "sets", payload: setA }),
+    ).resolves.toBeUndefined();
+
+    expect((await db.getAll("outbox")).map((item) => item.op)).toEqual([
+      { kind: "insert", table: "sets", payload: setA },
+    ]);
+    expect(outbox.getStatus()).toMatchObject({
+      state: "error",
+      lastError: expect.stringContaining("count refresh failed"),
+    });
+  });
+
+  it("resolves a batch enqueue after commit when the count refresh fails", async () => {
+    const { transport } = makeTransport();
+    const db = await getDb();
+    const refreshFailure = new Error("count refresh failed");
+    const failingRefreshDb = {
+      add: (...args: Parameters<Database["add"]>) => db.add(...args),
+      transaction: (store: "outbox", mode?: "readonly" | "readwrite") => {
+        if (mode === undefined) throw refreshFailure;
+        return db.transaction(store, mode);
+      },
+    } as unknown as Database;
+    const outbox = createOutbox({
+      getDb: () => Promise.resolve(failingRefreshDb),
+      transport,
+      isOnline: () => false,
+    });
+
+    await expect(outbox.enqueueBatch(roundOps)).resolves.toBeUndefined();
+
+    expect(
+      (await db.getAll("outbox")).map((item) =>
+        (item.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>)
+          .payload.id,
+      ),
+    ).toEqual([setA.id, setB.id]);
+  });
+
   it("leaves no part of the batch when its IndexedDB transaction aborts", async () => {
     const { transport } = makeTransport();
     const rows: OutboxItem[] = [];

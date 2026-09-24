@@ -13,8 +13,16 @@ import {
   within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { cacheGet, cacheKeys, cacheSet, resetDbForTests } from "../lib/db";
-import { resetAllSettings } from "../lib/settings";
+import {
+  cacheGet,
+  cacheKeys,
+  cacheSet,
+  getDb,
+  resetDbForTests,
+  type Database,
+} from "../lib/db";
+import { createOutbox, type OutboxTransport } from "../lib/outbox";
+import { resetAllSettings, setSetting } from "../lib/settings";
 import type {
   ActiveSession,
   ResolvedPrescriptionRow,
@@ -93,6 +101,26 @@ async function seed(
   await cacheSet(cacheKeys.activeSession, active);
   await cacheSet(cacheKeys.sessionRx(active.id), rows);
   await cacheSet(cacheKeys.sessionSets(active.id), sets);
+}
+
+async function outboxWithFailedCountRefresh() {
+  const db = await getDb();
+  const failingReadDb = {
+    add: (...args: Parameters<Database["add"]>) => db.add(...args),
+    transaction: (store: "outbox", mode?: "readonly" | "readwrite") => {
+      if (mode === undefined) throw new Error("count refresh failed");
+      return db.transaction(store, mode);
+    },
+  } as unknown as Database;
+  const transport: OutboxTransport = {
+    insert: async () => null,
+    update: async () => null,
+  };
+  return createOutbox({
+    getDb: () => Promise.resolve(failingReadDb),
+    transport,
+    isOnline: () => false,
+  });
 }
 
 beforeEach(async () => {
@@ -196,6 +224,39 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
 
+    expect(
+      screen.getByRole("button", { name: "reps value — tap to type" })
+        .textContent,
+    ).toBe("9");
+  });
+
+  it("asks before Home can discard an ordinary staged set and Stay keeps it", async () => {
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "reps value — tap to type" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "9" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "back to Today — session keeps running",
+      }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Unlogged set changes",
+    });
+    expect(dialog.textContent).toMatch(/held only on this screen/i);
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Stay in session" }),
+    );
+
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(
       screen.getByRole("button", { name: "reps value — tap to type" })
         .textContent,
@@ -311,6 +372,75 @@ describe("Session focus presentation", () => {
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
     });
+  });
+
+  it("keeps an ordinary set editable when its local queue write fails", async () => {
+    let rejectQueue!: (reason?: unknown) => void;
+    vi.mocked(outbox.enqueue).mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectQueue = reject;
+        }),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      render(
+        <MemoryRouter>
+          <Session />
+        </MemoryRouter>,
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+      await vi.waitFor(() =>
+        expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
+      );
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByText("LOGGED")).toBeNull();
+      expect(screen.queryByRole("timer", { name: "rest timer" })).toBeNull();
+      expect(
+        await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id)),
+      ).toEqual([]);
+
+      await act(async () => {
+        rejectQueue(new Error("IndexedDB unavailable"));
+        await Promise.resolve();
+      });
+
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /could not be saved locally.*retry/i,
+      );
+      expect(screen.getByRole("button", { name: "LOG SET" })).toBeTruthy();
+      expect(screen.queryByText("LOGGED")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "reps value — tap to type" })
+          .textContent,
+      ).toBe("8");
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("treats an ordinary set as saved when only the count refresh fails", async () => {
+    const durableOutbox = await outboxWithFailedCountRefresh();
+    vi.mocked(outbox.enqueue).mockImplementationOnce((op) =>
+      durableOutbox.enqueue(op),
+    );
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+
+    expect(
+      await screen.findByText("Last: 20 kg × 8 working"),
+    ).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    expect(await (await getDb()).getAll("outbox")).toHaveLength(1);
   });
 
   it("logs a bodyweight movement with no load at zero, never the hidden bar fallback", async () => {
@@ -524,6 +654,7 @@ describe("Session focus presentation", () => {
       prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
       prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
     ]);
+    await cacheSet(cacheKeys.sessionSkips(active.id), ["row"]);
     vi.mocked(outbox.enqueueBatch).mockRejectedValueOnce(
       new Error("disk full"),
     );
@@ -549,10 +680,257 @@ describe("Session focus presentation", () => {
       expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
         "22.5",
       );
+      expect(
+        await cacheGet<string[] | Record<string, unknown>>(
+          cacheKeys.sessionSkips(active.id),
+        ),
+      ).toEqual(["row"]);
       expect(screen.queryByText("LOGGED")).toBeNull();
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("keeps both member drafts when saving a single-member set fails", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    let rejectQueue!: (reason?: unknown) => void;
+    vi.mocked(outbox.enqueue).mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectQueue = reject;
+        }),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      render(
+        <MemoryRouter>
+          <Session />
+        </MemoryRouter>,
+      );
+
+      expect(await screen.findByText("round 1 of 2")).toBeTruthy();
+      const increaseLoad = screen.getAllByRole("button", {
+        name: "increase load by 2.5 kg",
+      });
+      fireEvent.click(increaseLoad[0]!);
+      fireEvent.click(increaseLoad[1]!);
+      fireEvent.click(increaseLoad[1]!);
+      fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+      await vi.waitFor(() =>
+        expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
+      );
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByText("LOGGED")).toBeNull();
+      expect(screen.queryByRole("timer", { name: "rest timer" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Log A1 only" })).toBeTruthy();
+      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
+        "22.5",
+      );
+      expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+        "25",
+      );
+      expect(
+        await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id)),
+      ).toEqual([]);
+
+      await act(async () => {
+        rejectQueue(new Error("IndexedDB unavailable"));
+        await Promise.resolve();
+      });
+
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /could not be saved locally.*retry/i,
+      );
+      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
+        "22.5",
+      );
+      expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+        "25",
+      );
+      expect(screen.getByText("round 1 of 2")).toBeTruthy();
+      expect(screen.queryByText("LOGGED")).toBeNull();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("does not offer a duplicate retry for an A1-only write with a count refresh failure", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    const durableOutbox = await outboxWithFailedCountRefresh();
+    vi.mocked(outbox.enqueue).mockImplementationOnce((op) =>
+      durableOutbox.enqueue(op),
+    );
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
+    const loadButtons = screen.getAllByRole("button", {
+      name: "increase load by 2.5 kg",
+    });
+    fireEvent.click(loadButtons[0]!);
+    fireEvent.click(loadButtons[1]!);
+    fireEvent.click(loadButtons[1]!);
+    fireEvent.click(screen.getByRole("button", { name: "Log A1 only" }));
+
+    await vi.waitFor(async () => {
+      expect(await (await getDb()).getAll("outbox")).toHaveLength(1);
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen.getByLabelText("A1 Bench Press").textContent,
+      ).not.toContain("22.5"),
+    );
+    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+      "25",
+    );
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    const [queued] = await (await getDb()).getAll("outbox");
+    expect(queued?.op).toMatchObject({
+      kind: "insert",
+      table: "sets",
+      payload: { exercise_id: "bench-press", load_kg: 22.5 },
+    });
+  });
+
+  it("clears the old rest strip when auto-rest is turned off before a round", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 3),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 3),
+      prescription("db-row", "dumbbell-row", "Dumbbell Row", "reps", 1, 3),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() =>
+      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
+    );
+    expect(await screen.findByRole("timer", { name: "rest timer" })).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /— current — view full workout$/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    expect(await screen.findByText("round 1 of 3")).toBeTruthy();
+
+    act(() => setSetting("autoStartRest", false));
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("timer", { name: "rest timer" }),
+      ).toBeNull(),
+    );
+    // The first ordinary log holds the duplicate-tap lock briefly. The rest
+    // assertion above is the behavior under test; wait for the independent
+    // lock before starting the next round.
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+    await vi.waitFor(() =>
+      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        screen.queryByRole("timer", { name: "rest timer" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps paired drafts when switching through overview and back to Focus", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: "increase load by 2.5 kg",
+      })[0]!,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: "increase load by 2.5 kg",
+      })[1]!,
+    );
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: /— current — view full workout$/,
+      })[0]!,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+
+    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
+      "22.5",
+    );
+    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+      "22.5",
+    );
+  });
+
+  it("warns before Home can discard paired member drafts", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
+    const loadButtons = screen.getAllByRole("button", {
+      name: "increase load by 2.5 kg",
+    });
+    fireEvent.click(loadButtons[0]!);
+    fireEvent.click(loadButtons[1]!);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "back to Today — session keeps running",
+      }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Unlogged set changes",
+    });
+    expect(dialog.textContent).toMatch(/held only on this screen/i);
+    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
+      "22.5",
+    );
+    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
+      "22.5",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Leave and discard drafts" }),
+    ).toBeTruthy();
   });
 
   it("does not advance either member when the local round batch cannot be saved", async () => {

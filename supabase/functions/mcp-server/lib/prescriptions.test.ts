@@ -55,18 +55,19 @@ Deno.test("owner and day are stamped on every row", () => {
   }
 });
 
-
 Deno.test("absent optional fields become null, not undefined", () => {
   const [row] = prescriptionRows(OWNER, DAY, [base]);
-  for (const k of [
-    "load_kg",
-    "load_pct_tm",
-    "load_entry",
-    "rest_seconds",
-    "notes",
-    "superset_group",
-    "section",
-  ]) {
+  for (
+    const k of [
+      "load_kg",
+      "load_pct_tm",
+      "load_entry",
+      "rest_seconds",
+      "notes",
+      "superset_group",
+      "section",
+    ]
+  ) {
     assertEquals(row[k], null, `${k} should be null`);
   }
 });
@@ -82,14 +83,14 @@ Deno.test(
   "schema rejects the load contradictions the DB would reject opaquely",
   () => {
     assertThrows(() =>
-      prescriptionSchema.parse({ ...base, load_kg: 100, load_pct_tm: 80 }),
+      prescriptionSchema.parse({ ...base, load_kg: 100, load_pct_tm: 80 })
     );
     assertThrows(() =>
-      prescriptionSchema.parse({ ...base, reps_min: 8, reps_max: 5 }),
+      prescriptionSchema.parse({ ...base, reps_min: 8, reps_max: 5 })
     );
     // per_side with no load has no side to halve
     assertThrows(() =>
-      prescriptionSchema.parse({ ...base, load_entry: "per_side" }),
+      prescriptionSchema.parse({ ...base, load_entry: "per_side" })
     );
   },
 );
@@ -141,16 +142,55 @@ Deno.test("a real pairing passes, and so does a day with no groups", () => {
   assertSupersetGroups([], "day 0");
 });
 
-Deno.test("members of one group need not be adjacent to count", () => {
-  // Adjacency is how the app RENDERS a superset, but the group is what makes
-  // it one; a check that required adjacency would reject a legal parse.
-  assertSupersetGroups(
-    [
-      { ...base, exercise_id: "A1", superset_group: 1 },
-      { ...base, exercise_id: "Filler" },
-      { ...base, exercise_id: "A2", superset_group: 1 },
-    ],
-    "day 0",
+Deno.test("a non-contiguous group is refused before Plan and Session disagree", () => {
+  const err = assertThrows(
+    () =>
+      assertSupersetGroups(
+        [
+          { ...base, exercise_id: "A1", superset_group: 1 },
+          { ...base, exercise_id: "Filler" },
+          { ...base, exercise_id: "A2", superset_group: 1 },
+        ],
+        "day 0",
+      ),
+    ToolError,
+  );
+  assertEquals(err.message.includes("contiguous"), true);
+});
+
+Deno.test("a group needs two distinct exercises, not two brackets of one exercise", () => {
+  const err = assertThrows(
+    () =>
+      assertSupersetGroups(
+        [
+          { ...base, exercise_id: "Bench", superset_group: 1 },
+          { ...base, exercise_id: "Bench", superset_group: 1 },
+        ],
+        "day 0",
+      ),
+    ToolError,
+  );
+  assertEquals(err.message.includes("two distinct exercises"), true);
+});
+
+Deno.test("one group reports both distinct-exercise and adjacency failures", () => {
+  const err = assertThrows(
+    () =>
+      assertSupersetGroups(
+        [
+          { ...base, exercise_id: "Bench", superset_group: 1 },
+          { ...base, exercise_id: "Filler" },
+          { ...base, exercise_id: "Bench", superset_group: 1 },
+        ],
+        "day 0",
+      ),
+    ToolError,
+  );
+  assertEquals(err.message.includes("two distinct exercises"), true);
+  assertEquals(
+    (err.message.match(/superset_group A/g) ?? []).length,
+    2,
+    "the same group needs both violations named so one correction can fix both",
   );
 });
 
@@ -204,7 +244,6 @@ Deno.test("set_type and tracking are present on every row, defaulted, never omit
     assertEquals("tracking" in r, true);
   }
 });
-
 
 // %TM with no training max. This REFUSED until 2026-09-05 and the refusal
 // pushed a real coach's "60-75% of 1RM" into the notes column as prose, with

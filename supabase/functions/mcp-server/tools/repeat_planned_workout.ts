@@ -44,6 +44,7 @@ import {
 } from "../lib/loop.ts";
 import {
   assertExercisesExist,
+  assertSupersetGroups,
   type Prescription,
   prescriptionRows,
   resolveTrainingMaxes,
@@ -236,6 +237,7 @@ export function registerRepeatPlannedWorkout(
         // The same gates as the other two doors. A day that was writable once
         // is almost always still writable, but "almost" is not a reason to
         // skip the check that makes the three tools agree.
+        assertSupersetGroups(prescriptions, "the repeated day");
         await assertExercisesExist(db, prescriptions);
         const tmRes = await resolveTrainingMaxes(db, prescriptions);
 

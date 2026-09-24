@@ -14,7 +14,7 @@ import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("react-router-dom", () => ({
   useNavigate: () => vi.fn(),
@@ -77,6 +77,7 @@ vi.mock("../lib/sync", () => ({
     flush: vi.fn().mockResolvedValue(undefined),
     pendingSessionUpdateIds: vi.fn().mockResolvedValue(new Set()),
     pendingRatedSessionIds: vi.fn().mockResolvedValue(new Set()),
+    inspect: vi.fn().mockResolvedValue([]),
     enqueue: vi.fn(),
   },
 }));
@@ -88,7 +89,9 @@ vi.mock("../lib/errors", () => ({
 
 import { Today } from "./Today";
 import { notifyPlanChanged } from "../lib/planChanges";
-import { resetDbForTests } from "../lib/db";
+import { cacheGet, cacheKeys, resetDbForTests } from "../lib/db";
+import * as db from "../lib/db";
+import { outbox } from "../lib/sync";
 
 const PROGRAM = {
   id: "prog-1",
@@ -162,6 +165,101 @@ beforeEach(() => {
 });
 
 describe("Today + coach plan changes (onPlanChanged)", () => {
+  it("does not publish an active session when durable session enqueue fails", async () => {
+    vi.mocked(outbox.enqueue).mockRejectedValueOnce(
+      new Error("IndexedDB unavailable"),
+    );
+    render(<Today presentation="train" userId="u1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
+    expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
+  });
+
+  it("keeps a queued session resumable when caching its targets fails", async () => {
+    const realCacheSet = db.cacheSet;
+    const cacheSet = vi
+      .spyOn(db, "cacheSet")
+      .mockImplementation(async (key, value) => {
+        if (key.startsWith("sessionRx:"))
+          throw new Error("target cache quota exceeded");
+        await realCacheSet(key, value);
+      });
+    try {
+      render(<Today presentation="train" userId="u1" />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+
+      await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
+      await waitFor(async () =>
+        expect(await cacheGet(cacheKeys.activeSession)).toMatchObject({
+          planned_workout_id: WORKOUT.id,
+        }),
+      );
+    } finally {
+      cacheSet.mockRestore();
+    }
+  });
+
+  it("holds a queued session on Today when the active-session cache write fails", async () => {
+    const realCacheSet = db.cacheSet;
+    const cacheSet = vi
+      .spyOn(db, "cacheSet")
+      .mockImplementation(async (key, value) => {
+        if (key === cacheKeys.activeSession)
+          throw new Error("active-session cache unavailable");
+        await realCacheSet(key, value);
+      });
+    try {
+      render(<Today presentation="train" userId="u1" />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+
+      await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /session was saved locally.*couldn.t open it/i,
+      );
+      expect(
+        screen.getByRole("button", { name: "Retry opening session" }),
+      ).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    } finally {
+      cacheSet.mockRestore();
+    }
+  });
+
+  it("recovers an offline queued session when its active pointer is absent after reload", async () => {
+    vi.mocked(outbox.inspect).mockResolvedValueOnce([
+      {
+        key: 1,
+        table: "sessions",
+        created_at: "2026-09-23T10:00:00Z",
+        retries: 0,
+        last_error: null,
+        user_id: "u1",
+        state: "waiting",
+        cause: null,
+        retryable: false,
+        op: {
+          kind: "insert",
+          table: "sessions",
+          payload: {
+            id: "queued-session",
+            planned_workout_id: WORKOUT.id,
+            started_at: "2026-09-23T10:00:00Z",
+          },
+        },
+      },
+    ]);
+    render(<Today presentation="train" userId="u1" />);
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /session was saved locally.*couldn.t open it/i,
+    );
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+  });
+
   it("reloads a currently-expanded undated day instead of leaving it blank", async () => {
     render(<Today userId="u1" />);
 
