@@ -380,26 +380,11 @@ export async function swapWorkoutOrder(
   a: PlannedWorkoutRow,
   b: PlannedWorkoutRow,
 ): Promise<void> {
-  const temp = 10000 + b.day_index;
-  const step = async (
-    id: string,
-    patch: { day_index: number; scheduled_date?: string | null },
-  ) => {
-    const { error } = await supabase
-      .from("planned_workouts")
-      .update(patch)
-      .eq("id", id);
-    throwIf(error);
-  };
-  await step(a.id, { day_index: temp });
-  await step(b.id, {
-    day_index: a.day_index,
-    scheduled_date: a.scheduled_date,
+  const { error } = await supabase.rpc("swap_planned_workout_order", {
+    p_first_id: a.id,
+    p_second_id: b.id,
   });
-  await step(a.id, {
-    day_index: b.day_index,
-    scheduled_date: b.scheduled_date,
-  });
+  throwIf(error);
   await invalidatePlanCaches();
 }
 

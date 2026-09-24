@@ -72,6 +72,9 @@ await db.exec(`
   grant usage on schema public, auth to authenticated;
   grant select, insert, update, delete on all tables in schema public to authenticated;
   grant execute on all functions in schema auth to authenticated;
+  grant usage on schema public, auth to service_role;
+  grant select, insert, update, delete on all tables in schema public to service_role;
+  grant execute on all functions in schema auth to service_role;
 `);
 
 // --- seed ------------------------------------------------------------------
@@ -624,6 +627,170 @@ await check("planned prescription edits roll back as one request on reorder fail
   );
 });
 
+await check("planned prescriptions reject changes while any device has an open session", async () => {
+  const day = "22222222-0000-4000-8000-000000000010";
+  const ids = [
+    "33333333-0000-4000-8000-000000000101",
+    "33333333-0000-4000-8000-000000000102",
+    "33333333-0000-4000-8000-000000000103",
+  ];
+  const before = await db.query(
+    `select id::text, position, reps_min from prescriptions where planned_workout_id = $1 order by id`,
+    [day],
+  );
+  await asUser(OWNER, `insert into sessions (id, user_id, planned_workout_id, started_at)
+    values ('44444444-0000-4000-8000-000000000020', '${OWNER}', '${day}', now())`);
+
+  for (const [name, sql] of [
+    ["single-row update", `update prescriptions set reps_min = 6 where id = '${ids[0]}'`],
+    ["insert", `insert into prescriptions (user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_kg) values ('${OWNER}', '${day}', 'Barbell_Deadlift', 3, 3, 5, 5, 100)`],
+    ["delete", `delete from prescriptions where id = '${ids[0]}'`],
+    ["atomic plan RPC", `select apply_plan_edit('${day}', '${ids[0]}', '{"reps_min":6}'::jsonb, array['${ids[0]}','${ids[1]}','${ids[2]}']::uuid[], null, false, array['${ids[1]}','${ids[2]}','${ids[0]}']::uuid[])`],
+    ["day-order swap RPC", `select swap_planned_workout_order('${day}', '22222222-0000-4000-8000-000000000001')`],
+  ]) {
+    let rejected = false;
+    try {
+      await asUser(OWNER, sql);
+    } catch (e) {
+      rejected = e.message.includes("open session");
+      if (!rejected) throw e;
+    }
+    if (!rejected) throw new Error(`${name} was allowed while the session was open`);
+  }
+
+  let dayMoveRejected = false;
+  try {
+    await asUser(OWNER,
+      `update planned_workouts set scheduled_date = current_date where id = '${day}'`,
+    );
+  } catch (e) {
+    dayMoveRejected = e.message.includes("open session");
+    if (!dayMoveRejected) throw e;
+  }
+  if (!dayMoveRejected) throw new Error("planned-day move was allowed while its session was open");
+
+  await db.exec("set role service_role");
+  let mcpRejected = false;
+  try {
+    await db.query(
+      `select replace_planned_workout_prescriptions($1, $2, '[]'::jsonb, '{}'::jsonb)`,
+      [OWNER, day],
+    );
+  } catch (e) {
+    mcpRejected = e.message.includes("open session");
+    if (!mcpRejected) throw e;
+  } finally {
+    await db.exec("reset role");
+  }
+  if (!mcpRejected) throw new Error("service-role MCP replacement was allowed during an open session");
+
+  const rows = await db.query(
+    `select id::text, position, reps_min from prescriptions where planned_workout_id = $1 order by id`,
+    [day],
+  );
+  assertEq(rows.rows, before.rows, "prescriptions remain unchanged");
+  await asUser(OWNER, `update sessions set ended_at = now()
+    where id = '44444444-0000-4000-8000-000000000020'`);
+});
+
+await check("MCP whole-day replacement is one owner-scoped transaction", async () => {
+  const day = "22222222-0000-4000-8000-000000000030";
+  await db.exec(`
+    insert into planned_workouts (id, user_id, program_id, day_index, label)
+    values ('${day}', '${OWNER}', '11111111-0000-4000-8000-000000000001', 30, 'MCP replacement');
+    insert into prescriptions (user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, load_kg)
+    values ('${OWNER}', '${day}', 'Barbell_Squat', 0, 3, 5, 5, 100);
+  `);
+  const validRows = JSON.stringify([{
+    exercise_id: "Barbell_Deadlift",
+    position: 0,
+    sets: 4,
+    reps_min: 4,
+    reps_max: 4,
+    load_kg: 120,
+    load_pct_tm: null,
+    rest_seconds: 180,
+    notes: "brace",
+    set_type: "working",
+    superset_group: null,
+    section: null,
+    tracking: "reps",
+    load_entry: "total",
+    entered_load: 120,
+    entered_unit: "kg",
+  }]);
+  await db.exec("set role service_role");
+  try {
+    await db.query(
+      `select replace_planned_workout_prescriptions($1, $2, $3::jsonb, $4::jsonb)`,
+      [OWNER, day, validRows, JSON.stringify({ label: "Updated by MCP" })],
+    );
+  } finally {
+    await db.exec("reset role");
+  }
+  const current = await db.query(
+    `select p.exercise_id, p.position, p.sets, p.load_kg, p.entered_load, p.entered_unit::text, w.label
+       from prescriptions p join planned_workouts w on w.id = p.planned_workout_id
+      where p.planned_workout_id = $1`,
+    [day],
+  );
+  assertEq(current.rows, [{
+    exercise_id: "Barbell_Deadlift",
+    position: 0,
+    sets: 4,
+    load_kg: "120.00",
+    entered_load: "120.000",
+    entered_unit: "kg",
+    label: "Updated by MCP",
+  }], "whole-day replacement and day patch land together");
+
+  let unauthorized = false;
+  try {
+    await asUser(OTHER,
+      `select replace_planned_workout_prescriptions('${OWNER}', '${day}', '[]'::jsonb, '{}'::jsonb)`,
+    );
+  } catch (e) {
+    unauthorized = e.message.includes("not authorized");
+    if (!unauthorized) throw e;
+  }
+  if (!unauthorized) throw new Error("another owner replaced this day's prescriptions");
+
+  const invalidRows = validRows.replace('"load_kg":120', '"load_kg":121');
+  await db.exec("set role service_role");
+  let rejected = false;
+  try {
+    await db.query(
+      `select replace_planned_workout_prescriptions($1, $2, $3::jsonb, $4::jsonb)`,
+      [OWNER, day, invalidRows, JSON.stringify({ label: "Should roll back" })],
+    );
+  } catch (e) {
+    rejected = e.message.includes("load_kg must match entered_load");
+    if (!rejected) throw e;
+  } finally {
+    await db.exec("reset role");
+  }
+  if (!rejected) throw new Error("invalid authored load was accepted");
+  const afterFailure = await db.query(
+    `select p.exercise_id, w.label from prescriptions p join planned_workouts w on w.id = p.planned_workout_id where p.planned_workout_id = $1`,
+    [day],
+  );
+  assertEq(afterFailure.rows, [{ exercise_id: "Barbell_Deadlift", label: "Updated by MCP" }],
+    "failed replacement leaves old prescription and day label intact");
+
+  await db.exec(`insert into planned_workouts (id, user_id, program_id, day_index, label, scheduled_date)
+    values ('22222222-0000-4000-8000-000000000031', '${OWNER}', '11111111-0000-4000-8000-000000000001', 31, 'Swap peer', current_date + 1)`);
+  await asUser(OWNER, `select swap_planned_workout_order('${day}', '22222222-0000-4000-8000-000000000031')`);
+  const swapped = await db.query(
+    `select id::text, day_index, scheduled_date::text from planned_workouts where id in ($1, $2) order by id`,
+    [day, "22222222-0000-4000-8000-000000000031"],
+  );
+  const tomorrow = (await db.query(`select (current_date + 1)::text as d`)).rows[0].d;
+  assertEq(swapped.rows, [
+    { id: day, day_index: 31, scheduled_date: tomorrow },
+    { id: "22222222-0000-4000-8000-000000000031", day_index: 30, scheduled_date: null },
+  ], "two-day swap lands atomically");
+});
+
 await check("set_notes: upsert own, reject cross-user, view exposes superset", async () => {
   await asUser(
     OWNER,
@@ -697,6 +864,8 @@ await db.exec(`
     ('55555555-0000-4000-8000-000000000022', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'Barbell_Squat', null, 2, 'working', 100, 5, 'total', now() - interval '100 minutes'),
     -- logged before the convention existed: permanently ambiguous
     ('55555555-0000-4000-8000-000000000023', '${OWNER}', '44444444-0000-4000-8000-000000000003', 'One_Arm_Dumbbell_Row', '33333333-0000-4000-8000-000000000012', 3, 'working', 30, 10, null, now() - interval '95 minutes');
+  update sessions set ended_at = now()
+   where id = '44444444-0000-4000-8000-000000000003';
 `);
 
 await check("load_entry: total, per_side and unknown are three distinct states", async () => {
