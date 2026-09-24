@@ -24,14 +24,16 @@ references a day, late-set session restore, and durable-first set logging
   acceptable for now: the daily prompt ships switched off, rest alerts do not
   use the sweep, and the app still asks in-app on foreground. They stay
   `needs live proof` on the ledger but no longer block Phase 1's gate.
-- **A-135:** the deploy receipt prints the intended SHA but does not read it
-  back from the served app (MECE G13-F02).
+- **A-135: fixed with test 2026-09-24.** The smoke now polls the served
+  `build.json` until it names the deployed commit. Production proof is the
+  first receipt showing `served_sha` equal to `sha`.
 - **A-134:** deploy still ships past a red CI run by policy. The one CI
   failure at `4da2c7d` was a test race (Start clicked before it was enabled),
   fixed in the test on 2026-09-24.
 
-**Next:** close the Phase 1 items above, then finish Phase 2 (A-91, A-84 and
-the rest of its list, plus the seeded browser E2E suite and a phone run).
+**Next:** confirm the first served-SHA receipt, which closes Phase 1. Then
+finish Phase 2: re-verify its remaining list, build the seeded browser E2E
+suite, and do a phone run.
 
 Audit inputs since this roadmap was written: the 2026-09-23 MECE audit
 (`docs/audits/2026-09-23-mece/SUMMARY.md`) and the training-scenes UX review
@@ -224,7 +226,7 @@ and the coach cannot spend money for an unapproved account.
 ### Phase 1: Make release and identity safety real
 
 **State:** Code merged and deployed (PR #10, PR #12). Exit gate open on
-production evidence: A-135 lacks served-SHA readback. A-02 closed
+production evidence: only A-135's first served-SHA receipt. A-02 closed
 2026-09-24. A-134 stays `open` by policy. A-137/A-138 are deferred to Phase 5
 (2026-09-24). See `release-ledger.md`.
 
@@ -263,8 +265,8 @@ receipt, and the access/tenant tests reject every adversarial fixture.
 
 **State:** In progress, started early (accepted 2026-09-24). Plan-write
 atomicity and locking, late-set session restore and durable-first logging
-shipped in PR #12; A-92 and A-107 are closed with tests. Confirmed still
-open: A-84 and A-91. Not re-verified since the audit: A-06, A-90, A-143,
+shipped in PR #12; A-92 and A-107 are closed with tests. A-84 and A-91 were
+fixed with tests the same day. Not re-verified since the audit: A-06, A-90, A-143,
 A-148, A-203 to A-206 and the screen-race items. No seeded browser E2E suite
 and no phone acceptance run yet.
 

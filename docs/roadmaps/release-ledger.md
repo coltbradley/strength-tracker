@@ -10,9 +10,9 @@ plan-write and session-integrity work.
 Reconciled 2026-09-24 against `main` at `4da2c7d` and the live project.
 A-92 and A-107 closed with tests. A-02 closed the same day once its
 production proof existed. A-137 and A-138 were checked in production and
-their proof is still missing. A-91 is unchanged in
-`pwa/src/lib/sync.ts` and stays open. A-84 (`set_training_plan`) is untouched
-by the plan-edit work and stays open. A-137 and A-138 are deferred to Phase 5 and
+their proof is still missing. Later the same day A-135 (served-SHA
+readback), A-91 (zero-row close) and A-84 (atomic plan replacement) were fixed
+with tests; see `docs/superpowers/plans/2026-09-24-a135-a91-a84-release-and-record.md`. A-137 and A-138 are deferred to Phase 5 and
 no longer block Phase 1's gate.
 
 States: `open` · `fixed with test` · `needs live proof` · `not reproducible`.
@@ -33,16 +33,16 @@ test and the evidence layer the roadmap names.
 | A-74  | Endurance checkpoint history    | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-75  | Endurance pagination            | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-76  | Invalid provider payload        | Engineering | open             | —                                                                                         | —                                                 | —                                        |
-| A-84  | Training-plan replacement       | Engineering | open             | —                                                                                         | —                                                 | —                                        |
+| A-84  | Training-plan replacement | Engineering | fixed with test | scripts/validate-db.mjs replace_training_plan checks (atomic replace, whole rollback on a bad phase, confirm_change gate, service role only) | Migration 20260924190000 applied by the next deploy | Forward-only migration; revert training_plan.ts to the multi-request write |
 | A-90  | Prefetch auth attribution       | Engineering | open             | —                                                                                         | —                                                 | —                                        |
-| A-91  | Session close zero-row          | Engineering | open             | —                                                                                         | —                                                 | —                                        |
+| A-91  | Session close zero-row | Engineering | fixed with test | pwa/src/lib/outbox.test.ts "keeps a session close that matched no row visible and retryable (A-91)" | — | Revert the .select("id").single() in sync.ts |
 | A-92  | Prescription edit adherence | Engineering | fixed with test | scripts/validate-db.mjs "logged prescriptions cannot be rewritten or removed after a session ends" | Migrations through 20260924052445 applied (2026-09-24) | Forward-only migration |
 | A-94  | Health prompt responded_at      | Engineering | open             | —                                                                                         | —                                                 | Phase 1+ ; do not stamp from this plan   |
 | A-98  | Export completeness             | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-99  | Readiness second device         | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-107 | Log before outbox commit | Engineering | fixed with test | pwa/src/screens/Session.focus.test.tsx "keeps an ordinary set editable when its local queue write fails" | — | Revert Session.tsx LOG ordering |
 | A-134 | Deploy after failed CI          | Engineering | open             | —                                                                                         | deferred: GitHub Actions CI billing; deploy must not wait | —                                        |
-| A-135 | Production verify/rollback | Engineering | fixed with test | scripts/check-deploy-contract.test.mjs smoke assertions; docs/deploy.md Rollback | Run 36002989753 receipt for 4da2c7d (pages_http=200 mcp_http=200); SHA is not read back from the served app (G13-F02) | — |
+| A-135 | Production verify/rollback | Engineering | fixed with test | scripts/check-deploy-contract.test.mjs served-SHA assertions; docs/deploy.md Rollback | Next deploy receipt shows served_sha equal to sha | Remove the build.json poll from the smoke step |
 | A-136 | MCP health probe | Engineering | fixed with test | supabase/functions/mcp-server/lib/health.test.ts | /health returned ok 2026-09-24 18:36Z; body carries no version | Revert health.ts |
 | A-137 | Alert-sweep scheduler | Engineering | needs live proof | docs/deploy.md "Is the sweep alive?" | No SWEEP_SECRET in `supabase secrets list` on 2026-09-24; cron.job / cron.job_run_details not yet read | — |
 | A-138 | Alert-sweep operator alert | Engineering | needs live proof | docs/deploy.md "Is the sweep alive?" | No SWEEP_SECRET in `supabase secrets list` on 2026-09-24; cron.job / cron.job_run_details not yet read | — |
