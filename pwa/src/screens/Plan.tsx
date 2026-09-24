@@ -288,15 +288,32 @@ export function Plan() {
   );
   const workoutLocked = activeForWorkout?.planned_workout_id === workout?.id;
 
+  // Only the newest reload may write state. A slow read for the day this
+  // screen showed a moment ago could otherwise land after the current day's
+  // and put the wrong workout's rows in front of the editor (A-05).
+  const loadGen = useRef(0);
   const reload = useCallback(() => {
+    const gen = ++loadGen.current;
     getPlannedWorkouts()
-      .then((r) => setList(r.data))
+      .then((r) => {
+        if (gen === loadGen.current) setList(r.data);
+      })
       .catch((e: unknown) => reportError(e, "load plan"));
     if (id)
       getResolvedPrescriptions(id)
-        .then((r) => setRx(r.data))
+        .then((r) => {
+          if (gen === loadGen.current) setRx(r.data);
+        })
         .catch((e: unknown) => reportError(e, "load prescriptions"));
   }, [id]);
+
+  // A different day: drop the previous day's rows at once rather than show
+  // them, editable, until the new read answers.
+  const [shownId, setShownId] = useState(id);
+  if (shownId !== id) {
+    setShownId(id);
+    setRx(null);
+  }
 
   useEffect(() => reload(), [reload]);
 

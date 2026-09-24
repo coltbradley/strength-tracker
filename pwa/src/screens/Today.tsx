@@ -476,14 +476,20 @@ export function Today({
     [list, program],
   );
 
+  // Only the newest reload may write state: a slow mount read answering
+  // after a coach edit's reload would otherwise put the old plan back (A-13).
+  const listGenRef = useRef(0);
   const reload = useCallback(() => {
+    const gen = ++listGenRef.current;
     getPlannedWorkouts()
       .then((r) => {
+        if (gen !== listGenRef.current) return;
         setList(r.data);
         setStale(r.stale);
         setLoadError(null);
       })
       .catch((e: unknown) => {
+        if (gen !== listGenRef.current) return;
         setLoadError(staleReason(e));
         reportError(e, "load workouts");
       });
@@ -590,12 +596,21 @@ export function Today({
 
   useEffect(() => {
     if (!program || workouts.length === 0) return;
+    // A newer week or plan supersedes this read (A-13).
+    let cancelled = false;
     getDoneWorkoutIds(
       program.id,
       workouts.map((w) => w.id),
     )
-      .then((r) => setDoneIds(new Set(r.data)))
-      .catch((e: unknown) => reportError(e, "load week state"));
+      .then((r) => {
+        if (!cancelled) setDoneIds(new Set(r.data));
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) reportError(e, "load week state");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [program, workouts, doneTick]);
 
   // Which DONE days get "Review with the coach": the ones whose session ended

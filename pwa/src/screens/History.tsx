@@ -152,21 +152,34 @@ export function History({ userId }: { userId: string }) {
   const [obsDeleteArm, setObsDeleteArm] = useArmed();
 
   useEffect(() => {
+    // A void or discard bumps reloadTick; the read it starts supersedes any
+    // still in flight, which must not land on top of it (A-13).
+    let cancelled = false;
     void cacheGet<ActiveSession>(cacheKeys.activeSession)
-      .then((a) => setActiveId(a?.id ?? null))
+      .then((a) => {
+        if (!cancelled) setActiveId(a?.id ?? null);
+      })
       .catch((e: unknown) => reportError(e, "read active session"));
     getExercises()
-      .then((r) => setExercises(r.data))
+      .then((r) => {
+        if (!cancelled) setExercises(r.data);
+      })
       .catch((e: unknown) => reportError(e, "load exercises"));
     // only which exercises have data — not every set ever logged
     getLoggedExerciseIds()
       .then((r) => {
+        if (cancelled) return;
         const ids = new Set(r.data);
         setWithData(ids);
         setSelected((cur) => cur ?? [...ids][0] ?? null);
       })
       .catch((e: unknown) => reportError(e, "load history index"))
-      .finally(() => setIndexLoading(false));
+      .finally(() => {
+        if (!cancelled) setIndexLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [reloadTick]);
 
   // The log and the week are independent of the selected exercise, so they

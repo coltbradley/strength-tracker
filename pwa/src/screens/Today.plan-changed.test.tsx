@@ -224,6 +224,34 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
   });
 
+  it("keeps the newer plan when an older read answers last (A-13)", async () => {
+    // The mount read is slow; a coach edit triggers a second read that
+    // answers first. The late mount read must not put the old plan back.
+    let resolveFirst!: (v: unknown) => void;
+    const future = { ...WORKOUT, scheduled_date: "2099-01-02" };
+    getPlannedWorkouts
+      .mockImplementationOnce(() => new Promise((r) => (resolveFirst = r)))
+      .mockResolvedValue({
+        data: { programs: [PROGRAM], workouts: [{ ...future, label: "New label" }] },
+        fromCache: false,
+        stale: null,
+      });
+
+    render(<Today presentation="train" userId="u1" />);
+    await waitFor(() => expect(getPlannedWorkouts).toHaveBeenCalledTimes(1));
+    notifyPlanChanged();
+    expect(await screen.findByText("New label")).toBeTruthy();
+
+    resolveFirst({
+      data: { programs: [PROGRAM], workouts: [{ ...future, label: "Old label" }] },
+      fromCache: false,
+      stale: null,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Old label")).toBeNull();
+    expect(screen.getByText("New label")).toBeTruthy();
+  });
+
   it("shows the earliest actionable future workout from Rest day", async () => {
     const draft = { ...WORKOUT, id: "draft", label: "Unwritten", scheduled_date: "2099-01-01", exercise_count: 0 };
     const next = { ...WORKOUT, id: "next", label: "Lower strength", scheduled_date: "2099-01-02" };
