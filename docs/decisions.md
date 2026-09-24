@@ -3102,10 +3102,18 @@ Each lands or rolls back as one transaction. Starting a session takes the same
 parent lock, so a session start and a plan mutation have a defined order rather
 than relying on this device's active-session cache.
 
-Any open session refuses plan changes. Once a set exists for a day, that day's
-prescription list is immutable, including an unlogged neighbour or a new
-exercise: changing the plan later would rewrite what the recorded set was
-measured against. The person can still correct the logged set by the existing
-void-and-relog path, or edit a future day. This is enforced in Postgres for the
-PWA, direct Data API calls, and the service-role MCP path, not merely hidden in
-the screen.
+Any non-discarded session reference refuses plan changes. Once a set exists for
+a day, that day's prescription list is also immutable, including an unlogged
+neighbour or a new exercise: changing the plan later would rewrite what the
+recorded set was measured against. The person can still correct the logged set
+by the existing void-and-relog path, or edit a future day. This is enforced in
+Postgres for the PWA, direct Data API calls, and the service-role MCP path, not
+merely hidden in the screen.
+
+There is one earlier boundary than the first synced set: any non-discarded
+session that references a planned day keeps the whole day and its prescriptions
+locked, even after Finish. Another device may still have sets in its offline
+outbox, so an ended session with no visible rows is not proof that its day is
+unused. Discarding an empty session releases the lock; a synced set remains
+protected by the historical-set guard. The PWA explains that the reference is
+preserved so queued sets can still attach to the right prescription.

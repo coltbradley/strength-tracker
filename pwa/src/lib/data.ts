@@ -369,7 +369,7 @@ export async function updatePlannedWorkout(
     .from("planned_workouts")
     .update(patch)
     .eq("id", id);
-  throwIf(error);
+  throwPlanEditError(error);
   await invalidatePlanCaches(id);
 }
 
@@ -385,7 +385,7 @@ export async function swapWorkoutOrder(
     p_first_id: a.id,
     p_second_id: b.id,
   });
-  throwIf(error);
+  throwPlanEditError(error);
   await invalidatePlanCaches();
 }
 
@@ -453,7 +453,7 @@ export async function deletePlannedWorkout(id: string): Promise<void> {
     .from("planned_workouts")
     .update({ discarded_at: new Date().toISOString() })
     .eq("id", id);
-  throwIf(error);
+  throwPlanEditError(error);
   await invalidatePlanCaches(id);
 }
 
@@ -465,9 +465,9 @@ function throwPlanEditError(error: { message: string; code?: string | null } | n
         "locked. Keep the training history intact and edit a future day instead.",
     );
   }
-  if (error.code === PLAN_LOCKED && error.message.toLowerCase().includes("open session")) {
+  if (error.code === PLAN_LOCKED && error.message.toLowerCase().includes("session")) {
     throw new PlanEditRefused(
-      "Finish or discard the active session before changing this workout or its place in the plan.",
+      "This workout's plan is locked because a session refers to it. Keep the day intact so sets still queued on another device can sync against the right exercises, or edit a future day.",
     );
   }
   throwIf(error);
