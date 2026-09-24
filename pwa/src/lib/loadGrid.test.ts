@@ -42,6 +42,18 @@ describe("loadGridFor", () => {
     expect(grid.coarseStep).toBe(1.25);
   });
 
+  it("uses the exercise's authored-unit preference ahead of the supplied unit", () => {
+    const grid = loadGridFor(
+      { id: "squat", name: "Squat", equipment: "barbell" },
+      "kg",
+      "total",
+      { exercisePref: { loadUnit: "lb" } },
+    );
+    expect(grid.authoredUnit).toBe("lb");
+    expect(grid.coarseStep).toBe(5);
+    expect(grid.fineStep).toBe(1);
+  });
+
   it("offers nearby standard values without changing an off-grid typed value", () => {
     const typed = 72.3;
     const grid = loadGridFor(

@@ -6,12 +6,13 @@ export interface LoadGridSettings {
   /** Existing global step preferences are stored as kg. */
   coarseStepKg?: number;
   fineStepKg?: number;
-  exercisePref?: Pick<ExercisePref, "loadStepKg">;
+  exercisePref?: Pick<ExercisePref, "loadStepKg" | "loadUnit">;
   /** Echoed for editing UIs. Suggestions never replace this typed value. */
   typedValue?: number;
 }
 
 export interface LoadGrid {
+  authoredUnit: LoadUnit;
   coarseStep: number;
   fineStep: number;
   typedValue?: number;
@@ -60,16 +61,18 @@ export function loadGridFor(
   entry: LoadEntry,
   settings: LoadGridSettings,
 ): LoadGrid {
+  const unit = settings.exercisePref?.loadUnit ?? authoredUnit;
   const kind = equipmentKind(exercise, entry);
-  const fallback = defaults(kind, authoredUnit);
+  const fallback = defaults(kind, unit);
   const coarseKg = settings.exercisePref?.loadStepKg ?? settings.coarseStepKg;
-  const coarseStep = coarseKg === undefined ? fallback.coarse : asUnit(coarseKg, authoredUnit);
+  const coarseStep = coarseKg === undefined ? fallback.coarse : asUnit(coarseKg, unit);
   const fineStep =
     settings.fineStepKg === undefined
       ? fallback.fine
-      : asUnit(settings.fineStepKg, authoredUnit);
+      : asUnit(settings.fineStepKg, unit);
 
   return {
+    authoredUnit: unit,
     coarseStep,
     fineStep,
     ...(settings.typedValue === undefined ? {} : { typedValue: settings.typedValue }),
