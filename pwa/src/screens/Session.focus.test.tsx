@@ -1336,7 +1336,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "more options for Bench Press" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "correct set 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Correct logged set 1" }));
 
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
   });
@@ -1381,7 +1381,7 @@ describe("Session focus presentation", () => {
       await screen.findByRole("button", { name: "expand details" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "correct set 1" }),
+      await screen.findByRole("button", { name: "Correct logged set 1" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
     expect(
@@ -1439,7 +1439,7 @@ describe("Session focus presentation", () => {
       screen.getByRole("button", { name: "more options for Back Squat" }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "correct set 1" }),
+      await screen.findByRole("button", { name: "Correct logged set 1" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
     expect(

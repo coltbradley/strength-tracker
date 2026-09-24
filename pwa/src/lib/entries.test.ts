@@ -18,6 +18,7 @@ import {
   type ExerciseEntry,
   type Substitution,
 } from "./entries";
+import { blockRowIds, moveEntry, planBlocks } from "./sections";
 import type { ResolvedPrescriptionRow, SetInsert } from "./types";
 
 let rxSeq = 0;
@@ -103,6 +104,58 @@ describe("groupRamps", () => {
 
   it("returns an empty list for an empty plan", () => {
     expect(groupRamps([])).toEqual([]);
+  });
+});
+
+describe("planned entry movement", () => {
+  it("moves a complete superset, including its ramp rows, within its section", () => {
+    const rampA = rx({
+      id: "ramp-a-1",
+      exercise_id: "squat",
+      section: "Strength",
+    });
+    const rampB = rx({
+      id: "ramp-a-2",
+      exercise_id: "squat",
+      section: "Strength",
+    });
+    const pairA1 = rx({
+      id: "pair-a1-1",
+      exercise_id: "bench",
+      superset_group: 1,
+      section: "Strength",
+    });
+    const pairA1Ramp = rx({
+      id: "pair-a1-2",
+      exercise_id: "bench",
+      superset_group: 1,
+      section: "Strength",
+    });
+    const pairA2 = rx({
+      id: "pair-a2-1",
+      exercise_id: "row",
+      superset_group: 1,
+      section: "Strength",
+    });
+    const rows = [rampA, rampB, pairA1, pairA1Ramp, pairA2];
+    const blocks = planBlocks(rows);
+
+    const moved = moveEntry(blocks, pairA1.id, -1);
+
+    expect(blockRowIds(moved!)).toEqual([
+      "pair-a1-1",
+      "pair-a1-2",
+      "pair-a2-1",
+      "ramp-a-1",
+      "ramp-a-2",
+    ]);
+    expect(moved?.[0]?.section).toBe("Strength");
+    expect(moved?.[0]?.entries[0]?.rows.map((row) => row.section)).toEqual([
+      "Strength",
+      "Strength",
+      "Strength",
+    ]);
+    expect(moved?.flatMap((block) => blockRowIds([block]))).toHaveLength(5);
   });
 });
 

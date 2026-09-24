@@ -7,12 +7,8 @@
 // A correction is still a void plus a new row underneath (lib/corrections.ts);
 // this component only knows it is the set being corrected, so it can say so.
 //
-// The control SAYS "remove" and the code says "void" on purpose. "Void" is the
-// honest domain word — the row survives in Postgres and an insert into
-// set_voids hides it from every view — and it stays the name of the table, the
-// prop and the cache family. But it is jargon at the exact moment a person is
-// least sure what is about to happen: the confirm tap. What she needs to know
-// there is that the set leaves her history, which is what "remove" says.
+// A void hides this append-only row from the live log. Name the operation so
+// the lifter can distinguish it from correcting the set or removing a plan.
 
 import { enteredKg } from "../lib/loadEntry";
 import { toDisplay, type Unit } from "../lib/units";
@@ -73,7 +69,7 @@ export function SetRow({
         <button
           type="button"
           className="set-load set-load-editable"
-          aria-label={`correct set ${set.set_index + 1}`}
+          aria-label={`Correct logged set ${set.set_index + 1}`}
           aria-pressed={editing}
           onClick={onEdit}
         >
@@ -94,10 +90,14 @@ export function SetRow({
         <button
           type="button"
           className={`set-void ${voidArmed ? "set-void-armed" : ""}`}
-          aria-label={voidArmed ? "confirm remove set" : "remove set"}
+          aria-label={
+            voidArmed
+              ? `Confirm void logged set ${set.set_index + 1}`
+              : `Void logged set ${set.set_index + 1}`
+          }
           onClick={() => (voidArmed ? onVoid() : onArmVoid?.())}
         >
-          {voidArmed ? "REMOVE?" : "✕"}
+          {voidArmed ? "VOID?" : "✕"}
         </button>
       )}
     </div>

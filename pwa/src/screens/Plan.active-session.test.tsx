@@ -137,7 +137,7 @@ describe("Plan with an active session", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Biceps curl/ }));
     fireEvent.click(screen.getByRole("button", { name: "reps min plus" }));
-    fireEvent.click(screen.getByRole("button", { name: /^Done$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save planned sets" }));
 
     await waitFor(() => expect(updatePrescription).toHaveBeenCalled());
     expect(updatePrescription.mock.calls[0]![2]).toMatchObject({
@@ -161,6 +161,29 @@ describe("Plan with an active session", () => {
     expect(cacheGet).toHaveBeenCalledWith("activeSession");
   });
 
+  it("refuses to persist an edited prescription while its session is active", async () => {
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [prescription("bench", "Bench Press", 0, null)],
+    });
+    render(<Plan />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Edit planned sets for Bench Press",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "reps min plus" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save planned sets" }));
+
+    await waitFor(() => {
+      expect(toast).toHaveBeenCalledWith(
+        "Finish the active session before changing this workout or its place in the plan.",
+        "error",
+      );
+    });
+    expect(updatePrescription).not.toHaveBeenCalled();
+  });
+
   it("leaves workout fields editable when no session targets the workout", async () => {
     cacheGet.mockResolvedValue({
       id: "session-elsewhere",
@@ -178,6 +201,49 @@ describe("Plan with an active session", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("labels planned prescription editing by the action it performs", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [prescription("bench", "Bench Press", 0, null)],
+    });
+    render(<Plan />);
+
+    expect(
+      await screen.findByRole("button", { name: "Edit planned sets for Bench Press" }),
+    ).toBeTruthy();
+  });
+
+  it("names planned removal and entry ordering precisely", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    getResolvedPrescriptions.mockResolvedValue({
+      data: [
+        prescription("bench", "Bench Press", 0, null),
+        prescription("row", "Barbell Row", 1, null),
+      ],
+    });
+    render(<Plan />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Edit planned sets for Barbell Row",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Move exercise block up: Barbell Row",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: "Move exercise block down: Barbell Row",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Remove planned exercise" }),
+    ).toBeTruthy();
+  });
+
   it("refuses an edit that would keep a noncontiguous superset", async () => {
     cacheGet.mockResolvedValue(undefined);
     const rows = [
@@ -188,10 +254,14 @@ describe("Plan with an active session", () => {
     getResolvedPrescriptions.mockResolvedValue({ data: rows });
     render(<Plan />);
 
-    const curl = await screen.findByRole("button", { name: /Biceps curl/ });
+    const curl = await screen.findByRole("button", { name: "Edit planned sets for Biceps curl" });
     fireEvent.click(curl);
     fireEvent.click(screen.getByRole("button", { name: "B" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Biceps curl/ }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Save planned sets for Biceps curl",
+      }),
+    );
 
     await waitFor(() => {
       expect(toast).toHaveBeenCalledWith(
@@ -269,7 +339,11 @@ describe("Plan with an active session", () => {
     expect(groupHeading.parentElement?.textContent).toContain(
       "malformed group, fix its order before paired rounds",
     );
-    fireEvent.click(await screen.findByRole("button", { name: /Bench Press/ }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Edit planned sets for Bench Press",
+      }),
+    );
     expect(screen.queryByText("Alternates with Barbell Row, Cable Curl.")).toBeNull();
     expect(screen.getByText(/Superset A must be fixed before paired rounds\./)).toBeTruthy();
   });
@@ -289,7 +363,11 @@ describe("Plan with an active session", () => {
     expect(groupHeading.parentElement?.textContent).toContain(
       "3 exercises, overview-only circuit",
     );
-    fireEvent.click(await screen.findByRole("button", { name: /Bench Press/ }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Edit planned sets for Bench Press",
+      }),
+    );
     expect(screen.getByText(/This group has 3 exercises and stays in the workout overview until circuit Focus is available\./)).toBeTruthy();
   });
 
@@ -308,7 +386,11 @@ describe("Plan with an active session", () => {
     render(<Plan />);
 
     await screen.findByText("SUPERSET A");
-    fireEvent.click(screen.getAllByRole("button", { name: /Bench Press/ })[0]!);
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: "Edit planned sets for Bench Press",
+      })[0]!,
+    );
     expect(screen.getByText("Alternates with Barbell Row.")).toBeTruthy();
   });
 });

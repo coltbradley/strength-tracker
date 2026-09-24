@@ -994,7 +994,7 @@ export function Plan() {
                           if (next) storeLayout(next);
                         }}
                       >
-                        ↑ Move up
+                        ↑ Move section up
                       </button>
                       <button
                         type="button"
@@ -1007,7 +1007,7 @@ export function Plan() {
                           if (next) storeLayout(next);
                         }}
                       >
-                        ↓ Move down
+                        ↓ Move section down
                       </button>
                       <button
                         type="button"
@@ -1035,6 +1035,9 @@ export function Plan() {
             )}
             {block.entries.map((entry) => {
               const ei = entries.findIndex((e) => e.key === entry.key);
+              const entryName = [
+                ...new Set(entry.rows.map((row) => row.exercise_name)),
+              ].join(" and ");
               return (
                 <div
                   key={entry.key}
@@ -1082,6 +1085,7 @@ export function Plan() {
               <button
                 type="button"
                 className="week-row week-row-rx"
+                aria-label={`${editingRx === r.id ? "Save planned sets for" : "Edit planned sets for"} ${r.exercise_name}`}
                 onClick={() => {
                   if (editingRx === r.id) {
                     void saveRx(r);
@@ -1526,22 +1530,24 @@ export function Plan() {
                     <button
                       type="button"
                       className="chip"
+                      aria-label={`Move exercise block up: ${entryName}`}
                       disabled={
                         busy || moveEntry(shownBlocks, entry.key, -1) === null
                       }
                       onClick={() => moveExercise(entry, r, -1)}
                     >
-                      ↑ Move up
+                      ↑ Move exercise block up
                     </button>
                     <button
                       type="button"
                       className="chip"
+                      aria-label={`Move exercise block down: ${entryName}`}
                       disabled={
                         busy || moveEntry(shownBlocks, entry.key, 1) === null
                       }
                       onClick={() => moveExercise(entry, r, 1)}
                     >
-                      ↓ Move down
+                      ↓ Move exercise block down
                     </button>
                   </div>
                   {block.section !== null && (
@@ -1560,7 +1566,7 @@ export function Plan() {
                       disabled={busy}
                       onClick={() => void saveRx(r)}
                     >
-                      Done
+                      Save planned sets
                     </button>
                     <button
                       type="button"
@@ -1572,10 +1578,9 @@ export function Plan() {
                     >
                       Discard changes
                     </button>
-                    {/* DELETE, not Remove: this drops the prescription from
-                        the database. Session's UNDO ADD is the reversible one. */}
                     <button
                       type="button"
+                      aria-label="Remove planned exercise"
                       className={`btn ${confirming === `rx:${r.id}` ? "btn-danger" : "btn-ghost"}`}
                       disabled={busy}
                       onClick={() =>
@@ -1585,8 +1590,8 @@ export function Plan() {
                       }
                     >
                       {confirming === `rx:${r.id}`
-                        ? "Delete exercise?"
-                        : "Delete exercise"}
+                        ? "Remove planned exercise?"
+                        : "Remove planned exercise"}
                     </button>
                   </div>
                   {confirming === `rx:${r.id}` && (
