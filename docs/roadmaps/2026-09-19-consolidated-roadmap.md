@@ -14,7 +14,7 @@ also carried atomic, locked plan writes, permanent plan locks once a session
 references a day, late-set session restore, and durable-first set logging
 (see `docs/decisions.md`, 2026-09-24). A-92 and A-107 are closed with tests.
 
-**Phase 1 exit gate is still open** on production evidence, not code:
+**Phase 1 exit gate passed on 2026-09-24.** What closed it:
 
 - **A-02: closed 2026-09-24.** `COACH_ALLOWED_USERS` now names Colt's wife
   only and coach v23 is deployed with it. Before that, the fail-closed coach
@@ -25,14 +25,13 @@ references a day, late-set session restore, and durable-first set logging
   use the sweep, and the app still asks in-app on foreground. They stay
   `needs live proof` on the ledger but no longer block Phase 1's gate.
 - **A-135: fixed with test 2026-09-24.** The smoke now polls the served
-  `build.json` until it names the deployed commit. Production proof is the
-  first receipt showing `served_sha` equal to `sha`.
+  `build.json` until it names the deployed commit. Run 36046324530's receipt
+  shows `served_sha` equal to `sha`.
 - **A-134:** deploy still ships past a red CI run by policy. The one CI
   failure at `4da2c7d` was a test race (Start clicked before it was enabled),
   fixed in the test on 2026-09-24.
 
-**Next:** confirm the first served-SHA receipt, which closes Phase 1. Then
-finish Phase 2: re-verify its remaining list, build the seeded browser E2E
+**Next:** finish Phase 2: re-verify its remaining list, build the seeded browser E2E
 suite, and do a phone run.
 
 Audit inputs since this roadmap was written: the 2026-09-23 MECE audit
@@ -225,9 +224,8 @@ and the coach cannot spend money for an unapproved account.
 
 ### Phase 1: Make release and identity safety real
 
-**State:** Code merged and deployed (PR #10, PR #12). Exit gate open on
-production evidence: only A-135's first served-SHA receipt. A-02 closed
-2026-09-24. A-134 stays `open` by policy. A-137/A-138 are deferred to Phase 5
+**State:** Complete (2026-09-24). Code merged and deployed (PR #10, PR #12);
+A-02 and A-135 have production proof. A-134 stays `open` by policy. A-137/A-138 are deferred to Phase 5
 (2026-09-24). See `release-ledger.md`.
 
 **Starts after:** Phase 0's ledger and coach boundary are complete.
