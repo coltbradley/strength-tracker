@@ -41,7 +41,7 @@ vi.mock("../lib/db", () => ({
   cacheGet: (...args: unknown[]) => cacheGet(...args),
 }));
 vi.mock("../lib/errors", () => ({ reportError: vi.fn(), toast: (...args: unknown[]) => toast(...args) }));
-vi.mock("../hooks/useUnit", () => ({ useUnit: () => "kg" }));
+vi.mock("../hooks/useUnit", () => ({ useUnit: () => "lb" }));
 vi.mock("../lib/settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/settings")>()),
   getSetting: () => ({ kg: 20, lb: 45 }),
@@ -49,7 +49,15 @@ vi.mock("../lib/settings", async (importOriginal) => ({
 vi.mock("../hooks/useDragList", () => ({
   useDragList: (keys: string[]) => ({ order: keys, handlers: () => ({}) }),
 }));
-vi.mock("../components/Stepper", () => ({ Stepper: () => null }));
+vi.mock("../components/Stepper", () => ({
+  Stepper: ({ label, value, onChange }: {
+    label: string;
+    value: number;
+    onChange: (next: number) => void;
+  }) => (
+    <button type="button" aria-label={`${label} plus`} onClick={() => onChange(value + 1)} />
+  ),
+}));
 vi.mock("../components/NumberPad", () => ({ NumberPad: () => null }));
 vi.mock("../components/NewExerciseSheet", () => ({ NewExerciseSheet: () => null }));
 vi.mock("../components/SetSchemeSheet", () => ({ SetSchemeSheet: () => null }));
@@ -92,6 +100,32 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Plan with an active session", () => {
+  it("preserves the exact authored load when changing an unrelated field", async () => {
+    cacheGet.mockResolvedValue(undefined);
+    const row = {
+      ...prescription("curl", "Biceps curl", 0, null),
+      load_kg: 102.17,
+      resolved_load_kg: 102.17,
+      load_entry: "total",
+      entered_load: 225.25,
+      entered_unit: "lb",
+    };
+    getResolvedPrescriptions.mockResolvedValue({ data: [row] });
+    render(<Plan />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Biceps curl/ }));
+    fireEvent.click(screen.getByRole("button", { name: "reps min plus" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Done$/ }));
+
+    await waitFor(() => expect(updatePrescription).toHaveBeenCalled());
+    expect(updatePrescription.mock.calls[0]![2]).toMatchObject({
+      reps_min: 9,
+      load_kg: 102.17,
+      entered_load: 225.25,
+      entered_unit: "lb",
+    });
+  });
+
   it("shows why edits are locked and disables workout fields", async () => {
     render(<Plan />);
     const alert = await screen.findByRole("alert");

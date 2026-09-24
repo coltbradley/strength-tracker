@@ -3092,5 +3092,54 @@ await check("authored-load trigger refuses disagreement and partial provenance",
   }
 });
 
+await check("kg compatibility writes carry provenance while old queued sets remain valid", async () => {
+  await db.exec(`
+    insert into prescriptions (
+      id, user_id, planned_workout_id, exercise_id, position, sets, reps_min,
+      reps_max, load_kg, load_entry, entered_load, entered_unit
+    ) values (
+      '33333333-0000-4000-8000-000000000023', '${OWNER}',
+      '22222222-0000-4000-8000-000000000001', 'Barbell_Deadlift', 6, 3, 5, 5,
+      60, 'per_side', 30, 'kg'
+    );
+    insert into sets (
+      id, user_id, session_id, exercise_id, prescription_id, set_index,
+      set_type, load_kg, reps, load_entry, entered_load, entered_unit
+    ) values (
+      '55555555-0000-4000-8000-000000000033', '${OWNER}',
+      '44444444-0000-4000-8000-000000000001', 'Barbell_Deadlift',
+      '33333333-0000-4000-8000-000000000023', 8, 'working', 60, 5,
+      'per_side', 30, 'kg'
+    );
+    -- An older offline payload has no provenance keys. It remains insertable;
+    -- only new MCP compatibility writes are forced to derive provenance.
+    insert into sets (
+      id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps
+    ) values (
+      '55555555-0000-4000-8000-000000000034', '${OWNER}',
+      '44444444-0000-4000-8000-000000000001', 'Barbell_Deadlift', 9,
+      'working', 100, 5
+    );
+  `);
+  const compatibility = await db.query(`
+    select p.entered_load::float as entered, p.entered_unit::text as unit,
+      s.entered_load::float as set_entered, s.entered_unit::text as set_unit
+      from prescriptions p join sets s on s.prescription_id = p.id
+      where p.id = '33333333-0000-4000-8000-000000000023'
+  `);
+  assertEq(compatibility.rows, [{
+    entered: 30,
+    unit: "kg",
+    set_entered: 30,
+    set_unit: "kg",
+  }], "compatibility provenance survives the trigger");
+  const oldQueue = await db.query(`
+    select entered_load, entered_unit from sets
+      where id = '55555555-0000-4000-8000-000000000034'
+  `);
+  assertEq([oldQueue.rows[0].entered_load, oldQueue.rows[0].entered_unit],
+    [null, null], "older offline payload remains legacy unknown");
+});
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

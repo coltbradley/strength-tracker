@@ -94,6 +94,8 @@ interface RxDraft {
   /** How this row's weight is expressed. */
   load_entry: LoadEntry;
   entered_unit: LoadUnit | null;
+  /** Exact authored number, retained until the load itself is edited. */
+  entered_load: number | null;
   load_pct: number; // meaningful in pct mode
   rest_seconds: number;
   hasRest: boolean;
@@ -152,6 +154,7 @@ function draftFrom(
       : Math.round(enteredKg(storedTotal, entry) * 100) / 100,
     load_entry: entry,
     entered_unit: r.entered_load != null ? r.entered_unit ?? null : null,
+    entered_load: r.entered_load ?? null,
     load_pct: r.load_pct_tm ?? 75,
     rest_seconds: r.rest_seconds ?? 180,
     hasRest: r.rest_seconds !== null,
@@ -196,7 +199,9 @@ function patchFrom(d: RxDraft): PrescriptionPatch {
         ? Math.round(Math.max(0, totalKg(d.load_kg, d.load_entry)) * 100) / 100
         : null,
     load_entry: d.mode === "kg" ? d.load_entry : null,
-    entered_load: hasDirectLoad ? toDisplay(d.load_kg, d.entered_unit!) : null,
+    entered_load: hasDirectLoad
+      ? d.entered_load ?? toDisplay(d.load_kg, d.entered_unit!)
+      : null,
     entered_unit: hasDirectLoad ? d.entered_unit : null,
     load_pct_tm: d.mode === "pct" ? d.load_pct : null,
     rest_seconds: d.hasRest ? d.rest_seconds : null,
@@ -1275,6 +1280,7 @@ export function Plan() {
                                 Math.max(0, fromDisplay(v, unit)),
                               ),
                               entered_unit: unit,
+                              entered_load: v,
                             }),
                           onCancel: () => setPad(null),
                         })
@@ -1288,6 +1294,7 @@ export function Plan() {
                         ...draft,
                         load_kg: v,
                         entered_unit: unit,
+                        entered_load: toDisplay(v, unit),
                       })}
                       snap
                       steps={[

@@ -96,6 +96,7 @@ export const prescriptionSchema = z
       .optional()
       .describe(
         "Temporary, unit-labeled compatibility input for older MCP clients. " +
+          "It requires load_entry and is persisted as kg-authored provenance. " +
           "New screenshot parses must use load:{value,unit,entry}.",
       ),
     load_pct_tm: z
@@ -170,6 +171,10 @@ export const prescriptionSchema = z
   })
   .refine((p) => p.reps_max >= p.reps_min, {
     message: "reps_max must be >= reps_min",
+  })
+  .refine((p) => p.load_kg == null || p.load_entry != null, {
+    message:
+      "the compatibility load_kg input requires load_entry; use load:{value,unit,entry} for new parses",
   })
   .refine(
     (p) =>
@@ -385,11 +390,13 @@ export function prescriptionRows(
         ((p.load.unit === "lb" ? p.load.value * 0.45359237 : p.load.value) *
           (p.load.entry === "per_side" ? 2 : 1)) * 100,
       ) / 100
-      : p.load_kg ?? null,
+      : p.load_kg == null ? null : Math.round(p.load_kg * 100) / 100,
     load_pct_tm: p.load_pct_tm ?? null,
     load_entry: p.load?.entry ?? p.load_entry ?? null,
-    entered_load: p.load?.value ?? null,
-    entered_unit: p.load?.unit ?? null,
+    entered_load: p.load?.value ?? (p.load_kg == null
+      ? null
+      : p.load_entry === "per_side" ? p.load_kg / 2 : p.load_kg),
+    entered_unit: p.load?.unit ?? (p.load_kg == null ? null : "kg"),
     rest_seconds: p.rest_seconds ?? null,
     notes: p.notes ?? null,
     superset_group: p.superset_group ?? null,
