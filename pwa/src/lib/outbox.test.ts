@@ -813,6 +813,80 @@ describe("outbox identity", () => {
     );
   });
 
+  it("holds a write queued while NO identity was known, even after one arrives (A-90)", async () => {
+    // Enqueued in the boot window before identity resolved. Nothing says
+    // whose set this is, so it must not replay as whoever signs in next.
+    let who: string | null = null;
+    const { calls, transport } = makeTransport();
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+    });
+
+    await box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: makeSet("aaaa3333-1111-4111-8111-111111111111", 0),
+    });
+    who = BOB;
+    await box.flush();
+
+    expect(calls).toHaveLength(0);
+    const [entry] = await box.inspect();
+    expect(entry).toMatchObject({ state: "held", user_id: null });
+  });
+
+  it("stamps the device's persisted owner when live identity is not known yet (A-90)", async () => {
+    let who: string | null = null;
+    const { calls, transport } = makeTransport();
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+      stampUserId: () => who ?? ALICE,
+    });
+
+    await box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: makeSet("aaaa4444-1111-4111-8111-111111111111", 0),
+    });
+    who = BOB;
+    await box.flush();
+    expect(calls).toHaveLength(0); // Alice's set is not sent as Bob
+
+    who = ALICE;
+    await box.flush();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("still replays a legacy item that predates owner stamping", async () => {
+    const { calls, transport } = makeTransport();
+    const db = await getDb();
+    await db.add("outbox", {
+      op: {
+        kind: "insert",
+        table: "sets",
+        payload: makeSet("aaaa5555-1111-4111-8111-111111111111", 0),
+      },
+      created_at: "2026-08-01T10:00:00.000Z",
+      retries: 0,
+      last_error: null,
+      status: "pending",
+    });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => ALICE,
+    });
+    await box.flush();
+    expect(calls).toHaveLength(1);
+  });
+
   it("holds a stamped item while identity is still unknown", async () => {
     // The boot race. getCurrentUserId() returns null for "signed out" AND for
     // "not known yet", and start() flushes after two IndexedDB round-trips

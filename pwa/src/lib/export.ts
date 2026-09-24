@@ -279,7 +279,7 @@ interface QueueEntry {
   created_at: string | null;
   retries: number;
   last_error: string | null;
-  user_id: string | undefined;
+  user_id: string | null | undefined;
   state: "waiting" | "held" | "dead";
   cause: string | null;
   retryable: boolean;

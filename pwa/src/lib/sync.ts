@@ -6,6 +6,7 @@ import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import { getDb, type OutboxOp } from "./db";
 import { getCurrentUserId, onUserChange } from "./currentUser";
+import { readPersistedUserId } from "./persistedSession";
 import { notifyCheckinMemory } from "./checkinMemory";
 import {
   createOutbox,
@@ -77,6 +78,9 @@ export const outbox = createOutbox({
   // `sets` is append-only. Stamping the OWNER on the item lets the flusher
   // hold it for the person it belongs to instead.
   currentUserId: getCurrentUserId,
+  // In the boot window the live identity is a token refresh away, but the
+  // session on disk already says whose device this is (A-90).
+  stampUserId: () => getCurrentUserId() ?? readPersistedUserId(),
   // Identity resolves asynchronously, and the flusher holds every stamped
   // item until it does. This is what un-holds them.
   onIdentityChange: onUserChange,

@@ -152,6 +152,15 @@ interface Deps {
    */
   currentUserId?: () => string | null;
   /**
+   * Whose write this is at ENQUEUE time, when that can be known better than
+   * `currentUserId`: the app boots with its UI drawn from the session saved on
+   * the device while the live identity is still a network refresh away, and a
+   * set logged in that window belongs to that saved account. Identity only,
+   * never authorization: replay still waits for `currentUserId` to match.
+   * Defaults to `currentUserId`.
+   */
+  stampUserId?: () => string | null;
+  /**
    * Subscribe to identity changes; returns an unsubscribe. Because an unknown
    * identity now HOLDS stamped items (see `replayable`), something has to run
    * the queue again once identity arrives, or a queue that was held at boot
@@ -266,8 +275,9 @@ export interface OutboxEntry {
   created_at: string | null;
   retries: number;
   last_error: string | null;
-  /** who queued it; undefined on items queued before multi-user */
-  user_id: string | undefined;
+  /** who queued it; undefined on items queued before multi-user, null when
+   *  no identity was known at enqueue */
+  user_id: string | null | undefined;
   /**
    * 'waiting' goes on the next flush. 'held' was queued by another account
    * (or before identity resolved) and this device must not send it. 'dead'
@@ -289,6 +299,7 @@ export function createOutbox({
   transport,
   isOnline,
   currentUserId,
+  stampUserId,
   onIdentityChange,
   onSynced,
 }: Deps): Outbox {
@@ -307,6 +318,10 @@ export function createOutbox({
 
   const online = isOnline ?? (() => navigator.onLine);
   const whoAmI = currentUserId ?? (() => null);
+  // With no identity source at all (a single-user outbox) items stay
+  // unstamped, exactly as before multi-user.
+  const stampOwner: () => string | null | undefined =
+    stampUserId ?? currentUserId ?? (() => undefined);
 
   /**
    * Whether this item may be replayed right now. An item queued by someone
@@ -331,6 +346,9 @@ export function createOutbox({
   function replayable(item: OutboxItem): boolean {
     const owner = item.user_id;
     if (owner === undefined) return true; // pre-multi-user item
+    // Queued while NO identity was known (A-90). Nothing records whose it is,
+    // so no later sign-in may claim it: it stays held and visible.
+    if (owner === null) return false;
     return whoAmI() === owner;
   }
 
@@ -388,14 +406,20 @@ export function createOutbox({
     };
   }
 
-  function makePendingItem(op: OutboxOp, owner: string | null): OutboxItem {
+  function makePendingItem(
+    op: OutboxOp,
+    owner: string | null | undefined,
+  ): OutboxItem {
     return {
       op,
       created_at: new Date().toISOString(),
       retries: 0,
       last_error: null,
       status: "pending",
-      ...(owner === null ? {} : { user_id: owner }),
+      // null is kept, never omitted: omitting it made an unknown owner look
+      // like a pre-multi-user item, which replays as whoever signs in next
+      // (A-90). Only an outbox with no identity source leaves it off.
+      ...(owner === undefined ? {} : { user_id: owner }),
     };
   }
 
@@ -571,7 +595,7 @@ export function createOutbox({
   return {
     async enqueue(op) {
       const db = await getDb();
-      await db.add("outbox", makePendingItem(op, whoAmI()));
+      await db.add("outbox", makePendingItem(op, stampOwner()));
       await refreshCountsAfterCommit();
       void flush();
     },
@@ -579,7 +603,7 @@ export function createOutbox({
     async enqueueBatch(ops) {
       if (ops.length === 0) return;
       const db = await getDb();
-      const owner = whoAmI();
+      const owner = stampOwner();
       const tx = db.transaction("outbox", "readwrite");
       for (const op of ops) {
         await tx.store.add(makePendingItem(op, owner));

@@ -135,9 +135,10 @@ export interface OutboxItem {
    *
    * Optional because items queued before multi-user have no owner recorded.
    * Those are treated as belonging to whoever is signed in, which is exactly
-   * what they already were.
+   * what they already were. Null means it was queued while NO identity was
+   * known; such an item is held and never claimed by a later sign-in (A-90).
    */
-  user_id?: string;
+  user_id?: string | null;
 }
 
 interface StrengthDB extends DBSchema {
