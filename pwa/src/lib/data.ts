@@ -1475,7 +1475,10 @@ export interface OpenSessionPort {
   lastSetAt(sessionId: string): Promise<string | null>;
   /** close a session that is still open (no-op if it closed meanwhile) */
   complete(sessionId: string, endedAt: string): Promise<void>;
-  discard(sessionId: string, discardedAt: string): Promise<void>;
+  /** discard a session that is STILL OPEN; false when it had already been
+   *  ended or discarded (by another device since the snapshot), in which
+   *  case nothing changed (A-204) */
+  discard(sessionId: string, discardedAt: string): Promise<boolean>;
   /** null when the server has never seen the row — its insert may still be
    *  queued in the outbox, which is NOT the same as "closed" */
   closedState(sessionId: string): Promise<SessionClosedState | null>;
@@ -1517,11 +1520,18 @@ const supabaseOpenSessions: OpenSessionPort = {
     throwIf(error);
   },
   async discard(sessionId, discardedAt) {
-    const { error } = await supabase
+    // Conditional on the session still being open, like complete() above:
+    // the listOpen() snapshot can be stale, and another device may have
+    // finished this session since (A-204).
+    const { data, error } = await supabase
       .from("sessions")
       .update({ discarded_at: discardedAt })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .is("ended_at", null)
+      .is("discarded_at", null)
+      .select("id");
     throwIf(error);
+    return (data ?? []).length > 0;
   },
   async closedState(sessionId) {
     const { data, error } = await supabase
@@ -1590,9 +1600,11 @@ export async function syncOpenSessions(
       // session `v_live_sets` excludes and the PWA has no un-discard.
       // Owning the active pointer is the one piece of evidence that the
       // absent outbox is OUR absent outbox.
-      await port.discard(s.id, new Date().toISOString());
+      const discarded = await port.discard(s.id, new Date().toISOString());
       await cacheDeleteByPrefix(cacheFamilies.sessionClosed);
-      autoDiscarded++;
+      // false: it was closed elsewhere after the snapshot. Closed either way,
+      // so the pointer below still goes, but it was not thrown away here.
+      if (discarded) autoDiscarded++;
     } else {
       // Someone else's open session that looks empty from here. Leave it
       // OPEN: its own device will either flush its sets (after which any

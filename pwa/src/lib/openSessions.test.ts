@@ -62,6 +62,7 @@ function makePort(
     },
     async discard(id, discardedAt) {
       calls.push({ op: "discard", id, at: discardedAt });
+      return true;
     },
     async closedState(id) {
       return closed[id] ?? null;
@@ -185,6 +186,23 @@ describe("syncOpenSessions", () => {
     );
     expect(calls).toEqual([]);
     expect(r.autoDiscarded).toBe(0);
+  });
+
+  it("does not count a discard that found the session already closed elsewhere (A-204)", async () => {
+    // The snapshot said open and empty; by the time the discard ran, another
+    // device had completed it. The conditional update changes no row, and a
+    // session somebody finished must not be reported (or treated) as thrown away.
+    const s = session();
+    const { port, calls } = makePort([s]);
+    port.discard = async (id, at) => {
+      calls.push({ op: "discard", id, at });
+      return false;
+    };
+    const r = await syncOpenSessions(s.id, localDayOf, TODAY, new Set(), port);
+    expect(calls.map((c) => c.op)).toEqual(["discard"]);
+    expect(r.autoDiscarded).toBe(0);
+    // The session is closed either way, so the stale pointer still goes.
+    expect(r.clearedActive).toBe(true);
   });
 
   it("still discards the device's OWN empty session from yesterday", async () => {
