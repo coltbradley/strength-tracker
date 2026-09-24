@@ -273,16 +273,18 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
       {held.length > 0 && (
         <section className="settings-group">
           <div className="field-label">HELD ({held.length})</div>
-          <QueueList entries={held} names={names} now={now} />
+          {/* Count only. On a shared phone these are another person's sets,
+              and listing them would show one account another's training
+              (A-148). Export leaves their contents out for the same reason. */}
           <div className="microcopy">
             {/* This is the invariant, said out loud. A logged set takes its
                 owner from whoever is signed in when it lands, and `sets` is
                 append-only, so sending one under the wrong account is a
                 mistake nothing can undo. Waiting is the only safe answer. */}
-            Queued while a different account was signed in here. This phone will
-            not send them as you: a logged set cannot be reassigned once it
-            lands. Sign in as that account on this phone and they go up on their
-            own.
+            Queued under a different account on this phone, or before it knew
+            who was signed in. This phone will not send them as you: a logged
+            set cannot be reassigned once it lands. Sign in as that account on
+            this phone and they go up on their own.
           </div>
         </section>
       )}

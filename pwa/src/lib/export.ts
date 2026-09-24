@@ -293,6 +293,24 @@ export function buildQueueExport(
   const summary = { waiting: 0, held: 0, dead: 0 };
   const items = entries.map((e, i): QueueExportItem => {
     summary[e.state] += 1;
+    // A held write belongs to another account (or to nobody this phone could
+    // name). It is counted so the file is honest about what is on the device,
+    // and nothing else: a shared phone must not hand one person another's
+    // training (A-148). Its owner exports it after signing in here.
+    if (e.state === "held") {
+      return {
+        position: i,
+        state: e.state,
+        cause: null,
+        retryable: false,
+        queued_at: e.created_at,
+        queued_by: null,
+        attempts: e.retries,
+        last_error: null,
+        operation: `${e.op.kind} ${e.op.table}`,
+        row: null,
+      };
+    }
     // An update's patch alone does not say WHAT it patches, so the target id
     // goes in beside it; an insert's payload already carries its own.
     const row =

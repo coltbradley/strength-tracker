@@ -222,6 +222,17 @@ describe("OutboxSheet", () => {
     expect(screen.getByText(/sets_reps_check/)).toBeTruthy();
   });
 
+  it("counts another account's held writes without showing what they are (A-148)", async () => {
+    await show([entry({ key: 2, state: "held", user_id: "someone-else" })]);
+
+    expect(
+      screen.getByText("Held for another account").nextSibling,
+    ).toHaveProperty("textContent", "1");
+    // A shared phone must not show one person another person's training.
+    expect(screen.queryByText(/Barbell Squat/)).toBeNull();
+    expect(screen.queryByText(/100/)).toBeNull();
+  });
+
   it("offers a retry only for the failures whose answer can change", async () => {
     await show([
       entry({ key: 1, state: "dead", cause: "blocked", retryable: true }),
@@ -252,7 +263,7 @@ describe("OutboxSheet", () => {
     expect(h.retryDead).not.toHaveBeenCalled();
   });
 
-  it("exports every queued write, held and failed ones included", async () => {
+  it("exports the queue, passing held rows to the builder that redacts them", async () => {
     const entries = [
       entry({ key: 1 }),
       entry({ key: 2, state: "held", user_id: "someone-else" }),
