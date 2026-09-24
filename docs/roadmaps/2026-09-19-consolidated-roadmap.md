@@ -16,8 +16,9 @@ references a day, late-set session restore, and durable-first set logging
 
 **Phase 1 exit gate is still open** on production evidence, not code:
 
-- **A-02:** `COACH_ALLOWED_USERS` is not set, so the fail-closed coach answers
-  503 for everyone, including its one intended user.
+- **A-02: closed 2026-09-24.** `COACH_ALLOWED_USERS` now names Colt's wife
+  only and coach v23 is deployed with it. Before that, the fail-closed coach
+  answered 503 for everyone.
 - **A-137/A-138: deferred to Phase 5 (Colt, 2026-09-24).** No `SWEEP_SECRET`,
   so the prompt sweep delivers nothing while the app is closed. That is
   acceptable for now: the daily prompt ships switched off, rest alerts do not
@@ -223,8 +224,8 @@ and the coach cannot spend money for an unapproved account.
 ### Phase 1: Make release and identity safety real
 
 **State:** Code merged and deployed (PR #10, PR #12). Exit gate open on
-production evidence: A-02 `needs live proof` and A-135 lacks served-SHA
-readback. A-134 stays `open` by policy. A-137/A-138 are deferred to Phase 5
+production evidence: A-135 lacks served-SHA readback. A-02 closed
+2026-09-24. A-134 stays `open` by policy. A-137/A-138 are deferred to Phase 5
 (2026-09-24). See `release-ledger.md`.
 
 **Starts after:** Phase 0's ledger and coach boundary are complete.

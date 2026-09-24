@@ -8,8 +8,9 @@ merged 2026-09-21 (PR #10) and 2026-09-24 (PR #12), along with early Phase 2
 plan-write and session-integrity work.
 
 Reconciled 2026-09-24 against `main` at `4da2c7d` and the live project.
-A-92 and A-107 closed with tests. A-02, A-137 and A-138 were checked in
-production and their proof is still missing. A-91 is unchanged in
+A-92 and A-107 closed with tests. A-02 closed the same day once its
+production proof existed. A-137 and A-138 were checked in production and
+their proof is still missing. A-91 is unchanged in
 `pwa/src/lib/sync.ts` and stays open. A-84 (`set_training_plan`) is untouched
 by the plan-edit work and stays open. A-137 and A-138 are deferred to Phase 5 and
 no longer block Phase 1's gate.
@@ -21,7 +22,7 @@ test and the evidence layer the roadmap names.
 | ID    | Boundary                        | Owner       | State            | Regression test                                                                           | Production proof                                  | Rollback                                 |
 | ----- | ------------------------------- | ----------- | ---------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------- |
 | A-01  | MCP tunnel readiness            | Engineering | fixed with test  | scripts/strength-mcp-relay.test.mjs                                                       | —                                                 | —                                        |
-| A-02  | Coach allowlist | Colt | needs live proof | supabase/functions/coach/lib/allowlist.test.ts | Absent from `supabase secrets list` on 2026-09-24: coach is fail-closed (503) for everyone | Redeploy coach after setting the secret |
+| A-02  | Coach allowlist | Colt | fixed with test | supabase/functions/coach/lib/allowlist.test.ts | COACH_ALLOWED_USERS set to Valentine only and coach redeployed as v23 (2026-09-24); a real admitted turn not yet observed | Unset the secret and redeploy coach (coach returns 503) |
 | A-03  | Cross-user parent refs          | Engineering | fixed with test  | scripts/validate-db.mjs parent FK check                                                   | —                                                 | —                                        |
 | A-07  | Coach quota reservation         | Engineering | fixed with test  | scripts/validate-db.mjs reserve checks                                                    | —                                                 | —                                        |
 | A-24  | PWA env validation              | Engineering | fixed with test  | scripts/check-pwa-env.test.mjs · pwa/src/lib/supabaseEnv.test.ts                          | —                                                 | Revert the checker step and assertProductionSupabaseEnv |
