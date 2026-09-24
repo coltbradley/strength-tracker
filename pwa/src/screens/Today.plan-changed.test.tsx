@@ -92,6 +92,7 @@ import { notifyPlanChanged } from "../lib/planChanges";
 import { cacheGet, cacheKeys, resetDbForTests } from "../lib/db";
 import * as db from "../lib/db";
 import { outbox } from "../lib/sync";
+import { formatPlannedDate, todayLocalIso } from "../lib/format";
 
 const PROGRAM = {
   id: "prog-1",
@@ -165,6 +166,55 @@ beforeEach(() => {
 });
 
 describe("Today + coach plan changes (onPlanChanged)", () => {
+  it("promotes the next actionable workout after today's workout is complete", async () => {
+    const today = todayLocalIso();
+    const tomorrowDate = new Date(`${today}T12:00:00`);
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrow = [
+      tomorrowDate.getFullYear(),
+      String(tomorrowDate.getMonth() + 1).padStart(2, "0"),
+      String(tomorrowDate.getDate()).padStart(2, "0"),
+    ].join("-");
+    const completedToday = {
+      ...WORKOUT,
+      id: "completed-today",
+      label: "Upper strength",
+      scheduled_date: today,
+    };
+    const next = {
+      ...WORKOUT,
+      id: "next",
+      label: "Lower strength",
+      scheduled_date: tomorrow,
+    };
+    getPlannedWorkouts.mockResolvedValue({
+      data: { programs: [PROGRAM], workouts: [completedToday, next] },
+      fromCache: false,
+      stale: null,
+    });
+    getDoneWorkoutIds.mockResolvedValue({
+      data: [completedToday.id],
+      fromCache: false,
+      stale: null,
+    });
+
+    render(<Today presentation="train" userId="u1" />);
+
+    expect(await screen.findByRole("heading", { name: "Rest day" })).toBeTruthy();
+    expect(screen.getByText("Lower strength")).toBeTruthy();
+    expect(screen.getByText(formatPlannedDate(tomorrow))).toBeTruthy();
+    const go = screen.getByRole("button", { name: "Go" });
+    expect(go.className).toContain("btn-primary");
+    const viewRecord = screen.getByRole("link", { name: "View record" });
+    expect(viewRecord.getAttribute("href")).toBe("/history");
+    expect(viewRecord.className).toContain("train-link");
+
+    fireEvent.click(go);
+    expect(screen.getByRole("dialog", { name: "Lower strength preview" })).toBeTruthy();
+    expect(outbox.enqueue).not.toHaveBeenCalled();
+    expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
+  });
+
   it("shows the earliest actionable future workout from Rest day", async () => {
     const draft = { ...WORKOUT, id: "draft", label: "Unwritten", scheduled_date: "2099-01-01", exercise_count: 0 };
     const next = { ...WORKOUT, id: "next", label: "Lower strength", scheduled_date: "2099-01-02" };

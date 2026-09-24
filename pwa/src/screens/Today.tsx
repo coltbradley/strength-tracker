@@ -1169,9 +1169,15 @@ export function Today({
 
   const trainWorkoutToday = trainWorkoutForToday(workouts, states, today);
   const nextTrainWorkout = nextActionableWorkout(workouts, states, today);
+  const promoteNextWorkout =
+    trainWorkoutToday?.state === "DONE" && nextTrainWorkout !== null;
   const trainWorkout =
-    trainWorkoutToday ??
-    (nextTrainWorkout ? { workout: nextTrainWorkout, state: "UPCOMING" as const } : null);
+    promoteNextWorkout
+      ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
+      : trainWorkoutToday ??
+        (nextTrainWorkout
+          ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
+          : null);
   const trainWorkoutId = trainWorkout?.workout.id ?? null;
   const trainPrescriptions = trainWorkout
     ? (rx[trainWorkout.workout.id] ?? null)
@@ -1266,6 +1272,7 @@ export function Today({
           active={active}
           recovery={recovery}
           startEnabled={canStart}
+          completedToday={promoteNextWorkout}
           unit={unit}
           onStart={(workout) => void start(workout)}
           onOpenCoach={() => openCoach()}

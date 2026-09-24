@@ -54,6 +54,7 @@ export function TrainHome({
   active,
   recovery,
   startEnabled,
+  completedToday,
   unit = "lb",
   onStart,
   onOpenCoach,
@@ -77,6 +78,7 @@ export function TrainHome({
   /** Recovery is owned by Today because it reconciles and repairs sessions. */
   recovery: ReactNode;
   startEnabled: boolean;
+  completedToday?: boolean;
   unit?: Unit;
   onStart: (workout: PlannedWorkoutRow) => void;
   onOpenCoach: () => void;
@@ -232,8 +234,8 @@ export function TrainHome({
           >
             Go
           </button>
-          <Link className="train-link" to="/program">
-            View program
+          <Link className="train-link" to={completedToday ? "/history" : "/program"}>
+            {completedToday ? "View record" : "View program"}
           </Link>
         </div>
       )}
