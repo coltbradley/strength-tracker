@@ -3,8 +3,15 @@
 Status source of truth for stop-release and Phase 0 re-verification items.
 Do not scatter status in `docs/plan.md` or old implementation plans.
 
-Phase 0 engineering merged 2026-09-21 (PR #8). Open rows below are Phase 1+
-work except A-02, which is waiting on production secret proof.
+Phase 0 engineering merged 2026-09-21 (PR #8). Phase 1 Slices 1 and 2
+merged 2026-09-21 (PR #10) and 2026-09-24 (PR #12), along with early Phase 2
+plan-write and session-integrity work.
+
+Reconciled 2026-09-24 against `main` at `4da2c7d` and the live project.
+A-92 and A-107 closed with tests. A-02, A-137 and A-138 were checked in
+production and their proof is still missing. A-91 is unchanged in
+`pwa/src/lib/sync.ts` and stays open. A-84 (`set_training_plan`) is untouched
+by the plan-edit work and stays open.
 
 States: `open` · `fixed with test` · `needs live proof` · `not reproducible`.
 A finding is not closed because the audit is old. Close only with a regression
@@ -13,7 +20,7 @@ test and the evidence layer the roadmap names.
 | ID    | Boundary                        | Owner       | State            | Regression test                                                                           | Production proof                                  | Rollback                                 |
 | ----- | ------------------------------- | ----------- | ---------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------- |
 | A-01  | MCP tunnel readiness            | Engineering | fixed with test  | scripts/strength-mcp-relay.test.mjs                                                       | —                                                 | —                                        |
-| A-02  | Coach allowlist                 | Colt        | needs live proof | supabase/functions/coach/lib/allowlist.test.ts                                            | `supabase secrets list` shows COACH_ALLOWED_USERS | Redeploy coach after setting the secret  |
+| A-02  | Coach allowlist | Colt | needs live proof | supabase/functions/coach/lib/allowlist.test.ts | Absent from `supabase secrets list` on 2026-09-24: coach is fail-closed (503) for everyone | Redeploy coach after setting the secret |
 | A-03  | Cross-user parent refs          | Engineering | fixed with test  | scripts/validate-db.mjs parent FK check                                                   | —                                                 | —                                        |
 | A-07  | Coach quota reservation         | Engineering | fixed with test  | scripts/validate-db.mjs reserve checks                                                    | —                                                 | —                                        |
 | A-24  | PWA env validation              | Engineering | fixed with test  | scripts/check-pwa-env.test.mjs · pwa/src/lib/supabaseEnv.test.ts                          | —                                                 | Revert the checker step and assertProductionSupabaseEnv |
@@ -27,16 +34,16 @@ test and the evidence layer the roadmap names.
 | A-84  | Training-plan replacement       | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-90  | Prefetch auth attribution       | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-91  | Session close zero-row          | Engineering | open             | —                                                                                         | —                                                 | —                                        |
-| A-92  | Prescription edit adherence     | Engineering | open             | —                                                                                         | —                                                 | —                                        |
+| A-92  | Prescription edit adherence | Engineering | fixed with test | scripts/validate-db.mjs "logged prescriptions cannot be rewritten or removed after a session ends" | Migrations through 20260924052445 applied (2026-09-24) | Forward-only migration |
 | A-94  | Health prompt responded_at      | Engineering | open             | —                                                                                         | —                                                 | Phase 1+ ; do not stamp from this plan   |
 | A-98  | Export completeness             | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-99  | Readiness second device         | Engineering | open             | —                                                                                         | —                                                 | —                                        |
-| A-107 | Log before outbox commit        | Engineering | open             | —                                                                                         | —                                                 | —                                        |
+| A-107 | Log before outbox commit | Engineering | fixed with test | pwa/src/screens/Session.focus.test.tsx "keeps an ordinary set editable when its local queue write fails" | — | Revert Session.tsx LOG ordering |
 | A-134 | Deploy after failed CI          | Engineering | open             | —                                                                                         | deferred: GitHub Actions CI billing; deploy must not wait | —                                        |
-| A-135 | Production verify/rollback      | Engineering | fixed with test  | scripts/check-deploy-contract.test.mjs smoke assertions; docs/deploy.md Rollback          | Next deploy job log's receipt sha= line           | —                                        |
-| A-136 | MCP health probe                | Engineering | fixed with test  | supabase/functions/mcp-server/lib/health.test.ts                                          | curl .../health is 200 on the live function       | Revert health.ts                         |
-| A-137 | Alert-sweep scheduler           | Engineering | needs live proof | docs/deploy.md "Is the sweep alive?"                                                      | cron.job / cron.job_run_details on live project   | —                                        |
-| A-138 | Alert-sweep operator alert      | Engineering | needs live proof | docs/deploy.md "Is the sweep alive?"                                                      | cron.job / cron.job_run_details on live project   | —                                        |
+| A-135 | Production verify/rollback | Engineering | fixed with test | scripts/check-deploy-contract.test.mjs smoke assertions; docs/deploy.md Rollback | Run 36002989753 receipt for 4da2c7d (pages_http=200 mcp_http=200); SHA is not read back from the served app (G13-F02) | — |
+| A-136 | MCP health probe | Engineering | fixed with test | supabase/functions/mcp-server/lib/health.test.ts | /health returned ok 2026-09-24 18:36Z; body carries no version | Revert health.ts |
+| A-137 | Alert-sweep scheduler | Engineering | needs live proof | docs/deploy.md "Is the sweep alive?" | No SWEEP_SECRET in `supabase secrets list` on 2026-09-24; cron.job / cron.job_run_details not yet read | — |
+| A-138 | Alert-sweep operator alert | Engineering | needs live proof | docs/deploy.md "Is the sweep alive?" | No SWEEP_SECRET in `supabase secrets list` on 2026-09-24; cron.job / cron.job_run_details not yet read | — |
 | A-139 | PWA endurance-sync URL          | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-140 | Endurance sync scheduler        | Engineering | open             | —                                                                                         | —                                                 | —                                        |
 | A-141 | Endurance connect/revoke        | Engineering | open             | —                                                                                         | —                                                 | —                                        |

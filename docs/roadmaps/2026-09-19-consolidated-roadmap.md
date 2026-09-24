@@ -1,32 +1,40 @@
 # Consolidated roadmap, 2026-09-19
 
-## Current status (2026-09-21)
+## Current status (2026-09-24)
 
-**Phase 0 is merged.** Engineering landed on `main` as PR #8 (`c25e3ad`).
-The release ledger exists and is CI-checked. Re-verification closed A-26,
-A-96, A-97, A-105, and A-119 with tests.
+Reconciled against `main` at `4da2c7d` and the live Supabase project on
+2026-09-24. Status per finding lives in `release-ledger.md`.
 
-**Phase 1 Slices 1 and 2** are implemented on branch `docs/phase-1-plans`
-(not merged). Slice 1 is admission and tenant-safety. Slice 2 is the
-release contract: PWA env checker, fail-not-skip backend deploy, Pages
-smoke receipt, MCP `/health` readiness, rollback/sweep runbook. **A-02**
-still needs live proof: set production `COACH_ALLOWED_USERS`. Unset is
-fail-closed in code (503). **A-134** stays `open` (GitHub Actions CI
-billing; deploy must not wait). **A-137/A-138** need live sweep queries.
-**A-135** production proof is the next `deploy` job log's `receipt sha=`
-line.
+**Phase 0 and Phase 1 code are merged and deployed.** Slices 1 and 2 landed
+through PR #10 (2026-09-21) and PR #12 (2026-09-24). Remote migrations match
+local through `20260924052445`. MCP `/health` answers ok.
 
-**Next:** merge this branch when ready. Do not start Phases 2–6, endurance
-E2+, or a 209-ticket audit programme until Phase 1's exit gate passes.
-GitHub Actions CI is billed-out; do not wait on it.
+**Phase 2 started before Phase 1's gate closed, and that is accepted.** PR #12
+also carried atomic, locked plan writes, permanent plan locks once a session
+references a day, late-set session restore, and durable-first set logging
+(see `docs/decisions.md`, 2026-09-24). A-92 and A-107 are closed with tests.
 
-- Slice 1 spec: `docs/superpowers/specs/2026-09-21-phase-1-admission-design.md`
-- Slice 1 plan: `docs/superpowers/plans/2026-09-21-phase-1-admission-tenant.md`
-- Slice 2 spec: `docs/superpowers/specs/2026-09-21-phase-1-release-contract-design.md`
-- Slice 2 plan: `docs/superpowers/plans/2026-09-21-phase-1-release-contract.md`
+**Phase 1 exit gate is still open** on production evidence, not code:
+
+- **A-02:** `COACH_ALLOWED_USERS` is not set, so the fail-closed coach answers
+  503 for everyone, including its one intended user.
+- **A-137/A-138:** no `SWEEP_SECRET`, so the prompt sweep delivers nothing.
+- **A-135:** the deploy receipt prints the intended SHA but does not read it
+  back from the served app (MECE G13-F02).
+- **A-134:** deploy still ships past a red CI run by policy. `HEAD`'s one CI
+  failure (`Today.plan-changed.test.tsx`) looks flaky: the identical tree
+  passed at `ed65677` and passed 3/3 locally.
+
+**Next:** close the Phase 1 items above, then finish Phase 2 (A-91, A-84 and
+the rest of its list, plus the seeded browser E2E suite and a phone run).
+
+Audit inputs since this roadmap was written: the 2026-09-23 MECE audit
+(`docs/audits/2026-09-23-mece/SUMMARY.md`) and the training-scenes UX review
+(`docs/audits/2026-09-23-training-scenes-ux-and-reconciliation.md`). Both are
+evidence backlogs like the 2026-09-19 audit.
 
 **Also shipped outside phase order:** M-01 `update_memory` is on `main`
-(`3cc8159`). Close the feedback row only after the next MCP deploy and the
+(`3cc8159`) and MCP has redeployed since. Close the feedback row once the
 athlete accepts the outcome.
 
 ## Plan authority
@@ -210,9 +218,9 @@ and the coach cannot spend money for an unapproved account.
 
 ### Phase 1: Make release and identity safety real
 
-**State:** Slices 1 and 2 implemented on `docs/phase-1-plans` (not merged);
-see `release-ledger.md` (A-02, A-137, A-138 still `needs live proof`; A-134
-stays `open`).
+**State:** Code merged and deployed (PR #10, PR #12). Exit gate open on
+production evidence: A-02, A-137 and A-138 `needs live proof`, A-135 lacks
+served-SHA readback, A-134 stays `open`. See `release-ledger.md`.
 
 **Starts after:** Phase 0's ledger and coach boundary are complete.
 
@@ -247,9 +255,15 @@ receipt, and the access/tenant tests reject every adversarial fixture.
 
 ### Phase 2: Prove the training record survives real use
 
-**State:** Not started. Blocked on Phase 1.
+**State:** In progress, started early (accepted 2026-09-24). Plan-write
+atomicity and locking, late-set session restore and durable-first logging
+shipped in PR #12; A-92 and A-107 are closed with tests. Confirmed still
+open: A-84 and A-91. Not re-verified since the audit: A-06, A-90, A-143,
+A-148, A-203 to A-206 and the screen-race items. No seeded browser E2E suite
+and no phone acceptance run yet.
 
-**Starts after:** Phase 1's deployment and tenant-boundary gates pass.
+**Starts after:** Phase 1's deployment and tenant-boundary gates pass. (This
+ordering was crossed on 2026-09-24; the exit gate below still applies.)
 
 **Owner:** Engineering; a real lifter performs acceptance on a phone.
 
