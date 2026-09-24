@@ -185,6 +185,12 @@ function classify(op: OutboxOp, err: TransportError): ErrorClass {
     return "fk-prescription";
   }
   if (err.status === 401) return "auth";
+  // An update that matched no row (the transport asks for it back with
+  // .single(), and PostgREST answers zero rows with 406 PGRST116). Nothing
+  // changed on the server, so it must not leave the queue as synced (A-91),
+  // and it must not block the writes behind it either: dead, and retryable
+  // through deadKind below.
+  if (err.code === "PGRST116") return "dead";
   if (err.code !== null && (/^23\d{3}$/.test(err.code) || err.code === "42501"))
     return "dead";
   if (err.status !== null && [400, 403, 404, 409, 422].includes(err.status))
@@ -221,7 +227,16 @@ export function deadKind(
   status: number | null | undefined,
 ): DeadKind {
   if (status === 401) return "auth";
-  if (code === "42501" || code === "23503" || status === 403) return "blocked";
+  // PGRST116 is an update that found no row to change: usually the session
+  // insert that should precede it has not landed, or the row is not visible
+  // to this caller. Both are state outside the payload, like 23503 (A-91).
+  if (
+    code === "42501" ||
+    code === "23503" ||
+    code === "PGRST116" ||
+    status === 403
+  )
+    return "blocked";
   // codes before statuses, so a 409 carrying 23503 stays 'blocked' and a bare
   // 409 (a conflict on the row) does not
   if (code != null && /^23\d{3}$/.test(code)) return "rejected";

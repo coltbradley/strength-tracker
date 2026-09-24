@@ -43,7 +43,12 @@ const transport: OutboxTransport = {
     const { error, status } = await supabase
       .from(table)
       .update(patch as Record<string, unknown>)
-      .eq("id", id);
+      .eq("id", id)
+      // Ask for the row back: without it a zero-row update reads as success
+      // and the close leaves the queue while the server session stays open
+      // (A-91). .single() makes PostgREST answer zero rows with PGRST116.
+      .select("id")
+      .single();
     return toTransportError(error, status ?? null);
   },
   async refreshAuth() {

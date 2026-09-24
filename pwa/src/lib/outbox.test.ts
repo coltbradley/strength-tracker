@@ -316,6 +316,52 @@ describe("outbox", () => {
     });
   });
 
+  it("keeps a session close that matched no row visible and retryable (A-91)", async () => {
+    // The update transport asks for the row back with .single(); PostgREST
+    // answers a zero-row match with 406 / PGRST116. Treating that as success
+    // deleted the close from the queue while the server session stayed open.
+    const zeroRows: TransportError = {
+      message: "JSON object requested, multiple (or no) rows returned",
+      code: "PGRST116",
+      status: 406,
+    };
+    const { calls, transport } = makeTransport([zeroRows]);
+    const outbox = build(transport);
+
+    await seed(outbox, [
+      {
+        kind: "update",
+        table: "sessions",
+        id: session.id,
+        patch: {
+          ended_at: "2026-08-25T11:00:00.000Z",
+          session_rpe: 8,
+          bodyweight_kg: null,
+          notes: null,
+        },
+      },
+      { kind: "insert", table: "sets", payload: setA },
+    ]);
+
+    online = true;
+    await outbox.flush();
+
+    // It must not block the queue behind it...
+    expect(calls.map((c) => `${c.kind}:${c.table}`)).toEqual([
+      "update:sessions",
+      "insert:sets",
+    ]);
+    // ...and it must stay, dead but offered for retry.
+    const items = await outbox.inspect();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      table: "sessions",
+      state: "dead",
+      retryable: true,
+    });
+    expect(deadKind("PGRST116", 406)).toBe("blocked");
+  });
+
   it("replays after a network failure without dropping or duplicating (idempotent upsert)", async () => {
     // first call (session) succeeds, second (setA) fails with a network error
     const { calls, transport } = makeTransport([null, netErr()]);
