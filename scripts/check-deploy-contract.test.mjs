@@ -56,3 +56,17 @@ test("pages smokes the published app and prints a receipt", async () => {
   assert.equal(afterPublish.includes("SUPABASE_DB_PASSWORD"), false);
   assert.equal(afterPublish.includes("SERVICE_ROLE"), false);
 });
+
+test("pages smoke reads the served build SHA back, not the one it meant to publish", async () => {
+  const text = await yaml();
+  const smoke = text.slice(text.indexOf("- name: smoke"));
+  assert.match(smoke, /build\.json/, "smoke must fetch the served build stamp");
+  assert.match(smoke, /served_sha/, "smoke must compare a served SHA");
+  assert.match(smoke, /"\$served_sha" != "\$\{\{ github\.sha \}\}"/, "a mismatch must fail the job");
+});
+
+test("the PWA build emits build.json from VITE_BUILD_SHA", async () => {
+  const cfg = await readFile(join(root, "pwa/vite.config.ts"), "utf8");
+  assert.match(cfg, /fileName: "build\.json"/);
+  assert.match(cfg, /VITE_BUILD_SHA/);
+});

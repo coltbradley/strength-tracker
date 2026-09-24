@@ -187,6 +187,20 @@ jobs:
             echo "::error::Pages smoke failed ($pages_code)"
             exit 1
           fi
+          # Pages publishes asynchronously after the gh-pages push, so the
+          # served stamp can lag; poll until it names THIS commit (A-135).
+          served_sha=unknown
+          for attempt in $(seq 1 40); do
+            served_sha=$(curl -sS --max-time 15 "${pages_url}build.json?run=${{ github.run_id }}-$attempt" \
+              | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' || true)
+            [ "$served_sha" = "${{ github.sha }}" ] && break
+            sleep 15
+          done
+          echo "served_sha=$served_sha"
+          if [ "$served_sha" != "${{ github.sha }}" ]; then
+            echo "::error::Pages is serving ${served_sha:-nothing}, not ${{ github.sha }}"
+            exit 1
+          fi
           mcp_code=skipped
           if [ -n "${SUPABASE_PROJECT_REF:-}" ]; then
             mcp_url="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/mcp-server/health"
@@ -199,4 +213,4 @@ jobs:
           else
             echo "MCP smoke skipped: SUPABASE_PROJECT_REF unset"
           fi
-          echo "receipt sha=${{ github.sha }} run=${{ github.run_id }} supabase_job=${{ needs.supabase.result }} pages_http=$pages_code mcp_http=$mcp_code"
+          echo "receipt sha=${{ github.sha }} run=${{ github.run_id }} supabase_job=${{ needs.supabase.result }} pages_http=$pages_code served_sha=$served_sha mcp_http=$mcp_code"

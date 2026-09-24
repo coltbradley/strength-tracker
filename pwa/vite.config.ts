@@ -10,10 +10,29 @@ import { VitePWA } from "vite-plugin-pwa";
 // the manifest all follow.
 const base = process.env.PAGES_BASE || "/";
 
+// The deploy smoke reads this back from the SERVED site and compares it to the
+// commit it meant to publish (A-135): printing github.sha only proved what the
+// workflow intended. json is outside the service worker's globPatterns, so
+// this file is never precached and always reflects what Pages serves.
+const buildStamp = {
+  name: "build-stamp",
+  apply: "build" as const,
+  generateBundle(this: {
+    emitFile: (file: { type: "asset"; fileName: string; source: string }) => void;
+  }) {
+    this.emitFile({
+      type: "asset",
+      fileName: "build.json",
+      source: JSON.stringify({ sha: process.env.VITE_BUILD_SHA || null }),
+    });
+  },
+};
+
 export default defineConfig({
   base,
   plugins: [
     react(),
+    buildStamp,
     VitePWA({
       // NOT "autoUpdate". That combination — autoUpdate plus
       // registerSW({immediate:true}) — makes a new deploy call skipWaiting and
