@@ -1,37 +1,38 @@
 # Release runbook
 
-## Where production stands (checked 2026-09-12)
+## Where production stands (checked 2026-09-24)
 
-Pushing to `main` deploys. The three CI settings landed on 2026-09-12, so
-`deploy.yml` now runs `supabase db push`, deploys all four functions, and only
-then publishes Pages. Check a release with `gh run list` and the
-`migrations + edge functions` job log: when credentials are set it should say
-"Remote database is up to date" or list what it applied. A `supabase/` push
-without all three credentials fails at the gate step — it does not skip with
-success.
+Pushing to `main` deploys. `deploy.yml` runs `supabase db push`, deploys all
+four functions, and only then publishes Pages. It does not wait on CI (A-134:
+Actions billing). Check a release with `gh run list` and two log lines:
 
-Live as of that check: migrations match local through `20260907060000`;
-`mcp-server` v26, `coach` v15, `push-alerts` v5, `endurance-sync` v3 all
-ACTIVE; `/mcp-server/health` answers ok; the `alert-sweep` cron runs every five
-minutes.
+- `migrations + edge functions`: "Remote database is up to date" or the
+  migrations it applied. A `supabase/` push without all three credentials
+  fails at the gate step; it does not skip with success.
+- `publish PWA` → `smoke`: a `receipt sha=… served_sha=…` line. The smoke
+  polls the served `build.json` until it names the pushed commit and fails the
+  job otherwise (A-135), so `served_sha` equal to `sha` means Pages is serving
+  that exact build.
 
-Still open from the 2026-09-07 checklist below:
+Live as of that check: migrations match local through `20260924200000`;
+`mcp-server` v62, `coach` v24, `push-alerts` v9, `endurance-sync` v6 all
+ACTIVE; `/mcp-server/health` answers ok. `COACH_ALLOWED_USERS` is set (the
+coach is fail-closed without it). Run 36052798728's receipt showed
+`served_sha` equal to `sha`.
 
-- **The prompt sweep is not configured.** No `SWEEP_SECRET` function secret
-  and no Vault rows exist, so every cron run succeeds while delivering nothing.
-  Rest alerts are unaffected. Morning check-in prompts only appear in-app on
-  foreground until step 2 below is done.
+Still open:
+
+- **The prompt sweep is not configured**, and that is deferred to Phase 5
+  (A-137/A-138). No `SWEEP_SECRET` function secret and no Vault rows exist,
+  so every cron run succeeds while delivering nothing. Rest alerts are
+  unaffected. Check-in prompts appear in-app on foreground.
 - **Push on a real phone** has still never been verified end to end (see
   "What needs a phone").
 
-Not yet live at all: the 22-task "live session adaptation" work (four new
-migrations, six new MCP tools, a coach prompt rewrite, the reworked session
-screen). See the 2026-09-17 round below before running anything from that
-plan against production.
-
 ## 2026-09-17 round — release checklist
 
-Not yet deployed. Twenty-two tasks: set type and skips chosen at log time
+Deployed: its migrations (through `20260917030000`) and functions were live by
+2026-09-19. Kept as the record of that round. Twenty-two tasks: set type and skips chosen at log time
 rather than defaulted from the slot (`session_skips`), equipment-aware load
 entry with correct plate math, a focus-hero session screen with a
 tap-to-jump progress rail, calmer sync, and coach trends and observations
@@ -586,6 +587,8 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
 
 ## Post-deploy smoke test (2 min)
 
+0. The deploy log's `receipt` line has `served_sha` equal to `sha`. The
+   workflow already fails otherwise; this is where to read it.
 1. `curl https://<PROJECT_REF>.supabase.co/functions/v1/mcp-server/health`
    — HTTP **200** and `{"status":"ok",...}` only when the function's
    `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set and the token store
