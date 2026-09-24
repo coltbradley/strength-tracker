@@ -2296,6 +2296,97 @@ await check("a program files under a phase, and survives the phase", async () =>
 });
 
 
+// set_training_plan used to supersede, insert and write phases as separate
+// PostgREST requests with a compensating rollback, so a failure mid-way could
+// leave someone with no live plan (A-84). replace_training_plan does all of it
+// in one transaction, as the service role, serialized per user.
+const phasesJson = (rows) => JSON.stringify(rows).replace(/'/g, "''");
+const TWO_PHASES = phasesJson([
+  { name: "Base", starts_on: "2027-01-01", ends_on: "2027-01-31", focus: "volume", primary_exercise_ids: ["Barbell_Squat"] },
+  { name: "Build", starts_on: "2027-02-01", ends_on: "2027-03-31", progression: "add 2.5 kg a week" },
+]);
+const livePlan = async () =>
+  (await db.query(
+    `select id, objective, confirmed_at from training_plans where user_id = '${OWNER}' and superseded_at is null`,
+  )).rows;
+const replacePlan = (objective, phases, confirm = false, who = OWNER) =>
+  db.query(
+    `select replace_training_plan('${who}', '${objective}', '2027-01-01', '2027-03-31', null,
+       '${phases}'::jsonb, ${confirm}) as r`,
+  );
+
+await check("replace_training_plan supersedes the live plan and writes every phase in one call", async () => {
+  await db.exec("reset role;");
+  const before = await livePlan();
+  assertEq(before.length, 1, "one live plan going in");
+  await db.exec("set role service_role");
+  const r = (await replacePlan("Bench 150", TWO_PHASES)).rows[0].r;
+  await db.exec("reset role;");
+  assertEq(r.superseded_plan_id, before[0].id, "reports what it superseded");
+  const live = await livePlan();
+  assertEq(live.map((p) => p.objective), ["Bench 150"], "the new plan is the live one");
+  const phases = await db.query(
+    `select name, position, user_id, primary_exercise_ids from plan_phases where plan_id = '${r.plan_id}' order by position`,
+  );
+  assertEq(phases.rows.map((p) => [p.name, p.position, p.user_id]), [
+    ["Base", 0, OWNER],
+    ["Build", 1, OWNER],
+  ], "phases in order, stamped with the owner");
+  assertEq(phases.rows[0].primary_exercise_ids, ["Barbell_Squat"], "text[] from the JSON array");
+  assertEq(phases.rows[1].primary_exercise_ids, [], "missing ids default to empty, not null");
+});
+
+await check("a failing phase rolls the WHOLE replacement back: the old plan stays live", async () => {
+  const before = await livePlan();
+  const count = (await db.query(`select count(*)::int as n from training_plans where user_id = '${OWNER}'`)).rows[0].n;
+  const overlapping = phasesJson([
+    { name: "One", starts_on: "2027-01-01", ends_on: "2027-02-01" },
+    { name: "Two", starts_on: "2027-02-01", ends_on: "2027-03-31" },
+  ]);
+  let code = null;
+  await db.exec("set role service_role");
+  try {
+    await replacePlan("never lands", overlapping);
+  } catch (e) {
+    code = e.code ?? e.message;
+  }
+  await db.exec("reset role;");
+  assertEq(code, "23P01", "the overlap trigger refused it");
+  assertEq(await livePlan(), before, "the previous plan is still the live one");
+  const after = (await db.query(`select count(*)::int as n from training_plans where user_id = '${OWNER}'`)).rows[0].n;
+  assertEq(after, count, "no half-written plan row");
+});
+
+await check("a CONFIRMED live plan is replaced only with confirm_change", async () => {
+  await db.exec(`update training_plans set confirmed_at = now() where user_id = '${OWNER}' and superseded_at is null`);
+  const before = await livePlan();
+  let message = null;
+  await db.exec("set role service_role");
+  try {
+    await replacePlan("unapproved", TWO_PHASES, false);
+  } catch (e) {
+    message = e.message;
+  }
+  await db.exec("reset role;");
+  if (!/confirm_change/.test(message ?? "")) throw new Error(`expected a confirm_change refusal, got ${message}`);
+  assertEq(await livePlan(), before, "the confirmed plan is untouched");
+  await db.exec("set role service_role");
+  const r = (await replacePlan("approved revision", TWO_PHASES, true)).rows[0].r;
+  await db.exec("reset role;");
+  assertEq(r.superseded_plan_was_confirmed, true, "says it replaced a confirmed plan");
+  assertEq((await livePlan()).map((p) => [p.objective, p.confirmed_at]), [["approved revision", null]], "lands unconfirmed");
+});
+
+await check("only the service role can call replace_training_plan", async () => {
+  let rejected = false;
+  try {
+    await asUser(OWNER, `select replace_training_plan('${OWNER}', 'from a browser', '2027-01-01', '2027-03-31', null, '${TWO_PHASES}'::jsonb, true)`);
+  } catch (e) {
+    rejected = e.code === "42501";
+  }
+  if (!rejected) throw new Error("an authenticated session could replace a plan directly");
+});
+
 // --- A · push alerts ---------------------------------------------------------
 // The three tables behind "alert me when the app is closed" (20260905050000).
 // A subscription is a device's address and must be private to its owner; the

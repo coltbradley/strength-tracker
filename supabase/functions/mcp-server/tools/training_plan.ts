@@ -31,7 +31,6 @@ import {
   type RequestContext,
   ToolError,
 } from "../lib/errors.ts";
-import { log } from "../lib/log.ts";
 
 const phaseSchema = z.object({
   name: z
@@ -524,104 +523,42 @@ export function registerSetTrainingPlan(
         }
 
         const previous = await livePlan(db);
-        // Before the supersede below, which is the first write.
+        // An early, readable refusal. replace_training_plan enforces the same
+        // gate inside its transaction, since this read can be stale by then.
         assertMaySupersede(previous, args.confirm_change);
 
-        // One live plan per user is a partial unique index, so the old plan
-        // has to be superseded BEFORE the new row can exist. That opens a
-        // window with no live plan; a failure inside it is compensated below
-        // by putting the old plan back, and the whole thing is reported
-        // rather than left half-done. PostgREST has no transactions.
-        const supersededAt = new Date().toISOString();
-        if (previous !== null) {
-          const { error } = await db.client
-            .from("training_plans")
-            .update({ superseded_at: supersededAt })
-            .eq("id", previous.id)
-            .eq("user_id", db.ownerId)
-            .is("superseded_at", null);
-          if (error) throw new Error(`supersede plan: ${error.message}`);
-        }
-
-        let planId: string | null = null;
-        try {
-          const inserted = must(
-            await db.client
-              .from("training_plans")
-              .insert({
-                user_id: db.ownerId,
-                objective: args.objective,
-                starts_on: dates.starts_on,
-                ends_on: dates.ends_on,
-                source_note: args.source_note ?? null,
-                confirmed_at: null,
-              })
-              .select("id")
-              .single(),
-            "insert plan",
-          ) as { id: string };
-          planId = inserted.id;
-
-          // EVERY column on EVERY row. PostgREST builds a bulk insert from the
-          // union of the rows' keys and fills a missing one with NULL, not
-          // with the column default (see prescriptionRows).
-          const { error: phaseError } = await db.client
-            .from("plan_phases")
-            .insert(
-              args.phases.map((p, i) => ({
-                user_id: db.ownerId,
-                plan_id: planId,
-                position: i,
-                name: p.name,
-                starts_on: p.starts_on,
-                ends_on: p.ends_on,
-                focus: p.focus ?? null,
-                progression: p.progression ?? null,
-                sessions_per_week: p.sessions_per_week ?? null,
-                primary_exercise_ids: p.primary_exercise_ids ?? [],
-                notes: p.notes ?? null,
-              })),
-            );
-          if (phaseError) {
-            throw new Error(`insert phases: ${phaseError.message}`);
-          }
-        } catch (err) {
-          // Compensate: remove the fragment nobody saw, put the old plan
-          // back. Either failing is logged, never swallowed, and the caller
-          // still sees the original error.
-          if (planId !== null) {
-            const { error } = await db.client
-              .from("training_plans")
-              .delete()
-              .eq("id", planId)
-              .eq("user_id", db.ownerId);
-            if (error) {
-              log("error", "set_training_plan_cleanup_failed", {
-                request_id: ctx.requestId,
-                tool: "set_training_plan",
-                plan_id: planId,
-                error: error.message,
-              });
-            }
-          }
-          if (previous !== null) {
-            const { error } = await db.client
-              .from("training_plans")
-              .update({ superseded_at: null })
-              .eq("id", previous.id)
-              .eq("user_id", db.ownerId)
-              .eq("superseded_at", supersededAt);
-            if (error) {
-              log("error", "set_training_plan_restore_failed", {
-                request_id: ctx.requestId,
-                tool: "set_training_plan",
-                plan_id: previous.id,
-                error: error.message,
-              });
-            }
-          }
-          throw err;
-        }
+        // Supersede, insert and phases in ONE transaction (A-84). This used to
+        // be three PostgREST requests with a compensating rollback, and a
+        // failure between them could leave the lifter with no live plan. The
+        // function reads exactly these keys from each phase.
+        const { data: written, error: writeError } = await db.client.rpc(
+          "replace_training_plan",
+          {
+            p_user_id: db.ownerId,
+            p_objective: args.objective,
+            p_starts_on: dates.starts_on,
+            p_ends_on: dates.ends_on,
+            p_source_note: args.source_note ?? null,
+            p_phases: args.phases.map((p) => ({
+              name: p.name,
+              starts_on: p.starts_on,
+              ends_on: p.ends_on,
+              focus: p.focus ?? null,
+              progression: p.progression ?? null,
+              sessions_per_week: p.sessions_per_week ?? null,
+              primary_exercise_ids: p.primary_exercise_ids ?? [],
+              notes: p.notes ?? null,
+            })),
+            p_confirm_change: args.confirm_change,
+          },
+        );
+        if (writeError) throw new Error(`write plan: ${writeError.message}`);
+        const result = written as {
+          plan_id: string;
+          superseded_plan_id: string | null;
+          superseded_plan_was_confirmed: boolean;
+        };
+        const planId = result.plan_id;
 
         const phases = must(
           await db.client
@@ -654,14 +591,14 @@ export function registerSetTrainingPlan(
           "This plan is UNCONFIRMED. Review it with the user; after explicit " +
             `approval in chat, call confirm_training_plan with plan_id ${planId}.`,
         ];
-        if (previous !== null) {
+        if (result.superseded_plan_id !== null) {
           lines.push(
             "",
-            previous.confirmed_at !== null
-              ? `The previous CONFIRMED plan (${previous.id}) is superseded as of ` +
+            result.superseded_plan_was_confirmed
+              ? `The previous CONFIRMED plan (${result.superseded_plan_id}) is superseded as of ` +
                   "now, so the app shows no plan until this one is confirmed. " +
                   "Confirm it in this conversation."
-              : `The previous unconfirmed draft (${previous.id}) is superseded.`,
+              : `The previous unconfirmed draft (${result.superseded_plan_id}) is superseded.`,
           );
         }
 
@@ -671,9 +608,8 @@ export function registerSetTrainingPlan(
             confirmed: false,
             starts_on: dates.starts_on,
             ends_on: dates.ends_on,
-            superseded_plan_id: previous?.id ?? null,
-            superseded_plan_was_confirmed:
-              previous !== null && previous.confirmed_at !== null,
+            superseded_plan_id: result.superseded_plan_id,
+            superseded_plan_was_confirmed: result.superseded_plan_was_confirmed,
             phases,
           },
           lines.join("\n"),
