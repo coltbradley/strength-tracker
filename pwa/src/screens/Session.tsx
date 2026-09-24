@@ -138,6 +138,7 @@ import {
   resolveLoadEntry,
   totalKg,
 } from "../lib/loadEntry";
+import { loadGridFor } from "../lib/loadGrid";
 import {
   offersLoadStyle,
   resolveLoadStyle,
@@ -166,7 +167,7 @@ interface RestCache {
   forLabel: string | null;
 }
 
-type PadKind = "load" | "reps" | "rest" | "base";
+type PadKind = "load" | "reps" | "duration" | "rest" | "base";
 interface PadSpec {
   kind: PadKind;
   fromPlates?: boolean;
@@ -258,6 +259,7 @@ export function Session() {
   // lib/loadEntry.ts). Seeded from the configured fallback, never a literal.
   const [entryKg, setEntryKg] = useState(() => getPrefillFallback().loadKg);
   const [reps, setReps] = useState(() => getPrefillFallback().reps);
+  const [durationSeconds, setDurationSeconds] = useState(60);
   const [setType, setSetType] = useState<SetType>("working");
   /**
    * The staged rating, and which exercises have asked to see the chips.
@@ -284,6 +286,7 @@ export function Session() {
       reps,
       setType: setType as BracketKind,
       rpe,
+      durationSeconds,
     };
     stagedDraftsRef.current[key] = { ...prior, ...next };
   };
@@ -301,6 +304,7 @@ export function Session() {
   const [roundDrafts, setRoundDrafts] = useState<Record<string, SetDraft>>({});
   const [roundError, setRoundError] = useState<string | null>(null);
   const [leavePromptOpen, setLeavePromptOpen] = useState(false);
+  const [extraSetArmed, setExtraSetArmed] = useState(false);
   /** Which paired editor owns the ephemeral pad or plate sheet, if either. */
   const [roundInputKey, setRoundInputKey] = useState<string | null>(null);
 
@@ -975,7 +979,9 @@ export function Session() {
     // entry, the same way `toggleOpen` pins the accordion: a set is being
     // fixed against a specific exercise, and neither an unrelated selection
     // nor the entry that happened to be open before may steal it.
-    setOpenKey(editingEntryKey ?? selectedEntryKey ?? priorFocusKey.current);
+    const current = editingEntryKey ?? focusKey ?? openKey ?? selectedEntryKey;
+    setSelectedEntryKey(current);
+    setOpenKey(current);
     setPresentation("overview");
   };
 
@@ -1027,6 +1033,9 @@ export function Session() {
   const currentBracket = openEntry
     ? bracketFor(openEntry, countFor(openEntry, stagedKind), stagedKind)
     : null;
+  const inputUnit = currentBracket?.entered_load != null && currentBracket.entered_unit
+    ? currentBracket.entered_unit
+    : unit;
   // The bracket a freshly opened exercise should start on, which is a
   // question about the PLAN and not about whatever the toggle was left on
   // two exercises ago.
@@ -1069,6 +1078,21 @@ export function Session() {
   const loadEntry: LoadEntry = resolveLoadEntry(loadEntryInput);
   const perSide = loadEntry === "per_side";
   const totalLoadKg = totalKg(entryKg, loadEntry);
+  const currentDraft = openEntry
+    ? stagedDraftsRef.current[`${openEntry.key}:${openEntry.exercise_id}`]
+    : undefined;
+  const displayedLoad = currentDraft?.enteredLoad !== undefined && currentDraft.enteredUnit === inputUnit
+    ? currentDraft.enteredLoad
+    : toDisplay(entryKg, inputUnit);
+  const loadGrid = openEntry && currentBracket?.load_pct_tm == null
+    ? loadGridFor(
+        { id: openEntry.exercise_id, name: openEntry.name, equipment },
+        inputUnit,
+        loadEntry,
+        { typedValue: displayedLoad },
+      )
+    : null;
+  const nearbyLoads = loadGrid?.nearbyStandardValues(displayedLoad).slice(0, 3) ?? [];
   // the total is what the column caps, so a per-side entry caps at half
   const maxEntryKg = perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
 
@@ -1152,6 +1176,7 @@ export function Session() {
       setReps(stagedDraft.reps);
       setSetType(stagedDraft.setType);
       setRpe(stagedDraft.rpe);
+      setDurationSeconds(stagedDraft.durationSeconds ?? 60);
       return;
     }
     const bracket = fresh ? openingBracket : currentBracket;
@@ -1190,18 +1215,20 @@ export function Session() {
       lastSession: lastActuals[openEntry.exercise_id] ?? null,
     }, bodyweightFallback(equipment));
     // every source above is a TOTAL; the steppers hold what gets typed
-    const prefilledLoad =
-      Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
+    const prefilledLoad = bracket?.entered_load != null && bracket.entered_unit
+      ? Math.round(fromDisplay(bracket.entered_load, bracket.entered_unit) * 100) / 100
+      : Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
     setEntryKg(prefilledLoad);
     setReps(p.reps);
-    if (stagedDraftsRef.current[draftKey]) {
-      stagedDraftsRef.current[draftKey] = {
-        entryKg: prefilledLoad,
-        reps: p.reps,
-        setType: stagedKind,
-        rpe,
-      };
-    }
+    stagedDraftsRef.current[draftKey] = {
+      entryKg: prefilledLoad,
+      reps: p.reps,
+      setType: stagedKind,
+      rpe: fresh ? null : rpe,
+      durationSeconds,
+      enteredLoad: bracket?.entered_load ?? undefined,
+      enteredUnit: bracket?.entered_unit ?? undefined,
+    };
     // Only on a fresh open. After that the toggle belongs to the lifter (and
     // to logSet, which advances it as the plan's warmups are used up):
     // writing it here on every bracket change would fight a deliberate tap.
@@ -1279,6 +1306,7 @@ export function Session() {
   ): SetInsert => {
     const storedLoad = totalKg(draft.entryKg, entryMode);
     const tick = isTick(entry);
+    const timed = entry.brackets[0]?.tracking === "time";
     return {
       id: uuid(),
       session_id: sessionId as string,
@@ -1289,15 +1317,18 @@ export function Session() {
       set_index: index,
       set_type: draft.setType,
       load_kg: tick ? 0 : Math.round(storedLoad * 100) / 100,
-      reps: tick ? 0 : draft.reps,
+      reps: tick || timed ? 0 : draft.reps,
       performed_at: new Date().toISOString(),
       rest_seconds_actual: actualRest,
       load_entry: loadEntryForSet(entryMode, storedLoad),
       entered_load: tick || storedLoad <= 0
         ? null
-        : toDisplay(draft.entryKg, unit),
-      entered_unit: tick || storedLoad <= 0 ? null : unit,
+        : draft.enteredLoad !== undefined && draft.enteredUnit === (bracket?.entered_unit ?? unit)
+          ? draft.enteredLoad
+          : toDisplay(draft.entryKg, bracket?.entered_unit ?? unit),
+      entered_unit: tick || storedLoad <= 0 ? null : (bracket?.entered_unit ?? unit),
       rpe: tick ? null : draft.rpe,
+      duration_seconds: timed ? Math.round(draft.durationSeconds ?? 60) : null,
     };
   };
 
@@ -1312,6 +1343,13 @@ export function Session() {
       reps,
       setType: setType as BracketKind,
       rpe,
+      durationSeconds,
+      enteredLoad: openEntry
+        ? stagedDraftsRef.current[`${openEntry.key}:${openEntry.exercise_id}`]?.enteredLoad
+        : undefined,
+      enteredUnit: openEntry
+        ? stagedDraftsRef.current[`${openEntry.key}:${openEntry.exercise_id}`]?.enteredUnit
+        : undefined,
     },
     entryToLog: ExerciseEntry | null = openEntry,
   ): Promise<boolean> => {
@@ -1390,6 +1428,14 @@ export function Session() {
       // below always starts, because `rest_seconds_actual` is data and
       // append-only, so a rest not measured now can never be recorded later.
       const roundOpen = supersetPartnerOf(entries, entryToLog.key, doneAfter);
+      if (doneAfter(entryToLog) && roundOpen === null) {
+        const index = entries.findIndex((entry) => entry.key === entryToLog.key);
+        const nextEntry = entries.slice(index + 1).find((entry) => !doneAfter(entry));
+        if (nextEntry) {
+          setFocusKey(nextEntry.key);
+          setOpenKey(nextEntry.key);
+        }
+      }
 
       // The clock always starts MEASURING (rest_seconds_actual is data, and
       // append-only means it can never be added later); auto-start governs only
@@ -1437,6 +1483,7 @@ export function Session() {
       // about set 4, and a sticky value would quietly attach one lifter's one
       // honest answer to every row after it.
       setRpe(null);
+      setExtraSetArmed(false);
       return true;
     } catch (error) {
       reportError(error, "queue set");
@@ -1569,6 +1616,14 @@ export function Session() {
       const doneAfter = (entry: ExerciseEntry): boolean =>
         entry.key in skips ||
         entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
+      if (doneAfter(members[0]) && doneAfter(members[1])) {
+        const index = entries.findIndex((entry) => entry.key === members[1].key);
+        const nextEntry = entries.slice(index + 1).find((entry) => !doneAfter(entry));
+        if (nextEntry) {
+          setFocusKey(nextEntry.key);
+          setOpenKey(nextEntry.key);
+        }
+      }
       const now = Date.now();
       restRef.current = { startedAt: now };
       // The round names its rest after A2 (see forLabel just below); the
@@ -2109,19 +2164,37 @@ export function Session() {
           ...prior,
           [roundEntry.key]: { ...draft, ...next },
         }));
+      if (pad.kind === "duration") {
+        return {
+          label: `${roundEntry.name.toUpperCase()} · DURATION IN SECONDS`,
+          action: "SET DURATION",
+          initial: String(draft.durationSeconds ?? 60),
+          allowDecimal: false,
+          onCommit: (value) => {
+            updateDraft({ durationSeconds: Math.min(3600, Math.max(0, Math.round(value))) });
+            setPad(null);
+          },
+          onCancel: () => setPad(null),
+        };
+      }
       if (pad.kind === "load") {
+        const roundUnit = bracket?.entered_load != null && bracket.entered_unit
+          ? bracket.entered_unit
+          : unit;
         const perSideRound = entryMode === "per_side";
         const max = perSideRound ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
         return {
           label: `${roundEntry.name.toUpperCase()} · ${
             perSideRound ? "WEIGHT ON EACH DUMBBELL" : "ONE TOTAL WEIGHT"
-          } IN ${unit.toUpperCase()}`,
+          } IN ${roundUnit.toUpperCase()}`,
           action: pad.fromPlates ? "BACK TO PLATES" : "SET LOAD",
-          initial: String(toDisplay(draft.entryKg, unit)),
+          initial: String(draft.enteredLoad !== undefined && draft.enteredUnit === roundUnit
+            ? draft.enteredLoad
+            : toDisplay(draft.entryKg, roundUnit)),
           allowDecimal: true,
           onCommit: (value) => {
-            const kg = Math.min(max, Math.max(0, fromDisplay(value, unit)));
-            updateDraft({ entryKg: Math.round(kg * 100) / 100 });
+            const kg = Math.min(max, Math.max(0, fromDisplay(value, roundUnit)));
+            updateDraft({ entryKg: Math.round(kg * 100) / 100, enteredLoad: value, enteredUnit: roundUnit });
             setPad(null);
             if (pad.fromPlates) setSheet("plates");
           },
@@ -2145,19 +2218,18 @@ export function Session() {
         onCancel: () => setPad(null),
       };
     }
-    const U = unit.toUpperCase();
     if (pad.kind === "load") {
       return {
         label: `${openEntry.name.toUpperCase()} · ${
           perSide ? "WEIGHT ON EACH DUMBBELL" : "ONE TOTAL WEIGHT"
-        } IN ${U}`,
+        } IN ${inputUnit.toUpperCase()}`,
         action: pad.fromPlates ? "BACK TO PLATES" : "SET LOAD",
-        initial: String(toDisplay(entryKg, unit)),
+        initial: String(displayedLoad),
         allowDecimal: true,
         onCommit: (v) => {
-          const kg = Math.min(maxEntryKg, Math.max(0, fromDisplay(v, unit)));
+          const kg = Math.min(maxEntryKg, Math.max(0, fromDisplay(v, inputUnit)));
           const entryKg = Math.round(kg * 100) / 100;
-          rememberStagedDraft(openEntry, { entryKg });
+          rememberStagedDraft(openEntry, { entryKg, enteredLoad: v, enteredUnit: inputUnit });
           setEntryKg(entryKg);
           setPad(null);
           if (pad.fromPlates) setSheet("plates");
@@ -2178,6 +2250,21 @@ export function Session() {
           const reps = Math.min(MAX_REPS, Math.max(0, Math.round(v)));
           rememberStagedDraft(openEntry, { reps });
           setReps(reps);
+          setPad(null);
+        },
+        onCancel: () => setPad(null),
+      };
+    }
+    if (pad.kind === "duration") {
+      return {
+        label: `${openEntry.name.toUpperCase()} · DURATION IN SECONDS`,
+        action: "SET DURATION",
+        initial: String(durationSeconds),
+        allowDecimal: false,
+        onCommit: (value) => {
+          const next = Math.min(3600, Math.max(0, Math.round(value)));
+          rememberStagedDraft(openEntry, { durationSeconds: next });
+          setDurationSeconds(next);
           setPad(null);
         },
         onCancel: () => setPad(null),
@@ -2490,8 +2577,11 @@ export function Session() {
               reps,
               setType: setType as BracketKind,
               rpe,
+              durationSeconds,
+              enteredLoad: currentDraft?.enteredLoad,
+              enteredUnit: currentDraft?.enteredUnit,
             }}
-            tracking={isTick(entry) ? "done" : "reps"}
+            tracking={isTick(entry) ? "done" : isTimed(entry) ? "time" : "reps"}
             loadPresentation={{
               perSide,
               totalKg: totalLoadKg,
@@ -2503,15 +2593,25 @@ export function Session() {
               styleIcon,
               perSideIcon,
             }}
-            unit={unit}
+            unit={inputUnit}
             maxEntryKg={maxEntryKg}
-            loadSteps={loadSteps(entry.exercise_id, unit)}
+            loadSteps={loadSteps(entry.exercise_id, inputUnit)}
+            nearbyLoads={nearbyLoads}
+            onChooseNearbyLoad={(value) => {
+              const nextKg = fromDisplay(value, inputUnit);
+              rememberStagedDraft(entry, {
+                entryKg: nextKg,
+                enteredLoad: value,
+                enteredUnit: inputUnit,
+              });
+              setEntryKg(nextKg);
+            }}
             rpeShown={rpeShown(entry.exercise_id)}
             logLabel={
               editing
                 ? `SAVE SET ${editing.set.set_index + 1}`
                 : presentation === "focus" && workoutDone
-                  ? "FINISH"
+                  ? extraSetArmed ? "Log extra set" : "FINISH"
                   : presentation === "focus"
                     ? isTick(entry)
                       ? "DONE"
@@ -2532,7 +2632,7 @@ export function Session() {
                 ? lastTime(entry.exercise_id, true, noLoadEditor)
                 : null
             }
-            restSlot={restInline && !sheetOpen ? restTimerEl : undefined}
+            restSlot={undefined}
             hasWarmupBracket={warmupSets(entry) > 0}
             onAlreadyWarm={() => {
               rememberStagedDraft(entry, { setType: "working" });
@@ -2550,11 +2650,15 @@ export function Session() {
               if (next.reps !== undefined) setReps(next.reps);
               if (next.setType !== undefined) setSetType(next.setType);
               if (next.rpe !== undefined) setRpe(next.rpe);
+              if (next.durationSeconds !== undefined) {
+                setDurationSeconds(next.durationSeconds);
+                if (!editing) rememberStagedDraft(entry, { durationSeconds: next.durationSeconds });
+              }
             }}
             onLog={
               editing
                 ? saveCorrection
-                : presentation === "focus" && workoutDone
+                : presentation === "focus" && workoutDone && !extraSetArmed
                   ? finishWorkout
                   : () => tapLog(() => logSet())
             }
@@ -2658,12 +2762,13 @@ export function Session() {
                         const el = e.currentTarget
                           .parentElement as HTMLElement | null;
                         window.setTimeout(() => {
-                          el?.scrollIntoView({
-                            block: "center",
-                            behavior: prefersReducedMotion()
-                              ? "auto"
-                              : "smooth",
-                          });
+                          if (typeof el?.scrollIntoView === "function")
+                            el.scrollIntoView({
+                              block: "center",
+                              behavior: prefersReducedMotion()
+                                ? "auto"
+                                : "smooth",
+                            });
                         }, 300);
                       }}
                       placeholder="Note on this set…"
@@ -3055,6 +3160,8 @@ export function Session() {
   /** A movement logged by ticking it off rather than by weight and reps. */
   const isTick = (entry: ExerciseEntry | null): boolean =>
     entry?.brackets[0]?.tracking === "done";
+  const isTimed = (entry: ExerciseEntry | null): boolean =>
+    entry?.brackets[0]?.tracking === "time";
 
   const defaultRoundDraft = (entry: ExerciseEntry): SetDraft => {
     const kind = suggestedKind(entry);
@@ -3234,13 +3341,6 @@ export function Session() {
     disarmRestAlert();
     navigate("/end");
   };
-  // The rest clock renders INSIDE the hero editor (just above its bottom
-  // bar) instead of Session's own fixed strip, but only for the plain,
-  // single-entry case that editor actually is — mid-correction or mid-round
-  // it reverts to the strip, since neither of those paths has a bottom bar
-  // of its own to sit above.
-  const restInline = inFocusDeck && !editing && focusSupersetPair === null;
-
   /** "Next: Squat 145 x 5, set 3 of 4" -- the same set the focus hero's own
    *  "next dot" line and the state rail's "next" dot point at. If the open
    *  entry itself is not done yet, the very next set is just its own next
@@ -3263,7 +3363,6 @@ export function Session() {
   };
 
   const restTimerEl = (
-    <>
       <RestTimer
         rest={rest}
         onAdjust={(d) => {
@@ -3284,17 +3383,15 @@ export function Session() {
           disarmRestAlert();
         }}
         nextSetLabel={nextSetLabel()}
+        lastSetRpe={lastLoggedSet?.rpe ?? null}
+        onRateLastSet={rest && !editing && lastLoggedSet ? rateLastSet : undefined}
+        onNoteLastSet={rest && !editing && lastLoggedSet
+          ? () => {
+              openNote(lastLoggedSet.id);
+              setMoreOpen(true);
+            }
+          : undefined}
       />
-      {rest && !editing && lastLoggedSet && (
-        <div className="rest-rate">
-          <RpeChips
-            shown
-            value={lastLoggedSet.rpe ?? null}
-            onChange={(rpe) => rateLastSet(rpe)}
-          />
-        </div>
-      )}
-    </>
   );
 
   return (
@@ -3355,6 +3452,11 @@ export function Session() {
               renderEditor={(entry) => renderEditor(entry, false, "hero")}
               onOpenMore={() => setMoreOpen(true)}
               formatScheme={scheme}
+              topSlot={!sheetOpen ? restTimerEl : undefined}
+              workoutComplete={workoutDone && !editing}
+              extraSetArmed={extraSetArmed}
+              onFinishWorkout={finishWorkout}
+              onAddExtraSet={() => setExtraSetArmed(true)}
               supersetHeading={focusRoundHeading}
               onSwap={
                 focusEntry && !editing && !swapFrozen(focusEntry)
@@ -3463,7 +3565,7 @@ export function Session() {
           would otherwise duplicate it below a footer that is itself hidden
           there. Mid-correction or mid-round, neither of which has a bottom
           bar of its own to sit above, it falls back to this fixed strip. */}
-      {!sheetOpen && !restInline && restTimerEl}
+      {!sheetOpen && !inFocusDeck && restTimerEl}
 
       <div className="session-footer">
         <button

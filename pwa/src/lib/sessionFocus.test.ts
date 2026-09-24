@@ -66,15 +66,15 @@ describe("session focus derivations", () => {
     expect(pinnedOverviewEntryKey("deadlift", null)).toBe("deadlift");
   });
 
-  it("does not offer focus mode for a timed prescription", () => {
-    expect(isFocusEligible([entry("plank", 3, "time")])).toBe(false);
+  it("offers focus mode for a timed prescription", () => {
+    expect(isFocusEligible([entry("plank", 3, "time")])).toBe(true);
   });
 
-  it("does not offer focus mode when a later bracket tracks duration", () => {
+  it("offers focus mode when a later bracket tracks duration", () => {
     const squat = entry("squat", 2);
     squat.brackets.push({ ...squat.brackets[0]!, id: "rx-squat-time", tracking: "time" });
 
-    expect(isFocusEligible([squat])).toBe(false);
+    expect(isFocusEligible([squat])).toBe(true);
   });
 
   it("counts remaining sets and exercises from incomplete canonical entries", () => {

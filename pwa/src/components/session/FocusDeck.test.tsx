@@ -67,6 +67,24 @@ describe("FocusDeck", () => {
     expect(screen.queryByText(/REMAINING/)).toBeNull();
   });
 
+  it("keeps the workout menu reachable above the progress rail and hosts the scene slot", () => {
+    const onViewFullWorkout = vi.fn();
+    render(
+      <FocusDeck
+        {...props({
+          onViewFullWorkout,
+          topSlot: <div data-testid="focus-top-slot">REST 1:20</div>,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Workout")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open workout" }));
+    expect(onViewFullWorkout).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("focus-top-slot").textContent).toBe("REST 1:20");
+    expect(screen.getByRole("list", { name: "workout progress" })).toBeTruthy();
+  });
+
   it("marks completed, current, and future sets in order without another spoken status", () => {
     const { container } = render(
       <FocusDeck

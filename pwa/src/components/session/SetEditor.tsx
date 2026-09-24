@@ -13,12 +13,16 @@ export type SetDraft = {
   reps: number;
   setType: BracketKind;
   rpe: number | null;
+  durationSeconds?: number;
+  /** Exact authored input, kept beside canonical kg while a draft is staged. */
+  enteredLoad?: number;
+  enteredUnit?: Unit;
 };
 
 export interface SetEditorProps {
   entry: ExerciseEntry;
   draft: SetDraft;
-  tracking: "reps" | "done";
+  tracking: "reps" | "done" | "time";
   loadPresentation: {
     perSide: boolean;
     totalKg: number;
@@ -49,6 +53,8 @@ export interface SetEditorProps {
   unit: Unit;
   maxEntryKg: number;
   loadSteps: StepDef[];
+  nearbyLoads?: number[];
+  onChooseNearbyLoad?(value: number): void;
   rpeShown: boolean;
   logLabel: string;
   logClassName?: string;
@@ -92,7 +98,7 @@ export interface SetEditorProps {
   onDraftChange(next: Partial<SetDraft>): void;
   onLog(): void;
   onOpenPlates(): void;
-  onOpenPad?(kind: "load" | "reps"): void;
+  onOpenPad?(kind: "load" | "reps" | "duration"): void;
   onToggleLoadEntry(): void;
   onRevealRpe(): void;
 }
@@ -150,6 +156,8 @@ export function SetEditor({
   unit,
   maxEntryKg,
   loadSteps,
+  nearbyLoads = [],
+  onChooseNearbyLoad,
   rpeShown,
   logLabel,
   logClassName = "btn btn-primary btn-log",
@@ -188,6 +196,11 @@ export function SetEditor({
   // Bodyweight has nothing to load — reps is the only number, and the hero.
   const heroIsLoad = focus && tracking === "reps" && !noLoad;
   const heroIsReps = focus && tracking === "reps" && Boolean(noLoad);
+  const heroIsDuration = tracking === "time";
+  const durationSeconds = draft.durationSeconds ?? 60;
+  const displayedLoad = draft.enteredLoad !== undefined && draft.enteredUnit === unit
+    ? draft.enteredLoad
+    : toDisplay(draft.entryKg, unit);
   const coarseDown = loadSteps[0];
   const coarseUp = loadSteps[loadSteps.length - 1];
 
@@ -214,6 +227,24 @@ export function SetEditor({
         max={MAX_REPS}
         onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
         steps={focus ? [] : [REPS_STEP_DOWN, REPS_STEP_UP]}
+      />
+    </section>
+  );
+
+  const durationSection = (
+    <section className={`rule-section ${focus ? "focus-hero-section" : ""}`}>
+      {!focus && <div className="section-head"><span className="field-label">DURATION · SEC</span></div>}
+      <Stepper
+        label="duration"
+        accent
+        display={String(durationSeconds)}
+        subText="SECONDS"
+        onTapValue={onOpenPad === undefined ? undefined : () => onOpenPad("duration")}
+        value={durationSeconds}
+        min={0}
+        max={3600}
+        onChange={(value) => onDraftChange({ durationSeconds: Math.round(value) })}
+        steps={focus ? [] : [{ label: "− 5", delta: -5 }, { label: "+ 5", delta: 5 }]}
       />
     </section>
   );
@@ -296,7 +327,7 @@ export function SetEditor({
       <Stepper
         label="load"
         accent
-        display={String(toDisplay(draft.entryKg, unit))}
+        display={String(displayedLoad)}
         subText={heroIsLoad ? unit.toUpperCase() : loadSub}
         onTapValue={
           onOpenPad === undefined ? undefined : () => onOpenPad("load")
@@ -305,9 +336,23 @@ export function SetEditor({
         value={draft.entryKg}
         min={0}
         max={maxEntryKg}
-        onChange={(entryKg) => onDraftChange({ entryKg })}
+        onChange={(entryKg) => onDraftChange({ entryKg, enteredLoad: undefined, enteredUnit: undefined })}
         steps={focus ? [] : loadSteps}
       />
+      {focus && heroIsLoad && nearbyLoads.length > 0 && onChooseNearbyLoad && (
+        <div className="focus-nearby-loads" aria-label="Nearby standard loads">
+          {nearbyLoads.map((value) => (
+            <button
+              type="button"
+              key={value}
+              aria-label={`Use suggested ${value} ${unit}`}
+              onClick={() => onChooseNearbyLoad(value)}
+            >
+              {value} {unit}
+            </button>
+          ))}
+        </div>
+      )}
       {/* Per-hand count only — never the lb/kg twin conversion the accordion
           shows (loadSub): that's a fine detail for the "more" sheet, not the
           hero. "15 × 2" is this app's own convention for a stored total
@@ -336,7 +381,7 @@ export function SetEditor({
           min={0}
           max={maxEntryKg}
           snap
-          onChange={(entryKg) => onDraftChange({ entryKg })}
+          onChange={(entryKg) => onDraftChange({ entryKg, enteredLoad: undefined, enteredUnit: undefined })}
         />
       )}
       {heroIsReps && (
@@ -347,6 +392,16 @@ export function SetEditor({
           min={0}
           max={MAX_REPS}
           onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
+        />
+      )}
+      {heroIsDuration && (
+        <BarStep
+          def={{ label: "−", delta: -5, announce: "5 seconds" }}
+          label="duration"
+          value={durationSeconds}
+          min={0}
+          max={3600}
+          onChange={(durationSeconds) => onDraftChange({ durationSeconds: Math.round(durationSeconds) })}
         />
       )}
       {showLog ? (
@@ -382,6 +437,16 @@ export function SetEditor({
           onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
         />
       )}
+      {heroIsDuration && (
+        <BarStep
+          def={{ label: "+", delta: 5, announce: "5 seconds" }}
+          label="duration"
+          value={durationSeconds}
+          min={0}
+          max={3600}
+          onChange={(durationSeconds) => onDraftChange({ durationSeconds: Math.round(durationSeconds) })}
+        />
+      )}
     </div>
   );
 
@@ -394,6 +459,11 @@ export function SetEditor({
           </p>
         </section>
       )
+    ) : heroIsDuration ? (
+      <>
+        {durationSection}
+        {!noLoad && loadSection}
+      </>
     ) : heroIsLoad ? (
       <>
         {loadSection}

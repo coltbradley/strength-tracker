@@ -11,7 +11,7 @@
 // again on the next tap. Both are invisible in normal use and both are
 // exactly the sort of thing that goes off in a quiet gym.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { RestTimer, type ActiveRest } from "./RestTimer";
 
 const noop = () => {};
@@ -200,7 +200,7 @@ describe("RestTimer", () => {
     expect(screen.queryByText(/Recorded against/)).toBeNull();
   });
 
-  it("still shows the OVER copy once the rest is past target, forward label or not", () => {
+  it("shows READY once the target has elapsed", () => {
     render(
       <RestTimer
         rest={overdue()}
@@ -210,6 +210,50 @@ describe("RestTimer", () => {
         nextSetLabel="Next: Squat 145 × 5, set 3 of 4"
       />,
     );
-    expect(screen.getByText(/Past the prescribed/)).toBeTruthy();
+    expect(screen.getByText("READY")).toBeTruthy();
+    expect(screen.queryByText(/Past the prescribed/)).toBeNull();
+  });
+
+  it("changes REST to READY once at expiry and never advances the workout by itself", () => {
+    vi.useFakeTimers();
+    const onDone = vi.fn();
+    const start = Date.now();
+    render(
+      <RestTimer
+        rest={{ startedAt: start, targetSeconds: 2, forLabel: "Squat set 1" }}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={onDone}
+        nextSetLabel="Next: Squat set 2 of 3"
+      />,
+    );
+
+    expect(screen.getByText("REST")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(2_100));
+
+    expect(screen.getByText("READY")).toBeTruthy();
+    expect(screen.getByText("Next: Squat set 2 of 3")).toBeTruthy();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("offers optional RPE and set-note actions in the rest scene", () => {
+    const onRateLastSet = vi.fn();
+    const onNoteLastSet = vi.fn();
+    render(
+      <RestTimer
+        rest={{ startedAt: Date.now(), targetSeconds: 90, forLabel: "Squat set 1" }}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+        lastSetRpe={null}
+        onRateLastSet={onRateLastSet}
+        onNoteLastSet={onNoteLastSet}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Note last set" }));
+    fireEvent.click(screen.getByRole("button", { name: "rpe 8" }));
+    expect(onNoteLastSet).toHaveBeenCalledTimes(1);
+    expect(onRateLastSet).toHaveBeenCalledWith(8);
   });
 });

@@ -18,6 +18,12 @@ export interface FocusDeckProps {
    *  below and, from the identical source, WorkoutOverview's rows. */
   entryState(entry: ExerciseEntry): ProgressState;
   onViewFullWorkout(): void;
+  /** Scene-level state (REST/READY) occupies the top slot when active. */
+  topSlot?: ReactNode;
+  workoutComplete?: boolean;
+  extraSetArmed?: boolean;
+  onFinishWorkout?(): void;
+  onAddExtraSet?(): void;
   onChooseNext(entry: ExerciseEntry): void;
   canAdvance: boolean;
   renderEditor(entry: ExerciseEntry): ReactNode;
@@ -177,6 +183,11 @@ export function FocusDeck({
   entryDone,
   entryState,
   onViewFullWorkout,
+  topSlot,
+  workoutComplete = false,
+  extraSetArmed = false,
+  onFinishWorkout,
+  onAddExtraSet,
   onChooseNext,
   canAdvance,
   renderEditor,
@@ -214,6 +225,15 @@ export function FocusDeck({
   return (
     <section className="focus-deck">
       <div className="focus-deck-top">
+        <button
+          type="button"
+          className="focus-workout-menu"
+          aria-label="Open workout"
+          onClick={onViewFullWorkout}
+        >
+          <span className="focus-hamburger" aria-hidden="true">☰</span>
+          Workout
+        </button>
         {/* A real <ul>, not a <div role="list">: the dots inside stay real
          * <button>s (role="listitem" on the button itself would REPLACE its
          * native button role, not add to it, so a screen reader would
@@ -270,6 +290,8 @@ export function FocusDeck({
           </button>
         )}
       </div>
+
+      {topSlot && <div className="focus-top-slot">{topSlot}</div>}
 
       <div className="focus-deck-status" aria-live="polite">
         <h1 className="focus-deck-name">
@@ -364,14 +386,29 @@ export function FocusDeck({
         </div>
       )}
 
-      <div className="focus-deck-editor">
-        <FocusSetProgress
-          progress={progress}
-          target={target}
-          warmup={warmupSets(entry) > 0 && workingSets(entry) === 0}
-        />
-        {renderEditor(entry)}
-      </div>
+      {workoutComplete && onFinishWorkout && onAddExtraSet && (
+        <div className="focus-complete-actions">
+          <button type="button" className="btn btn-primary btn-block" onClick={onFinishWorkout}>
+            Finish workout
+          </button>
+          {!extraSetArmed && (
+            <button type="button" className="focus-deck-secondary" onClick={onAddExtraSet}>
+              Add extra set
+            </button>
+          )}
+        </div>
+      )}
+
+      {(!workoutComplete || extraSetArmed) && (
+        <div className="focus-deck-editor">
+          <FocusSetProgress
+            progress={progress}
+            target={target}
+            warmup={warmupSets(entry) > 0 && workingSets(entry) === 0}
+          />
+          {renderEditor(entry)}
+        </div>
+      )}
 
       {next && canAdvance && (
         <button

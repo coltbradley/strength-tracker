@@ -70,7 +70,7 @@ export function WorkoutOverview({
           className="btn btn-outline-ink btn-block wk-focus-mode"
           onClick={onEnterFocus}
         >
-          Focus mode
+          Go to current exercise
         </button>
       )}
 

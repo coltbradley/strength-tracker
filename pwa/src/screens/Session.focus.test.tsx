@@ -221,7 +221,7 @@ describe("Session focus presentation", () => {
       await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
 
     expect(
@@ -285,13 +285,13 @@ describe("Session focus presentation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
     fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(
       await screen.findByRole("heading", { name: "Back Squat" }),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(
       await screen.findByRole("heading", { name: "Bench Press" }),
     ).toBeTruthy();
@@ -306,7 +306,7 @@ describe("Session focus presentation", () => {
     ).toBe("22.5");
   });
 
-  it("keeps a timed session in overview and explains why focus is unavailable", async () => {
+  it("opens timed work in focus with duration as the hero and logs seconds", async () => {
     resetDbForTests();
     await seed("time");
     render(
@@ -315,14 +315,12 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    expect(
-      await screen.findByText(
-        /duration tracking is not available in focus mode/i,
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: /— current — view full workout$/ }),
-    ).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "duration value — tap to type" }).textContent).toBe("60");
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { exercise_id: "bench-press", reps: 0, duration_seconds: 60 },
+    });
   });
 
   it("keeps normal focus navigation and logging on the same entry", async () => {
@@ -341,14 +339,7 @@ describe("Session focus presentation", () => {
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
     });
-    expect(
-      screen.queryByRole("button", { name: "Next · Back Squat" }),
-    ).toBeNull();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Next exercise" }),
-    );
-
-    expect(screen.getByRole("heading", { name: "Back Squat" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Back Squat" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
@@ -371,6 +362,70 @@ describe("Session focus presentation", () => {
 
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 8, load_kg: 20 },
+    });
+  });
+
+  it("requires local intent and a second tap before logging an extra set", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
+    ]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+    await screen.findByRole("button", { name: "Finish workout" });
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add extra set" }));
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    fireEvent.click(screen.getByRole("button", { name: "Log extra set" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
+      table: "sets",
+      payload: { exercise_id: "bench-press", set_index: 1 },
+    });
+  });
+
+  it("shows and logs a prescription in its durable authored unit", async () => {
+    resetDbForTests();
+    const bench = prescription();
+    bench.load_kg = 102.17;
+    bench.resolved_load_kg = 102.17;
+    bench.entered_load = 225.25;
+    bench.entered_unit = "lb";
+    await seed("reps", [bench]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { entered_load: 225.25, entered_unit: "lb" },
+    });
+  });
+
+  it("routes Note last set to the set_notes outbox row", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+    ]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+    await screen.findByRole("button", { name: "Note last set" });
+    fireEvent.click(screen.getByRole("button", { name: "Note last set" }));
+    const note = await screen.findByPlaceholderText("Note on this set…");
+    fireEvent.change(note, { target: { value: "Grip felt uneven" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
+      table: "set_notes",
+      payload: { note: "Grip felt uneven" },
     });
   });
 
@@ -398,7 +453,7 @@ describe("Session focus presentation", () => {
       );
       expect(screen.queryByRole("alert")).toBeNull();
       expect(screen.queryByText("LOGGED")).toBeNull();
-      expect(screen.queryByRole("timer", { name: "rest timer" })).toBeNull();
+      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
       expect(
         await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id)),
       ).toEqual([]);
@@ -538,11 +593,7 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Next exercise" }),
-    );
-
-    expect(screen.getByRole("heading", { name: "Farmer Carry" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Farmer Carry" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
     fireEvent.click(screen.getByRole("button", { name: "DONE" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
@@ -727,7 +778,7 @@ describe("Session focus presentation", () => {
       );
       expect(screen.queryByRole("alert")).toBeNull();
       expect(screen.queryByText("LOGGED")).toBeNull();
-      expect(screen.queryByRole("timer", { name: "rest timer" })).toBeNull();
+      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
       expect(screen.getByRole("button", { name: "Log A1 only" })).toBeTruthy();
       expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
         "22.5",
@@ -823,7 +874,7 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
     );
-    expect(await screen.findByRole("timer", { name: "rest timer" })).toBeTruthy();
+    expect(await screen.findByRole("timer", { name: /^rest timer/ })).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("button", { name: /— current — view full workout$/ }),
@@ -831,13 +882,13 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(await screen.findByText("round 1 of 3")).toBeTruthy();
 
     act(() => setSetting("autoStartRest", false));
     await vi.waitFor(() =>
       expect(
-        screen.queryByRole("timer", { name: "rest timer" }),
+        screen.queryByRole("timer", { name: /^rest timer/ }),
       ).toBeNull(),
     );
     // The first ordinary log holds the duplicate-tap lock briefly. The rest
@@ -851,7 +902,7 @@ describe("Session focus presentation", () => {
 
     await vi.waitFor(() =>
       expect(
-        screen.queryByRole("timer", { name: "rest timer" }),
+        screen.queryByRole("timer", { name: /^rest timer/ }),
       ).toBeNull(),
     );
   });
@@ -884,7 +935,7 @@ describe("Session focus presentation", () => {
         name: /— current — view full workout$/,
       })[0]!,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
 
     expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
       "22.5",
@@ -1074,7 +1125,7 @@ describe("Session focus presentation", () => {
       )[0]!,
     );
     fireEvent.click(screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
 
     expect(await screen.findByText("round 1 of 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Log round" })).toBeTruthy();
@@ -1094,9 +1145,9 @@ describe("Session focus presentation", () => {
       fireEvent.click(logSet);
       await Promise.resolve();
     });
-    expect(screen.getByRole("timer", { name: "rest timer" })).toBeTruthy();
+    expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     act(() => vi.advanceTimersByTime(30_000));
 
     expect(screen.getByText("0:30")).toBeTruthy();
@@ -1186,7 +1237,7 @@ describe("Session focus presentation", () => {
       await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(
       await screen.findByRole("button", { name: "Next exercise" }),
     ).toBeTruthy();
@@ -1251,7 +1302,7 @@ describe("Session focus presentation", () => {
     // Focus mode. The correction in progress must win: Bench stays open with
     // its staged edit, not Squat with a fresh prefill.
     fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
 
     expect(
       await screen.findByRole("heading", { name: "Bench Press" }),
@@ -1286,12 +1337,7 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Next exercise" }),
-    );
-    expect(
-      await screen.findByRole("heading", { name: "Back Squat" }),
-    ).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Back Squat" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     // past LOG_LOCK_MS, or the correction's own Save below is a no-op tap on

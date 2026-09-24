@@ -81,11 +81,8 @@ export function remainingProgress(
   };
 }
 
-/** Timed prescriptions use a different logging surface, so can't use focus mode. */
 export function isFocusEligible(entries: readonly ExerciseEntry[]): boolean {
-  return entries.every((entry) =>
-    entry.brackets.every((bracket) => bracket.tracking !== "time"),
-  );
+  return entries.length > 0;
 }
 
 export function transitionPresentation(
