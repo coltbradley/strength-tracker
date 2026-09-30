@@ -10,7 +10,7 @@ try {
     process.exit(2);
   }
   console.log(`NOT RUN: ${error.message}`);
-  process.exit(0);
+  process.exit(3);
 }
 
 async function reachable(url) {
@@ -24,7 +24,7 @@ async function reachable(url) {
 
 if (!(await reachable(`${local.supabaseUrl}/auth/v1/health`))) {
   console.log("NOT RUN: local Supabase is unavailable. Start it with `supabase start` and apply seeds with `supabase db reset`.");
-  process.exit(0);
+  process.exit(3);
 }
 const cli = new URL("../node_modules/@playwright/test/cli.js", import.meta.url);
 const child = spawn(process.execPath, [cli.pathname, "test", "--config=e2e/playwright.config.mjs"], {

@@ -18,7 +18,7 @@ export default defineConfig({
     browserName: "chromium",
     headless: true,
     launchOptions: local.browserChannel ? { channel: local.browserChannel } : {},
-    trace: "retain-on-failure",
+    trace: "off",
   },
   webServer: {
     command: `npm run dev -- --host 127.0.0.1 --port ${appPort} --strictPort`,

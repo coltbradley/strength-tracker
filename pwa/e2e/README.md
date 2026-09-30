@@ -60,8 +60,10 @@ npm run test:e2e:phase2
 
 Use `PHASE2_BROWSER_CHANNEL=chrome` in the env file to run an installed Google
 Chrome instead of Playwright's Chromium. If the required env values or local
-services are missing, the runner prints `NOT RUN` and exits successfully. A
-non-loopback URL is a hard refusal with a failing exit code.
+services are missing, the runner prints `NOT RUN` and exits with status 3, so
+an invoked gate cannot look like a pass. A non-loopback URL is a hard refusal
+with exit status 2. Playwright traces are disabled, and generated report
+directories are ignored so auth state is not saved in test artifacts.
 
 ## Data cleanup
 

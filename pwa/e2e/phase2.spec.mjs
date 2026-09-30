@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { loadLocalConfig } from "./local-config.mjs";
+import { cleanupUsers } from "./lifecycle-utils.mjs";
 
 const local = await loadLocalConfig();
 let userA;
@@ -116,8 +117,7 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
   });
 
   test.afterAll(async () => {
-    if (userB) await deleteUser(userB.id);
-    if (userA) await deleteUser(userA.id);
+    await cleanupUsers([userB, userA].filter(Boolean), (user) => deleteUser(user.id));
   });
 
   test("creates a confirmed plan, resumes, logs offline, corrects, finishes, and enforces tenant RLS", async ({ page, context, browser }) => {
@@ -145,6 +145,10 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
     const programs = await rows(page, "programs", `select=id,confirmed_at&user_id=eq.${userA.id}&id=eq.${planRows[0].program_id}`);
     expect(programs).toHaveLength(1);
     expect(programs[0].confirmed_at).not.toBeNull();
+    const prescriptions = await rows(page, "prescriptions", `select=id,exercise_id,sets,reps_min,reps_max,load_kg&user_id=eq.${userA.id}&planned_workout_id=eq.${plannedWorkoutId}&order=position.asc`);
+    expect(prescriptions).toHaveLength(1);
+    expect(prescriptions[0].exercise_id).toBeTruthy();
+    expect(prescriptions[0].sets).toBeGreaterThan(0);
 
     await page.getByRole("button", { name: "Start session" }).click();
     const openSessionRows = await waitFor(async () => {
@@ -160,7 +164,7 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
 
     await context.setOffline(true);
     await page.getByRole("button", { name: /^LOG SET(?:\s|$)/i }).click();
-    await expect(page.locator(".logged-sets")).toContainText(/\d+/);
+    await expect(page.locator(".focus-progress-rail")).toBeVisible();
     const queued = await page.evaluate(async () => {
       const database = await new Promise((resolve, reject) => {
         const request = indexedDB.open("strength-log", 1);
@@ -177,23 +181,33 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
     });
     expect(queued).toHaveLength(1);
     expect(queued[0].user_id).toBe(userA.id);
+    await page.getByRole("button", { name: `more options for ${exerciseName}` }).click();
     await expect(page.locator(".logged-set-wrap")).toHaveCount(1);
+    await page.getByRole("button", { name: "Close" }).click();
 
     await context.setOffline(false);
     let sessionSets = await waitFor(async () => {
-      const result = await rows(page, "sets", `select=id,user_id,session_id,set_index,load_kg,reps&session_id=eq.${session.id}&order=created_at.asc`);
+      const result = await rows(page, "sets", `select=id,user_id,session_id,prescription_id,set_index,load_kg,reps,performed_at&session_id=eq.${session.id}&order=created_at.asc`);
       return result.length ? result : null;
     }, "the offline set to sync");
     expect(sessionSets).toHaveLength(1);
+    const originalSet = sessionSets[0];
 
     await page.getByRole("button", { name: `more options for ${exerciseName}` }).click();
     await page.getByRole("button", { name: "Correct logged set 1" }).click();
     await page.getByRole("button", { name: /increase load by/i }).click();
     await page.getByRole("button", { name: /^SAVE SET 1$/i }).click();
     sessionSets = await waitFor(async () => {
-      const result = await rows(page, "sets", `select=id,user_id,session_id,set_index,load_kg,reps&session_id=eq.${session.id}&order=created_at.asc`);
+      const result = await rows(page, "sets", `select=id,user_id,session_id,prescription_id,set_index,load_kg,reps,performed_at&session_id=eq.${session.id}&order=created_at.asc`);
       return result.length >= 2 ? result : null;
     }, "the corrected set to sync");
+    const correctedSet = sessionSets.find((set) => set.id !== originalSet.id && set.set_index === originalSet.set_index);
+    expect(correctedSet).toBeTruthy();
+    expect(correctedSet.load_kg).not.toBe(originalSet.load_kg);
+    expect(correctedSet.performed_at).toBe(originalSet.performed_at);
+    expect(correctedSet.prescription_id).toBe(originalSet.prescription_id);
+    expect(correctedSet.prescription_id).toBe(prescriptions[0].id);
+    await page.getByRole("button", { name: "Close" }).click();
 
     for (let index = 0; index < 2; index += 1) {
       await page.getByRole("button", { name: /^LOG SET(?:\s|$)/i }).click();
@@ -223,12 +237,34 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
       const friendPage = await friendContext.newPage();
       await signIn(friendPage, userB);
       const readAsB = await rows(friendPage, "sets", `select=id&session_id=eq.${session.id}`);
+      const planReadAsB = await rows(friendPage, "planned_workouts", `select=id&id=eq.${plannedWorkoutId}`);
+      const sessionReadAsB = await rows(friendPage, "sessions", `select=id&id=eq.${session.id}`);
+      const foreignSetId = randomUUID();
+      const appendAsB = await authenticatedRequest(friendPage, "/rest/v1/sets", {
+        method: "POST",
+        body: {
+          id: foreignSetId,
+          session_id: session.id,
+          exercise_id: prescriptions[0].exercise_id,
+          prescription_id: prescriptions[0].id,
+          set_index: 99,
+          set_type: "working",
+          load_kg: 1,
+          reps: 1,
+          performed_at: originalSet.performed_at,
+        },
+      });
       const writeAsB = await authenticatedRequest(friendPage, "/rest/v1/set_voids", {
         method: "POST",
         body: { set_id: liveSets[0].id },
       });
       expect(readAsB).toEqual([]);
+      expect(planReadAsB).toEqual([]);
+      expect(sessionReadAsB).toEqual([]);
+      expect([401, 403]).toContain(appendAsB.status);
       expect(writeAsB.status).toBe(403);
+      expect(await rows(friendPage, "sets", `select=id&session_id=eq.${session.id}&id=eq.${foreignSetId}`)).toEqual([]);
+      expect(await rows(friendPage, "set_voids", `select=set_id&set_id=eq.${liveSets[0].id}`)).toEqual([]);
     } finally {
       await friendContext.close();
     }
