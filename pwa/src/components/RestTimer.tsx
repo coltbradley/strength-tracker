@@ -1,6 +1,7 @@
 // Rest strip — docked above the session footer (in-flow, not floating).
-// Counts down to the target, then keeps counting up in the Aubergine accent ("OVER"):
-// rest is recorded either way when the next set is logged.
+// Counts down to the target, then holds at 0:00 with a clear REST OVER state.
+// Rest is recorded either way when the next set is logged. Hiding this strip
+// never ends the measured rest or advances the workout.
 // Notification API is used only if permission was already granted — never
 // prompts. It is also not enough on its own: an installed iOS web app has no
 // `new Notification(...)` constructor at all, so the tone from lib/restCue.ts
@@ -115,11 +116,11 @@ export function RestTimer({
       // because only ServiceWorkerRegistration.showNotification is real —
       // which is why the catch is not decoration and why the tone above is
       // not a nicety.
-      new Notification("Rest over", { body: "Next set." });
+      new Notification("Rest over", { body: nextSetLabel ?? "Next set is ready." });
     } catch {
       // cosmetic
     }
-  }, [ready, startedAt]);
+  }, [ready, startedAt, nextSetLabel]);
 
   if (!rest) return null;
 
@@ -137,10 +138,15 @@ export function RestTimer({
       key={rest.startedAt}
       className={`rest-timer ${ready ? "rest-timer-ready" : "rest-timer-rest rest-timer-enter"}`}
       role="timer"
-      aria-label={ready ? "rest timer ready" : "rest timer"}
+      aria-label={ready ? "rest timer complete" : "rest timer"}
     >
+      {/* Announce the transition once, without reading a changing countdown
+          aloud every 400 ms. The visible state remains when sound is off. */}
+      <span className="sr-only" role="status" aria-live="assertive">
+        {ready ? "Rest over. Your next set is ready when you are." : ""}
+      </span>
       <div className="rest-row">
-        <span className="rest-label">{ready ? "READY" : "REST"}</span>
+        <span className="rest-label">{ready ? "REST OVER" : "RESTING"}</span>
         <button
           type="button"
           className="rest-timer-time"
@@ -148,7 +154,7 @@ export function RestTimer({
           /* the label ADDS to the visible time rather than replacing it —
              "edit remaining rest" alone left the clock unreadable */
           aria-label={ready
-            ? "ready, rest complete — tap to change"
+            ? "rest over — tap to change the target"
             : `rest remaining ${spokenClock(remaining)} — tap to change`}
         >
           {ready ? "0:00" : formatClock(remaining)}
@@ -178,15 +184,15 @@ export function RestTimer({
         <button
           type="button"
           className="rest-timer-dismiss"
-          aria-label="dismiss the rest strip — rest is still recorded"
+          aria-label="hide the rest timer — rest is still recorded"
           onClick={onDone}
         >
-          DONE
+          HIDE
         </button>
       </div>
       <div className="rest-foot">
           {ready
-          ? nextSetLabel ?? "Ready when you are."
+          ? nextSetLabel ?? "Next set when you are ready."
           : nextSetLabel
             ? nextSetLabel
             : `Tap to change. Recorded against ${rest.forLabel}.`}

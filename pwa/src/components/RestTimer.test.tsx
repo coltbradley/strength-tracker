@@ -61,7 +61,7 @@ describe("RestTimer", () => {
     expect(container.querySelector(".rest-timer")).toBeNull();
   });
 
-  it("marks the active rest state for its distinct orange treatment", () => {
+  it("marks the active and completed rest states for their aubergine treatment", () => {
     const { container, rerender } = render(
       <RestTimer
         rest={{ startedAt: Date.now(), targetSeconds: 60, forLabel: "Squat set 2" }}
@@ -244,7 +244,7 @@ describe("RestTimer", () => {
     expect(screen.queryByText(/Recorded against/)).toBeNull();
   });
 
-  it("shows READY once the target has elapsed", () => {
+  it("shows REST OVER and a screen-reader alert once the target has elapsed", () => {
     render(
       <RestTimer
         rest={overdue()}
@@ -254,11 +254,14 @@ describe("RestTimer", () => {
         nextSetLabel="Next: Squat 145 × 5, set 3 of 4"
       />,
     );
-    expect(screen.getByText("READY")).toBeTruthy();
+    expect(screen.getByText("REST OVER")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe(
+      "Rest over. Your next set is ready when you are.",
+    );
     expect(screen.queryByText(/Past the prescribed/)).toBeNull();
   });
 
-  it("changes REST to READY once at expiry and never advances the workout by itself", () => {
+  it("changes RESTING to REST OVER once at expiry and never advances the workout by itself", () => {
     vi.useFakeTimers();
     const onDone = vi.fn();
     const start = Date.now();
@@ -272,12 +275,24 @@ describe("RestTimer", () => {
       />,
     );
 
-    expect(screen.getByText("REST")).toBeTruthy();
+    expect(screen.getByText("RESTING")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("");
     act(() => vi.advanceTimersByTime(2_100));
 
-    expect(screen.getByText("READY")).toBeTruthy();
+    expect(screen.getByText("REST OVER")).toBeTruthy();
     expect(screen.getByText("Next: Superset A, round 2 of 3")).toBeTruthy();
     expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("makes hiding the rest strip an explicit optional action", () => {
+    const onDone = vi.fn();
+    render(
+      <RestTimer rest={overdue()} onAdjust={noop} onEdit={noop} onDone={onDone} />,
+    );
+
+    expect(onDone).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /hide the rest timer/ }));
+    expect(onDone).toHaveBeenCalledTimes(1);
   });
 
   it("offers optional RPE and set-note actions in the rest scene", () => {

@@ -274,6 +274,31 @@ describe("OutboxSheet", () => {
     await waitFor(() => expect(h.repairDeadLoadSet).toHaveBeenCalledWith(1, original));
   });
 
+  it("uses one saved export to review each unchanged failed set", async () => {
+    const first = entry({ key: 1, state: "dead", cause: "rejected", loadRepairable: true });
+    const second = entry({ key: 2, state: "dead", cause: "rejected", loadRepairable: true });
+    h.repairDeadLoadSet.mockImplementationOnce(async () => {
+      h.entries = [second];
+      return true;
+    });
+    await show([first, second]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 of 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
+    await waitFor(() => expect(h.downloadText).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("checkbox", { name: /saved the queue export/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Keep 100 kg total and retry/ }));
+    await waitFor(() => expect(h.repairDeadLoadSet).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Review 1 of 1/ }));
+    const savedExport = screen.getByRole("checkbox", { name: /saved the queue export/ });
+    expect(savedExport).toHaveProperty("disabled", false);
+    fireEvent.click(savedExport);
+    fireEvent.click(screen.getByRole("button", { name: /Keep 100 kg total and retry/ }));
+    await waitFor(() => expect(h.repairDeadLoadSet).toHaveBeenCalledTimes(2));
+    expect(h.downloadText).toHaveBeenCalledTimes(1);
+  });
+
   it("does not offer load repair for a generic check violation", async () => {
     await show([entry({
       key: 2,

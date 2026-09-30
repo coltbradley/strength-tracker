@@ -1,8 +1,6 @@
-// The cue's whole contract is what it does when it CANNOT play: nothing, and
-// nothing visible. Every case here is a failure case, because the success case
-// is a sound and a test cannot hear one — what it can check is that the module
-// never throws out of a path the caller does not guard, and that it never
-// tries to start audio outside the gesture that iOS requires.
+// The cue must remain silent when it cannot play, and a scheduled completion
+// cue must be distinct without requiring another tap. A test cannot hear it,
+// but it can verify the oscillator pattern and the no-throw failure paths.
 //
 // The module keeps one AudioContext for the life of the page (Safari caps how
 // many a document may create), so each test re-imports it through
@@ -23,7 +21,7 @@ async function loadCue(): Promise<Cue> {
 function fakeAudio() {
   const started: number[] = [];
   const stopped: number[] = [];
-  const oscillators: unknown[] = [];
+  const oscillators: Array<{ frequency: { value: number } }> = [];
   const resume = vi.fn(() => Promise.resolve());
 
   const param = () => ({
@@ -89,19 +87,23 @@ describe("restCue", () => {
     expect(started).toEqual([]);
   });
 
-  it("plays after the unlock, scheduling two blips", async () => {
-    const { FakeContext, started, stopped } = fakeAudio();
+  it("plays after the unlock, scheduling one three-note completion cue", async () => {
+    const { FakeContext, started, stopped, oscillators } = fakeAudio();
     g.AudioContext = FakeContext;
     const cue = await loadCue();
 
     cue.unlockRestCue();
     cue.playRestCue();
 
-    expect(started).toHaveLength(2);
+    expect(started).toHaveLength(3);
     expect(started[1]).toBeGreaterThan(started[0]);
+    expect(started[2]).toBeGreaterThan(started[1]);
+    expect(oscillators.map((oscillator) => oscillator.frequency.value)).toEqual([
+      880, 1175, 880,
+    ]);
     // Every oscillator is stopped, not merely disconnected — one that is only
     // disconnected is never collected.
-    expect(stopped).toHaveLength(2);
+    expect(stopped).toHaveLength(3);
   });
 
   it("resumes a suspended context on unlock", async () => {
@@ -150,6 +152,6 @@ describe("restCue", () => {
 
     cue.unlockRestCue();
     cue.playRestCue();
-    expect(started).toHaveLength(2);
+    expect(started).toHaveLength(3);
   });
 });

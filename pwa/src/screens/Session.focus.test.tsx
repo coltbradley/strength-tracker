@@ -481,6 +481,146 @@ describe("Session focus presentation", () => {
     expectAcceptedAuthoredLoad(payload);
   });
 
+  it("switches the workout unit without changing a staged load or queuing stale provenance", async () => {
+    resetDbForTests();
+    setSetting("unit", "lb");
+    await seed();
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "5" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
+    expect(screen.getByRole("button", { name: "Show weights in pounds" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show weights in kilograms" }));
+    expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("102.06");
+
+    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 102.06, entered_load: 225, entered_unit: "lb" });
+    expectAcceptedAuthoredLoad(payload);
+  });
+
+  it("restores the exact typed pound value when switching back during the same set", async () => {
+    resetDbForTests();
+    setSetting("unit", "lb");
+    await seed();
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "5" }));
+    fireEvent.click(screen.getByRole("button", { name: "." }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "5" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Show weights in kilograms" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25");
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 102.17, entered_load: 225.25, entered_unit: "lb" });
+    expectAcceptedAuthoredLoad(payload);
+  });
+
+  it("restores the next-set draft after switching units and cancelling a correction", async () => {
+    resetDbForTests();
+    const old: SetInsert = {
+      id: "bench-correction-1", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working",
+      load_kg: 30, reps: 8, performed_at: "2026-09-12T12:05:00.000Z",
+      rest_seconds_actual: null, load_entry: "total", rpe: null,
+    };
+    await seed("reps", [prescription("bench", "bench-press", "Bench Press", "reps", null, 2)], [old]);
+    vi.mocked(getServerSessionSets).mockResolvedValue([old]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "5" }));
+    fireEvent.click(screen.getByRole("button", { name: "0" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
+    fireEvent.click(screen.getByRole("button", { name: "Last: 30 kg × 8 working" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "6" }));
+    fireEvent.click(screen.getByRole("button", { name: "6" }));
+    fireEvent.click(screen.getByRole("button", { name: "." }));
+    fireEvent.click(screen.getByRole("button", { name: "1" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
+
+    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("110.23");
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 50, entered_load: 50, entered_unit: "kg", set_index: 1 });
+    expectAcceptedAuthoredLoad(payload);
+  });
+
+  it("saves a pound-edited correction with matching canonical kg", async () => {
+    resetDbForTests();
+    const old: SetInsert = {
+      id: "bench-correction-2", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working",
+      load_kg: 30, reps: 8, performed_at: "2026-09-12T12:05:00.000Z",
+      rest_seconds_actual: null, load_entry: "total", rpe: null,
+    };
+    await seed("reps", [prescription("bench", "bench-press", "Bench Press", "reps", null, 2)], [old]);
+    vi.mocked(getServerSessionSets).mockResolvedValue([old]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "7" }));
+    fireEvent.click(screen.getByRole("button", { name: "0" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
+    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 31.75, entered_load: 70, entered_unit: "lb", set_index: 0 });
+    expectAcceptedAuthoredLoad(payload);
+    expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
+      table: "set_voids", payload: { set_id: old.id },
+    });
+  });
+
+  it("keeps a corrected stepper load consistent after changing to pounds", async () => {
+    resetDbForTests();
+    const old: SetInsert = {
+      id: "bench-correction-3", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working",
+      load_kg: 30, reps: 8, performed_at: "2026-09-12T12:05:00.000Z",
+      rest_seconds_actual: null, load_entry: "total", rpe: null,
+    };
+    await seed("reps", [prescription("bench", "bench-press", "Bench Press", "reps", null, 2)], [old]);
+    vi.mocked(getServerSessionSets).mockResolvedValue([old]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    fireEvent.click(screen.getByRole("button", { name: "increase load by 5 lb" }));
+    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+    const payload = firstQueuedSet();
+    expect(payload.entered_unit).toBe("lb");
+    expect(payload.load_kg).not.toBe(old.load_kg);
+    expectAcceptedAuthoredLoad(payload);
+  });
+
   it("routes Note last set to the set_notes outbox row", async () => {
     resetDbForTests();
     await seed("reps", [
@@ -799,6 +939,35 @@ describe("Session focus presentation", () => {
     );
     expect(first?.payload.id).not.toBe(second?.payload.id);
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
+  });
+
+  it("keeps both staged superset loads stable on the first unit switch", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
+    ]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText("round 1 of 2");
+    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    const a1 = screen.getByLabelText("A1 Bench Press");
+    const a2 = screen.getByLabelText("A2 Barbell Row");
+    expect(within(a1).getByRole("button", { name: /load value/ }).textContent).toBe("44.09");
+    expect(within(a2).getByRole("button", { name: /load value/ }).textContent).toBe("44.09");
+    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1));
+    const ops = vi.mocked(outbox.enqueueBatch).mock.calls[0]?.[0] ?? [];
+    for (const op of ops) {
+      if (op.kind !== "insert" || op.table !== "sets") continue;
+      expect(op.payload).toMatchObject({
+        load_kg: 20,
+        entered_load: 20,
+        entered_unit: "kg",
+      });
+      expectAcceptedAuthoredLoad(op.payload);
+    }
   });
 
   it("rests only after full non-final rounds and names the next A1 round", async () => {

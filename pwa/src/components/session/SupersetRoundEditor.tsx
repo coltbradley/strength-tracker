@@ -1,5 +1,5 @@
 import { Stepper, type StepDef } from "../Stepper";
-import { toDisplay } from "../../lib/units";
+import { stagedDisplayLoad, toDisplay } from "../../lib/units";
 import type { SetDraft, SetEditorProps } from "./SetEditor";
 
 export interface SupersetRoundMember {
@@ -44,10 +44,9 @@ function MemberRow({ member }: { member: SupersetRoundMember }) {
     onOpenPad,
   } = member.editor;
   const { perSide, totalKg } = loadPresentation;
-  const displayLoad =
-    draft.enteredLoad !== undefined && draft.enteredUnit === unit
-      ? draft.enteredLoad
-      : toDisplay(draft.entryKg, unit);
+  const displayLoad = stagedDisplayLoad(
+    draft.entryKg, draft.enteredLoad, draft.enteredUnit, unit,
+  );
   const coarseDown: StepDef | undefined = loadSteps[0];
   const coarseUp: StepDef | undefined = loadSteps[loadSteps.length - 1];
 

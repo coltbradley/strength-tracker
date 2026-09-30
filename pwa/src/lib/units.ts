@@ -26,6 +26,23 @@ export function toDisplay(kg: number, unit: Unit): number {
   return Math.round(v * 10) / 10;
 }
 
+/** Keep an already staged weight legible when the display unit changes.
+ * Two decimals on the converted view preserve the hundredth-kg value held
+ * by the draft; ordinary unstaged suggestions keep the usual one decimal. */
+export function stagedDisplayLoad(
+  entryKg: number,
+  enteredLoad: number | undefined,
+  enteredUnit: Unit | undefined,
+  unit: Unit,
+): number {
+  if (enteredLoad !== undefined && enteredUnit === unit) return enteredLoad;
+  if (enteredUnit !== undefined && enteredUnit !== unit) {
+    const converted = unit === "kg" ? entryKg : kgToLb(entryKg);
+    return Math.round(converted * 100) / 100;
+  }
+  return toDisplay(entryKg, unit);
+}
+
 /** value entered/shown in the display unit -> kg (unrounded). */
 export function fromDisplay(value: number, unit: Unit): number {
   return unit === "kg" ? value : lbToKg(value);

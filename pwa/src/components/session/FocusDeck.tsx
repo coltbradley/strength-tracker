@@ -13,6 +13,8 @@ export interface FocusDeckProps {
   entry: ExerciseEntry;
   entryProgress(entry: ExerciseEntry): number;
   entryDone(entry: ExerciseEntry): boolean;
+  /** Device display-unit switch, kept beside the other quiet workout controls. */
+  unitSwitch?: ReactNode;
   /** One state per entry, from the shared vocabulary — see StateGlyph.tsx
    *  and lib/sessionFocus.ts's `railState`. Drives both the progress rail
    *  below and, from the identical source, WorkoutOverview's rows. */
@@ -181,6 +183,7 @@ export function FocusDeck({
   entry,
   entryProgress,
   entryDone,
+  unitSwitch,
   entryState,
   onViewFullWorkout,
   topSlot,
@@ -297,8 +300,11 @@ export function FocusDeck({
         <h1 className="focus-deck-name">
           {supersetHeading ? supersetHeading.title : entry.name}
         </h1>
-        <div className="focus-deck-position">
-          {supersetHeading ? supersetHeading.subtitle : setPosition}
+        <div className="focus-deck-position-row">
+          <div className="focus-deck-position">
+            {supersetHeading ? supersetHeading.subtitle : setPosition}
+          </div>
+          {unitSwitch}
         </div>
       </div>
 

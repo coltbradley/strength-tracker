@@ -11,7 +11,8 @@
 // WHY AN OSCILLATOR AND NOT A FILE: an audio file is an asset, and an asset is
 // a precache entry in the service worker, a byte range that has to survive
 // every deploy, and one more thing that can 404 into a silent failure offline.
-// Two sine blips are a dozen lines and no bytes.
+// A short three-note pattern needs no extra asset and is easier to recognize
+// as rest completion than the old pair of very short blips.
 //
 // WHY THE UNLOCK IS SEPARATE: iOS refuses to start an AudioContext outside a
 // user gesture, and it stays refused — a context created during a timer
@@ -73,12 +74,12 @@ export function unlockRestCue(): void {
   }
 }
 
-/** peak gain of one blip — audible across a gym, nowhere near clipping */
-const PEAK = 0.25;
+/** peak gain of one blip — prominent without approaching clipping */
+const PEAK = 0.28;
 /** seconds each blip sounds for */
-const BLIP_SECONDS = 0.12;
-/** seconds between the start of the first blip and the second */
-const BLIP_GAP_SECONDS = 0.18;
+const BLIP_SECONDS = 0.16;
+/** seconds between the start of successive blips */
+const BLIP_GAP_SECONDS = 0.23;
 
 /**
  * One blip. The gain ramps in and out rather than switching, because a square
@@ -117,7 +118,8 @@ export function playRestCue(): void {
     }
     const t = ac.currentTime;
     blip(ac, t, 880);
-    blip(ac, t + BLIP_GAP_SECONDS, 1320);
+    blip(ac, t + BLIP_GAP_SECONDS, 1175);
+    blip(ac, t + BLIP_GAP_SECONDS * 2, 880);
   } catch {
     // cosmetic, exactly like the notification path next to it
   }

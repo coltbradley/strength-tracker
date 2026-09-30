@@ -6,7 +6,7 @@ import { Stepper, stepTo, type StepDef } from "../Stepper";
 import type { BracketKind, ExerciseEntry } from "../../lib/entries";
 import { formatStoredTwin } from "../../lib/format";
 import type { PlateSplit } from "../../lib/plates";
-import { toDisplay, type Unit } from "../../lib/units";
+import { stagedDisplayLoad, toDisplay, type Unit } from "../../lib/units";
 
 export type SetDraft = {
   entryKg: number;
@@ -198,9 +198,9 @@ export function SetEditor({
   const heroIsReps = focus && tracking === "reps" && Boolean(noLoad);
   const heroIsDuration = tracking === "time";
   const durationSeconds = draft.durationSeconds ?? 60;
-  const displayedLoad = draft.enteredLoad !== undefined && draft.enteredUnit === unit
-    ? draft.enteredLoad
-    : toDisplay(draft.entryKg, unit);
+  const displayedLoad = stagedDisplayLoad(
+    draft.entryKg, draft.enteredLoad, draft.enteredUnit, unit,
+  );
   const coarseDown = loadSteps[0];
   const coarseUp = loadSteps[loadSteps.length - 1];
 

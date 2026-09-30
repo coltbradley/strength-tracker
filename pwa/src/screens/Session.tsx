@@ -45,6 +45,7 @@ import {
   type SetEditorProps,
 } from "../components/session/SetEditor";
 import { SupersetRoundEditor } from "../components/session/SupersetRoundEditor";
+import { UnitSwitch } from "../components/session/UnitSwitch";
 import { FocusDeck } from "../components/session/FocusDeck";
 import { FocusMoreSheet } from "../components/session/FocusMoreSheet";
 import { WorkoutOverview } from "../components/session/WorkoutOverview";
@@ -117,6 +118,7 @@ import {
   setExerciseBarKg,
   setExerciseLoadEntry,
   setExerciseLoadStyle,
+  setUnit,
 } from "../lib/settings";
 import { readSkipsCache, type SkipRecord } from "../lib/skips";
 import { useWakeLock } from "../hooks/useWakeLock";
@@ -151,7 +153,7 @@ import {
   PlateMachineIcon,
   StackIcon,
 } from "../components/icons/LoadIcons";
-import { fromDisplay, loadToKg, stepKgFor, toDisplay, type Unit } from "../lib/units";
+import { fromDisplay, kgToLb, loadToKg, stagedDisplayLoad, stepKgFor, toDisplay, type Unit } from "../lib/units";
 import type {
   ActiveSession,
   ExerciseRow,
@@ -386,12 +388,19 @@ export function Session() {
   // index (lib/corrections.ts); this is only the screen's side of it.
   const [editing, setEditing] = useState<{
     set: SetInsert;
+    stagedKey: string;
     staged: {
       entryKg: number;
       reps: number;
       setType: SetType;
       rpe: number | null;
+      durationSeconds: number;
+      enteredLoad?: number;
+      enteredUnit?: Unit;
     };
+    enteredLoad: number;
+    enteredUnit: Unit;
+    loadEdited: boolean;
   } | null>(null);
 
   // per-set notes (set_id -> note); "" = cleared
@@ -1084,9 +1093,12 @@ export function Session() {
   const currentDraft = openEntry
     ? stagedDraftsRef.current[`${openEntry.key}:${openEntry.exercise_id}`]
     : undefined;
-  const displayedLoad = currentDraft?.enteredLoad !== undefined && currentDraft.enteredUnit === inputUnit
-    ? currentDraft.enteredLoad
-    : toDisplay(entryKg, inputUnit);
+  const displayedLoad = stagedDisplayLoad(
+    entryKg,
+    editing?.enteredLoad ?? currentDraft?.enteredLoad,
+    editing?.enteredUnit ?? currentDraft?.enteredUnit,
+    inputUnit,
+  );
   const loadGrid = openEntry && currentBracket?.load_pct_tm == null
     ? loadGridFor(
         { id: openEntry.exercise_id, name: openEntry.name, equipment },
@@ -1105,6 +1117,14 @@ export function Session() {
    *  changed. */
   const toggleLoadEntry = () => {
     if (!openEntry) return;
+    if (editing) {
+      setEditing({
+        ...editing,
+        enteredLoad: displayedLoad,
+        enteredUnit: unit,
+        loadEdited: true,
+      });
+    }
     setExerciseLoadEntry(openEntry.exercise_id, perSide ? "total" : "per_side");
   };
 
@@ -1184,7 +1204,7 @@ export function Session() {
     }
     const bracket = fresh ? openingBracket : currentBracket;
     const key = fresh
-      ? `${openEntry.key}:${bracket?.id ?? "free"}:${openingKind}`
+      ? `${openEntry.key}:${openEntry.exercise_id}:${bracket?.id ?? "free"}:${openingKind}`
       : prefillKey;
     if (!fresh && prefilledFor.current === key) return;
     openedFor.current = openEntry.key;
@@ -1312,10 +1332,15 @@ export function Session() {
     index: number,
     actualRest: number | null,
   ): SetInsert => {
-    const enteredLoad = draft.enteredLoad !== undefined && draft.enteredUnit === unit
+    // A display-unit switch does not rewrite how this staged number was
+    // entered. An actual edit clears or replaces the authored pair.
+    const authoredUnit = draft.enteredLoad !== undefined && draft.enteredUnit
+      ? draft.enteredUnit
+      : unit;
+    const enteredLoad = draft.enteredLoad !== undefined && draft.enteredUnit
       ? draft.enteredLoad
       : toDisplay(draft.entryKg, unit);
-    const storedLoad = loadToKg(enteredLoad, unit, entryMode);
+    const storedLoad = loadToKg(enteredLoad, authoredUnit, entryMode);
     const tick = isTick(entry);
     const timed = entry.brackets[0]?.tracking === "time";
     return {
@@ -1333,7 +1358,7 @@ export function Session() {
       rest_seconds_actual: actualRest,
       load_entry: loadEntryForSet(entryMode, storedLoad),
       entered_load: tick || storedLoad <= 0 ? null : enteredLoad,
-      entered_unit: tick || storedLoad <= 0 ? null : unit,
+      entered_unit: tick || storedLoad <= 0 ? null : authoredUnit,
       rpe: tick ? null : draft.rpe,
       duration_seconds: timed ? Math.round(draft.durationSeconds ?? 60) : null,
     };
@@ -1728,12 +1753,32 @@ export function Session() {
     setMoreOpen(false);
     // Only the first tap displaces the staged values; re-tapping a different
     // set mid-correction must still restore what was there BEFORE editing.
-    const staged = editing?.staged ?? { entryKg, reps, setType, rpe };
-    setEditing({ set: s, staged });
+    const stagedKey = editing?.stagedKey ?? (openEntry
+      ? `${openEntry.key}:${openEntry.exercise_id}`
+      : `${s.prescription_id ?? "extra"}:${s.exercise_id}`);
+    const priorDraft = stagedDraftsRef.current[stagedKey];
+    const staged = editing?.staged ?? {
+      entryKg, reps, setType, rpe, durationSeconds,
+      enteredLoad: priorDraft?.enteredLoad ?? toDisplay(entryKg, unit),
+      enteredUnit: priorDraft?.enteredUnit ?? unit,
+    };
+    const correctionEntryKg = Math.round(enteredKg(s.load_kg, loadEntry) * 100) / 100;
+    const oldAuthored = s.load_entry === loadEntry &&
+      s.entered_load != null && s.entered_unit != null;
+    setEditing({
+      set: s, stagedKey, staged,
+      enteredLoad: oldAuthored
+        ? s.entered_load!
+        : unit === "kg"
+          ? correctionEntryKg
+          : Math.round(kgToLb(correctionEntryKg) * 100) / 100,
+      enteredUnit: oldAuthored ? s.entered_unit! : unit,
+      loadEdited: false,
+    });
     // load_kg is the TOTAL; show it in whatever convention the exercise is
     // in NOW, so Save — which totals the entry by that same convention —
     // round-trips exactly even if the toggle was flipped since the set.
-    setEntryKg(Math.round(enteredKg(s.load_kg, loadEntry) * 100) / 100);
+    setEntryKg(correctionEntryKg);
     setReps(s.reps);
     setSetType(s.set_type);
     // A correction is the only way to rate a set after the fact, so the row's
@@ -1749,6 +1794,13 @@ export function Session() {
     setReps(editing.staged.reps);
     setSetType(editing.staged.setType);
     setRpe(editing.staged.rpe);
+    setDurationSeconds(editing.staged.durationSeconds);
+    // A legacy backoff can still be staged in state; it is not selectable in
+    // new brackets but the original draft must survive Cancel unchanged.
+    stagedDraftsRef.current[editing.stagedKey] = {
+      ...editing.staged,
+      setType: editing.staged.setType as BracketKind,
+    };
     setEditing(null);
   };
 
@@ -1763,19 +1815,22 @@ export function Session() {
     // after logging one silently blocked the NEXT log for up to 400 ms.
     if (!editing || !sessionId) return;
     const old = editing.set;
+    const correctedTotalKg = editing.loadEdited
+      ? Math.round(loadToKg(editing.enteredLoad, editing.enteredUnit, loadEntry) * 100) / 100
+      : old.load_kg;
     const correction = {
-      load_kg: Math.round(totalLoadKg * 100) / 100,
+      load_kg: correctedTotalKg,
       reps,
       set_type: setType,
-      load_entry: loadEntryForSet(loadEntry, totalLoadKg),
-      entered_load: Math.round(totalLoadKg * 100) / 100 === old.load_kg
+      load_entry: loadEntryForSet(loadEntry, correctedTotalKg),
+      entered_load: correctedTotalKg === old.load_kg
         ? old.entered_load ?? null
-        : totalLoadKg > 0
-          ? toDisplay(enteredKg(totalLoadKg, loadEntry), unit)
+        : correctedTotalKg > 0
+          ? editing.enteredLoad
           : null,
-      entered_unit: Math.round(totalLoadKg * 100) / 100 === old.load_kg
+      entered_unit: correctedTotalKg === old.load_kg
         ? old.entered_unit ?? null
-        : (totalLoadKg > 0 ? unit : null),
+        : (correctedTotalKg > 0 ? editing.enteredUnit : null),
       rpe,
     };
     if (isNoopCorrection(old, correction)) {
@@ -1830,6 +1885,11 @@ export function Session() {
     setReps(editing.staged.reps);
     setSetType(editing.staged.setType);
     setRpe(editing.staged.rpe);
+    setDurationSeconds(editing.staged.durationSeconds);
+    stagedDraftsRef.current[editing.stagedKey] = {
+      ...editing.staged,
+      setType: editing.staged.setType as BracketKind,
+    };
     setEditing(null);
     toast(`Set ${old.set_index + 1} corrected`);
   };
@@ -2192,9 +2252,9 @@ export function Session() {
             perSideRound ? "WEIGHT ON EACH DUMBBELL" : "ONE TOTAL WEIGHT"
           } IN ${roundUnit.toUpperCase()}`,
           action: pad.fromPlates ? "BACK TO PLATES" : "SET LOAD",
-          initial: String(draft.enteredLoad !== undefined && draft.enteredUnit === roundUnit
-            ? draft.enteredLoad
-            : toDisplay(draft.entryKg, roundUnit)),
+          initial: String(stagedDisplayLoad(
+            draft.entryKg, draft.enteredLoad, draft.enteredUnit, roundUnit,
+          )),
           allowDecimal: true,
           onCommit: (value) => {
             const kg = Math.min(max, Math.max(0, fromDisplay(value, roundUnit)));
@@ -2233,7 +2293,11 @@ export function Session() {
         onCommit: (v) => {
           const kg = Math.min(maxEntryKg, Math.max(0, fromDisplay(v, inputUnit)));
           const entryKg = Math.round(kg * 100) / 100;
-          rememberStagedDraft(openEntry, { entryKg, enteredLoad: v, enteredUnit: inputUnit });
+          if (editing) {
+            setEditing({ ...editing, enteredLoad: v, enteredUnit: inputUnit, loadEdited: true });
+          } else {
+            rememberStagedDraft(openEntry, { entryKg, enteredLoad: v, enteredUnit: inputUnit });
+          }
           setEntryKg(entryKg);
           setPad(null);
           if (pad.fromPlates) setSheet("plates");
@@ -2252,7 +2316,7 @@ export function Session() {
         allowDecimal: false,
         onCommit: (v) => {
           const reps = Math.min(MAX_REPS, Math.max(0, Math.round(v)));
-          rememberStagedDraft(openEntry, { reps });
+          if (!editing) rememberStagedDraft(openEntry, { reps });
           setReps(reps);
           setPad(null);
         },
@@ -2267,7 +2331,7 @@ export function Session() {
         allowDecimal: false,
         onCommit: (value) => {
           const next = Math.min(3600, Math.max(0, Math.round(value)));
-          rememberStagedDraft(openEntry, { durationSeconds: next });
+          if (!editing) rememberStagedDraft(openEntry, { durationSeconds: next });
           setDurationSeconds(next);
           setPad(null);
         },
@@ -2584,8 +2648,8 @@ export function Session() {
               setType: setType as BracketKind,
               rpe,
               durationSeconds,
-              enteredLoad: currentDraft?.enteredLoad,
-              enteredUnit: currentDraft?.enteredUnit,
+              enteredLoad: editing?.enteredLoad ?? currentDraft?.enteredLoad,
+              enteredUnit: editing?.enteredUnit ?? currentDraft?.enteredUnit,
             }}
             tracking={isTick(entry) ? "done" : isTimed(entry) ? "time" : "reps"}
             loadPresentation={{
@@ -2605,11 +2669,15 @@ export function Session() {
             nearbyLoads={nearbyLoads}
             onChooseNearbyLoad={(value) => {
               const nextKg = fromDisplay(value, inputUnit);
-              rememberStagedDraft(entry, {
-                entryKg: nextKg,
-                enteredLoad: value,
-                enteredUnit: inputUnit,
-              });
+              if (editing) {
+                setEditing({ ...editing, enteredLoad: value, enteredUnit: inputUnit, loadEdited: true });
+              } else {
+                rememberStagedDraft(entry, {
+                  entryKg: nextKg,
+                  enteredLoad: value,
+                  enteredUnit: inputUnit,
+                });
+              }
               setEntryKg(nextKg);
             }}
             rpeShown={rpeShown(entry.exercise_id)}
@@ -2641,7 +2709,7 @@ export function Session() {
             restSlot={undefined}
             hasWarmupBracket={warmupSets(entry) > 0}
             onAlreadyWarm={() => {
-              rememberStagedDraft(entry, { setType: "working" });
+              if (!editing) rememberStagedDraft(entry, { setType: "working" });
               setSetType("working");
             }}
             lastSetLine={presentation === "focus" ? lastSetLine : null}
@@ -2652,7 +2720,17 @@ export function Session() {
             onDraftChange={(next) => {
               setLogError(null);
               if (!editing) rememberStagedDraft(entry, next);
-              if (next.entryKg !== undefined) setEntryKg(next.entryKg);
+              if (next.entryKg !== undefined) {
+                if (editing) {
+                  setEditing({
+                    ...editing,
+                    enteredLoad: next.enteredLoad ?? toDisplay(next.entryKg, unit),
+                    enteredUnit: next.enteredUnit ?? unit,
+                    loadEdited: true,
+                  });
+                }
+                setEntryKg(next.entryKg);
+              }
               if (next.reps !== undefined) setReps(next.reps);
               if (next.setType !== undefined) setSetType(next.setType);
               if (next.rpe !== undefined) setRpe(next.rpe);
@@ -3220,6 +3298,35 @@ export function Session() {
         : defaultRoundDraft(entry));
   };
 
+  const switchWorkoutUnit = (next: Unit) => {
+    if (next === unit) return;
+    // Stamp a prefilled draft's displayed value before changing units. An
+    // authored value already has its own unit and must keep that provenance.
+    if (!editing && openEntry && currentDraft?.enteredUnit === undefined) {
+      rememberStagedDraft(openEntry, {
+        enteredLoad: displayedLoad,
+        enteredUnit: unit,
+      });
+    }
+    if (!editing && focusSupersetPair) {
+      setRoundDrafts((prior) => {
+        const nextDrafts = { ...prior };
+        for (const member of focusSupersetPair) {
+          const draft = prior[member.key] ?? roundDraftFor(member);
+          nextDrafts[member.key] = draft.enteredUnit !== undefined
+            ? draft
+            : {
+                ...draft,
+                enteredLoad: toDisplay(draft.entryKg, unit),
+                enteredUnit: unit,
+              };
+        }
+        return nextDrafts;
+      });
+    }
+    setUnit(next);
+  };
+
   const roundEditorFor = (entry: ExerciseEntry, draft: SetDraft) => {
     const bracket = bracketFor(
       entry,
@@ -3459,11 +3566,14 @@ export function Session() {
                   ? active.workout_label.toUpperCase()
                   : "WORKOUT"}
               </h1>
-              {entries.length > 0 && (
-                <span className="section-meta">
-                  {doneEntries} OF {entries.length} DONE
-                </span>
-              )}
+              <div className="session-heading-controls">
+                {entries.length > 0 && (
+                  <span className="section-meta">
+                    {doneEntries} OF {entries.length} DONE
+                  </span>
+                )}
+                <UnitSwitch unit={unit} onChange={switchWorkoutUnit} />
+              </div>
             </div>
           )}
 
@@ -3471,6 +3581,7 @@ export function Session() {
             <FocusDeck
               entries={entries}
               entry={focusEntry}
+              unitSwitch={<UnitSwitch unit={unit} onChange={switchWorkoutUnit} />}
               entryProgress={entryProgress}
               entryDone={entryDone}
               entryState={entryState}

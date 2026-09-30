@@ -140,7 +140,7 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [reviewKey, setReviewKey] = useState<number | null>(null);
-  const [exportedSnapshot, setExportedSnapshot] = useState<string | null>(null);
+  const [exportedSnapshot, setExportedSnapshot] = useState<OutboxEntry[] | null>(null);
   const [savedExport, setSavedExport] = useState(false);
 
   const reload = useCallback(() => {
@@ -186,7 +186,15 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
   const reviewTotal = review?.op.kind === "insert" && review.op.table === "sets"
     ? `${unit === "kg" ? review.op.payload.load_kg : toDisplay(review.op.payload.load_kg, unit)} ${unit}`
     : null;
-  const exportMatches = exportedSnapshot === JSON.stringify(entries);
+  // A saved export can cover more than one repaired set. The queue changes
+  // after the first retry, but an untouched row is still the exact row the
+  // lifter saved and reviewed. The outbox checks it again before mutation.
+  const exportMatches = Boolean(review && exportedSnapshot?.some((saved) =>
+    saved.key === review.key &&
+    saved.user_id === review.user_id &&
+    saved.created_at === review.created_at &&
+    JSON.stringify(saved.op) === JSON.stringify(review.op)
+  ));
   const oldest = entries.reduce<number | null>((acc, e) => {
     if (e.created_at === null) return acc;
     const t = Date.parse(e.created_at);
@@ -219,7 +227,7 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
         toast("The queue changed during export. Export it again before repair.");
         return;
       }
-      setExportedSnapshot(JSON.stringify(rows));
+      setExportedSnapshot(rows);
       setSavedExport(false);
       toast(`Queue copy prepared for ${rows.length} writes. Confirm you saved the file.`);
     };
@@ -275,7 +283,6 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
         if (repaired) {
           toast("Set queued for retry with its logged total; check sync status for delivery.");
           setReviewKey(null);
-          setExportedSnapshot(null);
           setSavedExport(false);
         } else {
           toast("This set changed or belongs to another account. Export and review it again.");
@@ -356,8 +363,8 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
           <div className="field-label">LOAD REPAIR ({repairable.length})</div>
           <div className="microcopy">
             These sets were refused because the saved total and stored entered fields
-            disagree. Review each total, export the queue, then choose which
-            set to retry. Repair keeps the logged total in kg and marks the
+            disagree. Export the queue, then review each total before retrying.
+            One saved export covers every unchanged set it contains. Repair keeps the logged total in kg and marks the
             stored entered number and unit as unknown. The export keeps the
             original queued row.
           </div>
