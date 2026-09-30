@@ -13,7 +13,10 @@ function run(env) {
 }
 
 test("missing local configuration reports NOT RUN with a nonzero status", () => {
-  const result = run({});
+  const result = run({
+    PHASE2_E2E_CONFIG_FILE: "/dev/null",
+    PHASE2_E2E_ADMIN_CONFIG_FILE: "/dev/null",
+  });
   assert.equal(result.status, 3);
   assert.match(result.stdout, /^NOT RUN:/);
 });
@@ -23,6 +26,8 @@ test("hosted Supabase URL is refused with a distinct status before admin-key loa
     PHASE2_SUPABASE_URL: "https://hosted.supabase.co",
     PHASE2_ANON_KEY: "test-anon-key",
     PHASE2_APP_URL: "http://127.0.0.1:5198",
+    PHASE2_E2E_CONFIG_FILE: "/dev/null",
+    PHASE2_E2E_ADMIN_CONFIG_FILE: "/dev/null",
   });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /hosted targets are refused/);

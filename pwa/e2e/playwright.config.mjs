@@ -1,7 +1,10 @@
 import { defineConfig } from "@playwright/test";
 import { loadLocalConfig } from "./local-config.mjs";
 
-const local = await loadLocalConfig();
+const local = await loadLocalConfig({
+  envFile: process.env.PHASE2_E2E_CONFIG_FILE ?? new URL("../.env.e2e.local", import.meta.url),
+  adminEnvFile: process.env.PHASE2_E2E_ADMIN_CONFIG_FILE ?? new URL("../.env.e2e.admin.local", import.meta.url),
+});
 const appPort = new URL(local.appUrl).port || "80";
 
 export default defineConfig({

@@ -253,6 +253,22 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
           performed_at: originalSet.performed_at,
         },
       });
+      const rlsSetId = randomUUID();
+      const appendWithForeignOwner = await authenticatedRequest(friendPage, "/rest/v1/sets", {
+        method: "POST",
+        body: {
+          id: rlsSetId,
+          user_id: userA.id,
+          session_id: session.id,
+          exercise_id: prescriptions[0].exercise_id,
+          prescription_id: prescriptions[0].id,
+          set_index: 100,
+          set_type: "working",
+          load_kg: 1,
+          reps: 1,
+          performed_at: originalSet.performed_at,
+        },
+      });
       const writeAsB = await authenticatedRequest(friendPage, "/rest/v1/set_voids", {
         method: "POST",
         body: { set_id: liveSets[0].id },
@@ -260,9 +276,12 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
       expect(readAsB).toEqual([]);
       expect(planReadAsB).toEqual([]);
       expect(sessionReadAsB).toEqual([]);
-      expect([401, 403]).toContain(appendAsB.status);
+      expect(appendAsB.status).toBe(409);
+      expect(appendAsB.payload?.code).toBe("23503");
+      expect(appendWithForeignOwner.status).toBe(403);
       expect(writeAsB.status).toBe(403);
       expect(await rows(friendPage, "sets", `select=id&session_id=eq.${session.id}&id=eq.${foreignSetId}`)).toEqual([]);
+      expect(await rows(friendPage, "sets", `select=id&session_id=eq.${session.id}&id=eq.${rlsSetId}`)).toEqual([]);
       expect(await rows(friendPage, "set_voids", `select=set_id&set_id=eq.${liveSets[0].id}`)).toEqual([]);
     } finally {
       await friendContext.close();

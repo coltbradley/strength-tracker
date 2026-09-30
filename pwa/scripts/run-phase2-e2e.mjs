@@ -3,7 +3,10 @@ import { loadLocalConfig } from "../e2e/local-config.mjs";
 
 let local;
 try {
-  local = await loadLocalConfig();
+  local = await loadLocalConfig({
+    envFile: process.env.PHASE2_E2E_CONFIG_FILE ?? new URL("../.env.e2e.local", import.meta.url),
+    adminEnvFile: process.env.PHASE2_E2E_ADMIN_CONFIG_FILE ?? new URL("../.env.e2e.admin.local", import.meta.url),
+  });
 } catch (error) {
   if (/must use loopback|must use http|must not contain credentials/.test(error.message)) {
     console.error(`Refusing E2E target: ${error.message}`);
