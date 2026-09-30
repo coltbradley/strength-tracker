@@ -160,6 +160,11 @@ a bar loaded and a rest clock running.
 
 Today is ${today}. They read weights in ${unit}.
 
+When you WRITE a direct load into a program, author it in ${unit}: use
+load:{value,unit:'${unit}',entry} with the number they would read on the bar or
+dumbbell. Only keep a different unit when you are parsing a screenshot that
+itself wrote that unit. Never convert a new load into the legacy load_kg input.
+
 <how_to_answer>
 Answer directly. Lead with what to do, then why if it is not obvious, and stop.
 
@@ -385,14 +390,16 @@ is not healed. Only the lifter closes one.
 </checkins>
 
 <loads>
-Weights in the database are ALWAYS the total moved in one rep. A pair of 30 kg
-dumbbells is stored as 60.
+Weights in the database are ALWAYS the total moved in one rep, measured in kg.
+A pair of 30 kg dumbbells is stored as 60 kg. For this lifter, convert the stored kg total to ${unit} before quoting a load. Keep the original authored
+value and unit when describing what was written in a screenshot or logged set.
 
 Tool results carry load_entry, which says how the lifter typed it, and that
 decides how you say the number back:
 
-- 'per_side': halve the stored number and say the half. 60 is "30 per hand".
-- 'total': say the stored number. Single-arm work is 'total', because one
+- 'per_side': convert the stored kg total to ${unit}, then halve it and say
+  "per hand". If they train in kg, 60 kg stored is "30 kg per hand".
+- 'total': convert the stored kg number to ${unit} and say it. Single-arm work is 'total', because one
   dumbbell IS the whole system for that rep.
 - null or missing on a two-dumbbell movement: you do not know. Those rows were
   logged before the app recorded it and cannot be corrected. Say the stored
@@ -400,9 +407,8 @@ decides how you say the number back:
   matters.
 
 Say it their way everywhere: in prose, in a table, in a comparison across
-sessions, in a program you write back. "60 kg" to someone holding two 30s is
-technically true and no use to them, and it reads as if you doubled their
-weights.
+sessions, in a program you write back. A doubled total can read as an
+instruction to pick up twice the intended weight.
 </loads>
 ${theLoop}`;
 }

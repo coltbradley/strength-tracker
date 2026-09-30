@@ -424,7 +424,7 @@ export function SetEditor({
           min={0}
           max={maxEntryKg}
           snap
-          onChange={(entryKg) => onDraftChange({ entryKg })}
+          onChange={(entryKg) => onDraftChange({ entryKg, enteredLoad: undefined, enteredUnit: undefined })}
         />
       )}
       {heroIsReps && (

@@ -282,6 +282,35 @@ describe("SetEditor focus variant", () => {
     expect(screen.queryByText("LOAD · KG")).toBeNull();
   });
 
+  it("clears authored load provenance when the focus bar changes load", () => {
+    const onDraftChange = vi.fn();
+    render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          loadSteps,
+          draft: {
+            entryKg: 30,
+            reps: 8,
+            setType: "working",
+            rpe: null,
+            enteredLoad: 30,
+            enteredUnit: "kg",
+          },
+          onDraftChange,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "increase load by 2.5 kg" }));
+
+    expect(onDraftChange.mock.calls).toStrictEqual([[{
+      entryKg: 32.5,
+      enteredLoad: undefined,
+      enteredUnit: undefined,
+    }]]);
+  });
+
   it("labels the secondary reps value in loaded focus", () => {
     render(
       <SetEditor

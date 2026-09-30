@@ -34,7 +34,7 @@ export function rxLoadKg(rx: ResolvedPrescriptionRow): number | null {
   return rx.plate_load_kg ?? rx.resolved_load_kg;
 }
 
-/** Use the durable authored value when present, otherwise convert a legacy kg row. */
+/** Keep exact authorship in the chosen unit, otherwise display canonical kg. */
 export function formatAuthoredLoad(
   loadKg: number,
   loadEntry: "total" | "per_side" | null | undefined,
@@ -42,7 +42,7 @@ export function formatAuthoredLoad(
   enteredUnit: Unit | null | undefined,
   displayUnit: Unit,
 ): string {
-  if (enteredLoad != null && enteredUnit != null && loadEntry != null) {
+  if (enteredLoad != null && enteredUnit === displayUnit && loadEntry != null) {
     return `${enteredLoad} ${enteredUnit}${loadEntry === "per_side" ? "/side" : ""}`;
   }
   const entry = loadEntry === "per_side" ? loadKg / 2 : loadKg;

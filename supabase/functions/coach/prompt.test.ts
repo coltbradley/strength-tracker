@@ -12,6 +12,13 @@ import { systemPrompt } from "./prompt.ts";
 
 const PROMPT = systemPrompt("2026-09-16", "kg");
 
+Deno.test("coach writes direct loads in the lifter's unit while preserving screenshot units", () => {
+  const poundsPrompt = systemPrompt("2026-09-16", "lb");
+  assertStringIncludes(poundsPrompt, "load:{value,unit:'lb',entry}");
+  assertStringIncludes(poundsPrompt, "Only keep a different unit when you are parsing a screenshot");
+  assertStringIncludes(poundsPrompt, "convert the stored kg total to lb before quoting a load");
+});
+
 Deno.test("REVIEWING A SESSION step 1 compares with get_session_diff", () => {
   assertStringIncludes(PROMPT, "get_session_diff");
   assertStringIncludes(PROMPT, "session_skips");

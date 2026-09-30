@@ -87,7 +87,7 @@ describe("formatRxTarget is the one prescription formatter", () => {
     ).toBe("3×5 @ 220.5 lb");
   });
 
-  it("preserves the authored unit and value even when display unit differs", () => {
+  it("converts authored lb when the lifter reads kg", () => {
     expect(
       formatRxTarget(
         rx({
@@ -99,10 +99,15 @@ describe("formatRxTarget is the one prescription formatter", () => {
         }),
         "kg",
       ),
-    ).toBe("3×5 @ 225 lb");
+    ).toBe("3×5 @ 102.1 kg");
   });
 
-  it("preserves per-side authored values while analytics keep the total", () => {
+  it("converts a kg-authored target into the lifter's lb display unit", () => {
+    expect(formatAuthoredLoad(100, "total", 100, "kg", "lb")).toBe("220.5 lb");
+    expect(formatAuthoredLoad(100, "per_side", 50, "kg", "lb")).toBe("110.2 lb/side");
+  });
+
+  it("converts per-side authored values when display unit differs", () => {
     expect(
       formatRxTarget(
         rx({
@@ -114,7 +119,7 @@ describe("formatRxTarget is the one prescription formatter", () => {
         }),
         "kg",
       ),
-    ).toBe("3×5 @ 30 lb/side");
+    ).toBe("3×5 @ 13.6 kg/side");
   });
 
   // The column has existed since August and nothing rendered it, so a
@@ -181,8 +186,8 @@ describe("formatStoredTwin", () => {
 });
 
 describe("formatAuthoredLoad", () => {
-  it("prefers persisted entered load over a converted kg display", () => {
-    expect(formatAuthoredLoad(lbToKg(225), "total", 225, "lb", "kg"))
+  it("keeps the exact persisted value when the units match", () => {
+    expect(formatAuthoredLoad(lbToKg(225), "total", 225, "lb", "lb"))
       .toBe("225 lb");
   });
 

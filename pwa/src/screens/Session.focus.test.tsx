@@ -103,6 +103,25 @@ async function seed(
   await cacheSet(cacheKeys.sessionSets(active.id), sets);
 }
 
+// Same arithmetic as validate_entered_load_consistency() in the applied
+// Postgres migration. The queue payload must pass before it reaches the phone.
+function expectAcceptedAuthoredLoad(payload: SetInsert) {
+  expect(payload.entered_load).not.toBeNull();
+  const expectedTotal = Math.round(
+    payload.entered_load! * (payload.entered_unit === "lb" ? 0.45359237 : 1) *
+      (payload.load_entry === "per_side" ? 2 : 1) * 100,
+  ) / 100;
+  expect(payload.load_kg).toBe(expectedTotal);
+}
+
+function firstQueuedSet(): SetInsert {
+  const op = vi.mocked(outbox.enqueue).mock.calls[0]?.[0];
+  if (op?.kind !== "insert" || op.table !== "sets") {
+    throw new Error("expected a queued set insert");
+  }
+  return op.payload;
+}
+
 async function outboxWithFailedCountRefresh() {
   const db = await getDb();
   const failingReadDb = {
@@ -390,6 +409,7 @@ describe("Session focus presentation", () => {
 
   it("shows and logs a prescription in its durable authored unit", async () => {
     resetDbForTests();
+    setSetting("unit", "lb");
     const bench = prescription();
     bench.load_kg = 102.17;
     bench.resolved_load_kg = 102.17;
@@ -406,6 +426,59 @@ describe("Session focus presentation", () => {
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { entered_load: 225.25, entered_unit: "lb" },
     });
+  });
+
+  it("logs the rounded visible lb value of a kg-authored total", async () => {
+    resetDbForTests();
+    setSetting("unit", "lb");
+    const bench = { ...prescription(), load_kg: 100, resolved_load_kg: 100,
+      entered_load: 100, entered_unit: "kg" as const, load_entry: "total" as const };
+    await seed("reps", [bench]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("220.5"));
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 100.02, entered_load: 220.5, entered_unit: "lb", load_entry: "total" });
+    expectAcceptedAuthoredLoad(payload);
+  });
+
+  it("logs per-side lb provenance and canonical total from the same number", async () => {
+    resetDbForTests();
+    setSetting("unit", "lb");
+    const pair = { ...prescription("pair", "dumbbell-bench", "Dumbbell Bench Press"),
+      load_kg: 100, resolved_load_kg: 100, entered_load: 50,
+      entered_unit: "kg" as const, load_entry: "per_side" as const };
+    await seed("reps", [pair]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("110.2"));
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 99.97, entered_load: 110.2, entered_unit: "lb", load_entry: "per_side" });
+    expectAcceptedAuthoredLoad(payload);
+  });
+
+  it("logs an explicitly typed lb load without rounding its authored number", async () => {
+    resetDbForTests();
+    setSetting("unit", "lb");
+    const bench = { ...prescription(), load_kg: 100, resolved_load_kg: 100,
+      entered_load: 100, entered_unit: "kg" as const, load_entry: "total" as const };
+    await seed("reps", [bench]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "5" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 102.06, entered_load: 225, entered_unit: "lb", load_entry: "total" });
+    expectAcceptedAuthoredLoad(payload);
   });
 
   it("routes Note last set to the set_notes outbox row", async () => {
@@ -653,6 +726,7 @@ describe("Session focus presentation", () => {
 
   it("keeps each member's authored load and unit in its round draft", async () => {
     resetDbForTests();
+    setSetting("unit", "lb");
     const authoredBench = {
       ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
       load_kg: 102.17,
