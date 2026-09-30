@@ -232,13 +232,14 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
     expect(liveSets.map((set) => set.set_index).sort((a, b) => a - b)).toEqual([0, 1, 2]);
 
     const friendContext = await browser.newContext();
+    const foreignSetId = randomUUID();
+    const rlsSetId = randomUUID();
     try {
       const friendPage = await friendContext.newPage();
       await signIn(friendPage, userB);
       const readAsB = await rows(friendPage, "sets", `select=id&session_id=eq.${session.id}`);
       const planReadAsB = await rows(friendPage, "planned_workouts", `select=id&id=eq.${plannedWorkoutId}`);
       const sessionReadAsB = await rows(friendPage, "sessions", `select=id&id=eq.${session.id}`);
-      const foreignSetId = randomUUID();
       const appendAsB = await authenticatedRequest(friendPage, "/rest/v1/sets", {
         method: "POST",
         body: {
@@ -253,7 +254,6 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
           performed_at: originalSet.performed_at,
         },
       });
-      const rlsSetId = randomUUID();
       const appendWithForeignOwner = await authenticatedRequest(friendPage, "/rest/v1/sets", {
         method: "POST",
         body: {
@@ -287,6 +287,12 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
       await friendContext.close();
     }
 
+    const attemptedRowsAsOwner = await rows(
+      page,
+      "sets",
+      `select=id&user_id=eq.${userA.id}&id=in.(${foreignSetId},${rlsSetId})`,
+    );
+    expect(attemptedRowsAsOwner).toEqual([]);
     const finalVoids = await rows(page, "set_voids", `select=set_id,user_id&set_id=eq.${liveSets[0].id}`);
     expect(finalVoids).toHaveLength(0);
   });
