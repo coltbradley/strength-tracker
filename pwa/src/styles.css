@@ -3694,10 +3694,12 @@
 
   .superset-round-members {
     display: grid;
-    flex: 1;
-    grid-template-rows: repeat(2, minmax(142px, 1fr));
+    flex: 1 0 auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(max-content, 1fr));
     gap: var(--s-8);
     min-height: 0;
+    min-width: 0;
   }
 
   .superset-member-card {
@@ -3738,13 +3740,37 @@
   .superset-member-row {
     display: flex;
     align-items: baseline;
+    flex-wrap: wrap;
     gap: var(--s-4);
   }
 
-  /* The two cards share equal space and keep load and reps legible together. */
+  /* Keep the load controls at the 44px tap floor. The multiplier and reps
+   * move together when a long pound value cannot share one phone-width row. */
+  .superset-member-row .stepper-inline {
+    gap: var(--s-4);
+  }
+
+  .superset-member-row .stepper-btn {
+    flex-basis: var(--tap-min);
+    min-width: var(--tap-min);
+  }
+
+  .superset-member-reps {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--s-4);
+    flex: none;
+  }
+
   .superset-member-row .stepper-value {
     font-size: 42px;
     border-bottom: none;
+  }
+
+  @media (max-width: 359px) {
+    .superset-member-row .stepper-value {
+      font-size: 36px;
+    }
   }
 
   .superset-member-row .stepper-sub {

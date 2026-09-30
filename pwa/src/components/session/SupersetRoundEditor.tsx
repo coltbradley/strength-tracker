@@ -84,22 +84,24 @@ function MemberRow({ member }: { member: SupersetRoundMember }) {
             (s): s is StepDef => s !== undefined,
           )}
         />
-        <span className="superset-member-x" aria-hidden="true">
-          ×
-        </span>
-        <Stepper
-          label="reps"
-          inline
-          display={String(draft.reps)}
-          onTapValue={
-            onOpenPad === undefined ? undefined : () => onOpenPad("reps")
-          }
-          value={draft.reps}
-          min={0}
-          max={100}
-          onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
-          steps={[]}
-        />
+        <div className="superset-member-reps">
+          <span className="superset-member-x" aria-hidden="true">
+            ×
+          </span>
+          <Stepper
+            label="reps"
+            inline
+            display={String(draft.reps)}
+            onTapValue={
+              onOpenPad === undefined ? undefined : () => onOpenPad("reps")
+            }
+            value={draft.reps}
+            min={0}
+            max={100}
+            onChange={(reps) => onDraftChange({ reps: Math.round(reps) })}
+            steps={[]}
+          />
+        </div>
       </div>
       {perSide && (
         <div className="microcopy superset-member-detail">
