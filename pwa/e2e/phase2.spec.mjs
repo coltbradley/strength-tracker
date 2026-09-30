@@ -3,7 +3,10 @@ import { test, expect } from "@playwright/test";
 import { loadLocalConfig } from "./local-config.mjs";
 import { cleanupUsers } from "./lifecycle-utils.mjs";
 
-const local = await loadLocalConfig();
+const local = await loadLocalConfig({
+  envFile: process.env.PHASE2_E2E_CONFIG_FILE ?? new URL("../.env.e2e.local", import.meta.url),
+  adminEnvFile: process.env.PHASE2_E2E_ADMIN_CONFIG_FILE ?? new URL("../.env.e2e.admin.local", import.meta.url),
+});
 let userA;
 let userB;
 
@@ -227,8 +230,10 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
     expect(sessionSets).toHaveLength(4);
     expect(voids).toHaveLength(1);
     expect(voids[0].user_id).toBe(userA.id);
+    expect(voids[0].set_id).toBe(originalSet.id);
     expect(sessionSets.every((set) => set.user_id === userA.id && set.session_id === session.id)).toBe(true);
     const liveSets = sessionSets.filter((set) => !voids.some((voidRow) => voidRow.set_id === set.id));
+    expect(liveSets.some((set) => set.id === correctedSet.id && set.load_kg !== originalSet.load_kg)).toBe(true);
     expect(liveSets.map((set) => set.set_index).sort((a, b) => a - b)).toEqual([0, 1, 2]);
 
     const friendContext = await browser.newContext();
