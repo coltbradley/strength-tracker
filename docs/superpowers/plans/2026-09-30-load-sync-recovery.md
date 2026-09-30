@@ -34,12 +34,14 @@ on the phone and are not repaired by a new build alone.
    tests. First add a failing case for kg-authored 100 kg viewed in lb and
    logged unchanged. The stored total and entered value must satisfy the
    production trigger, including a per-side case and explicit lb edits.
-3. Inspect the outbox's rejected-item contract and implement a safe path for
-   the specific failed set rows if the existing export and retry controls
-   cannot recover them. Files, if required: `pwa/src/lib/outbox.ts`,
-   `pwa/src/components/OutboxSheet.tsx`, and focused tests. Any repair must be
-   owner-scoped, keep the same set UUID and `load_kg`, require a queue export
-   and human review, and leave unrelated constraint failures untouched.
+3. **Done, commit `2939f91` (`Repair eligible failed sets in one batch`).**
+   The Outbox offers one reviewed batch repair for all eligible authored-load
+   failures in the current queue export. It validates the whole snapshot and
+   owner before changing anything, preserves each set UUID and training value,
+   and leaves linked voids and notes parked until their parent sets sync.
+   The phone requires a current saved export and explicit review; the export
+   does not need to be uploaded to us. Other constraint failures remain
+   untouched.
 4. Reproduce the reported superset overlap at the phone's 402 × 812 viewport
    and fix the card width and small-screen wrapping. Keep the tap targets and
    action row usable at narrower widths.
@@ -66,16 +68,28 @@ as rollback. No database migration is planned.
 - A dead set with the exact load-consistency error can be reviewed, exported,
   and retried with its original entered number/unit marked unknown. Its UUID,
   owner, timestamp, index, load total, and other training fields are retained.
-  Native file sharing is used when available; cancellation leaves repair
-  locked. The recovery has no automatic repair path.
+  The batch path validates all selected rows against one current export and
+  repairs them atomically. Native file sharing is used when available;
+  cancellation leaves repair locked. Linked child writes stay parked until
+  the parent sets sync. There is no automatic repair path.
 - Superset cards overflowed the 402 px page by 13 px in the lb demo. After
   the layout change, the cards end at x=384 and the page scroll width is 402.
   At 320 px, content wraps inside the cards and the actions remain reachable
   by scrolling. Desktop width remains within the viewport.
 - The full PWA, Edge Function, database, selected-column, and release-script
-  gates passed locally. The affected installed iPhone's queue export, writes,
-  and server readback remain unverified. The plate-diagram and
-  next-action complaints lack enough phone context for a confirmed fix.
+  gates passed locally before the batch-repair commit. The batch repair was
+  independently reviewed with no concrete data-integrity defect found; the
+  review confirmed nullable provenance is accepted by the trigger and linked
+  child retry ordering is preserved. The implementer reported 1,074/1,074 full
+  PWA tests, typecheck, and build passing before a final microcopy/copy
+  assertion tweak, then 69/69 focused outbox and OutboxSheet tests passing
+  after that tweak with `npm test -- --configLoader runner
+  src/lib/outbox.test.ts src/components/OutboxSheet.test.tsx`. These are
+  agent-reported results. The independent reviewer could not rerun them because
+  the worktree hit sandbox `EPERM` in `node_modules` temp. The affected
+  installed iPhone's repair and post-replay server readback remain unverified.
+  The plate-diagram and next-action complaints lack enough phone context for a
+  confirmed fix.
 
 ## Affected phone evidence, later on 2026-09-30
 
@@ -85,11 +99,11 @@ authored-load mismatch, two set voids refused by `set_voids` row-level
 security, and one set note refused by `set_notes` row-level security. Both
 policies require the referenced set to belong to the caller and to exist on
 the server. The failed parent set inserts are a plausible cause of the three
-dependent refusals, but the screenshot does not show set UUIDs. An export of
-the phone queue is required to confirm the links. Do not treat the three as
-independent permission bugs or retry them before the parent sets land.
+dependent refusals, but the screenshot does not show set UUIDs. The previously
+supplied export confirms the links. Do not treat the three as independent
+permission bugs or retry them before the parent sets land.
 
-The queue export received afterward contains exactly those ten failed writes,
+The previously supplied queue export contains exactly those ten failed writes,
 all queued by one owner in one session. Every void/note points to one of the
 seven failed set IDs. The split-squat and calf-raise voids each target an
 earlier copy in a correction pair, so successful recovery should leave five
@@ -97,8 +111,8 @@ of these seven sets live. The stored totals are 65.77, 34.02, 45.36, and
 52.16 kg, nearly exactly 145, 75, 100, and 115 lb; their stale entered fields
 are rounded kg values. A read-only live database check found the session
 under the same owner, ended and not discarded, and found none of the seven set
-IDs, their voids, or their note on the server. The export is the only copy of
-those writes until the phone's outbox successfully replays them.
+IDs, their voids, or their note on the server. The phone outbox and saved
+export contain those writes until they successfully replay.
 
 ## Read-only server confirmation, 2026-09-30
 
@@ -112,11 +126,12 @@ discarded. This confirms the exported writes have not landed; it does not
 confirm recovery. Post-replay phone queue count and server readback by UUID:
 **NOT RUN**.
 
-## Phone count update, 2026-09-30
+## Current phone gate, 2026-09-30
 
-The affected iPhone currently reports 10 failed writes, matching the saved
-export's count. This count match does not establish UUID or payload match; a
-fresh phone export is requested and pending. A repeated read-only production
-query still found none of the seven saved-export set UUIDs, two voids, or note.
-No repair or retry has been performed. Replay and post-replay phone count and
-server UUID readback remain **NOT RUN**.
+The affected iPhone still reports **10 failed writes**, unchanged from the
+earlier screenshot. The previously supplied export has been analyzed. The
+batch repair UI requires a current saved queue export and review on the phone;
+there is no request to upload that export to us. The count alone does not
+establish UUID or payload identity. The old export's pre-replay server query
+found none of its seven set UUIDs, two voids, or note. Repair/replay outcome
+and post-replay phone count and server UUID readback remain **NOT RUN**.
