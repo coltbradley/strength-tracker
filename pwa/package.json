@@ -10,6 +10,8 @@
     "typecheck": "tsc -b --force",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:e2e:phase2": "node scripts/run-phase2-e2e.mjs",
+    "test:e2e:phase2:config": "node --test e2e/local-config.test.mjs",
     "icons": "node scripts/make-icons.mjs",
     "postbuild": "cp dist/index.html dist/404.html",
     "demo": "VITE_DEMO=1 vite --port 5199"
@@ -23,6 +25,7 @@
     "react-router-dom": "^7.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^26.3.0",
     "@types/react": "^19.1.0",
