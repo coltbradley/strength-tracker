@@ -23,9 +23,9 @@
 // doing its job. The colour and the ranking only appear when something is
 // genuinely stuck.
 //
-// It never edits or deletes a queued write. Corrections to a logged set are
-// voids, and a queue is not a place to rewrite history — the two verbs offered
-// here are "ask again" and "give me a copy".
+// A narrow recovery for an authored-load consistency rejection can remove the
+// contradictory provenance from an unsent set after export and review. The
+// logged total, set id and training fields stay as the lifter recorded them.
 
 import { useCallback, useEffect, useState } from "react";
 import { Sheet } from "./Sheet";
@@ -136,6 +136,9 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
   const [names, setNames] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [reviewKey, setReviewKey] = useState<number | null>(null);
+  const [exportedSnapshot, setExportedSnapshot] = useState<string | null>(null);
+  const [savedExport, setSavedExport] = useState(false);
 
   const reload = useCallback(() => {
     outbox
@@ -171,6 +174,9 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
   const held = entries.filter((e) => e.state === "held");
   const waiting = entries.filter((e) => e.state === "waiting");
   const retryable = dead.filter((e) => e.retryable);
+  const repairable = dead.filter((e) => e.loadRepairable === true);
+  const review = repairable.find((e) => e.key === reviewKey);
+  const exportMatches = exportedSnapshot === JSON.stringify(entries);
   const oldest = entries.reduce<number | null>((acc, e) => {
     if (e.created_at === null) return acc;
     const t = Date.parse(e.created_at);
@@ -197,18 +203,76 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
 
   const runExport = () => {
     setBusy(true);
+    const saveSnapshot = async (rows: OutboxEntry[]) => {
+      const current = await outbox.inspect();
+      if (JSON.stringify(current) !== JSON.stringify(rows)) {
+        toast("The queue changed during export. Export it again before repair.");
+        return;
+      }
+      setExportedSnapshot(JSON.stringify(rows));
+      setSavedExport(false);
+      toast(`Queue copy prepared for ${rows.length} writes. Confirm you saved the file.`);
+    };
+
+    // Installed iOS web apps have had Blob-link downloads silently fail. A
+    // native file share gives the lifter a Save to Files choice. It must be
+    // called during the click's user activation, before an IndexedDB await.
+    const rows = entries;
+    const bundle = buildQueueExport(rows, names, APP_VERSION);
+    const filename = exportFilename("json", "unsynced");
+    const json = JSON.stringify(bundle, null, 2);
+    const file = new File([json], filename, { type: "application/json" });
+    let canShareFile = false;
+    try {
+      canShareFile = Boolean(typeof navigator.share === "function" && navigator.canShare?.({ files: [file] }));
+    } catch {
+      // A file type unsupported by this browser falls back to a download.
+    }
+    if (canShareFile) {
+      navigator
+        .share({ files: [file], title: "Strength log write queue" })
+        .then(() => saveSnapshot(rows))
+        .catch((e: unknown) => {
+          if (e instanceof DOMException && e.name === "AbortError") return;
+          reportError(e, "share the write queue");
+        })
+        .finally(() => setBusy(false));
+      return;
+    }
     outbox
       .inspect()
-      .then((rows) => {
-        const bundle = buildQueueExport(rows, names, APP_VERSION);
-        downloadText(
-          exportFilename("json", "unsynced"),
-          "application/json",
-          JSON.stringify(bundle, null, 2),
-        );
-        toast(`Exported ${bundle.items.length} queued writes`);
+      .then((current) => {
+        const currentBundle = buildQueueExport(current, names, APP_VERSION);
+        downloadText(filename, "application/json", JSON.stringify(currentBundle, null, 2));
+        return saveSnapshot(current);
       })
       .catch((e: unknown) => reportError(e, "export the write queue"))
+      .finally(() => setBusy(false));
+  };
+
+  const repairReviewed = () => {
+    if (
+      !review ||
+      review.op.kind !== "insert" ||
+      review.op.table !== "sets" ||
+      !exportMatches ||
+      !savedExport
+    ) return;
+    setBusy(true);
+    outbox
+      .repairDeadLoadSet(review.key, review.op.payload)
+      .then((repaired) => {
+        if (repaired) {
+          toast("Set queued for retry with its logged total; check sync status for delivery.");
+          setReviewKey(null);
+          setExportedSnapshot(null);
+          setSavedExport(false);
+        } else {
+          toast("This set changed or belongs to another account. Export and review it again.");
+        }
+        reload();
+      })
+      .catch((e: unknown) => reportError(e, "repair failed set"))
       .finally(() => setBusy(false));
   };
 
@@ -266,6 +330,62 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
                   {CAUSE_COPY[cause]}
                 </div>
               ),
+          )}
+        </section>
+      )}
+
+      {repairable.length > 0 && (
+        <section className="settings-group">
+          <div className="field-label">LOAD REPAIR ({repairable.length})</div>
+          <div className="microcopy">
+            These sets were refused because the saved total and entered value
+            disagree. Review each total, export the queue, then choose which
+            set to retry. Repair keeps the logged total in kg and marks the
+            original entered number and unit as unknown. The export keeps the
+            original queued row.
+          </div>
+          {repairable.map((e) => (
+            <button
+              key={e.key}
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => { setReviewKey(e.key); setSavedExport(false); }}
+              disabled={busy}
+            >
+              Review failed set {e.op.kind === "insert" && e.op.table === "sets" ? e.op.payload.set_index + 1 : e.key}
+            </button>
+          ))}
+          {review?.op.kind === "insert" && review.op.table === "sets" && (
+            <div className="queue-repair-review">
+              <div className="field-label">REVIEW THIS SET</div>
+              <div>{describeOp(review.op, names)} · set {review.op.payload.set_index + 1}</div>
+              <div>Logged total: {review.op.payload.load_kg} kg</div>
+              <div>Original entered value: {review.op.payload.entered_load} {review.op.payload.entered_unit} ({review.op.payload.load_entry ?? "unknown"})</div>
+              <div>Reps: {review.op.payload.reps}</div>
+              <div>Logged at: {review.op.payload.performed_at}</div>
+              <div className="microcopy">
+                This keeps {review.op.payload.load_kg} kg as the training load.
+                The authored number and unit become unknown in the server row;
+                the original remains in your queue export.
+              </div>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={savedExport}
+                  onChange={(event) => setSavedExport(event.target.checked)}
+                  disabled={!exportMatches || busy}
+                />
+                I saved the queue export and checked this total
+              </label>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={repairReviewed}
+                disabled={busy || !exportMatches || !savedExport}
+              >
+                Keep {review.op.payload.load_kg} kg and retry
+              </button>
+            </div>
           )}
         </section>
       )}

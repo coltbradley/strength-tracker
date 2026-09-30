@@ -1074,6 +1074,68 @@ describe("outbox visibility", () => {
   const setC = makeSet("cccccccc-3333-4333-8333-333333333333", 2);
   const setD = makeSet("dddddddd-4444-4444-8444-444444444444", 3);
 
+  it("repairs only the exact authored-load failure without changing the logged set", async () => {
+    let online = false;
+    const { calls, transport } = makeTransport([{
+      code: "23514",
+      status: 400,
+      message: "load_kg must match entered_load, entered_unit, and load_entry",
+    }]);
+    const original: SetInsert = {
+      ...setA,
+      load_kg: 100,
+      load_entry: "total",
+      entered_load: 220.5,
+      entered_unit: "lb",
+      reps: 6,
+      rpe: 8,
+    };
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => ALICE,
+    });
+    await box.enqueue({ kind: "insert", table: "sets", payload: original });
+    online = true;
+    await box.flush();
+    const [failed] = await box.inspect();
+    expect(failed.state).toBe("dead");
+
+    expect(await box.repairDeadLoadSet(failed.key, original)).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].payload).toEqual({
+      ...original,
+      entered_load: null,
+      entered_unit: null,
+    });
+    expect(box.getStatus().dead).toBe(0);
+    expect((await box.inspect())).toHaveLength(0);
+  });
+
+  it("never repairs a different constraint or another owner's failed set", async () => {
+    let online = false;
+    let who = ALICE;
+    const { calls, transport } = makeTransport([
+      { code: "23514", status: 400, message: "load_kg must match entered_load, entered_unit, and load_entry" },
+      checkErr,
+    ]);
+    const authored = { ...setB, load_entry: "total" as const, entered_load: 220.5, entered_unit: "lb" as const };
+    const box = createOutbox({ getDb, transport, isOnline: () => online, currentUserId: () => who });
+    await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+    who = BOB;
+    await box.enqueue({ kind: "insert", table: "sets", payload: authored });
+    online = true;
+    await box.flush();
+    who = ALICE;
+    await box.flush();
+    const rows = await box.inspect();
+    expect(await box.repairDeadLoadSet(rows[0].key, setA)).toBe(false);
+    expect(await box.repairDeadLoadSet(rows[1].key, authored)).toBe(false);
+    expect(calls).toHaveLength(2);
+    expect((await box.inspect()).map((r) => r.state)).toEqual(["dead", "dead"]);
+  });
+
   beforeEach(() => {
     globalThis.indexedDB = new IDBFactory();
     resetDbForTests();

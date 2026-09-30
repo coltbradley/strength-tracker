@@ -90,6 +90,9 @@ export interface Outbox {
    * instead of implying a rescue that never happened.
    */
   retryDead(): Promise<RetryOutcome>;
+  /** After a queue export and explicit review, keep the logged kg total and
+   *  retry one rejected set with its inconsistent authored provenance unknown. */
+  repairDeadLoadSet(key: number, expected: SetInsert): Promise<boolean>;
   /**
    * Every queued item, in replay order, for the pending-writes view. The one
    * READ of the queue as a queue: everything else here asks it a question
@@ -266,6 +269,26 @@ export function isRetryable(item: OutboxItem): boolean {
   return deadKind(item.last_code, item.last_status) !== "rejected";
 }
 
+const LOAD_CONSISTENCY_ERROR =
+  "load_kg must match entered_load, entered_unit, and load_entry";
+
+function isLoadRepairCandidate(
+  item: OutboxItem,
+  owner: string | null,
+): item is OutboxItem & { op: Extract<OutboxOp, { kind: "insert"; table: "sets" }> } {
+  return (
+    item.status === "dead" &&
+    item.op.kind === "insert" &&
+    item.op.table === "sets" &&
+    typeof item.user_id === "string" &&
+    item.user_id === owner &&
+    item.last_code === "23514" &&
+    item.last_error === LOAD_CONSISTENCY_ERROR &&
+    item.op.payload.entered_load != null &&
+    item.op.payload.entered_unit != null
+  );
+}
+
 export interface RetryOutcome {
   /** dead items put back in the queue */
   requeued: number;
@@ -295,6 +318,8 @@ export interface OutboxEntry {
   /** null unless dead */
   cause: DeadKind | null;
   retryable: boolean;
+  /** This account may review and repair this exact authored-load failure. */
+  loadRepairable?: boolean;
 }
 
 interface Row {
@@ -673,6 +698,40 @@ export function createOutbox({
       return { requeued, stuck };
     },
 
+    async repairDeadLoadSet(key, expected) {
+      const db = await getDb();
+      const tx = db.transaction("outbox", "readwrite");
+      const item = await tx.store.get(key);
+      if (
+        !item ||
+        !isLoadRepairCandidate(item, whoAmI()) ||
+        JSON.stringify(item.op.payload) !== JSON.stringify(expected)
+      ) {
+        await tx.done;
+        return false;
+      }
+      // The exported payload retains the original authored value. Null here
+      // means unknown, never a fabricated claim that the lifter typed kg.
+      await tx.store.put(
+        {
+          ...item,
+          op: {
+            ...item.op,
+            payload: { ...item.op.payload, entered_load: null, entered_unit: null },
+          },
+          status: "pending",
+          last_error: null,
+          last_code: null,
+          last_status: null,
+        },
+        key,
+      );
+      await tx.done;
+      await refreshCountsAfterCommit();
+      await flush();
+      return true;
+    },
+
     async inspect() {
       const db = await getDb();
       const rows = await readAll(db);
@@ -689,6 +748,7 @@ export function createOutbox({
           state: dead ? "dead" : replayable(item) ? "waiting" : "held",
           cause: dead ? deadKind(item.last_code, item.last_status) : null,
           retryable: dead && isRetryable(item),
+          loadRepairable: isLoadRepairCandidate(item, whoAmI()),
         };
       });
     },

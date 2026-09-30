@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   },
   entries: [] as OutboxEntry[],
   retryDead: vi.fn(async () => ({ requeued: 0, stuck: 0 })),
+  repairDeadLoadSet: vi.fn(async () => true),
   buildQueueExport: vi.fn(() => ({ items: [] })),
   downloadText: vi.fn(),
 }));
@@ -38,6 +39,7 @@ vi.mock("../lib/sync", () => ({
     subscribe: () => () => {},
     inspect: () => Promise.resolve(h.entries),
     retryDead: h.retryDead,
+    repairDeadLoadSet: h.repairDeadLoadSet,
   },
 }));
 
@@ -106,6 +108,8 @@ async function show(entries: OutboxEntry[]) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  Reflect.deleteProperty(navigator, "canShare");
+  Reflect.deleteProperty(navigator, "share");
 });
 
 describe("formatAge", () => {
@@ -172,6 +176,98 @@ describe("describeOp", () => {
 });
 
 describe("OutboxSheet", () => {
+  it("requires a saved export and review before retrying an authored-load failure", async () => {
+    const original = {
+      ...(entry({ key: 1 }).op as Extract<OutboxEntry["op"], { kind: "insert"; table: "sets" }>).payload,
+      load_entry: "total" as const,
+      entered_load: 220.5,
+      entered_unit: "lb" as const,
+    };
+    await show([entry({
+      key: 1,
+      op: { kind: "insert", table: "sets", payload: original },
+      state: "dead",
+      cause: "rejected",
+      retryable: false,
+      loadRepairable: true,
+      last_error: "load_kg must match entered_load, entered_unit, and load_entry",
+      user_id: "alice",
+    })]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Review failed set/ }));
+    expect(screen.getByText(/220.5 lb/)).toBeTruthy();
+    expect(screen.getByText("Logged total: 100 kg")).toBeTruthy();
+    const repair = screen.getByRole("button", { name: /Keep 100 kg and retry/ });
+    expect(repair).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
+    await waitFor(() => expect(h.downloadText).toHaveBeenCalledTimes(1));
+    expect(repair).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /saved the queue export/ }));
+    expect(repair).toHaveProperty("disabled", false);
+    fireEvent.click(repair);
+    await waitFor(() => expect(h.repairDeadLoadSet).toHaveBeenCalledWith(1, original));
+  });
+
+  it("does not offer load repair for a generic check violation", async () => {
+    await show([entry({
+      key: 2,
+      state: "dead",
+      cause: "rejected",
+      retryable: false,
+      loadRepairable: false,
+      last_error: 'violates check constraint "sets_reps_check"',
+    })]);
+    expect(screen.queryByRole("button", { name: /Review failed set/ })).toBeNull();
+  });
+
+  it("uses the native file share on a phone and waits for a saved-copy acknowledgement", async () => {
+    let finishShare: (() => void) | undefined;
+    const share = vi.fn((_data: ShareData) => new Promise<void>((resolve) => { finishShare = resolve; }));
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
+    Object.defineProperty(navigator, "share", { configurable: true, value: share });
+    await show([entry({ key: 1, state: "dead", cause: "rejected", loadRepairable: true })]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(share.mock.calls[0][0].files?.[0]?.name).toBe("strength-log-unsynced-20260904.json");
+    expect(h.downloadText).not.toHaveBeenCalled();
+    finishShare?.();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Export queue/ })).toHaveProperty("disabled", false));
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: undefined });
+    Object.defineProperty(navigator, "share", { configurable: true, value: undefined });
+  });
+
+  it("keeps repair locked when the native file share is cancelled", async () => {
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: () => Promise.reject(new DOMException("Cancelled", "AbortError")),
+    });
+    await show([entry({
+      key: 1,
+      state: "dead",
+      cause: "rejected",
+      retryable: false,
+      loadRepairable: true,
+      last_error: "load_kg must match entered_load, entered_unit, and load_entry",
+    })]);
+    fireEvent.click(screen.getByRole("button", { name: /Review failed set/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Export queue/ })).toHaveProperty("disabled", false));
+    expect(screen.getByRole("checkbox", { name: /saved the queue export/ })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /Keep 100 kg and retry/ })).toHaveProperty("disabled", true);
+  });
+
+  it("uses the download path when file sharing cannot inspect a JSON file", async () => {
+    Object.defineProperty(navigator, "canShare", {
+      configurable: true,
+      value: () => { throw new TypeError("unsupported file"); },
+    });
+    Object.defineProperty(navigator, "share", { configurable: true, value: vi.fn() });
+    await show([entry({ key: 1 })]);
+    fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
+    await waitFor(() => expect(h.downloadText).toHaveBeenCalledTimes(1));
+  });
   it("reads as a queue doing its job when nothing is stuck", async () => {
     await show([entry({ key: 1 }), entry({ key: 2 })]);
 
