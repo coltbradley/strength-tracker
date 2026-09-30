@@ -1033,14 +1033,12 @@ export function Session() {
     [warmupCount, workingCount],
   );
 
+  const inputUnit = unit;
   // the bracket the NEXT set of the staged kind falls into; walking into a
   // new bracket re-prefills (its rep range, its load if set) mid-exercise
   const currentBracket = openEntry
     ? bracketFor(openEntry, countFor(openEntry, stagedKind), stagedKind)
     : null;
-  const inputUnit = currentBracket?.entered_load != null && currentBracket.entered_unit
-    ? currentBracket.entered_unit
-    : unit;
   // The bracket a freshly opened exercise should start on, which is a
   // question about the PLAN and not about whatever the toggle was left on
   // two exercises ago.
@@ -1225,14 +1223,19 @@ export function Session() {
       : Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
     setEntryKg(prefilledLoad);
     setReps(p.reps);
+    // Exact authored numbers only when Settings already matches that unit
+    // (225.25 lb stays 225.25). Otherwise leave enteredLoad unset so the
+    // hero tracks entryKg — stamping a converted value here made a later
+    // stepper bump look like it "didn't stick" after switching exercises.
     stagedDraftsRef.current[draftKey] = {
       entryKg: prefilledLoad,
       reps: p.reps,
       setType: stagedKind,
       rpe: fresh ? null : rpe,
       durationSeconds,
-      enteredLoad: bracket?.entered_load ?? undefined,
-      enteredUnit: bracket?.entered_unit ?? undefined,
+      ...(bracket?.entered_load != null && bracket.entered_unit === unit
+        ? { enteredLoad: bracket.entered_load, enteredUnit: unit }
+        : {}),
     };
     // Only on a fresh open. After that the toggle belongs to the lifter (and
     // to logSet, which advances it as the plan's warmups are used up):
@@ -1256,6 +1259,7 @@ export function Session() {
     openingKind,
     setsForExercise,
     lastActuals,
+    unit,
   ]);
 
   // ---- rest helpers --------------------------------------------------------
@@ -1328,10 +1332,10 @@ export function Session() {
       load_entry: loadEntryForSet(entryMode, storedLoad),
       entered_load: tick || storedLoad <= 0
         ? null
-        : draft.enteredLoad !== undefined && draft.enteredUnit === (bracket?.entered_unit ?? unit)
+        : draft.enteredLoad !== undefined && draft.enteredUnit === unit
           ? draft.enteredLoad
-          : toDisplay(draft.entryKg, bracket?.entered_unit ?? unit),
-      entered_unit: tick || storedLoad <= 0 ? null : (bracket?.entered_unit ?? unit),
+          : toDisplay(draft.entryKg, unit),
+      entered_unit: tick || storedLoad <= 0 ? null : unit,
       rpe: tick ? null : draft.rpe,
       duration_seconds: timed ? Math.round(draft.durationSeconds ?? 60) : null,
     };
@@ -2182,9 +2186,7 @@ export function Session() {
         };
       }
       if (pad.kind === "load") {
-        const roundUnit = bracket?.entered_load != null && bracket.entered_unit
-          ? bracket.entered_unit
-          : unit;
+        const roundUnit = unit;
         const perSideRound = entryMode === "per_side";
         const max = perSideRound ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
         return {
@@ -3195,15 +3197,16 @@ export function Session() {
     }, bodyweightFallback(equipMap[entry.exercise_id] ?? null));
     const authoredLoad = bracket?.entered_load ?? null;
     const authoredUnit = bracket?.entered_unit ?? null;
+    const entryFromPlan = authoredLoad !== null && authoredUnit !== null
+      ? Math.round(fromDisplay(authoredLoad, authoredUnit) * 100) / 100
+      : Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100;
     return {
-      entryKg: authoredLoad !== null && authoredUnit !== null
-        ? Math.round(fromDisplay(authoredLoad, authoredUnit) * 100) / 100
-        : Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100,
+      entryKg: entryFromPlan,
       reps: prefill.reps,
       setType: kind,
       rpe: null,
-      ...(authoredLoad !== null && authoredUnit !== null
-        ? { enteredLoad: authoredLoad, enteredUnit: authoredUnit }
+      ...(authoredLoad !== null && authoredUnit === unit
+        ? { enteredLoad: authoredLoad, enteredUnit: unit }
         : {}),
     };
   };
@@ -3223,7 +3226,7 @@ export function Session() {
       draft.setType,
     );
     const equipment = equipMap[entry.exercise_id] ?? null;
-    const roundUnit = bracket?.entered_unit ?? unit;
+    const roundUnit = unit;
     const entryMode = resolveLoadEntry({
       override: getExercisePref(entry.exercise_id).loadEntry,
       prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),

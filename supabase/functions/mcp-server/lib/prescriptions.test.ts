@@ -136,15 +136,18 @@ Deno.test("a parsed load number cannot omit its unit or entry convention", () =>
   assertThrows(() => prescriptionSchema.parse({ ...base, load: { value: 225, unit: "lb" } }));
 });
 
-Deno.test("temporary kg compatibility loads require and retain authored provenance", () => {
+Deno.test("temporary kg compatibility loads stay legacy (no fabricated unit)", () => {
+  // load_kg is a unitless compatibility input. Stamping entered_unit:'kg'
+  // locked every Settings=lb surface onto kilograms forever. Null provenance
+  // lets the PWA convert through the display unit, same as pre-authored rows.
   assertThrows(() => prescriptionSchema.parse({ ...base, load_kg: 100 }));
   const rows = prescriptionRows(OWNER, DAY, [
     { ...base, load_kg: 100, load_entry: "total" },
     { ...base, load_kg: 60, load_entry: "per_side" },
   ]);
   assertEquals(rows.map((row) => [row.load_kg, row.load_entry, row.entered_load, row.entered_unit]), [
-    [100, "total", 100, "kg"],
-    [60, "per_side", 30, "kg"],
+    [100, "total", null, null],
+    [60, "per_side", null, null],
   ]);
 });
 
