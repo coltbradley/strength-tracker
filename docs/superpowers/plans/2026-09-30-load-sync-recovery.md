@@ -80,14 +80,13 @@ as rollback. No database migration is planned.
   gates passed locally before the batch-repair commit. The batch repair was
   independently reviewed with no concrete data-integrity defect found; the
   review confirmed nullable provenance is accepted by the trigger and linked
-  child retry ordering is preserved. The implementer reported 1,074/1,074 full
-  PWA tests, typecheck, and build passing before a final microcopy/copy
-  assertion tweak, then 69/69 focused outbox and OutboxSheet tests passing
-  after that tweak with `npm test -- --configLoader runner
-  src/lib/outbox.test.ts src/components/OutboxSheet.test.tsx`. These are
-  agent-reported results. The independent reviewer could not rerun them because
-  the worktree hit sandbox `EPERM` in `node_modules` temp. The affected
-  installed iPhone's repair and post-replay server readback remain unverified.
+  child retry ordering is preserved. After commit `2939f91`, an independent
+  rerun passed `npm run typecheck`, `npm run build`, and
+  `npm test -- --configLoader runner --run` (90 test files, 1,074 tests).
+  Independent review also passed the focused 69/69 outbox and OutboxSheet
+  tests with `npm test -- --configLoader runner src/lib/outbox.test.ts
+  src/components/OutboxSheet.test.tsx`. The affected installed iPhone's repair
+  and post-replay server readback remain unverified.
   The plate-diagram and next-action complaints lack enough phone context for a
   confirmed fix.
 
