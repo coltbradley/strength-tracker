@@ -151,11 +151,11 @@ describe("End: session_skips at Finish", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "End session" }));
-
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("button", { name: "End session" })).toBeNull(),
-    );
+    // A server-confirmed empty session switches from the bootstrap End
+    // button to the deliberate "End anyway" action. Wait for that verdict
+    // before clicking, so the test cannot pass merely because the button
+    // changed during bootstrap.
+    fireEvent.click(await screen.findByRole("button", { name: "End anyway (counts as done)" }));
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
     );
@@ -190,11 +190,7 @@ describe("End: session_skips at Finish", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "End session" }));
-
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("button", { name: "End session" })).toBeNull(),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "End anyway (counts as done)" }));
     await vi.waitFor(() =>
       expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
     );
@@ -222,11 +218,7 @@ describe("End: session_skips at Finish", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "End session" }));
-
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("button", { name: "End session" })).toBeNull(),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "End anyway (counts as done)" }));
     // Finish still completes normally: the sessions update and the flush
     // race both still run. A dropped skip must never take the session
     // close down with it.
