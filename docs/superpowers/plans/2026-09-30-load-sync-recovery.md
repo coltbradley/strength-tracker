@@ -111,3 +111,12 @@ A read-only production query found 0 of the 7 set UUIDs, 0 of the 2 voids, and
 discarded. This confirms the exported writes have not landed; it does not
 confirm recovery. Post-replay phone queue count and server readback by UUID:
 **NOT RUN**.
+
+## Phone count update, 2026-09-30
+
+The affected iPhone currently reports 10 failed writes, matching the saved
+export's count. This count match does not establish UUID or payload match; a
+fresh phone export is requested and pending. A repeated read-only production
+query still found none of the seven saved-export set UUIDs, two voids, or note.
+No repair or retry has been performed. Replay and post-replay phone count and
+server UUID readback remain **NOT RUN**.
