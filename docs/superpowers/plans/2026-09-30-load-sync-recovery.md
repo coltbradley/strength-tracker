@@ -73,6 +73,29 @@ as rollback. No database migration is planned.
   At 320 px, content wraps inside the cards and the actions remain reachable
   by scrolling. Desktop width remains within the viewport.
 - The full PWA, Edge Function, database, selected-column, and release-script
-  gates passed locally. The affected installed iPhone's saved file, five
-  queued rows, and server readback remain unverified. The plate-diagram and
+  gates passed locally. The affected installed iPhone's queue export, writes,
+  and server readback remain unverified. The plate-diagram and
   next-action complaints lack enough phone context for a confirmed fix.
+
+## Affected phone evidence, later on 2026-09-30
+
+The supplied Unsynced Writes screenshot shows **10 failed writes**, rather
+than the five visible in the earlier report: seven set inserts with the exact
+authored-load mismatch, two set voids refused by `set_voids` row-level
+security, and one set note refused by `set_notes` row-level security. Both
+policies require the referenced set to belong to the caller and to exist on
+the server. The failed parent set inserts are a plausible cause of the three
+dependent refusals, but the screenshot does not show set UUIDs. An export of
+the phone queue is required to confirm the links. Do not treat the three as
+independent permission bugs or retry them before the parent sets land.
+
+The queue export received afterward contains exactly those ten failed writes,
+all queued by one owner in one session. Every void/note points to one of the
+seven failed set IDs. The split-squat and calf-raise voids each target an
+earlier copy in a correction pair, so successful recovery should leave five
+of these seven sets live. The stored totals are 65.77, 34.02, 45.36, and
+52.16 kg, nearly exactly 145, 75, 100, and 115 lb; their stale entered fields
+are rounded kg values. A read-only live database check found the session
+under the same owner, ended and not discarded, and found none of the seven set
+IDs, their voids, or their note on the server. The export is the only copy of
+those writes until the phone's outbox successfully replays them.
