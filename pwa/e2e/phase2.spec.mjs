@@ -207,7 +207,6 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
     expect(correctedSet.performed_at).toBe(originalSet.performed_at);
     expect(correctedSet.prescription_id).toBe(originalSet.prescription_id);
     expect(correctedSet.prescription_id).toBe(prescriptions[0].id);
-    await page.getByRole("button", { name: "Close" }).click();
 
     for (let index = 0; index < 2; index += 1) {
       await page.getByRole("button", { name: /^LOG SET(?:\s|$)/i }).click();
