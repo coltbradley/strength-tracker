@@ -87,7 +87,7 @@ describe("formatRxTarget is the one prescription formatter", () => {
     ).toBe("3×5 @ 220.5 lb");
   });
 
-  it("preserves the authored unit and value even when display unit differs", () => {
+  it("keeps the exact authored value when display unit matches", () => {
     expect(
       formatRxTarget(
         rx({
@@ -97,12 +97,29 @@ describe("formatRxTarget is the one prescription formatter", () => {
           entered_unit: "lb",
           load_entry: "total",
         }),
-        "kg",
+        "lb",
       ),
     ).toBe("3×5 @ 225 lb");
   });
 
-  it("preserves per-side authored values while analytics keep the total", () => {
+  it("converts a kg-authored target into the lifter's lb display unit", () => {
+    // Settings=lb used to keep showing "100 kg" because authored provenance
+    // always won over the display unit — the plan looked metric forever.
+    expect(
+      formatRxTarget(
+        rx({
+          load_kg: 100,
+          resolved_load_kg: 100,
+          entered_load: 100,
+          entered_unit: "kg",
+          load_entry: "total",
+        }),
+        "lb",
+      ),
+    ).toBe("3×5 @ 220.5 lb");
+  });
+
+  it("preserves per-side authored values when display unit matches", () => {
     expect(
       formatRxTarget(
         rx({
@@ -112,7 +129,7 @@ describe("formatRxTarget is the one prescription formatter", () => {
           entered_unit: "lb",
           load_entry: "per_side",
         }),
-        "kg",
+        "lb",
       ),
     ).toBe("3×5 @ 30 lb/side");
   });
@@ -181,9 +198,15 @@ describe("formatStoredTwin", () => {
 });
 
 describe("formatAuthoredLoad", () => {
-  it("prefers persisted entered load over a converted kg display", () => {
-    expect(formatAuthoredLoad(lbToKg(225), "total", 225, "lb", "kg"))
+  it("uses the exact entered load when display unit matches authorship", () => {
+    expect(formatAuthoredLoad(lbToKg(225), "total", 225, "lb", "lb"))
       .toBe("225 lb");
+  });
+
+  it("honors the display unit when authorship differs", () => {
+    expect(formatAuthoredLoad(100, "total", 100, "kg", "lb")).toBe("220.5 lb");
+    expect(formatAuthoredLoad(lbToKg(225), "total", 225, "lb", "kg"))
+      .toBe("102.1 kg");
   });
 
   it("uses current conversion only when authored provenance is absent", () => {

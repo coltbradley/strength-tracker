@@ -34,7 +34,13 @@ export function rxLoadKg(rx: ResolvedPrescriptionRow): number | null {
   return rx.plate_load_kg ?? rx.resolved_load_kg;
 }
 
-/** Use the durable authored value when present, otherwise convert a legacy kg row. */
+/** Prefer the exact authored number when the lifter is viewing in that unit;
+ *  otherwise convert from canonical kg into the display unit.
+ *
+ *  Authored provenance exists so 225 lb round-trips as 225, not 224.9 from a
+ *  kg conversion. It must not freeze a Settings=lb lifter onto kilograms when
+ *  a coach wrote the day in kg — that was how "lbs never show up".
+ */
 export function formatAuthoredLoad(
   loadKg: number,
   loadEntry: "total" | "per_side" | null | undefined,
@@ -42,7 +48,12 @@ export function formatAuthoredLoad(
   enteredUnit: Unit | null | undefined,
   displayUnit: Unit,
 ): string {
-  if (enteredLoad != null && enteredUnit != null && loadEntry != null) {
+  if (
+    enteredLoad != null &&
+    enteredUnit != null &&
+    loadEntry != null &&
+    enteredUnit === displayUnit
+  ) {
     return `${enteredLoad} ${enteredUnit}${loadEntry === "per_side" ? "/side" : ""}`;
   }
   const entry = loadEntry === "per_side" ? loadKg / 2 : loadKg;

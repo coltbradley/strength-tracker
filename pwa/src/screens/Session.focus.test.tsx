@@ -390,6 +390,7 @@ describe("Session focus presentation", () => {
 
   it("shows and logs a prescription in its durable authored unit", async () => {
     resetDbForTests();
+    setSetting("unit", "lb");
     const bench = prescription();
     bench.load_kg = 102.17;
     bench.resolved_load_kg = 102.17;
@@ -405,6 +406,27 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { entered_load: 225.25, entered_unit: "lb" },
+    });
+  });
+
+  it("opens a kg-authored plan in the Settings lb unit", async () => {
+    resetDbForTests();
+    setSetting("unit", "lb");
+    const bench = prescription();
+    bench.load_kg = 100;
+    bench.resolved_load_kg = 100;
+    bench.entered_load = 100;
+    bench.entered_unit = "kg";
+    await seed("reps", [bench]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("220.5"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      payload: { entered_load: 220.5, entered_unit: "lb" },
     });
   });
 
@@ -653,6 +675,7 @@ describe("Session focus presentation", () => {
 
   it("keeps each member's authored load and unit in its round draft", async () => {
     resetDbForTests();
+    setSetting("unit", "lb");
     const authoredBench = {
       ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
       load_kg: 102.17,
