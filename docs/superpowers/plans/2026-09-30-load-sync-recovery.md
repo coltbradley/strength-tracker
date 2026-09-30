@@ -99,3 +99,15 @@ are rounded kg values. A read-only live database check found the session
 under the same owner, ended and not discarded, and found none of the seven set
 IDs, their voids, or their note on the server. The export is the only copy of
 those writes until the phone's outbox successfully replays them.
+
+## Read-only server confirmation, 2026-09-30
+
+The export SHA-256 is
+`2dcec370efabc5530a82cc39890e65496c30b5ebbd960a587121bcc309d1d421`. Its
+internal checks found 10 dead writes: seven unique sets, two voids, and one
+note, all for one owner/session; every child targets one of the exported sets.
+A read-only production query found 0 of the 7 set UUIDs, 0 of the 2 voids, and
+0 of the note on the server. It found the corresponding session ended and not
+discarded. This confirms the exported writes have not landed; it does not
+confirm recovery. Post-replay phone queue count and server readback by UUID:
+**NOT RUN**.
