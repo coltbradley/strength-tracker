@@ -30,7 +30,10 @@ const h = vi.hoisted(() => ({
   repairDeadLoadSet: vi.fn(async () => true),
   buildQueueExport: vi.fn(() => ({ items: [] })),
   downloadText: vi.fn(),
+  unit: "kg" as "kg" | "lb",
 }));
+
+vi.mock("../hooks/useUnit", () => ({ useUnit: () => h.unit }));
 
 vi.mock("../lib/sync", () => ({
   outbox: {
@@ -108,6 +111,7 @@ async function show(entries: OutboxEntry[]) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  h.unit = "kg";
   Reflect.deleteProperty(navigator, "canShare");
   Reflect.deleteProperty(navigator, "share");
 });
@@ -176,6 +180,68 @@ describe("describeOp", () => {
 });
 
 describe("OutboxSheet", () => {
+  it("distinguishes correction pairs with the same exercise, set index and time", async () => {
+    const first = entry({ key: 1, state: "dead", cause: "rejected", loadRepairable: true });
+    const second = entry({ key: 2, state: "dead", cause: "rejected", loadRepairable: true });
+    await show([first, second]);
+
+    const firstChoice = await screen.findByRole("button", {
+      name: "Review 1 of 2 · Barbell Squat · set 1",
+    });
+    const secondChoice = screen.getByRole("button", {
+      name: "Review 2 of 2 · Barbell Squat · set 1",
+    });
+    expect(firstChoice).not.toBe(secondChoice);
+    fireEvent.click(secondChoice);
+    expect(screen.getByText("Logged total: 100 kg")).toBeTruthy();
+  });
+  it("reviews a 65.77 kg total as 145 lb without treating stale entered kg as authored truth", async () => {
+    h.unit = "lb";
+    const original = {
+      ...(entry({ key: 7 }).op as Extract<OutboxEntry["op"], { kind: "insert"; table: "sets" }>).payload,
+      load_kg: 65.77,
+      load_entry: "total" as const,
+      entered_load: 65.8,
+      entered_unit: "kg" as const,
+    };
+    await show([entry({
+      key: 7,
+      op: { kind: "insert", table: "sets", payload: original },
+      state: "dead",
+      cause: "rejected",
+      loadRepairable: true,
+      last_error: "load_kg must match entered_load, entered_unit, and load_entry",
+    })]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 of 1/ }));
+    expect(screen.getByText("Logged total: 65.77 kg")).toBeTruthy();
+    expect(screen.getByText("In your unit: 145 lb total")).toBeTruthy();
+    expect(screen.getByText(/Rejected row's entered fields: 65.8 kg/)).toBeTruthy();
+    expect(screen.getByText(/may be stale/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep 145 lb total and retry" })).toHaveProperty("disabled", true);
+  });
+
+  it("shows the per-side equivalent while the repair button names the stored total", async () => {
+    h.unit = "lb";
+    const original = {
+      ...(entry({ key: 8 }).op as Extract<OutboxEntry["op"], { kind: "insert"; table: "sets" }>).payload,
+      load_kg: 65.77,
+      load_entry: "per_side" as const,
+      entered_load: 65.8,
+      entered_unit: "kg" as const,
+    };
+    await show([entry({
+      key: 8,
+      op: { kind: "insert", table: "sets", payload: original },
+      state: "dead",
+      cause: "rejected",
+      loadRepairable: true,
+    })]);
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 of 1/ }));
+    expect(screen.getByText("In your unit: 145 lb total")).toBeTruthy();
+    expect(screen.getByText("Per side: 72.5 lb/side")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep 145 lb total and retry" })).toBeTruthy();
+  });
   it("requires a saved export and review before retrying an authored-load failure", async () => {
     const original = {
       ...(entry({ key: 1 }).op as Extract<OutboxEntry["op"], { kind: "insert"; table: "sets" }>).payload,
@@ -194,10 +260,10 @@ describe("OutboxSheet", () => {
       user_id: "alice",
     })]);
 
-    fireEvent.click(screen.getByRole("button", { name: /Review failed set/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 of 1/ }));
     expect(screen.getByText(/220.5 lb/)).toBeTruthy();
     expect(screen.getByText("Logged total: 100 kg")).toBeTruthy();
-    const repair = screen.getByRole("button", { name: /Keep 100 kg and retry/ });
+    const repair = screen.getByRole("button", { name: /Keep 100 kg total and retry/ });
     expect(repair).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
     await waitFor(() => expect(h.downloadText).toHaveBeenCalledTimes(1));
@@ -217,7 +283,7 @@ describe("OutboxSheet", () => {
       loadRepairable: false,
       last_error: 'violates check constraint "sets_reps_check"',
     })]);
-    expect(screen.queryByRole("button", { name: /Review failed set/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Review \d+ of/ })).toBeNull();
   });
 
   it("uses the native file share on a phone and waits for a saved-copy acknowledgement", async () => {
@@ -251,11 +317,36 @@ describe("OutboxSheet", () => {
       loadRepairable: true,
       last_error: "load_kg must match entered_load, entered_unit, and load_entry",
     })]);
-    fireEvent.click(screen.getByRole("button", { name: /Review failed set/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 of 1/ }));
     fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: /Export queue/ })).toHaveProperty("disabled", false));
     expect(screen.getByRole("checkbox", { name: /saved the queue export/ })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: /Keep 100 kg and retry/ })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /Keep 100 kg total and retry/ })).toHaveProperty("disabled", true);
+  });
+
+  it("explains when to retry refused removals and notes linked to failed sets", async () => {
+    await show([
+      entry({ key: 1, state: "dead", cause: "rejected", loadRepairable: true }),
+      entry({
+        key: 2,
+        op: { kind: "insert", table: "set_voids", payload: { set_id: "set-1" } },
+        table: "set_voids",
+        state: "dead",
+        cause: "blocked",
+        retryable: true,
+      }),
+      entry({
+        key: 3,
+        op: { kind: "insert", table: "set_notes", payload: { set_id: "set-1", note: "Shoulder felt tight" } },
+        table: "set_notes",
+        state: "dead",
+        cause: "blocked",
+        retryable: true,
+      }),
+    ]);
+
+    expect(screen.getByText(/After the set syncs, use Retry failed/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry 2 failed" })).toBeTruthy();
   });
 
   it("uses the download path when file sharing cannot inspect a JSON file", async () => {

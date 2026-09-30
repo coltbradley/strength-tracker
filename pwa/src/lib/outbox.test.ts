@@ -1136,6 +1136,84 @@ describe("outbox visibility", () => {
     expect((await box.inspect()).map((r) => r.state)).toEqual(["dead", "dead"]);
   });
 
+  it("repairs a failed set before retrying its refused void and note in queue order", async () => {
+    let online = false;
+    let who: string | null = ALICE;
+    const calls: Array<{ table: string; payload: unknown; owner: string | null }> = [];
+    const landedSets = new Set<string>();
+    const original: SetInsert = {
+      ...setA,
+      load_entry: "total",
+      entered_load: 220.5,
+      entered_unit: "lb",
+    };
+    const voidRow = { set_id: original.id };
+    const noteRow = { set_id: original.id, note: "Left shoulder felt tight" };
+    const transport: OutboxTransport = {
+      async insert(table, payload) {
+        calls.push({ table, payload, owner: who });
+        if (table === "sets") {
+          const set = payload as SetInsert;
+          if (set.entered_load != null) {
+            return {
+              code: "23514",
+              status: 400,
+              message: "load_kg must match entered_load, entered_unit, and load_entry",
+            };
+          }
+          landedSets.add(set.id);
+          return null;
+        }
+        if ((table === "set_voids" || table === "set_notes") &&
+            !landedSets.has((payload as { set_id: string }).set_id)) {
+          return { code: "42501", status: 403, message: "new row violates row-level security policy" };
+        }
+        return null;
+      },
+      async update() { return null; },
+    };
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => who,
+    });
+    await box.enqueueBatch([
+      { kind: "insert", table: "sets", payload: original },
+      { kind: "insert", table: "set_voids", payload: voidRow },
+      { kind: "insert", table: "set_notes", payload: noteRow },
+    ]);
+    online = true;
+    await box.flush();
+    const failed = await box.inspect();
+    expect(failed.map((e) => [e.table, e.state, e.cause, e.user_id])).toEqual([
+      ["sets", "dead", "rejected", ALICE],
+      ["set_voids", "dead", "blocked", ALICE],
+      ["set_notes", "dead", "blocked", ALICE],
+    ]);
+    expect(await box.pendingVoidIds()).toEqual(new Set([original.id]));
+
+    expect(await box.repairDeadLoadSet(failed[0].key, original)).toBe(true);
+    expect(landedSets.has(original.id)).toBe(true);
+    expect((await box.inspect()).map((e) => e.table)).toEqual(["set_voids", "set_notes"]);
+    who = BOB;
+    expect(await box.retryDead()).toEqual({ requeued: 2, stuck: 0 });
+    expect(box.getStatus()).toMatchObject({ pending: 2, held: 2, dead: 0 });
+    expect(calls).toHaveLength(4); // neither child was sent as Bob
+    who = ALICE;
+    await box.flush();
+
+    expect(calls.map((c) => c.table)).toEqual([
+      "sets", "set_voids", "set_notes", "sets", "set_voids", "set_notes",
+    ]);
+    expect(calls.every((c) => c.owner === ALICE)).toBe(true);
+    expect(calls[3].payload).toEqual({ ...original, entered_load: null, entered_unit: null });
+    expect(calls[4].payload).toEqual(voidRow);
+    expect(calls[5].payload).toEqual(noteRow);
+    expect(await box.inspect()).toEqual([]);
+    expect(await box.pendingVoidIds()).toEqual(new Set());
+  });
+
   beforeEach(() => {
     globalThis.indexedDB = new IDBFactory();
     resetDbForTests();

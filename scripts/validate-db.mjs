@@ -3804,7 +3804,7 @@ await check("authored-load trigger refuses disagreement and partial provenance",
   }
 });
 
-await check("kg compatibility writes carry provenance while old queued sets remain valid", async () => {
+await check("explicit authored loads validate while legacy kg rows remain valid", async () => {
   await db.exec(`
     insert into planned_workouts (id, user_id, program_id, day_index, label)
       values ('22222222-0000-4000-8000-000000000045', '${OWNER}', '11111111-0000-4000-8000-000000000001', 45, 'Compatibility writes');
@@ -3819,6 +3819,16 @@ await check("kg compatibility writes carry provenance while old queued sets rema
       '22222222-0000-4000-8000-000000000045', 'Barbell_Deadlift', 0, 3, 5, 5,
       60, 'per_side', 30, 'kg'
     );
+    -- Unitless MCP compatibility rows retain the canonical kg total without
+    -- inventing a value the coach or lifter authored in a particular unit.
+    insert into prescriptions (
+      id, user_id, planned_workout_id, exercise_id, position, sets, reps_min,
+      reps_max, load_kg, load_entry
+    ) values (
+      '33333333-0000-4000-8000-000000000024', '${OWNER}',
+      '22222222-0000-4000-8000-000000000045', 'Barbell_Deadlift', 1, 3, 5, 5,
+      100, 'total'
+    );
     insert into sets (
       id, user_id, session_id, exercise_id, prescription_id, set_index,
       set_type, load_kg, reps, load_entry, entered_load, entered_unit
@@ -3828,8 +3838,8 @@ await check("kg compatibility writes carry provenance while old queued sets rema
       '33333333-0000-4000-8000-000000000023', 8, 'working', 60, 5,
       'per_side', 30, 'kg'
     );
-    -- An older offline payload has no provenance keys. It remains insertable;
-    -- only new MCP compatibility writes are forced to derive provenance.
+    -- Older offline payloads and unitless MCP compatibility writes have no
+    -- authored provenance. They remain insertable with canonical kg totals.
     insert into sets (
       id, user_id, session_id, exercise_id, set_index, set_type, load_kg, reps
     ) values (

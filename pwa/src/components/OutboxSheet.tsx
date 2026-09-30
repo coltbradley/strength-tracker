@@ -35,6 +35,8 @@ import { getExercises } from "../lib/data";
 import { buildQueueExport, downloadText, exportFilename } from "../lib/export";
 import { reportError, toast } from "../lib/errors";
 import { APP_VERSION } from "../lib/build";
+import { useUnit } from "../hooks/useUnit";
+import { toDisplay } from "../lib/units";
 import type { DeadKind, OutboxEntry } from "../lib/outbox";
 import type { OutboxOp } from "../lib/db";
 
@@ -131,6 +133,7 @@ const CAUSE_COPY: Record<DeadKind, string> = {
 };
 
 export function OutboxSheet({ onClose }: { onClose: () => void }) {
+  const unit = useUnit();
   const status = useOutboxStatus();
   const [entries, setEntries] = useState<OutboxEntry[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
@@ -174,8 +177,15 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
   const held = entries.filter((e) => e.state === "held");
   const waiting = entries.filter((e) => e.state === "waiting");
   const retryable = dead.filter((e) => e.retryable);
+  const blockedSetChanges = dead.filter(
+    (e) => e.cause === "blocked" && e.op.kind === "insert" &&
+      (e.op.table === "set_voids" || e.op.table === "set_notes"),
+  );
   const repairable = dead.filter((e) => e.loadRepairable === true);
   const review = repairable.find((e) => e.key === reviewKey);
+  const reviewTotal = review?.op.kind === "insert" && review.op.table === "sets"
+    ? `${unit === "kg" ? review.op.payload.load_kg : toDisplay(review.op.payload.load_kg, unit)} ${unit}`
+    : null;
   const exportMatches = exportedSnapshot === JSON.stringify(entries);
   const oldest = entries.reduce<number | null>((acc, e) => {
     if (e.created_at === null) return acc;
@@ -331,6 +341,13 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
                 </div>
               ),
           )}
+          {blockedSetChanges.length > 0 && (
+            <div className="microcopy">
+              A set removal or note may be waiting on its set. After the set
+              syncs, use Retry failed below to send these linked writes. If
+              they are still refused, keep the queue export for review.
+            </div>
+          )}
         </section>
       )}
 
@@ -338,34 +355,43 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
         <section className="settings-group">
           <div className="field-label">LOAD REPAIR ({repairable.length})</div>
           <div className="microcopy">
-            These sets were refused because the saved total and entered value
+            These sets were refused because the saved total and stored entered fields
             disagree. Review each total, export the queue, then choose which
             set to retry. Repair keeps the logged total in kg and marks the
-            original entered number and unit as unknown. The export keeps the
+            stored entered number and unit as unknown. The export keeps the
             original queued row.
           </div>
-          {repairable.map((e) => (
-            <button
-              key={e.key}
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => { setReviewKey(e.key); setSavedExport(false); }}
-              disabled={busy}
-            >
-              Review failed set {e.op.kind === "insert" && e.op.table === "sets" ? e.op.payload.set_index + 1 : e.key}
-            </button>
-          ))}
+          {repairable.map((e, index) => {
+            const set = e.op.kind === "insert" && e.op.table === "sets"
+              ? e.op.payload
+              : null;
+            return (
+              <button
+                key={e.key}
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => { setReviewKey(e.key); setSavedExport(false); }}
+                disabled={busy}
+              >
+                Review {index + 1} of {repairable.length} · {set ? names[set.exercise_id] ?? "Set logged" : "Set logged"} · set {set ? set.set_index + 1 : e.key}
+              </button>
+            );
+          })}
           {review?.op.kind === "insert" && review.op.table === "sets" && (
             <div className="queue-repair-review">
               <div className="field-label">REVIEW THIS SET</div>
               <div>{describeOp(review.op, names)} · set {review.op.payload.set_index + 1}</div>
               <div>Logged total: {review.op.payload.load_kg} kg</div>
-              <div>Original entered value: {review.op.payload.entered_load} {review.op.payload.entered_unit} ({review.op.payload.load_entry ?? "unknown"})</div>
+              {unit !== "kg" && <div>In your unit: {reviewTotal} total</div>}
+              {review.op.payload.load_entry === "per_side" && (
+                <div>Per side: {toDisplay(review.op.payload.load_kg / 2, unit)} {unit}/side</div>
+              )}
+              <div>Rejected row&apos;s entered fields: {review.op.payload.entered_load} {review.op.payload.entered_unit} ({review.op.payload.load_entry ?? "unknown"}). These may be stale.</div>
               <div>Reps: {review.op.payload.reps}</div>
               <div>Logged at: {review.op.payload.performed_at}</div>
               <div className="microcopy">
-                This keeps {review.op.payload.load_kg} kg as the training load.
-                The authored number and unit become unknown in the server row;
+                The server keeps the exact {review.op.payload.load_kg} kg total.
+                The inconsistent entered fields become unknown in the server row;
                 the original remains in your queue export.
               </div>
               <label>
@@ -383,7 +409,7 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
                 onClick={repairReviewed}
                 disabled={busy || !exportMatches || !savedExport}
               >
-                Keep {review.op.payload.load_kg} kg and retry
+                Keep {reviewTotal} total and retry
               </button>
             </div>
           )}
