@@ -176,7 +176,11 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
   const dead = entries.filter((e) => e.state === "dead");
   const held = entries.filter((e) => e.state === "held");
   const waiting = entries.filter((e) => e.state === "waiting");
-  const retryable = dead.filter((e) => e.retryable);
+  const queuedSetIds = new Set(entries.flatMap((e) =>
+    e.op.kind === "insert" && e.op.table === "sets" ? [e.op.payload.id] : []));
+  const retryable = dead.filter((e) => e.retryable && !(e.op.kind === "insert" &&
+    (e.op.table === "set_voids" || e.op.table === "set_notes") &&
+    queuedSetIds.has(e.op.payload.set_id)));
   const blockedSetChanges = dead.filter(
     (e) => e.cause === "blocked" && e.op.kind === "insert" &&
       (e.op.table === "set_voids" || e.op.table === "set_notes"),
@@ -195,6 +199,11 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
     saved.created_at === review.created_at &&
     JSON.stringify(saved.op) === JSON.stringify(review.op)
   ));
+  const batchMatches = repairable.length > 1 && Boolean(exportedSnapshot &&
+    repairable.every((row) => exportedSnapshot.some((saved) =>
+      saved.key === row.key && saved.user_id === row.user_id &&
+      saved.created_at === row.created_at &&
+      JSON.stringify(saved.op) === JSON.stringify(row.op))));
   const oldest = entries.reduce<number | null>((acc, e) => {
     if (e.created_at === null) return acc;
     const t = Date.parse(e.created_at);
@@ -293,6 +302,27 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
       .finally(() => setBusy(false));
   };
 
+  const repairAllReviewed = () => {
+    if (!batchMatches || !savedExport || !exportedSnapshot) return;
+    const selected = exportedSnapshot.filter((row) => repairable.some((current) => current.key === row.key));
+    setBusy(true);
+    outbox.repairDeadLoadSets(selected)
+      .then((repaired) => {
+        if (repaired) {
+          toast(`${selected.length} sets queued for retry. Check sync status before retrying linked writes.`);
+          setSavedExport(false);
+          setExportedSnapshot(null);
+        } else {
+          toast("The queue or account changed. Export and review it again; no sets were repaired.");
+          setSavedExport(false);
+          setExportedSnapshot(null);
+        }
+        reload();
+      })
+      .catch((e: unknown) => reportError(e, "repair failed sets"))
+      .finally(() => setBusy(false));
+  };
+
   return (
     <Sheet title="UNSYNCED WRITES" onClose={onClose}>
       <section className="settings-group">
@@ -363,11 +393,33 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
           <div className="field-label">LOAD REPAIR ({repairable.length})</div>
           <div className="microcopy">
             These sets were refused because the saved total and stored entered fields
-            disagree. Export the queue, then review each total before retrying.
-            One saved export covers every unchanged set it contains. Repair keeps the logged total in kg and marks the
+            disagree. Export the queue, then review every total before retrying.
+            Repair keeps the logged total in kg and marks the
             stored entered number and unit as unknown. The export keeps the
             original queued row.
           </div>
+          {repairable.length > 1 && (
+            <div className="queue-repair-review">
+              <div className="field-label">REVIEW ALL {repairable.length} SETS</div>
+              {repairable.map((row) => row.op.kind === "insert" && row.op.table === "sets" && (
+                <div key={row.key}>
+                  {names[row.op.payload.exercise_id] ?? "Set logged"} · set {row.op.payload.set_index + 1}: {row.op.payload.load_kg} kg total
+                  {unit !== "kg" ? ` (${toDisplay(row.op.payload.load_kg, unit)} ${unit} total)` : ""}
+                  {row.op.payload.load_entry === "per_side" ? `, ${toDisplay(row.op.payload.load_kg / 2, unit)} ${unit}/side` : ""}
+                  {` · ID ${row.op.payload.id}`}
+                </div>
+              ))}
+              <div className="microcopy">The original entered numbers and units remain in the saved export. All {repairable.length} sets keep their IDs, owners, times, indexes, totals and other training values. Linked removals and notes need a separate retry after these sets sync.</div>
+              <label>
+                <input type="checkbox" checked={savedExport} onChange={(event) => setSavedExport(event.target.checked)} disabled={!batchMatches || busy} />
+                I saved the queue export and checked all {repairable.length} totals
+              </label>
+              <button type="button" className="btn btn-ghost" onClick={repairAllReviewed} disabled={busy || !batchMatches || !savedExport}>
+                Repair all {repairable.length} sets and retry
+              </button>
+            </div>
+          )}
+          {repairable.length === 1 && <>
           {repairable.map((e, index) => {
             const set = e.op.kind === "insert" && e.op.table === "sets"
               ? e.op.payload
@@ -420,6 +472,7 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
               </button>
             </div>
           )}
+          </>}
         </section>
       )}
 
@@ -464,7 +517,7 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
         </button>
         <div className="microcopy">
           {dead.length > retryable.length
-            ? `${dead.length - retryable.length} of the failed writes would be refused again unchanged, so retry leaves them alone rather than pretending.`
+            ? "Some failed writes are excluded: rejected rows need repair, and linked removals or notes wait for their set to sync."
             : "Puts the failed writes back in the queue, in the order they were made."}
         </div>
 

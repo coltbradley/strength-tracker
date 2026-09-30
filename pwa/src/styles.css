@@ -2531,6 +2531,10 @@
     overflow-wrap: break-word;
   }
 
+  .queue-repair-review {
+    overflow-wrap: anywhere;
+  }
+
   .queue-item-age {
     font-family: var(--font-mono);
     font-size: var(--fs-micro);

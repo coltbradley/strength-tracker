@@ -93,6 +93,9 @@ export interface Outbox {
   /** After a queue export and explicit review, keep the logged kg total and
    *  retry one rejected set with its inconsistent authored provenance unknown. */
   repairDeadLoadSet(key: number, expected: SetInsert): Promise<boolean>;
+  /** Atomically repair every eligible set in one reviewed queue export. A
+   *  stale or incomplete snapshot changes nothing. Child writes stay dead. */
+  repairDeadLoadSets(expected: readonly OutboxEntry[]): Promise<boolean>;
   /**
    * Every queued item, in replay order, for the pending-writes view. The one
    * READ of the queue as a queue: everything else here asks it a question
@@ -306,6 +309,8 @@ export interface OutboxEntry {
   created_at: string | null;
   retries: number;
   last_error: string | null;
+  last_code?: string | null;
+  last_status?: number | null;
   /** who queued it; undefined on items queued before multi-user, null when
    *  no identity was known at enqueue */
   user_id: string | null | undefined;
@@ -680,8 +685,19 @@ export function createOutbox({
       const db = await getDb();
       let requeued = 0;
       let stuck = 0;
-      for (const row of await readAll(db)) {
+      const rows = await readAll(db);
+      const queuedSetIds = new Set(rows.flatMap(({ item }) =>
+        item.op.kind === "insert" && item.op.table === "sets" ? [item.op.payload.id] : []));
+      for (const row of rows) {
         if (row.item.status !== "dead") continue;
+        // A refused void/note cannot pass RLS until its parent set is on the
+        // server. Keep it parked while that set remains anywhere in this queue.
+        if (row.item.op.kind === "insert" &&
+            (row.item.op.table === "set_voids" || row.item.op.table === "set_notes") &&
+            queuedSetIds.has(row.item.op.payload.set_id)) {
+          stuck++;
+          continue;
+        }
         // A row the server rejected on its own merits comes back refused, and
         // a retry that re-queues it only moves it from FAILED to FAILED via a
         // moment of false hope. It stays dead and stays exportable.
@@ -732,6 +748,53 @@ export function createOutbox({
       return true;
     },
 
+    async repairDeadLoadSets(expected) {
+      const owner = whoAmI();
+      if (!owner || expected.length === 0 || new Set(expected.map((e) => e.key)).size !== expected.length) return false;
+      const db = await getDb();
+      const tx = db.transaction("outbox", "readwrite");
+      const keys = await tx.store.getAllKeys();
+      const current = await Promise.all(keys.map(async (key) => ({ key, item: await tx.store.get(key) })));
+      const eligible = current.filter((row) => row.item && isLoadRepairCandidate(row.item, owner));
+      const selected = new Map(expected.map((row) => [row.key, row]));
+      // Compare the whole exported entry, not only the payload: retries,
+      // error cause, owner and queue position are part of the reviewed copy.
+      const valid = eligible.length === expected.length && eligible.every(({ key, item }) => {
+        const saved = selected.get(key);
+        return Boolean(item && saved && saved.loadRepairable === true &&
+          saved.state === "dead" && saved.user_id === owner &&
+          saved.created_at === (item.created_at ?? null) &&
+          saved.retries === (item.retries ?? 0) &&
+          saved.last_error === (item.last_error ?? null) &&
+          saved.last_code === (item.last_code ?? null) &&
+          saved.last_status === (item.last_status ?? null) &&
+          saved.cause === deadKind(item.last_code, item.last_status) &&
+          JSON.stringify(saved.op) === JSON.stringify(item.op));
+      });
+      if (!valid || whoAmI() !== owner) {
+        await tx.done;
+        return false;
+      }
+      for (const { key, item } of eligible) {
+        if (!item || !isLoadRepairCandidate(item, owner)) {
+          tx.abort();
+          return false;
+        }
+        await tx.store.put({
+          ...item,
+          op: { ...item.op, payload: { ...item.op.payload, entered_load: null, entered_unit: null } },
+          status: "pending",
+          last_error: null,
+          last_code: null,
+          last_status: null,
+        }, key);
+      }
+      await tx.done;
+      await refreshCountsAfterCommit();
+      void flush();
+      return true;
+    },
+
     async inspect() {
       const db = await getDb();
       const rows = await readAll(db);
@@ -744,6 +807,8 @@ export function createOutbox({
           created_at: item.created_at ?? null,
           retries: item.retries ?? 0,
           last_error: item.last_error ?? null,
+          last_code: item.last_code ?? null,
+          last_status: item.last_status ?? null,
           user_id: item.user_id,
           state: dead ? "dead" : replayable(item) ? "waiting" : "held",
           cause: dead ? deadKind(item.last_code, item.last_status) : null,

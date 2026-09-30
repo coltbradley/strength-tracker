@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
   entries: [] as OutboxEntry[],
   retryDead: vi.fn(async () => ({ requeued: 0, stuck: 0 })),
   repairDeadLoadSet: vi.fn(async () => true),
+  repairDeadLoadSets: vi.fn(async () => true),
   buildQueueExport: vi.fn(() => ({ items: [] })),
   downloadText: vi.fn(),
   unit: "kg" as "kg" | "lb",
@@ -43,6 +44,7 @@ vi.mock("../lib/sync", () => ({
     inspect: () => Promise.resolve(h.entries),
     retryDead: h.retryDead,
     repairDeadLoadSet: h.repairDeadLoadSet,
+    repairDeadLoadSets: h.repairDeadLoadSets,
   },
 }));
 
@@ -185,15 +187,8 @@ describe("OutboxSheet", () => {
     const second = entry({ key: 2, state: "dead", cause: "rejected", loadRepairable: true });
     await show([first, second]);
 
-    const firstChoice = await screen.findByRole("button", {
-      name: "Review 1 of 2 · Barbell Squat · set 1",
-    });
-    const secondChoice = screen.getByRole("button", {
-      name: "Review 2 of 2 · Barbell Squat · set 1",
-    });
-    expect(firstChoice).not.toBe(secondChoice);
-    fireEvent.click(secondChoice);
-    expect(screen.getByText("Logged total: 100 kg")).toBeTruthy();
+    expect(screen.getByText(/ID set-1/)).toBeTruthy();
+    expect(screen.getByText(/ID set-2/)).toBeTruthy();
   });
   it("reviews a 65.77 kg total as 145 lb without treating stale entered kg as authored truth", async () => {
     h.unit = "lb";
@@ -274,29 +269,42 @@ describe("OutboxSheet", () => {
     await waitFor(() => expect(h.repairDeadLoadSet).toHaveBeenCalledWith(1, original));
   });
 
-  it("uses one saved export to review each unchanged failed set", async () => {
-    const first = entry({ key: 1, state: "dead", cause: "rejected", loadRepairable: true });
-    const second = entry({ key: 2, state: "dead", cause: "rejected", loadRepairable: true });
-    h.repairDeadLoadSet.mockImplementationOnce(async () => {
-      h.entries = [second];
-      return true;
-    });
-    await show([first, second]);
-
-    fireEvent.click(screen.getByRole("button", { name: /Review 1 of 2/ }));
+  it("reviews seven totals, then repairs them with one saved export and confirmation", async () => {
+    const rows = [65.77, 34.02, 45.36, 52.16, 65.77, 34.02, 45.36].map((load, i) =>
+      entry({
+        key: i + 1, state: "dead", cause: "rejected", loadRepairable: true,
+        user_id: "alice",
+        op: { kind: "insert", table: "sets", payload: {
+          ...(entry({ key: i + 1 }).op as Extract<OutboxEntry["op"], { kind: "insert"; table: "sets" }>).payload,
+          set_index: i, load_kg: load, entered_load: Math.round(load * 10) / 10,
+          entered_unit: "kg", load_entry: "total",
+        } },
+      }));
+    await show(rows);
+    expect(screen.getByText("REVIEW ALL 7 SETS")).toBeTruthy();
+    expect(screen.getByText(/set 1: 65.77 kg total/)).toBeTruthy();
+    expect(screen.getByText(/set 7: 45.36 kg total/)).toBeTruthy();
+    const action = screen.getByRole("button", { name: "Repair all 7 sets and retry" });
+    expect(action).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
     await waitFor(() => expect(h.downloadText).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("checkbox", { name: /saved the queue export/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Keep 100 kg total and retry/ }));
-    await waitFor(() => expect(h.repairDeadLoadSet).toHaveBeenCalledTimes(1));
+    expect(action).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /checked all 7 totals/ }));
+    fireEvent.click(action);
+    await waitFor(() => expect(h.repairDeadLoadSets).toHaveBeenCalledTimes(1));
+    expect(h.repairDeadLoadSets).toHaveBeenCalledWith(rows);
+    expect(h.repairDeadLoadSet).not.toHaveBeenCalled();
+  });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Review 1 of 1/ }));
-    const savedExport = screen.getByRole("checkbox", { name: /saved the queue export/ });
-    expect(savedExport).toHaveProperty("disabled", false);
-    fireEvent.click(savedExport);
-    fireEvent.click(screen.getByRole("button", { name: /Keep 100 kg total and retry/ }));
-    await waitFor(() => expect(h.repairDeadLoadSet).toHaveBeenCalledTimes(2));
-    expect(h.downloadText).toHaveBeenCalledTimes(1);
+  it("keeps batch repair locked after a cancelled phone export", async () => {
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: () => true });
+    Object.defineProperty(navigator, "share", { configurable: true,
+      value: () => Promise.reject(new DOMException("Cancelled", "AbortError")) });
+    await show([1, 2].map((key) => entry({ key, state: "dead", cause: "rejected", loadRepairable: true })));
+    fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Export queue/ })).toHaveProperty("disabled", false));
+    expect(screen.getByRole("button", { name: "Repair all 2 sets and retry" })).toHaveProperty("disabled", true);
+    expect(h.repairDeadLoadSets).not.toHaveBeenCalled();
   });
 
   it("does not offer load repair for a generic check violation", async () => {
@@ -371,7 +379,7 @@ describe("OutboxSheet", () => {
     ]);
 
     expect(screen.getByText(/After the set syncs, use Retry failed/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Retry 2 failed" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Nothing to retry" })).toHaveProperty("disabled", true);
   });
 
   it("uses the download path when file sharing cannot inspect a JSON file", async () => {
@@ -454,7 +462,7 @@ describe("OutboxSheet", () => {
     const button = screen.getByRole("button", { name: "Retry 1 failed" });
     expect(button).toHaveProperty("disabled", false);
     // ...and it says so, rather than quietly doing half of what it offered.
-    expect(screen.getByText(/would be refused again unchanged/)).toBeTruthy();
+    expect(screen.getByText(/rejected rows need repair/i)).toBeTruthy();
 
     fireEvent.click(button);
     await waitFor(() => expect(h.retryDead).toHaveBeenCalledTimes(1));

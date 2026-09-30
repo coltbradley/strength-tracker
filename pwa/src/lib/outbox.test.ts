@@ -1074,6 +1074,112 @@ describe("outbox visibility", () => {
   const setC = makeSet("cccccccc-3333-4333-8333-333333333333", 2);
   const setD = makeSet("dddddddd-4444-4444-8444-444444444444", 3);
 
+  it("repairs seven exported sets atomically while preserving keys and training data", async () => {
+    let who = ALICE;
+    const calls: Call[] = [];
+    const box = createOutbox({ getDb, currentUserId: () => who, isOnline: () => false,
+      transport: { async insert(table, payload) { calls.push({ kind: "insert", table, payload }); return null; }, async update() { return null; } } });
+    const originals = Array.from({ length: 7 }, (_, i): SetInsert => ({
+      ...makeSet(`0000000${i}-1111-4111-8111-111111111111`, i),
+      load_kg: [65.77, 34.02, 45.36, 52.16, 65.77, 34.02, 45.36][i],
+      load_entry: "total", entered_load: [65.8, 34, 45.4, 52.2, 65.8, 34, 45.4][i],
+      entered_unit: "kg", rpe: 8,
+    }));
+    await box.enqueueBatch(originals.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })));
+    const db = await getDb();
+    for (const key of await db.getAllKeys("outbox")) {
+      const item = (await db.get("outbox", key))!;
+      await db.put("outbox", { ...item, status: "dead", retries: 1,
+        last_error: "load_kg must match entered_load, entered_unit, and load_entry",
+        last_code: "23514", last_status: 400 }, key);
+    }
+    const exported = await box.inspect();
+    expect(exported).toHaveLength(7);
+    expect(await box.repairDeadLoadSets(exported)).toBe(true);
+    const repaired = await box.inspect();
+    expect(repaired.map((e) => e.key)).toEqual(exported.map((e) => e.key));
+    expect(repaired.map((e) => e.user_id)).toEqual(Array(7).fill(ALICE));
+    expect(repaired.map((e) => e.state)).toEqual(Array(7).fill("waiting"));
+    expect(repaired.map((e) => e.op)).toEqual(originals.map((payload) => ({ kind: "insert", table: "sets",
+      payload: { ...payload, entered_load: null, entered_unit: null } })));
+    expect(exported.map((e) => (e.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>).payload.entered_load))
+      .toEqual(originals.map((set) => set.entered_load));
+    expect(calls).toHaveLength(0);
+    who = BOB;
+    await box.flush();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("changes none when one exported row is stale or the owner changes", async () => {
+    let who = ALICE;
+    const { transport } = makeTransport();
+    const box = createOutbox({ getDb, transport, currentUserId: () => who, isOnline: () => false });
+    const authored = [setA, setB].map((set) => ({ ...set, load_entry: "total" as const,
+      entered_load: 220.5, entered_unit: "lb" as const }));
+    await box.enqueueBatch(authored.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })));
+    const db = await getDb();
+    for (const key of await db.getAllKeys("outbox")) {
+      const item = (await db.get("outbox", key))!;
+      await db.put("outbox", { ...item, status: "dead", last_code: "23514", last_status: 400,
+        last_error: "load_kg must match entered_load, entered_unit, and load_entry" }, key);
+    }
+    const exported = await box.inspect();
+    const second = (await db.get("outbox", exported[1].key))!;
+    await db.put("outbox", { ...second, retries: 2 }, exported[1].key);
+    expect(await box.repairDeadLoadSets(exported)).toBe(false);
+    expect((await db.get("outbox", exported[0].key))?.status).toBe("dead");
+    await db.put("outbox", second, exported[1].key);
+    who = BOB;
+    expect(await box.repairDeadLoadSets(exported)).toBe(false);
+    expect((await db.get("outbox", exported[0].key))?.status).toBe("dead");
+    who = ALICE;
+    expect(await box.repairDeadLoadSets(exported.slice(0, 1))).toBe(false);
+    expect((await db.get("outbox", exported[1].key))?.status).toBe("dead");
+    await db.put("outbox", { ...second, user_id: BOB }, exported[1].key);
+    const mixedOwners = await box.inspect();
+    expect(await box.repairDeadLoadSets(mixedOwners)).toBe(false);
+    expect((await db.get("outbox", exported[0].key))?.status).toBe("dead");
+  });
+
+  it("holds dependent writes until parents land and keeps a partial replay failure visible", async () => {
+    let online = false;
+    const calls: Call[] = [];
+    const transport: OutboxTransport = {
+      async insert(table, payload) {
+        calls.push({ kind: "insert", table, payload });
+        return table === "sets" && (payload as SetInsert).id === setA.id ? checkErr : null;
+      },
+      async update() { return null; },
+    };
+    const box = createOutbox({ getDb, transport, currentUserId: () => ALICE, isOnline: () => online });
+    const authored = [setA, setB].map((set) => ({ ...set, load_entry: "total" as const,
+      entered_load: 220.5, entered_unit: "lb" as const }));
+    await box.enqueueBatch([
+      ...authored.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })),
+      { kind: "insert", table: "set_voids", payload: { set_id: setA.id } },
+    ]);
+    const db = await getDb();
+    for (const key of await db.getAllKeys("outbox")) {
+      const item = (await db.get("outbox", key))!;
+      await db.put("outbox", { ...item, status: "dead", last_code: item.op.table === "sets" ? "23514" : "42501",
+        last_status: item.op.table === "sets" ? 400 : 403,
+        last_error: item.op.table === "sets"
+          ? "load_kg must match entered_load, entered_unit, and load_entry" : "RLS refused" }, key);
+    }
+    expect(await box.retryDead()).toEqual({ requeued: 0, stuck: 3 });
+    const exported = (await box.inspect()).filter((entry) => entry.loadRepairable);
+    expect(await box.repairDeadLoadSets(exported)).toBe(true);
+    online = true;
+    await box.flush();
+    const remaining = await box.inspect();
+    expect(remaining.map((row) => [row.table, row.state])).toEqual([
+      ["sets", "dead"], ["set_voids", "dead"],
+    ]);
+    expect(calls.map((call) => call.table)).toEqual(["sets", "sets"]);
+    expect(await box.retryDead()).toEqual({ requeued: 0, stuck: 2 });
+    expect((await box.inspect()).map((row) => row.table)).toEqual(["sets", "set_voids"]);
+  });
+
   it("repairs only the exact authored-load failure without changing the logged set", async () => {
     let online = false;
     const { calls, transport } = makeTransport([{
