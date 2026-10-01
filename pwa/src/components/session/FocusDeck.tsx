@@ -318,7 +318,7 @@ export function FocusDeck({
       </div>
 
       {(topSlot || stageSlot) && (
-        <div className="focus-stage">
+        <div className={`focus-stage ${topSlot ? "focus-stage-scroll" : ""}`}>
           {topSlot ?? stageSlot}
         </div>
       )}

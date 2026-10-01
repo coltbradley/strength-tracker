@@ -1482,6 +1482,10 @@ describe("Session focus presentation", () => {
       await Promise.resolve();
     });
     expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
+    const activeRestScene = screen.getByRole("timer", { name: /^rest timer/ });
+    expect(activeRestScene.parentElement?.className).toContain("focus-stage-scroll");
+    expect(screen.getByRole("button", { name: "Note last set" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "rpe 6.5" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "reps value — tap to type" }));
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));

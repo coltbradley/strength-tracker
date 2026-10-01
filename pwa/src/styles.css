@@ -3718,6 +3718,20 @@
     padding-inline: var(--gutter);
   }
 
+  /* The rest scene contains its own adjustment, last-set, RPE and note
+   * controls, so its content can be taller than this flexible stage. Keep
+   * that scene anchored at the stage's top and scroll it inside its bounds;
+   * it must never paint over the exercise heading, secondary actions, or
+   * the fixed set dock. */
+  .focus-stage-scroll {
+    min-height: 0;
+    align-items: flex-start;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
   .focus-stage-details {
     display: flex;
     flex-direction: column;
