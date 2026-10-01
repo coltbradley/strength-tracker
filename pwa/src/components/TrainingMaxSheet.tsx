@@ -170,7 +170,7 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Sheet title="TRAINING MAXES" onClose={close}>
+    <Sheet title="Training maxes" onClose={close}>
       <div className="microcopy">
         The number a “% TM” prescription resolves against. Each value is dated:
         the most recent date on or before today is the one the plan uses, and
