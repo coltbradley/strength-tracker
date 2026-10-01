@@ -15,21 +15,29 @@
 // The glyph is decorative (aria-hidden); the accessible name is the label plus
 // what a tap does, so the visible words are always inside the name.
 //
-// The two pills that cannot be fixed by asking again OPEN the queue instead of
-// pretending to act on it. A dead item needs a reason before it needs a retry,
-// and a HELD item cannot move at all until its own account signs in here — a
-// pill that flushed on tap was, for that state, a button that did nothing and
-// said nothing about why. Everything else still taps to flush, which is
-// exactly what it does.
+// EVERY tap answers: it opens the queue sheet, in every state, including the
+// quiet check ("everything is on the server") and while offline. A chip that
+// flushed silently, or did nothing at all offline, was a button with no
+// feedback. Waiting and sending chips also start a flush when the phone is
+// online (it is what they used to do); a HELD item cannot move until its own
+// account signs in and a dead one needs a reason before a retry, so those only
+// open the sheet.
+//
+// The wide label is for the roomy header. In the one-row session header the
+// chip must not grow (the whole screen used to jump under the thumb), so each
+// chip also carries `data-count` and the stylesheet shows glyph + count in a
+// fixed-width chip there; the words stay in the accessible name and the sheet.
 
 import { useState } from "react";
 import { useOutboxKnown, useOutboxStatus } from "../hooks/useOutboxStatus";
 import { OutboxSheet } from "./OutboxSheet";
 import { outbox } from "../lib/sync";
+import { useOnline } from "../hooks/useFabDrag";
 
 export function SyncStatus() {
   const status = useOutboxStatus();
   const known = useOutboxKnown();
+  const online = useOnline();
   const [queueOpen, setQueueOpen] = useState(false);
 
   const sheet = queueOpen ? (
@@ -43,6 +51,7 @@ export function SyncStatus() {
         className="sync-chip sync-chip-dead"
         title={status.lastError ?? undefined}
         aria-label={`Review ${status.dead} failed writes`}
+        data-count={status.dead > 9 ? "9+" : status.dead}
         onClick={() => setQueueOpen(true)}
       >
         <span className="sync-chip-glyph" aria-hidden="true">
@@ -80,7 +89,11 @@ export function SyncStatus() {
           <button
             type="button"
             className="sync-chip sync-chip-ok"
-            aria-label="Nothing waiting to send"
+            aria-label={
+              online
+                ? "Nothing waiting to send"
+                : "Nothing waiting to send, offline"
+            }
             onClick={() => setQueueOpen(true)}
           >
             <span className="sync-chip-glyph" aria-hidden="true">
@@ -133,11 +146,13 @@ export function SyncStatus() {
   const action =
     kind === "held"
       ? "review the queue"
-      : status.state === "error"
-        ? "retrying, tap to retry"
-        : kind === "pending"
-          ? "tap to send"
-          : "tap to send now";
+      : !online
+        ? "offline, tap to see the queue"
+        : status.state === "error"
+          ? "retrying, tap to retry"
+          : kind === "pending"
+            ? "tap to send"
+            : "tap to send now";
 
   return (
     <span className="sync-group">
@@ -147,7 +162,11 @@ export function SyncStatus() {
         className={`sync-chip sync-chip-${kind}`}
         title={status.lastError ?? undefined}
         aria-label={`${label}, ${action}`}
-        onClick={() => (allHeld ? setQueueOpen(true) : void outbox.flush())}
+        data-count={status.pending > 9 ? "9+" : status.pending || undefined}
+        onClick={() => {
+          setQueueOpen(true);
+          if (!allHeld && online) void outbox.flush();
+        }}
       >
         <span className="sync-chip-glyph" aria-hidden="true">
           {glyph}

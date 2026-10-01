@@ -702,6 +702,8 @@ interface BuilderState {
   filters: Filter[];
   orders: { col: string; ascending: boolean }[];
   limit: number | null;
+  /** inclusive row window from `.range(from, to)`, applied after ordering */
+  range: { from: number; to: number } | null;
   payload: unknown;
   patch: Row | null;
   onConflict: string;
@@ -730,6 +732,7 @@ export interface MockQuery extends PromiseLike<Result> {
   filter(col: string, op: string, val: unknown): MockQuery;
   order(col: string, options?: { ascending?: boolean }): MockQuery;
   limit(n: number): MockQuery;
+  range(from: number, to: number): MockQuery;
   maybeSingle(): MockQuery;
   single(): MockQuery;
 }
@@ -824,6 +827,7 @@ function createQuery(engine: Engine, table: string): MockQuery {
     filters: [],
     orders: [],
     limit: null,
+    range: null,
     payload: null,
     patch: null,
     onConflict: "id",
@@ -862,6 +866,8 @@ function createQuery(engine: Engine, table: string): MockQuery {
               return o.ascending ? c : -c;
             });
           }
+          if (state.range !== null)
+            rows = rows.slice(state.range.from, state.range.to + 1);
           if (state.limit !== null) rows = rows.slice(0, state.limit);
           const projected = rows.map((r) => project(r, state.columns));
           if (state.cardinality === "many") return ok(projected);
@@ -993,6 +999,11 @@ function createQuery(engine: Engine, table: string): MockQuery {
     },
     limit(n) {
       state.limit = n;
+      return q;
+    },
+    // PostgREST's inclusive window, which getExercisePrefRows pages with.
+    range(from, to) {
+      state.range = { from, to };
       return q;
     },
     maybeSingle() {

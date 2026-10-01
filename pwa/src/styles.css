@@ -637,7 +637,7 @@
   @media (max-width: 359px) {
     /* Keep sync recovery and all three header controls inside the phone-width
      * column. Their icon buttons retain accessible names and 44px targets. */
-    .header-action span:not(.fab-off-dot, .fab-queue) {
+    .header-action span:not(.fab-off-dot) {
       display: none;
     }
   }
@@ -2492,7 +2492,7 @@
     gap: 0;
   }
 
-  .topbar:has(.topbar-session) .header-action span:not(.fab-off-dot, .fab-queue) {
+  .topbar:has(.topbar-session) .header-action span:not(.fab-off-dot) {
     display: none;
   }
 
@@ -3116,6 +3116,275 @@
     margin: 0;
     padding: 0 var(--gutter);
   }
+
+  /* ---- chrome fixes (final) ---- */
+
+  /* D2. The sync chip never changes the header's geometry in the session.
+   * Above 360px the session header is ONE row with no slack, and a chip that
+   * grew from a 44px check to "On phone · 1" wrapped it (66px to 111px, the
+   * whole screen jumping under the thumb). So there the chip is always the same
+   * 44px circle: glyph plus the count read off data-count; the words stay in
+   * the accessible name and in the queue sheet one tap away. At 360px and below
+   * the chip already lives alone on row two, where growing moves nothing. */
+  @media (min-width: 361px) {
+    .topbar:has(.topbar-session) .sync-chip {
+      width: var(--tap-min);
+      min-width: var(--tap-min);
+      padding: 0;
+      gap: var(--s-1);
+      overflow: hidden;
+    }
+
+    .topbar:has(.topbar-session) .sync-chip > :not(.sync-chip-glyph) {
+      display: none;
+    }
+
+    .topbar:has(.topbar-session) .sync-chip[data-count]::after {
+      content: attr(data-count);
+    }
+  }
+
+  /* Icon-only coach in the session: the offline dot sits on the icon's corner. */
+  .topbar:has(.topbar-session) .fab-off-dot {
+    top: 12px;
+    right: 9px;
+  }
+
+  /* The count never wraps or clips in the fixed chip. */
+  .sync-chip[data-count]::after {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- End screen (Version D): "That's the session." ---- */
+
+  .end-title {
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-title) * 1.44);
+    font-weight: 800;
+    letter-spacing: var(--track-tight);
+    line-height: 1.05;
+    overflow-wrap: break-word;
+  }
+
+  /* the one-line summary sits right under the title, like the design */
+  .end-summary-block {
+    margin-top: calc(var(--s-4) - var(--screen-gap));
+  }
+
+  .end-screen .end-summary {
+    margin: 0;
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-label));
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+
+  /* Receipt tiles: card surface, mono label, big number. Two columns down to
+   * 320px (each tile is ~140px there; the note wraps rather than clipping). */
+  .end-tiles {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-4);
+  }
+
+  .end-tile {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    min-width: 0;
+    padding: var(--s-6);
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+  }
+
+  .end-tile-label {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
+    letter-spacing: var(--track-1);
+    color: var(--text);
+  }
+
+  .end-tile-value {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-title));
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .end-tile-note {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
+    color: var(--text-dim);
+    overflow-wrap: anywhere;
+  }
+
+  .end-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+  }
+
+  .end-question {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-base));
+    font-weight: 700;
+  }
+
+  /* RPE keys: rounded surface keys, six across from 360px (auto-fit keeps the
+   * 44px floor at 320). */
+  .end-screen .rpe-grid {
+    margin-top: 0;
+  }
+
+  .end-screen .rpe-btn {
+    min-height: var(--tap-key);
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-key);
+    color: var(--text);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-base));
+    letter-spacing: 0;
+  }
+
+  @media (min-width: 361px) {
+    .end-screen .rpe-grid {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+  }
+
+  .end-screen .rpe-btn.seg-on {
+    background: var(--accent);
+    color: var(--text-on-accent);
+  }
+
+  .end-add-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-4);
+  }
+
+  .end-add-btn {
+    flex: 1 1 var(--tap-key);
+    min-height: var(--tap-key);
+    padding: 0 var(--s-6);
+    border-radius: var(--r-card);
+    background: var(--surface-key);
+    color: var(--text);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-base));
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .end-add-btn:active {
+    background: var(--surface-key-press);
+  }
+
+  .end-bw {
+    flex: 1 1 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    padding: var(--s-6);
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+  }
+
+  .end-bw-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s-4);
+  }
+
+  /* bodyweight stepper as the design draws it: [-]  80 kg  [+] */
+  .end-bw .stepper {
+    margin-top: 0;
+  }
+
+  .end-bw .stepper-inline {
+    display: grid;
+    grid-template-columns: var(--tap-key) minmax(0, 1fr) var(--tap-key);
+    align-items: center;
+    gap: var(--s-4);
+  }
+
+  .end-bw .stepper-inline > :nth-child(1) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .end-bw .stepper-inline > :nth-child(2) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .end-bw .stepper-inline > :nth-child(3) {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .end-bw .stepper-btn {
+    min-width: 0;
+    min-height: var(--tap-key);
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-key);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
+  }
+
+  .end-bw .stepper-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: center;
+    border-bottom: 0;
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-title));
+    font-weight: 800;
+  }
+
+  .end-bw-head .end-question {
+    text-transform: capitalize;
+  }
+
+  .end-screen .note-input {
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+  }
+
+  .end-screen .chip {
+    min-height: var(--tap-min);
+    border-radius: var(--radius-pill);
+    background: var(--surface-key);
+    border: 0;
+  }
+
+  .end-note {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
+    line-height: 1.45;
+  }
+
+  /* End / Discard / Back: centred bold sans labels, not left-aligned mono caps */
+  .end-screen .btn {
+    justify-content: center;
+    text-align: center;
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-base));
+    letter-spacing: 0;
+    text-transform: none;
+    border-radius: var(--r-panel);
+  }
+
+  .end-screen > .btn-primary.btn-block {
+    min-height: var(--tap-log);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
+    font-weight: 800;
+  }
+
+  .end-screen > .btn-ghost.btn-block {
+    min-height: var(--tap-md);
+    border: 0;
+  }
+
 
   /* ---- session focus deck: three bands (Version D) ----
    * status (above) / .focus-middle / .focus-dock. The middle takes whatever
@@ -6785,7 +7054,7 @@
     height: 16px;
   }
 
-  .header-action span:not(.fab-off-dot, .fab-queue) {
+  .header-action span:not(.fab-off-dot) {
     font-family: var(--font-mono);
     font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
     font-weight: 700;
@@ -6805,29 +7074,15 @@
     opacity: 0.65;
   }
 
-  .fab-off-dot,
-  .fab-queue {
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    min-width: 14px;
-    height: 14px;
-    border-radius: var(--radius-pill);
-    font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * 9px);
-    line-height: 14px;
-    text-align: center;
-    border: var(--bw-hair) solid var(--bg);
-  }
-
   .fab-off-dot {
+    position: absolute;
+    top: 8px;
+    right: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
     background: var(--text-dim);
-  }
-
-  .fab-queue {
-    background: var(--accent);
-    color: var(--text-inverse);
-    padding: 0 3px;
+    border: var(--bw-hair) solid var(--bg);
   }
 
   /* -- parts of a day ------------------------------------------------------

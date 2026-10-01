@@ -12,7 +12,7 @@
 // the bug impossible regardless of layout: the overlay must never be in the
 // hit path, and it must render below whatever the shell publishes as its
 // topbar height.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { Toasts } from "./Toasts";
 import { toast } from "../lib/errors";
@@ -55,5 +55,24 @@ describe("Toasts", () => {
     const { container } = render(<Toasts />);
     act(() => toast("bad thing", "error"));
     expect(container.querySelector(".toast-error")).not.toBeNull();
+  });
+
+  it("announces toasts: errors as alerts, the rest as polite status", () => {
+    const { container } = render(<Toasts />);
+    act(() => {
+      toast("fine");
+      toast("bad", "error");
+    });
+    expect(container.querySelector(".toast-info")!.getAttribute("role")).toBe("status");
+    expect(container.querySelector(".toast-error")!.getAttribute("role")).toBe("alert");
+  });
+
+  it("leaves no timer behind when the shell unmounts", () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<Toasts />);
+    act(() => toast("one"));
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
   });
 });

@@ -42,6 +42,8 @@ vi.mock("../lib/data", async () => {
 vi.mock("../lib/sync", () => ({
   outbox: {
     pendingSets: vi.fn(async () => []),
+    subscribe: vi.fn(() => () => undefined),
+    inspect: vi.fn(async () => []),
     enqueue: vi.fn(async () => undefined),
     enqueueBatch: vi.fn(async () => undefined),
     // end() (Task 12) races this against a 1.5s timeout so Today's
@@ -187,7 +189,7 @@ describe("End: session_skips at Finish", () => {
     fireEvent.click(screen.getByRole("button", { name: "7" }));
     expect(screen.getByRole("button", { name: "7" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "8" }).getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Note" }));
     fireEvent.change(screen.getByPlaceholderText("How did it go?"), {
       target: { value: "Kept the last set smooth." },
     });
