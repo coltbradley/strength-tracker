@@ -229,7 +229,9 @@ export function OutboxSheet({
   const repairable = dead.filter((e) => e.loadRepairable === true);
   const review = repairable.find((e) => e.key === reviewKey);
   const reviewTotal = review?.op.kind === "insert" && review.op.table === "sets"
-    ? `${formatLoad(review.op.payload.load_kg, unit)} ${unit}`
+    // in kg this is the STORED total the repair keeps (the button names it),
+    // so it is quoted raw; in lb it is the converted reading of it
+    ? `${unit === "kg" ? review.op.payload.load_kg : formatLoad(review.op.payload.load_kg, unit)} ${unit}`
     : null;
   const reviewRepair = review?.op.kind === "insert" && review.op.table === "sets"
     ? describeRepairedLoad(review.op.payload)
