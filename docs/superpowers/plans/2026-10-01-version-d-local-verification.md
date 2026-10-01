@@ -1,6 +1,6 @@
 # Version D local verification, 2026-10-01
 
-Branch: `codex/version-d-light-plan`, managed checkout `/Users/coltbradley/.codex/worktrees/version-d-plan/strength-tracker`. Implementation began at `ed2e7f5`. Tasks 1–8 are locally committed and independently reviewed. Task 9 source is at `7214497`; final integration and review remain open because the full suite reproduced a preference-persistence assertion failure. No push, merge or deployment was performed.
+Branch: `codex/version-d-light-plan`, managed checkout `/Users/coltbradley/.codex/worktrees/version-d-plan/strength-tracker`. Implementation began at `ed2e7f5`. All nine scoped tasks are locally committed, tested and independently reviewed. Final product source is `3b7b1d7`. The final whole-branch review is pending. No push, merge or deployment was performed.
 
 The specification is [Version D light](../specs/2026-09-30-version-d-light-design.md); the [execution record](2026-09-30-version-d-execution.md) maps all task commits and review findings. GPT-6 Luna implementers and reviewers were used as requested.
 
@@ -12,13 +12,16 @@ The failed authored-load consistency cause was already fixed at `40676f5`. Recov
 
 ## Automated evidence
 
-- At `7214497`, `npm test` ran 97 files: 1,171 passed, one failed (Session unit preference persistence, cached value undefined at `Session.focus.test.tsx:603`). This recurring failure is under investigation, not accepted as a transient pass.
-- At `7214497`, `npm run typecheck` and `npm run build` passed. The existing Vite main-chunk advisory remains.
+- At `3b7b1d7`, the coordinator ran `npm test`: all 97 files and 1,172 tests passed (10.83 seconds). `npm run typecheck` and `npm run build` passed. The existing Vite main-chunk advisory remains. Exact logs: `/private/tmp/version-d-final-pwa-tests-3.log`, `/private/tmp/version-d-final-typecheck-3.log`, `/private/tmp/version-d-final-build-3.log`.
 - Final select contract passed all 476 columns; `node scripts/check-release-ledger.mjs` passed; `node --test scripts/*.test.mjs` passed 28/28; E2E configuration checks passed 8/8.
 - Earlier in this branch run, `node scripts/validate-db.mjs` passed the PGlite schema/RLS and authored-load constraints. Deno MCP 187, coach 41, push 10 and endurance-normalization 6 tests passed (244 total). These sources have not changed since those checks.
 - Local seeded Phase 2 E2E is NOT RUN (exit 3): local fixture configuration is absent and Docker is unavailable. Production was not substituted.
 
-The ignored task reports retain detailed RED/GREEN and covering-test evidence. One earlier Task 3 timeout passed on immediate rerun; preference test failures recurred in Tasks 8/9 and are explicitly unresolved above.
+The ignored task reports retain detailed RED/GREEN and covering-test evidence. Earlier full runs were not uniformly green: Task 3 had a timeout, and preference persistence intermittently failed in Tasks 8/9. At `7214497` it failed 1/1,172; boundary assertions in `5aa29ec` now verify a connected unpressed control, the exact owner/session write, a true identity guard, persisted value and reload. No production cause was established, so this is test hardening, not a claimed product fix. The implementer had two complete green runs after that change; the final coordinator run above is also green. If it recurs, capture every guard evaluation and await the actual transaction promise before inspecting database name/put/read.
+
+At `f0755f4`, the full run instead failed the new Finish-payload test (1/1,172). Instrumentation reproduced a disconnected End button and two count calls before the click, with no enqueue. `3b7b1d7` replaces the one-shot server-count fixture with one real cached set and waits for its loaded summary, then asserts the connected control, synchronous enqueue and unchanged exact payload. The End file passed 9/9, followed by full-suite/typecheck/build passes from implementer and coordinator. This changes tests only.
+
+Task 9's functional spec review passed; the initial quality gate stayed open during these failures. Scoped reviews accepted the preference hardening, relative-text-scale fix (RED/GREEN), and Finish fixture fix. All Task 9 findings are addressed; final whole-branch review remains pending.
 
 ## Rendered browser evidence
 
