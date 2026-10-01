@@ -93,7 +93,7 @@ scope here, but a reviewer must be able to tell which is which. "Shipped" means
 | `End rest now ›` | Proposal. The shipped clock can be dismissed; ending it early is new wording and a REST OVER state |
 | Superset member by member, rest after A2 | Proposal; replaces the shipped **Log round** batch |
 | Drag to reorder in "Today's workout" | Proposal. Shipped reorder is arrows in the plan editor only; the session screen cannot reorder at all |
-| Bodyweight added-load row | Proposal, and it reverses a declined item (2026-08-27); see Bodyweight |
+| Bodyweight added-load row | Shipped in Phase 1; stores the added load only in `load_kg`, as a staged load on a "body only" exercise always did; see Bodyweight |
 | Units this session (override) | Proposal. Shipped: a device-wide switch in the header |
 | Train week strip with state words, Go | Go is shipped on Train. The week strip is shipped on Program only (Train is the sparse home of warm-precision); moving it to Train, top-aligned, with state words is proposal |
 | Record: Pinned goals and Recent | Proposal. Goals exist (`goals`, `v_goal_progress`) but only the coach writes them |
@@ -214,16 +214,15 @@ under the reps stepper: `+ 25 lb added` with `-`, `+` and `x` (remove). No grey
 Copy when load is on: `Reps count most. The added load is logged with each
 set.` Bodyweight with no added load is unchanged: a 0 kg set, reps only.
 
-**Added load is new, and it reverses a declined item.** The 2026-08-27 decision
-("per-side load") records "bodyweight + added load" as considered and declined,
-and defines `load_kg` as the total system load, which for a weighted pull-up
-would be bodyweight plus the belt, a number the app does not hold per set. The
-prototype's copy says the opposite: "Your bodyweight isn't added to the load."
-So a positive `load_kg` here would be the added mass only, and `v_e1rm`
-(`load_kg > 0`) would then compute an e1RM from the belt alone. This conflict
-needs an answer before the added-load write path ships (open question 8). Until
-then the row is built and tested but gated off by a single constant, and
-bodyweight remains reps-first without it.
+**Added load stores the added load only, with no change to storage semantics.**
+The row writes the added mass alone into `load_kg` (0 when none is added),
+exactly as the app already did for a load staged on a "body only" exercise;
+bodyweight is never added in, matching the prototype's "Your bodyweight isn't
+added to the load." `load_kg` as the total system load (2026-08-27) is
+unchanged for implements the lifter loads. Nothing new is written and no view
+changes, so the row ships with Phase 1 and needs no gate. The 2026-08-27
+"bodyweight + added load" item stays declined as a computed total: the app
+still does not hold bodyweight per set.
 
 ### Rest (middle band)
 
@@ -497,9 +496,9 @@ a view over `v_live_sets`, never a stored column (see plan, Phase 3).
    history, or should unpin keep the row hidden?
 7. Should the coach (MCP `set_goal`) and the PWA pin share one goal row per
    exercise? The `unique (user_id, exercise_id)` constraint says yes.
-8. Bodyweight added load: what does `load_kg` hold, and how do `v_e1rm` and
-   volume treat it? See Bodyweight. Needs a code owner and a decision entry
-   before the write path ships.
+8. Resolved: bodyweight added load stores only the added load in `load_kg`,
+   as the app already did for a staged load on a "body only" exercise. No
+   change to storage semantics; see Bodyweight.
 
 ## Verification
 

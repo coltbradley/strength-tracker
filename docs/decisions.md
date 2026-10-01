@@ -3260,14 +3260,13 @@ with a starting target of the current e1RM x 1.1 rounded up; an exercise with no
 e1RM cannot be pinned. Per-exercise recency comes from a new view over
 `v_live_sets`, never a stored column.
 
-**Not decided here, and blocking.** Bodyweight "added load" reverses a declined
-item of 2026-08-27 ("bodyweight + added load ... considered and declined") and
-conflicts with `load_kg` as the total system load: `v_e1rm` filters on
-`load_kg > 0`, so an added-mass-only `load_kg` would yield a belt-only e1RM. The
-UI row is built behind one constant; the write path waits for an answer
-(spec open question 8). Likewise the pin-stack drawing must not imply a pin
-position the app does not know (2026-09-12 non-goal), so it is illustrative with
-the caption number as the only claim.
+**Bodyweight added load changes nothing in storage.** The added-load row logs
+only the added load in `load_kg` (0 when none), exactly as a load staged on a
+"body only" exercise already did; bodyweight is never added in. The 2026-08-27
+"bodyweight + added load" item remains declined as a computed total. The
+pin-stack drawing must not imply a pin position the app does not know
+(2026-09-12 non-goal), so it is illustrative with the caption number as the
+only claim.
 
 **Superseded statements.** Marked with a pointer, not rewritten, until the code
 ships: the three 2026-09-12 and 2026-09-23 specs, the focus-mode spec, and

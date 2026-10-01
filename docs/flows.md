@@ -138,16 +138,6 @@ Supabase sends the stock link email and the paste path is the working one.
 - **Switch exercise** — tap any closed row; it opens (previous closes) and
   scrolls into view, prefilled (prescription → this session → last session →
   configured fallback). Tapping the open header collapses it.
-> **In flight (Version D, 2026-10-01).** The Focus deck, Rest, Log a superset
-> round and Plates bullets below describe what is shipped. Phase 1 of
-> `docs/superpowers/specs/2026-10-01-version-d-design.md` replaces them: a drawn
-> load picture and RPE / Note / Skip / Swap keys on the default screen (not
-> behind `•••`), load and reps side by side, rest in the middle band with
-> "End rest now", superset logged member by member (no "Log round"), a plate
-> sheet with an editable base weight, a `☰ n/m` header with an always-visible
-> sync check, and drag-to-reorder in the workout sheet. Rewrite these bullets in
-> the PR that ships each piece.
-
 - **Session header** — on the session route the topbar's "SET" wordmark gives
   way to the session controls (App publishes a slot, Session portals into
   it): a "☰ 9/25" button (non-voided sets done over the plan's target sets)
@@ -156,42 +146,43 @@ Supabase sends the stock link email and the paste path is the working one.
   session" switch (the only place to change units mid-session, in both
   modes), one row per exercise in the shared state vocabulary (done, current,
   next, skipped, upcoming) with its scheme and n/m count — tap to jump to it
-  in focus, or open it in the list — and Finish session. The sheet leaves a
-  slot for a per-row drag handle (reorder is built separately). The sync chip
+  in focus, or open it in the list — and Finish session. Each row has a ⠿
+  handle: drag it (or focus it and press the arrow keys) to change today's
+  order. A superset moves as one unit, the plan is untouched, and the order is
+  kept on this device only (it writes nothing to the server). The sync chip
   beside the gear is a round 44px ✓ when everything is on the server and
   widens to "◐ On phone · N", "↑ Sending · N", "‖ Held" or a filled
   "! Review" when something is waiting, held or failed.
 - **Focus deck** — the default presentation for an eligible session, from
   Start or restore. The tab bar and wordmark hide while it is shown (the
-  session controls, sync chip, coach and settings stay), and the screen is
-  deliberately spare: exercise name, `SET n OF m`, one hero value (load
-  for a loaded implement, reps for bodyweight — whichever is hard to get
-  right for the movement), the plate bar or per-hand breakdown when it
-  applies (plates vs stack, per exercise and device-local — a stack/cable
-  exercise gets no calculator at all, since a weight pin has no plates to
-  show), the secondary field with its target quietly beside it, a "Last: 145
-  kg × 5 working" line once something is logged (tapping it opens the same
-  correction flow as ✕ in the full history), and a bottom row of
-  `−step / LOG SET / +step`. WARMUP | WORKING sits on the hero itself next to
-  LOG whenever the entry has a prescribed warmup, with "Already warm" beside
-  it to stage working and log nothing; swap and skip are visible secondary
-  actions on the hero rather than a level down, and skip offers an optional
-  reason chip row (Equipment taken, Already warm, Out of time, Didn't feel
-  right) or free text. Everything else the accordion shows inline — the same
-  warmup/working toggle kept for parity, RPE, the plate calculator, the
-  per-hand/total toggle, skip, last time, and the full logged-set history
-  (void, note, correct) — still lives one tap away behind the quiet "•••"
-  control, in a sheet scoped to the current entry (or both members of an
-  open superset round). Starting a correction from that sheet closes it and
-  reveals the full inline editor (type, RPE, fine adjustment) on the main
-  screen, exempt from the minimalism — and from LOG's 200ms duplicate-tap
-  lock — for as long as the correction is open. In overview, selecting an
-  exercise name chooses the next focus destination without opening its
-  editor. "Focus mode" returns to that selection, or to the entry that was
-  focused before overview if nothing was selected. Selection and expansion
-  stay separate, and switching views preserves staged values and the running
-  rest clock. Selecting either member of an unfinished superset returns to
-  its canonical A1/A2 round.
+  session controls, sync chip, coach and settings stay). Top to bottom: the
+  exercise name, `SET n OF m` (a warmup reads `SET n OF m · WARMUP`, counting
+  the entry's warmups, whether the entry is warmup-only or mixed) with one
+  segment per set, then the load picture: the plates on the bar, one or two
+  dumbbells, a weight pin, or a bodyweight card, drawn from facts the app
+  already holds (tapping a plate or dumbbell picture opens the plate sheet).
+  Under it, the coach's cue and a "Last time" line. The dock at the bottom
+  holds load and reps side by side (tap a value for the number pad, or use the
+  −/+ steppers), four keys (`RPE`, `Note`, `Skip` / `Unskip`, and `Swap` before
+  anything is logged or `Fix last` after), and LOG SET. A loaded implement
+  leads with load; a bodyweight movement leads with reps and offers a small
+  "+ Add load (belt or vest)" row beneath it (below). When an entry is finished
+  and another is unfinished, the dock offers "Next exercise" instead of the
+  editor, and when the whole workout is done it offers Finish session and
+  "+ Extra set". Skip asks for an optional reason (Equipment taken, Already
+  warm, Out of time, Didn't feel right, or none). RPE opens the sheet scoped to
+  the current entry (or both members of an open superset round) with the
+  warmup/working toggle, RPE, the per-hand/total toggle, last time and the full
+  logged-set history (void, note, correct). Starting a correction, from `Fix
+  last`, the saved-set card during rest, or that sheet, reveals the full
+  inline editor (type, RPE, fine adjustment), exempt from LOG's 200ms
+  duplicate-tap lock for as long as the correction is open. A finished entry
+  has no editor in Focus: its set is corrected from the List. The topbar's
+  Focus | List switch moves between the deck and the full list; selecting an
+  exercise in the list chooses the next focus destination without opening its
+  editor, and switching views preserves staged values and the running rest
+  clock. Selecting either member of an unfinished superset returns to its
+  A1/A2 round.
 - **Focus-mode limitation** — duration-tracked workouts stay in overview and
   explain that duration tracking is unavailable in focus mode. The focus deck
   currently supports reps and tick-only exercises; it does not approximate a
@@ -218,19 +209,28 @@ Supabase sends the stock link email and the paste path is the working one.
 - **Fix a wrong set** — ✕ on the logged row → VOID? (append-only void +
   relog; the record keeps both). Voiding the set that started the rest
   clock cancels the clock.
-- **Skip / unskip an exercise** — the action on each closed row (collapse
-  the open one first). Session-local; the analytical record is the sets.
+- **Skip / unskip an exercise** — the Skip / Unskip key in Focus, or the
+  action on each closed row in the List (collapse the open one first). Session-local; the analytical record is the sets.
 - **Undo adding an exercise** — the same slot reads UNDO ADD, two-tap, but
   only for an extra added this session with nothing logged into it. A
   prescribed exercise, or one with sets, can only be skipped.
 - **Add an exercise** — bottom of the list → search sheet.
-- **Rest** — strip counts down then over, naming the NEXT set ("Next: Squat
-  145 × 5, set 3 of 4") rather than the one just finished, with optional RPE
-  chips underneath for the set that WAS just logged — tapping one rates it,
-  leaving it alone keeps it unrated, which is the ordinary case. Adjust,
-  type, or dismiss the clock; it keeps running for rest stamping either way.
-  Survives leaving the screen. Rest alerts opt in via Settings (notification
-  permission). The strip hides while a sheet or the number pad is open.
+- **Rest** — in Focus, resting takes the middle band, not the screen: the
+  picture gives way to "◷ RESTING" with the clock (tap to change, −30 / +30 to
+  adjust, a progress track), the line naming the NEXT set ("Next: Squat 145 ×
+  5, set 3 of 4", or "Next: Superset A, round 2 of 3") in small dim text, and
+  the card "LAST SET · ALREADY SAVED" with the set just logged and a Fix button
+  (the set is named the way the lifter counts it: "warmup 2" or working set
+  3, never the raw `set_index`). The dock is tagged "NEXT SET · SET n OF m"
+  with "End rest now", which ends the view of the rest and never changes the log or
+  the stamped rest: the dock edits the next set, and the saved one changes only
+  through Fix. At the target the panel reads "REST OVER · Ready when you are."
+  with the elapsed time. In the List (and mid-correction or mid-round) the same clock
+  is a docked strip with optional RPE chips for the set just logged. Either
+  way it keeps running for rest stamping, survives leaving the screen, and
+  never advances the workout by itself. Rest alerts opt in via Settings
+  (notification permission). The strip hides while a sheet or the number pad is
+  open.
 - **Log a superset round** — member by member, A1 then A2. In focus the
   middle shows one card per member (tag, name, staged "load unit × reps", and
   ● NOW / ✓ / ○ NEXT), a one-line hint, and the load picture (plates, pin
@@ -244,14 +244,23 @@ Supabase sends the stock link email and the paste path is the working one.
   second member is logged, and not after the pair's last round; the rest
   clock itself always measures (A2's recorded rest is the gap since A1).
   Offline sets appear in Outbox and replay in enqueue order.
-- **Plates** — the plate sheet shows the total, the bar diagram and what goes
-  on each side, with a red note when the target cannot be made exactly. The
-  base weight (bar 45 lb, leg-press sled, calf-raise machine) is a per-exercise
-  card stepped with -/+ (one plate step: 5 lb or 2.5 kg, never below 0) or
-  typed; there are no preset chips. A machine or cable exercise also shows
-  "Which machine?" (Plate sled | Pin stack); a pin stack shows "Pin at X" and
-  hides the base weight. It only changes how plates are worked out; the logged
-  load is still the total.
+- **Plates** — tapping the plate or dumbbell picture opens the plate sheet,
+  titled "<exercise> · PLATES": the total, the bar diagram with plates sized
+  and coloured by weight, and what goes on each side, with a red note when the
+  target cannot be made exactly ("type a target load" to plan from a number).
+  The base weight (bar 45 lb, leg-press sled, calf-raise machine) is a
+  per-exercise card stepped with -/+ (one plate step: 5 lb or 2.5 kg, never
+  below 0) or typed; there are no preset chips. A machine or cable exercise
+  also shows "Which machine?" (Plate sled | Pin stack); a pin stack shows "Pin
+  at X" and hides the base weight, and a stack or cable exercise otherwise
+  gets no plate calculator. Base weight and sled/stack are device-local, per
+  exercise. They only change how plates are worked out; the logged load is
+  still the total.
+- **Bodyweight added load** — a bodyweight movement is reps-first. "+ Add
+  load (belt or vest)" opens a secondary row with −, + and × (remove). The
+  logged `load_kg` is the added load alone, exactly as a load staged on a "body
+  only" exercise always was, and 0 when no load is added; bodyweight itself is
+  never added in. Storage semantics are unchanged.
 - **Read the day's notes** — plan note and coach note render at the top of
   the session screen, clamped with MORE/LESS.
 - **Leave mid-session** — footer Home (the session keeps running). Today and
