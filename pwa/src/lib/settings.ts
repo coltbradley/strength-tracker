@@ -1,4 +1,4 @@
-// Device-local preference registry.
+// Preference registry: global settings are device-local, per-exercise prefs sync.
 //
 // Every preference is ONE declaration in `SETTINGS` below carrying its group,
 // label, help text, control kind, default and validator. The store, the hooks
@@ -13,7 +13,8 @@
 // keys; those keys are deliberately NOT deleted, so a rollback to the previous
 // release still finds them.
 //
-// SCOPE: device-local, with ONE exception. Global preferences (plates, bars,
+// SCOPE: device-local, with ONE exception: the per-exercise record syncs.
+// Global preferences (plates, bars,
 // unit, steps, rest defaults, display) never sync — there is no user_settings
 // table (owner decision, 2026-08-27). The per-exercise record `exercisePrefs`
 // DOES sync, per user, through the `exercise_prefs` table (owner decision,
@@ -832,24 +833,23 @@ function repairBarsForUnit(u: Unit): void {
     if (fixed !== null) setSetting("bar", { ...sel, [u]: fixed });
   }
 
-  const prefs = getSetting("exercisePrefs");
-  let changed = false;
-  const next: ExercisePrefs = {};
-  for (const [id, pref] of Object.entries(prefs)) {
+  // Only a bar that CAME FROM a bar list is remapped: a barKg that matches the
+  // other unit's inventory is that bar seen through the old unit. Anything no
+  // bar list contains is a base weight the lifter typed (a sled's 34 kg) and
+  // is left exactly as it is. A remap IS a change to a synced record, so it
+  // goes through commitExercisePref: stamped, and queued for the server, or
+  // this device would disagree with every other one and equal stamps would
+  // never reconcile it.
+  const other = getBarInventory(u === "kg" ? "lb" : "kg");
+  for (const [id, pref] of Object.entries(getSetting("exercisePrefs"))) {
+    const kg = pref.barKg;
     // 0 means "no bar" and is unit-independent — never remap it.
-    if (
-      pref.barKg === undefined ||
-      pref.barKg === 0 ||
-      inv.some((b) => nearKg(b, pref.barKg as number))
-    ) {
-      next[id] = pref;
-      continue;
-    }
-    const fixed = nearestIn(inv, pref.barKg);
-    next[id] = fixed === null ? pref : { ...pref, barKg: fixed };
-    changed = changed || fixed !== null;
+    if (kg === undefined || kg === 0) continue;
+    if (inv.some((b) => nearKg(b, kg))) continue;
+    if (!other.some((b) => nearKg(b, kg))) continue;
+    const fixed = nearestIn(inv, kg);
+    if (fixed !== null) commitExercisePref(id, { ...pref, barKg: fixed });
   }
-  if (changed) setSetting("exercisePrefs", next);
 }
 
 // ---- plates ----------------------------------------------------------------
@@ -1040,10 +1040,18 @@ export function getExercisePrefsSyncState(): ExercisePrefsSyncState {
  * second change always beats the first here even if the clock stepped back.
  */
 function nextStamp(previous: string | undefined): string {
-  const prev = previous === undefined ? NaN : Date.parse(previous);
   const now = Date.now();
+  let prev = previous === undefined ? NaN : Date.parse(previous);
+  // A previous stamp beyond the server's bound is ignored, not built on: the
+  // server refuses anything past now() + MAX_STAMP_SKEW_MS, so +1 on it would
+  // queue a write that can never land.
+  if (prev > now + MAX_STAMP_SKEW_MS) prev = NaN;
   return new Date(Number.isFinite(prev) && prev >= now ? prev + 1 : now).toISOString();
 }
+
+/** How far ahead of the server's clock a stamp may be. Mirrors the bound in
+ *  20261001000000_exercise_prefs.sql (`interval '1 day'`). */
+export const MAX_STAMP_SKEW_MS = 24 * 60 * 60 * 1000;
 
 function samePref(a: ExercisePref | undefined, b: ExercisePref): boolean {
   if (a === undefined) return Object.keys(b).length === 0;
@@ -1119,6 +1127,28 @@ export function replaceExercisePrefsState(
 ): void {
   setSetting("exercisePrefs", prefs);
   setSetting("exercisePrefsSync", sync);
+}
+
+/**
+ * Forget one override whose upload the server refused for good (the exercise is
+ * gone or not visible to this person). Only if the device still holds the very
+ * stamp that was refused: a newer local choice is a different write and stays.
+ * Local only, no subscriber told.
+ */
+export function dropRefusedExercisePref(
+  exerciseId: string,
+  updatedAt: string,
+): boolean {
+  const sync = getSetting("exercisePrefsSync");
+  const held = sync.stamps[exerciseId];
+  if (held === undefined || Date.parse(held) !== Date.parse(updatedAt)) return false;
+  const prefs = { ...getSetting("exercisePrefs") };
+  delete prefs[exerciseId];
+  const stamps = { ...sync.stamps };
+  delete stamps[exerciseId];
+  setSetting("exercisePrefs", prefs);
+  setSetting("exercisePrefsSync", { ...sync, stamps });
+  return true;
 }
 
 /**

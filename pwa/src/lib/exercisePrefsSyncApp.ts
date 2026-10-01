@@ -14,7 +14,9 @@ export const exercisePrefsSync = createExercisePrefsSync({
   async pendingKeys() {
     const keys = new Set<string>();
     for (const e of await outbox.inspect()) {
-      if (e.state === "dead") continue;
+      // Dead items count too: a write the server refused is not re-queued
+      // under the same stamp on every reconcile (a new local choice has a new
+      // stamp and is). Discardable refusals never reach here (see outbox).
       if (e.op.kind === "insert" && e.op.table === "exercise_prefs") {
         keys.add(pendingKey(e.op.payload.exercise_id, e.op.payload.updated_at));
       }

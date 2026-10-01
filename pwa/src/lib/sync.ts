@@ -8,6 +8,7 @@ import { getDb, type OutboxOp } from "./db";
 import { getCurrentUserId, onUserChange } from "./currentUser";
 import { readPersistedUserId } from "./persistedSession";
 import { notifyCheckinMemory } from "./checkinMemory";
+import { dropRefusedExercisePref } from "./settings";
 import {
   createOutbox,
   type OutboxTransport,
@@ -97,6 +98,14 @@ export const outbox = createOutbox({
   onSynced: (op: OutboxOp) => {
     if (op.kind === "insert" && op.table === "checkins" && op.payload.note) {
       notifyCheckinMemory();
+    }
+  },
+  // The server refused a pref for good (the exercise is gone or not this
+  // person's to see): forget it locally, or every reconcile would send it
+  // again.
+  onDiscarded: (op: OutboxOp) => {
+    if (op.kind === "insert" && op.table === "exercise_prefs") {
+      dropRefusedExercisePref(op.payload.exercise_id, op.payload.updated_at);
     }
   },
 });

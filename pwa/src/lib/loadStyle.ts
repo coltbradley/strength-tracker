@@ -77,7 +77,7 @@ export function defaultLoadStyle(
 
 /**
  * How this exercise's load is presented, most specific first: the user's
- * own device-local override, then the equipment/name guess. There is no
+ * own per-exercise override (synced to their account), then the equipment/name guess. There is no
  * PRESCRIPTION-level assertion for load style, unlike load entry — the
  * coach writes reps and load, never a bar-vs-stack opinion — so this chain
  * is only two links long.

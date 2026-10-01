@@ -6,6 +6,7 @@ import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  comparePrefValues,
   createExercisePrefsSync,
   mergeExercisePrefs,
   pendingKey,
@@ -20,6 +21,7 @@ import {
   getExercisePrefsSyncState,
   getSetting,
   listExercisePrefs,
+  dropRefusedExercisePref,
   pruneExercisePrefs,
   reloadSettings,
   replaceExercisePrefsState,
@@ -443,6 +445,182 @@ describe("exercise-pref sync: a different account is never sent the previous one
     await h.sync.reconcile();
     expect(getExercisePrefsSyncState().owner).toBe(ALICE);
     expect(h.enqueued).toHaveLength(1);
+  });
+});
+
+// ---- audit fixes -------------------------------------------------------------
+
+describe("equal stamps (F7)", () => {
+  it("converge on the larger value on both sides, like the trigger", () => {
+    const local = { sled: { barKg: 20 } };
+    const r = mergeExercisePrefs(local, { sled: T1 }, [row("sled", T1, { bar_kg: 34 })], T2);
+    expect(r.prefs.sled).toEqual({ barKg: 34 });
+    expect(r.uploads).toEqual([]);
+    const r2 = mergeExercisePrefs({ sled: { barKg: 34 } }, { sled: T1 }, [row("sled", T1, { bar_kg: 20 })], T2);
+    expect(r2.prefs.sled).toEqual({ barKg: 34 });
+    expect(r2.uploads).toEqual([{ exerciseId: "sled", pref: { barKg: 34 }, updatedAt: T1 }]);
+  });
+
+  it("orders absent below any value, then numbers, then strings", () => {
+    expect(comparePrefValues({ barKg: 0 }, null)).toBeGreaterThan(0);
+    expect(comparePrefValues({ loadStyle: "stack" }, { loadStyle: "plates" })).toBeGreaterThan(0);
+    expect(comparePrefValues({ barKg: 20 }, { barKg: 20 })).toBe(0);
+  });
+});
+
+describe("far-future stamps (F3)", () => {
+  it("a device stamp beyond the server's bound is treated as unstamped", () => {
+    const r = mergeExercisePrefs(
+      { sled: { barKg: 20 } },
+      { sled: "9999-12-31T00:00:00.000Z" },
+      [row("sled", T1, { bar_kg: 34 })],
+      new Date(NOW).toISOString(),
+    );
+    expect(r.prefs.sled).toEqual({ barKg: 34 });
+    expect(r.stamps.sled).toBe(T1);
+  });
+
+  it("a new local choice does not build on an out-of-bound stamp", () => {
+    replaceExercisePrefsState({}, { owner: null, stamps: { sled: "9999-12-31T00:00:00.000Z" } });
+    setExercisePref("sled", { barKg: 34 });
+    expect(getExercisePrefsSyncState().stamps.sled).toBe(new Date(NOW).toISOString());
+  });
+});
+
+describe("a refused pref is forgotten, not re-queued forever (F1)", () => {
+  it("drops the pref and stamp only if the refused stamp is still current", () => {
+    replaceExercisePrefsState({ gone: { barKg: 20 }, kept: { barKg: 20 } }, { owner: ALICE, stamps: { gone: T1, kept: T2 } });
+    expect(dropRefusedExercisePref("kept", T1)).toBe(false); // edited since
+    expect(dropRefusedExercisePref("gone", T1)).toBe(true);
+    expect(getExercisePref("gone")).toEqual({});
+    expect(getExercisePrefsSyncState().stamps).toEqual({ kept: T2 });
+  });
+
+  it("does not enqueue a second copy while one is dead or waiting", async () => {
+    const h = (active = harness());
+    h.setUser(ALICE);
+    replaceExercisePrefsState({ gone: { barKg: 20 } }, { owner: ALICE, stamps: { gone: T1 } });
+    await h.sync.reconcile();
+    await h.sync.reconcile();
+    await h.sync.reconcile();
+    expect(h.enqueued).toHaveLength(1);
+  });
+
+  it("through the real outbox: an FK or RLS refusal discards the item and the local pref", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    resetDbForTests();
+    const refusals = [
+      { message: "violates foreign key constraint", code: "23503", status: 409 },
+      { message: "new row violates row-level security policy", code: "42501", status: 403 },
+    ];
+    for (const err of refusals) {
+      replaceExercisePrefsState({ gone: { barKg: 20 } }, { owner: ALICE, stamps: { gone: T1 } });
+      const dropped: OutboxOp[] = [];
+      let sends = 0;
+      const outbox = createOutbox({
+        getDb,
+        transport: {
+          async insert() {
+            sends += 1;
+            return err;
+          },
+          async update() {
+            return null;
+          },
+        },
+        isOnline: () => true,
+        currentUserId: () => ALICE,
+        onDiscarded: (op) => {
+          dropped.push(op);
+          if (op.kind === "insert" && op.table === "exercise_prefs") {
+            dropRefusedExercisePref(op.payload.exercise_id, op.payload.updated_at);
+          }
+        },
+      });
+      await outbox.enqueue({
+        kind: "insert",
+        table: "exercise_prefs",
+        payload: prefToUpsert(ALICE, "gone", { barKg: 20 }, T1),
+      });
+      await outbox.flush();
+      expect(sends).toBe(1);
+      expect(dropped).toHaveLength(1);
+      expect(await outbox.inspect()).toEqual([]); // no dead pile
+      expect(outbox.getStatus().dead).toBe(0);
+      expect(getExercisePref("gone")).toEqual({});
+      expect(getExercisePrefsSyncState().stamps).toEqual({});
+    }
+  });
+
+  it("a bare permission-denied (role problem) or another table's FK is NOT discarded", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    resetDbForTests();
+    const outbox = createOutbox({
+      getDb,
+      transport: {
+        async insert() {
+          return { message: "permission denied for table exercise_prefs", code: "42501", status: 403 };
+        },
+        async update() {
+          return null;
+        },
+      },
+      isOnline: () => true,
+      currentUserId: () => ALICE,
+      onDiscarded: () => {
+        throw new Error("should not be discarded");
+      },
+    });
+    await outbox.enqueue({
+      kind: "insert",
+      table: "exercise_prefs",
+      payload: prefToUpsert(ALICE, "x", { barKg: 20 }, T1),
+    });
+    await outbox.flush();
+    expect(outbox.getStatus().dead).toBe(1);
+  });
+});
+
+describe("identity claim and triggers (F5, F6)", () => {
+  it("claims for a new account at once, even while the previous account's fetch hangs", async () => {
+    let release: (r: ExercisePrefRow[]) => void = () => {};
+    let first = true;
+    const h = (active = harness({
+      fetchRows: () => {
+        if (first) {
+          first = false;
+          return new Promise<ExercisePrefRow[]>((res) => (release = res));
+        }
+        return Promise.resolve([]);
+      },
+    }));
+    h.sync.start();
+    h.setUser(ALICE);
+    replaceExercisePrefsState({ sled: { barKg: 20 } }, { owner: ALICE, stamps: { sled: T1 } });
+    const hung = h.sync.reconcile(); // Alice's read is in flight
+    await new Promise((r) => setTimeout(r, 0));
+    h.setUser(BOB);
+    expect(getExercisePrefsSyncState().owner).toBe(BOB); // before any fetch returns
+    expect(getExercisePref("sled")).toEqual({});
+    release([]);
+    await hung;
+    await h.sync.reconcile();
+    expect(h.enqueued).toEqual([]); // Alice's pref was never sent as Bob's
+  });
+
+  it("a failed read does not throttle the next foreground reconcile; online retries", async () => {
+    const win = new EventTarget();
+    vi.stubGlobal("window", win);
+    const h = (active = harness());
+    h.setRows(new Error("offline"));
+    h.setUser(ALICE);
+    h.sync.start();
+    await h.sync.reconcile();
+    const failed = h.fetchCalls();
+    h.setRows([]);
+    win.dispatchEvent(new Event("online"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.fetchCalls()).toBeGreaterThan(failed);
   });
 });
 

@@ -15,8 +15,8 @@
 // for a week — cannot clobber a newer choice. Clearing writes a TOMBSTONE (all
 // values null), never a delete; there is no delete policy (see the migration).
 //
-// READ: on start, on every identity change and (at most every few minutes) on
-// return to the foreground, the user's rows are fetched and merged
+// READ: on start, on every identity change, on `online` and (at most every few
+// minutes) on return to the foreground, the user's rows are fetched and merged
 // last-write-wins by `updated_at` against this device's stamps. Local entries
 // that are newer, or that the server has never seen, are uploaded in the same
 // pass, which is also how writes made while identity was unknown get sent.
@@ -34,6 +34,7 @@ import type { OutboxOp } from "./db";
 import {
   getExercisePrefsSyncState,
   getSetting,
+  MAX_STAMP_SKEW_MS,
   replaceExercisePrefsState,
   subscribeExercisePrefWrites,
   type ExercisePref,
@@ -101,11 +102,39 @@ function ms(iso: string | undefined): number {
 }
 
 /**
+ * Total order on the VALUES of two records written at the same instant, so
+ * two devices that stamped the same millisecond converge on the same winner.
+ * Mirrors `exercise_prefs_lww` in the migration column for column: absent
+ * (null) sorts below any value, numbers numerically, then the three strings.
+ * Returns >0 when `a` wins, <0 when `b` wins, 0 when identical.
+ */
+export function comparePrefValues(
+  a: ExercisePref | null,
+  b: ExercisePref | null,
+): number {
+  const nums = ["barKg", "restSeconds", "loadStepKg"] as const;
+  const strs = ["loadUnit", "loadEntry", "loadStyle"] as const;
+  for (const k of nums) {
+    const x = a?.[k] ?? -1;
+    const y = b?.[k] ?? -1;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  for (const k of strs) {
+    const x = a?.[k] ?? "";
+    const y = b?.[k] ?? "";
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
  * Last-write-wins, per exercise, by `updated_at`:
  *  - server newer than this device's stamp (or no stamp at all): take the
  *    server's value, tombstones included, and adopt its stamp;
  *  - device stamp newer: keep ours and upload it;
- *  - equal: nothing to do;
+ *  - equal stamps: the same value is nothing to do; different values go to
+ *    `comparePrefValues`, whose winner is the server's rule too, so every
+ *    device and the trigger agree;
  *  - device has a pref the server has never seen: upload it, stamping it now
  *    if it predates sync. A device tombstone the server never saw needs
  *    nothing.
@@ -122,6 +151,12 @@ export function mergeExercisePrefs(
   const st: Record<string, string> = { ...stamps };
   const uploads: PrefUpload[] = [];
   const seen = new Set<string>();
+  const ceiling = Date.parse(nowIso) + MAX_STAMP_SKEW_MS;
+  // A device stamp past what the server accepts could never be uploaded and
+  // would beat every server row forever: treat it as no stamp at all.
+  for (const [id, stamp] of Object.entries(st)) {
+    if (ms(stamp) > ceiling) delete st[id];
+  }
 
   for (const row of remote) {
     const rMs = ms(row.updated_at);
@@ -136,6 +171,16 @@ export function mergeExercisePrefs(
       st[id] = row.updated_at;
     } else if (lMs > rMs) {
       uploads.push({ exerciseId: id, pref: prefs[id] ?? null, updatedAt: st[id] });
+    } else {
+      // Same instant. Equal values: converged. Otherwise the shared tie-break.
+      const order = comparePrefValues(prefs[id] ?? null, rowToPref(row));
+      if (order < 0) {
+        const pref = rowToPref(row);
+        if (pref === null) delete prefs[id];
+        else prefs[id] = pref;
+      } else if (order > 0) {
+        uploads.push({ exerciseId: id, pref: prefs[id] ?? null, updatedAt: st[id] });
+      }
     }
   }
 
@@ -219,8 +264,7 @@ export function createExercisePrefsSync(
   async function doReconcile(): Promise<void> {
     const uid = deps.currentUserId();
     if (uid === null) return; // unknown is not permission; identity re-runs us
-    claimFor(uid);
-    lastRun = now();
+    claimFor(uid); // idempotent; the identity listener already ran it
 
     // FRESH rows only. The device copy already lives in the settings envelope,
     // so a cached server read could only ever be older than what we hold — or,
@@ -234,6 +278,8 @@ export function createExercisePrefsSync(
       deps.report(e, "load exercise settings");
       return;
     }
+
+    lastRun = now(); // only a read that LANDED throttles the next one
 
     // Identity may have changed while we were waiting on the network: these
     // rows are then not the signed-in person's, and must not be merged.
@@ -296,7 +342,13 @@ export function createExercisePrefsSync(
       started = true;
       unsubs.push(subscribeExercisePrefWrites(onLocalWrite));
       const offUser = deps.onUserChange?.((id) => {
-        if (id !== null) void reconcile();
+        if (id === null) return;
+        // The ownership claim runs HERE, synchronously, not behind the
+        // serialized reconcile chain: a previous account's reconcile may be
+        // hung on the network, and until the claim runs this account would
+        // see (and could write over) the other person's prefs.
+        claimFor(id);
+        void reconcile();
       });
       if (offUser) unsubs.push(offUser);
       if (typeof document !== "undefined") {
@@ -309,6 +361,13 @@ export function createExercisePrefsSync(
         unsubs.push(() =>
           document.removeEventListener("visibilitychange", onVisible),
         );
+      }
+      if (typeof window !== "undefined") {
+        // A phone that booted with no signal and gains it with the app open
+        // fires neither a visibility change nor an identity change.
+        const onOnline = (): void => void reconcile();
+        window.addEventListener("online", onOnline);
+        unsubs.push(() => window.removeEventListener("online", onOnline));
       }
       void reconcile();
     },
