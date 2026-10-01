@@ -215,7 +215,8 @@ interface RestTimerProps {
   onEdit: () => void;
   /** strip only: hide it (the clock keeps measuring) */
   onDone?: () => void;
-  /** "Next: Barbell Row · set 3 of 4" — one line, computed by Session from
+  /** The List strip's foot only ("Next: Barbell Row · set 3 of 4"). The Focus
+   *  panel leaves it out: header and dock tag already say it (D9). Computed by Session from
    *  the same logic the focus deck's own next-set label uses, so the two never
    *  name a different next set. Null when there is nothing left to look
    *  forward to. */
@@ -310,11 +311,6 @@ export function RestTimer({
               />
             </span>
           </>
-        )}
-        {nextSetLabel && (
-          <div className="rest-panel-next" title={nextSetLabel}>
-            {nextSetLabel}
-          </div>
         )}
       </div>
     );

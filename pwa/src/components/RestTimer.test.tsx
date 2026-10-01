@@ -109,13 +109,18 @@ describe("RestTimer panel", () => {
     expect(screen.getByText("Ended early at 0:42 · target 2:30")).toBeTruthy();
   });
 
-  it("shows a single-line next-set label under the clock, resting and ready", () => {
-    const { rerender } = render(
+  it("D9: the Focus panel does not repeat the next set's position (the header and the dock tag already say it); the List strip still does", () => {
+    const { rerender, container } = render(
       <RestTimer rest={running()} onAdjust={noop} onEdit={noop} nextSetLabel="Next: Row · set 3 of 4" />,
     );
-    expect(screen.getByText("Next: Row · set 3 of 4")).toBeTruthy();
+    expect(screen.queryByText("Next: Row · set 3 of 4")).toBeNull();
     rerender(
       <RestTimer rest={overdue()} onAdjust={noop} onEdit={noop} nextSetLabel="Next: Row · set 3 of 4" />,
+    );
+    expect(screen.queryByText("Next: Row · set 3 of 4")).toBeNull();
+    expect(container.querySelector(".rest-panel-next")).toBeNull();
+    rerender(
+      <RestTimer variant="strip" rest={running()} onAdjust={noop} onEdit={noop} nextSetLabel="Next: Row · set 3 of 4" />,
     );
     expect(screen.getByText("Next: Row · set 3 of 4")).toBeTruthy();
   });

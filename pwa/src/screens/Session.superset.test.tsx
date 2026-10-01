@@ -207,7 +207,9 @@ describe("Session supersets", () => {
     expect(queuedSets()[1]).toMatchObject({ exercise_id: "barbell-row", set_index: 0 });
     // rest comes after the round's last member
     expect(await screen.findByRole("timer", { name: /^rest timer/ })).toBeTruthy();
-    expect(screen.getByText(/Next: Superset A.*round 2 of 2/)).toBeTruthy();
+    // said once in the header and once on the dock tag, not a third time (D9)
+    expect(screen.queryByText(/Next: Superset A/)).toBeNull();
+    expect(screen.getAllByText(/round 2 of 2/i).length).toBe(2);
     expect(queuedSets()[0]!.id).not.toBe(queuedSets()[1]!.id);
   });
 

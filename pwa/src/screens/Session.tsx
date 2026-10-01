@@ -3635,7 +3635,6 @@ export function Session() {
         rest={rest}
         onAdjust={adjustRest}
         onEdit={() => openPad("rest")}
-        nextSetLabel={nextSetLabel()}
       />
       {lastSet && (
         <RestLastSetCard
