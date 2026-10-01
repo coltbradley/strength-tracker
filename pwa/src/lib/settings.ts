@@ -1010,6 +1010,19 @@ export function getExerciseBarKg(
   return equipment === "barbell" ? getBarKg(u) : 0;
 }
 
+/**
+ * Whether the base weight is a FACT rather than a guess. A barbell's bar comes
+ * from the shared bar inventory, so it is always known; a machine's sled has
+ * no default worth trusting (a leg press sled is not zero), so until somebody
+ * sets one the picture asks instead of drawing an empty sled as truth.
+ */
+export function hasExerciseBase(
+  exerciseId: string,
+  equipment: string | null,
+): boolean {
+  return equipment === "barbell" || getExercisePref(exerciseId).barKg !== undefined;
+}
+
 /** kg value, or 0 for no bar; null clears the override */
 export function setExerciseBarKg(exerciseId: string, kg: number | null): void {
   setExercisePref(exerciseId, { barKg: kg ?? undefined });

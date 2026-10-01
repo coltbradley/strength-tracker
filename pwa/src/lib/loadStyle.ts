@@ -89,3 +89,33 @@ export function resolveLoadStyle(
 ): LoadStyle {
   return override ?? defaultLoadStyle(equipment, name);
 }
+
+/**
+ * Names that suggest the SAME station can be set up with plates: leg press,
+ * hack squat, smith, chest/shoulder press, calf raise. Wider than
+ * PLATE_MACHINE_NAME (which decides the DEFAULT) because a chest press or a
+ * calf raise machine is usually a pin stack but often a plate-loaded sibling
+ * exists, whereas a pin-stack Lat Pulldown or Leg Extension is not.
+ */
+const PLATE_ALTERNATIVE_NAME =
+  /\b(leg press|hack squat|smith|chest press|shoulder press|calf raise|plate[- ]loaded)/i;
+
+/**
+ * Whether the sled/stack switch is worth OFFERING for this exercise. Only a
+ * named machine with a plausible plate-loaded alternative: a cable Face Pull
+ * has no plate sled, and offering one ("tap to switch to the plate sled") was
+ * nonsense. A cable is never offered. A choice already made stays reachable
+ * (`override` differs from the guess), so an old toggle can always be undone.
+ */
+export function offersLoadStyleSwitch(
+  equipment: string | null | undefined,
+  name: string,
+  override?: LoadStyle,
+): boolean {
+  if (!isMachineLikeEquipment(equipment)) return false;
+  const e = equipment?.toLowerCase() ?? "";
+  if (e.startsWith("machine") && PLATE_ALTERNATIVE_NAME.test(name)) return true;
+  return (
+    override !== undefined && override !== defaultLoadStyle(equipment, name)
+  );
+}

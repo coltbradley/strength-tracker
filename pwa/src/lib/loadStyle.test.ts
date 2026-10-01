@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   defaultLoadStyle,
   offersLoadStyle,
+  offersLoadStyleSwitch,
   resolveLoadStyle,
 } from "./loadStyle";
 import {
@@ -107,5 +108,36 @@ describe("the per-exercise override round-trips through settings", () => {
     expect(getExerciseLoadStyle("Leg_Press")).toBe("stack");
     setExerciseLoadStyle("Leg_Press", undefined);
     expect(getExerciseLoadStyle("Leg_Press")).toBeUndefined();
+  });
+});
+
+describe("offersLoadStyleSwitch — only where a plate-loaded alternative plausibly exists", () => {
+  it.each([
+    ["Leg Press", "machine"],
+    ["Hack Squat", "machine"],
+    ["Smith Machine Bench Press", "machine"],
+    ["Chest Press Machine", "machine"],
+    ["Seated Calf Raise", "machine"],
+    ["Plate-Loaded Row", "machine"],
+  ])("%s offers it", (name, equipment) => {
+    expect(offersLoadStyleSwitch(equipment, name)).toBe(true);
+  });
+
+  it.each([
+    ["Face Pull", "cable"],
+    ["Cable Row", "cable"],
+    ["Cable Chest Press", "cable"],
+    ["Leg Extension", "machine"],
+    ["Lat Pulldown", "machine"],
+    ["Back Squat", "barbell"],
+    ["Goblet Squat", "dumbbell"],
+    ["Pull-up", "body only"],
+  ])("%s does not", (name, equipment) => {
+    expect(offersLoadStyleSwitch(equipment, name)).toBe(false);
+  });
+
+  it("keeps an earlier non-default choice reachable so it can be undone", () => {
+    expect(offersLoadStyleSwitch("cable", "Face Pull", "plates")).toBe(true);
+    expect(offersLoadStyleSwitch("cable", "Face Pull", "stack")).toBe(false);
   });
 });

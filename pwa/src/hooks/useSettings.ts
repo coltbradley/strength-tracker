@@ -16,6 +16,7 @@ import {
   getBarKg,
   getDefaultRestSeconds,
   getExerciseBarKg,
+  hasExerciseBase,
   getExercisePref,
   getExerciseRestSeconds,
   getExerciseStepKg,
@@ -74,6 +75,16 @@ export function useExerciseBarKg(
 ): number {
   return useSyncExternalStore(subscribeSettings, () =>
     exerciseId === null ? 0 : getExerciseBarKg(exerciseId, unit, equipment),
+  );
+}
+
+/** Whether this exercise's base weight has been set (see hasExerciseBase). */
+export function useExerciseBaseKnown(
+  exerciseId: string | null,
+  equipment: string | null,
+): boolean {
+  return useSyncExternalStore(subscribeSettings, () =>
+    exerciseId === null ? true : hasExerciseBase(exerciseId, equipment),
   );
 }
 

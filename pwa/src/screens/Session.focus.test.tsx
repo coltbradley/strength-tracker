@@ -1998,7 +1998,7 @@ describe("Session focus presentation", () => {
       within(a2More).getByRole("button", { name: "Plate calculator" }),
     );
     expect(await screen.findByText("BARBELL ROW · PLATES")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Type a target" }));
+    fireEvent.click(screen.getByRole("button", { name: "type a target load" }));
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "BACK TO PLATES" }));

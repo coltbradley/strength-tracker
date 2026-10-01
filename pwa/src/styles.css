@@ -135,6 +135,13 @@
     --plate-collar: #565b63;
     --teal: #2e6e7e;
 
+    /* Surfaces for the focus dock: white cards and mist keys on a lavender
+     * dock, taken from Version D. Values only; roles are named below. */
+    --white: #ffffff;
+    --mist: #ebe8f0;
+    --haze: #efedf3;
+    --straw: #f6ecd9;
+
     /* -- colour roles: the only names component rules may reference -------- */
     --bg: var(--paper);
     --bg-raised: var(--paper-raised);
@@ -178,6 +185,19 @@
     --focus-set-completed-mark: var(--cream);
     --focus-set-future: var(--control-outline);
 
+    /* Focus-dock surfaces. card = a number or a card sitting on the dock or
+     * the page; key = the small keys and chips on top of either; dock = the
+     * panel itself. A dark theme swaps these roles and nothing else. */
+    --surface-card: var(--white);
+    --surface-key: var(--mist);
+    --surface-key-press: color-mix(in srgb, var(--aubergine) 10%, var(--mist));
+    --surface-dock: var(--haze);
+    --surface-current: var(--straw);
+    --text-on-accent: var(--text-inverse);
+    --dock-edge: var(--rule-hair-color);
+    --lp-steel: var(--plate-1h);
+    --lp-edge: rgb(var(--ink-rgb) / 0.2);
+
     /* State vocabulary roles (StateGlyph.tsx) — reuse the same three focus-set
      * roles above wherever the meaning matches (done ~ completed, current ~
      * current, upcoming ~ future) rather than mint parallel tokens for the
@@ -189,9 +209,15 @@
     --font-sans: Chivo, system-ui, -apple-system, sans-serif;
     --font-mono: "Chivo Mono", ui-monospace, monospace;
 
-    --fs-micro: 9.5px; /* mono eyebrow labels */
-    --fs-label: 10.5px; /* mono secondary labels */
+    /* 11px is the floor for anything a person has to read (Version D review
+     * item 14; WCAG tap-and-read comfort on a phone at arm's length). micro
+     * and label used to be 9.5px and 10.5px and carried sheet titles, RPE
+     * chips, scheme lines and state words; they keep their names (one more
+     * place to look, not a rename across 90 rules) and share the floor. */
+    --fs-micro: 11px; /* mono eyebrow labels */
+    --fs-label: 11px; /* mono secondary labels */
     --fs-meta: 11px; /* mono metadata, button text */
+    --fs-caption: 12px; /* captions under a drawing, small keys */
     --fs-sm: 13px; /* dense body */
     --fs-body: 14px; /* row names, toasts, logged loads */
     --fs-base: 16px; /* body + .input — must stay 16 or iOS zooms on focus */
@@ -263,6 +289,10 @@
     --bw-thick: 2px;
     --radius: 2px; /* index cards do not have rounded corners */
     --radius-pill: 999px;
+    --r-seg: 5px; /* focus set-progress bars */
+    --r-card: 14px; /* keys, info cards, added-load row */
+    --r-panel: 18px; /* number cards, LOG, the next-exercise card */
+    --r-dock: 24px; /* the dock's top corners */
     --radius-card: 16px;
     --shadow-toast: 0 6px 18px rgb(var(--ink-rgb) / 0.14);
     --rail-accent: inset 3px 0 0 var(--accent);
@@ -2906,13 +2936,14 @@
 
   /* ---- plate calculator ---- */
 
-  .plate-target-row {
+  .plate-total-btn {
     display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: var(--s-5);
+    align-items: baseline;
+    gap: var(--s-4);
+    width: 100%;
     border-bottom: var(--rule);
     padding-bottom: var(--s-5);
+    text-align: left;
   }
 
   .plate-target {
@@ -2920,55 +2951,93 @@
     font-size: calc(var(--demo-text-scale, 1) * 42px);
     font-weight: 700;
     border-bottom: var(--bw-hair) solid var(--accent);
-    cursor: pointer;
   }
 
-  .plate-bars {
-    display: flex;
-    gap: var(--s-3);
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .plate-diagram {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    padding: var(--s-9) 0 var(--gutter);
-  }
-
-  .plate-bar {
-    width: 54px;
-    height: var(--s-3);
-    background: var(--rule-strong-color);
-  }
-
-  .plate-collar {
-    width: 9px;
-    height: 20px;
-    background: var(--rule-strong-color);
-  }
-
-  .plate {
-    background: var(--text);
-  }
-
-  .plate-row {
-    display: flex;
-    justify-content: space-between;
-    padding: var(--s-4) 0;
-    border-bottom: var(--rule-hair);
+  .plate-total-unit {
     font-family: var(--font-mono);
     font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
+    color: var(--text-dim);
   }
 
-  .plate-count {
+  .plate-which {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-5);
+    padding: var(--s-6) 0;
+    border-bottom: var(--rule-hair);
+  }
+
+  .plate-which-label {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
+    color: var(--text-dim);
+  }
+
+  .plate-picture {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s-5);
+    padding: var(--s-9) 0 var(--s-6);
+  }
+
+  .plate-picture-stack {
+    flex-direction: row;
+    justify-content: center;
+    gap: var(--s-7);
+  }
+
+  .plate-text {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
     font-weight: 600;
+    text-align: center;
   }
 
-  .plate-total span:last-child {
+  .plate-warn {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
+    line-height: 1.5;
+    color: var(--danger);
+    margin-bottom: var(--s-5);
+  }
+
+  .plate-base {
+    border: var(--bw-hair) solid var(--control-border-color);
+    border-radius: var(--radius);
+    padding: var(--s-6);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+
+  .plate-base-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s-5);
+  }
+
+  .plate-base-label {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
     font-weight: 700;
+    letter-spacing: var(--track-2);
+    color: var(--text-dim);
+  }
+
+  .plate-base-value {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
+    font-weight: 700;
+  }
+
+  .plate-base-keys {
+    display: flex;
+    gap: var(--s-4);
+  }
+
+  .plate-base-keys .btn {
+    flex: 1;
   }
 
   .plate-note {
@@ -2978,15 +3047,214 @@
     margin-top: var(--s-5);
   }
 
-  .plate-actions {
-    display: flex;
-    gap: var(--s-4);
-    margin-top: var(--s-7);
+  .plate-sub {
+    display: block;
+    margin-top: var(--s-2);
+    color: var(--text-dim);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-caption));
+    font-weight: 500;
   }
 
-  .plate-actions .btn,
-  .plate-actions .btn-outline-ink {
-    flex: 1;
+  .plate-base-unset {
+    border-style: dashed;
+  }
+
+
+  /* ---- load picture: what is in front of the lifter ---- */
+
+  .text-link {
+    align-self: flex-start;
+    min-height: var(--tap-min);
+    padding: 0;
+    color: var(--accent);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  /* -- the load picture -- */
+
+  .load-picture {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s-3);
+    width: 100%;
+    min-width: 0;
+    padding: var(--s-2) 0;
+    color: var(--text);
+    text-align: center;
+  }
+
+  .load-picture-row {
+    flex-direction: row;
+    justify-content: center;
+    gap: var(--s-7);
+    text-align: left;
+  }
+
+  .load-picture-bw {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-1);
+  }
+
+  .lp-bw-title {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
+    font-weight: 800;
+  }
+
+  .lp-text {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
+    font-weight: 700;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  .lp-caption {
+    color: var(--text-dim);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-caption));
+    line-height: 1.35;
+  }
+
+  .lp-stack-words {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+  }
+
+  /* The bar: sleeve end, plates (smallest outermost), shaft, plates, sleeve
+   * end — heavier plates are taller AND thicker. Plates may shrink in width
+   * before the drawing is ever allowed past the column. */
+  .lp-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 60px;
+    min-width: 0;
+  }
+
+  .lp-bar-compact {
+    width: auto;
+    height: 40px;
+    flex: none;
+  }
+
+  .lp-bar-compact .lp-plate {
+    transform: scaleY(0.7);
+  }
+
+  .lp-sleeve-end {
+    flex: none;
+    width: 8px;
+    height: 18px;
+    border-radius: 2px;
+    background: var(--lp-steel);
+  }
+
+  .lp-shaft {
+    flex: 1 1 12px;
+    min-width: 12px;
+    max-width: 150px;
+    height: 7px;
+    border-radius: 3px;
+    background: var(--lp-steel);
+  }
+
+  .lp-shaft-short {
+    flex: none;
+    width: 24px;
+    height: 6px;
+  }
+
+  .lp-plate,
+  .lp-db-head {
+    flex: 0 1 auto;
+    min-width: 3px;
+    margin: 0 1px;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px var(--lp-edge);
+  }
+
+  .lp-c-25 { background: var(--plate-25); }
+  .lp-c-20 { background: var(--plate-20); }
+  .lp-c-15 { background: var(--plate-15); }
+  .lp-c-10 { background: var(--plate-10); }
+  .lp-c-5 { background: var(--plate-5); }
+  .lp-c-2h { background: var(--plate-2h); }
+  .lp-c-1h { background: var(--plate-1h); }
+
+  .lp-dbs {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-7);
+    width: 100%;
+    height: 60px;
+  }
+
+  .lp-db {
+    display: flex;
+    align-items: center;
+  }
+
+  .lp-db-head {
+    flex: none;
+    width: 16px;
+    margin: 0;
+    border-radius: 5px;
+  }
+
+  .lp-db-handle {
+    flex: none;
+    width: 30px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--lp-steel);
+  }
+
+  .lp-db-plus {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-base));
+    font-weight: 700;
+  }
+
+  /* A generic weight stack: equal plates and a pin rod, no lifted plates and
+   * no pin position (see StackDrawing in LoadPicture.tsx). */
+  .lp-stack {
+    flex: none;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    padding: var(--s-3) var(--s-5) var(--s-3) var(--s-3);
+    border-radius: 8px;
+    background: var(--surface-key);
+  }
+
+  .lp-stack-plate {
+    width: 64px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--control-outline);
+  }
+
+  .lp-stack-rod {
+    position: absolute;
+    top: var(--s-2);
+    bottom: var(--s-2);
+    right: var(--s-3);
+    width: 3px;
+    border-radius: 2px;
+    background: var(--lp-steel);
   }
 
   /* ---- history ---- */

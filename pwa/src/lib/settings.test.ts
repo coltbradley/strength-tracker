@@ -19,6 +19,7 @@ import {
   getBarKg,
   getDefaultRestSeconds,
   getExerciseBarKg,
+  hasExerciseBase,
   getExercisePref,
   getExerciseRestSeconds,
   getExerciseStepKg,
@@ -543,5 +544,19 @@ describe("v1 -> v2: fallbackLoadKg becomes per-unit fallbackLoad", () => {
     ) as { v: number; values: Record<string, unknown> };
     expect(env.v).toBe(2);
     expect(env.values.fallbackLoadKg).toBe(60);
+  });
+});
+
+describe("hasExerciseBase — a sled weight is a fact only once somebody sets it", () => {
+  it("is always known for a barbell and unknown for an unset machine", () => {
+    expect(hasExerciseBase("squat", "barbell")).toBe(true);
+    expect(hasExerciseBase("leg-press", "machine")).toBe(false);
+  });
+
+  it("an explicit zero counts as known; clearing makes it unknown again", () => {
+    setExerciseBarKg("leg-press", 0);
+    expect(hasExerciseBase("leg-press", "machine")).toBe(true);
+    setExerciseBarKg("leg-press", null);
+    expect(hasExerciseBase("leg-press", "machine")).toBe(false);
   });
 });
