@@ -25,3 +25,7 @@ No initial slice adds a table or changes server metrics. Dark mode, added
 bodyweight load, coach Apply, and pinned Record goals remain separate product
 decisions. D is a clear visual direction, but it needs React composition,
 offline receipt work, and phone validation rather than a direct HTML port.
+
+## Execution authorization, 2026-09-30
+
+Colt authorized implementation with GPT-6 Luna subagents, tests and incremental commits. Recovery of the old affected phone writes is no longer a prerequisite. Keep the recovery tools and underlying load-consistency fixes. New-data durability and browser/phone acceptance remain separate evidence requirements. Follow [the execution record](2026-09-30-version-d-execution.md) for current progress; older unchecked boxes are not current completion evidence.

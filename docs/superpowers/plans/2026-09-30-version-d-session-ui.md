@@ -87,3 +87,7 @@
 - [ ] Repeat the interaction on a phone at normal and enlarged text with the number pad open, using the existing offline queue. Confirm the small controls by touch instead of redesigning them speculatively.
 - [ ] Read back every test set UUID and correction after the phone reconnects; confirm that List and Focus describe the same session and queue state.
 - [ ] Follow `docs/deploy.md` for any authorized release, record served SHA and rollback, and keep the D release behind the Phase 2 gate until it passes.
+
+## Execution authorization, 2026-09-30
+
+Colt authorized implementation with GPT-6 Luna subagents, tests and incremental commits. Recovery of the old affected phone writes is no longer a prerequisite. Keep the recovery tools and underlying load-consistency fixes. New-data durability and browser/phone acceptance remain separate evidence requirements. Follow [the execution record](2026-09-30-version-d-execution.md) for current progress; older unchecked boxes are not current completion evidence.

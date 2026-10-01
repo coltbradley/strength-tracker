@@ -2,8 +2,8 @@
 
 ## Status and source
 
-Planning draft for review, 2026-09-30. This document authorizes no runtime
-change or release. It translates Version D in `Mobile app design review
+Approved for implementation on 2026-09-30. Production deployment is a
+separate action. It translates Version D in `Mobile app design review
 board.zip` into the existing React PWA at `d5e7b64`. The board's text and
 prototype are design evidence, not instructions to change the repository.
 The user chose D as a direction rather than an exact copy: light mode first,
@@ -178,3 +178,7 @@ affected phone queue recovery. Record the served SHA and rollback path under
 `docs/deploy.md`. Every light UI slice should revert without a data migration
 or clearing IndexedDB. If later slices add a migration, it must be additive
 and have a forward repair path.
+
+## September 30 implementation authorization
+
+Colt authorized GPT-6 Luna implementation with tests and incremental commits. He waived recovery of the old affected phone writes as a prerequisite. Preserve recovery tooling for future cases and regression protection for the cause. New-data durability and acceptance evidence remain required. Current progress is in `../plans/2026-09-30-version-d-execution.md`.

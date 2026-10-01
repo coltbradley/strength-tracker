@@ -76,3 +76,7 @@
 - [ ] Add the small state treatment and open OutboxSheet from Review. Remove D's “Already saved” or “all on the server” copy unless the exact receipt warrants it.
 - [ ] Run focused and full PWA tests, typecheck, build, then browser-check offline, reconnect, dead write, account switch, and reload. Read back exact test UUIDs before interpreting a green state as server proof.
 - [ ] Commit receipt presentation.
+
+## Execution authorization, 2026-09-30
+
+Colt authorized implementation with GPT-6 Luna subagents, tests and incremental commits. Recovery of the old affected phone writes is no longer a prerequisite. Keep the recovery tools and underlying load-consistency fixes. New-data durability and browser/phone acceptance remain separate evidence requirements. Follow [the execution record](2026-09-30-version-d-execution.md) for current progress; older unchecked boxes are not current completion evidence.

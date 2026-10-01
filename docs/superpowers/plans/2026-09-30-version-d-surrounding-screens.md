@@ -85,3 +85,7 @@
 - [ ] Repeat phone offline logging, app background/foreground, update prompt, reconnect, and exact UUID readback after the affected phone recovery has been completed.
 - [ ] Check 320, 390, and 402 x 812 widths, normal and 1.3x text, safe areas, keyboard, long names, and all small controls by touch.
 - [ ] Follow `docs/deploy.md` for an authorized release and record served SHA, results, and rollback. Do not mark the release gate complete from tests or screenshots alone.
+
+## Execution authorization, 2026-09-30
+
+Colt authorized implementation with GPT-6 Luna subagents, tests and incremental commits. Recovery of the old affected phone writes is no longer a prerequisite. Keep the recovery tools and underlying load-consistency fixes. New-data durability and browser/phone acceptance remain separate evidence requirements. Follow [the execution record](2026-09-30-version-d-execution.md) for current progress; older unchecked boxes are not current completion evidence.
