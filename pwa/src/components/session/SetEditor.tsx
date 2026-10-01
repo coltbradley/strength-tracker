@@ -80,6 +80,9 @@ export interface SetEditorProps {
   lastPerformance?: string | null;
   /** Focus only: the four small keys, rendered between the numbers and LOG. */
   keysSlot?: ReactNode;
+  /** Focus only: "A1" in a superset round, so the load card's caption names
+   *  whose number this is ("lb · A1"). */
+  memberTag?: string;
   /** Focus only, bodyweight movements: reps stay the big number and any
    *  added load (belt, vest) is a small secondary row under them. `on` while
    *  that row is showing; `onRemove` sets the load back to nothing. */
@@ -192,6 +195,7 @@ function FocusDock({
   showLog = true,
   disabled,
   keysSlot,
+  memberTag,
   addedLoad = null,
   onDraftChange,
   onLog,
@@ -213,7 +217,7 @@ function FocusDock({
     <DockNumber
       label="load"
       display={String(displayedLoad)}
-      caption={perSide ? `${unit} each` : unit}
+      caption={`${perSide ? `${unit} each` : unit}${memberTag ? ` · ${memberTag}` : ""}`}
       value={draft.entryKg}
       min={0}
       max={maxEntryKg}

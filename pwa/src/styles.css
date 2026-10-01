@@ -3842,6 +3842,76 @@
     transform: scaleY(1.3);
   }
 
+  /* ---- focus superset round (Version D) ---- */
+  .ss-round {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    min-width: 0;
+  }
+
+  .ss-round-heading {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-weight: 700;
+    letter-spacing: var(--track-1);
+  }
+
+  .ss-card {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--s-4);
+    padding: var(--s-5) var(--s-6);
+    border: var(--bw-thick) solid transparent;
+    border-radius: var(--radius);
+    background: var(--bg-raised);
+  }
+
+  .ss-card.is-now {
+    border-color: var(--current-set);
+  }
+
+  .ss-card-tag {
+    color: var(--current-set);
+    font-family: var(--font-mono);
+    font-weight: 700;
+  }
+
+  .ss-card-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .ss-card-name {
+    overflow-wrap: anywhere;
+  }
+
+  .ss-card-line {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ss-card-state {
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .ss-card.is-now .ss-card-state {
+    color: var(--current-set);
+  }
+
+  .ss-round-hint {
+    margin: 0;
+    color: var(--text-dim);
+  }
+
   /* ---- state vocabulary (StateGlyph.tsx) ----
    * One shape family, reused by the progress rail, FocusSetProgress and
    * WorkoutOverview rows. Circular by default; warmups get a squared-off
@@ -3948,128 +4018,6 @@
   .focus-deck,
   .wk-overview {
     animation: mode-cross-fade var(--motion-med) var(--ease-out);
-  }
-
-  /* A superset round fills the middle band's remaining height. */
-  .superset-round-editor {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-
-  .superset-round-members {
-    display: grid;
-    flex: 1 0 auto;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: repeat(2, minmax(max-content, 1fr));
-    gap: var(--s-8);
-    min-height: 0;
-    min-width: 0;
-  }
-
-  .superset-member-card {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    min-height: 142px;
-    padding: var(--s-5) var(--s-6);
-    border: 1px solid var(--rule-strong-color);
-    background: var(--bg-raised);
-  }
-
-  .superset-round-actions {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-5);
-    margin-top: auto;
-    padding-top: var(--s-7);
-  }
-
-  .superset-round-member-label {
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    letter-spacing: var(--track-1);
-    text-transform: uppercase;
-    margin-bottom: var(--s-4);
-  }
-
-  .superset-member-target {
-    margin: 0 0 var(--s-2);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .superset-member-row {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: var(--s-4);
-  }
-
-  /* Keep the load controls at the 44px tap floor. The multiplier and reps
-   * move together when a long pound value cannot share one phone-width row. */
-  .superset-member-row .stepper-inline {
-    gap: var(--s-4);
-  }
-
-  .superset-member-row .stepper-btn {
-    flex-basis: var(--tap-min);
-    min-width: var(--tap-min);
-  }
-
-  .superset-member-reps {
-    display: inline-flex;
-    align-items: baseline;
-    gap: var(--s-4);
-    flex: none;
-  }
-
-  .superset-member-row .stepper-value {
-    font-size: 42px;
-    border-bottom: none;
-  }
-
-  @media (max-width: 359px) {
-    .superset-member-row .stepper-value {
-      font-size: 36px;
-    }
-  }
-
-  .superset-member-row .stepper-sub {
-    font-size: var(--fs-lg);
-    color: var(--text);
-    padding-bottom: 0;
-  }
-
-  .superset-member-x {
-    color: var(--text-dim);
-    font-size: var(--fs-lg);
-  }
-
-  .superset-member-detail {
-    margin-top: var(--s-2);
-  }
-
-  .superset-member-history {
-    margin-top: var(--s-2);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: var(--track-1);
-  }
-
-  .superset-round-error {
-    margin: 0;
-    color: var(--danger);
-  }
-
-  .superset-partial-action {
-    min-height: var(--tap-min);
   }
 
   .focus-deck .btn,
