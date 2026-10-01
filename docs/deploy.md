@@ -627,25 +627,19 @@ The integrated branch (`feat/version-d`) DOES change the database: two new migra
 
 ## Version D release (`feat/version-d`)
 
-Status: NOT RELEASED. Nothing below has been run against production.
+Status: DEPLOYED 2026-10-01 at `5a6f97c` (`deploy.yml` run 36938114881:
+migrations, edge functions and Pages all succeeded). The Phase 2 browser gate
+(3) and the phone verification (4) below are still NOT RUN. Work added to
+`feat/version-d` after `5a6f97c` (human-precision load display) ships in a
+follow-up deploy.
 
-**One decision is OPEN and awaits the owner (Colt) before any deploy.** Two
-documents disagree about the phone's old failed writes and neither has been
-overruled in writing:
-
-- "Release waives recovery": `docs/superpowers/plans/2026-09-30-version-d-execution.md`
-  (Authority and rulings) and the Version D spec (scope item 1 and the
-  September 30 authorization) record that Colt waived recovery of the
-  September 30 phone's old failed writes as a release prerequisite.
-- "Do not deploy without reviewing the queue":
-  `docs/superpowers/plans/2026-09-30-load-sync-recovery.md` (Constraints and
-  Verification and release) says not to deploy without reviewing the phone
-  queue and that a passing CI run does not establish recovered phone data.
-  That plan predates the waiver.
-
-Until the owner chooses, do not treat either as settled. If the waiver stands,
-record it here with the date and skip step 6; if the five sets matter, run step
-6 before or right after the new build installs. The choice is Colt's.
+The former OPEN decision is RESOLVED: the owner chose to deploy and repair the
+phone's failed writes on the phone (step 6), not to waive them. The two
+documents that disagreed ("release waives recovery" in
+`docs/superpowers/plans/2026-09-30-version-d-execution.md` and the Version D
+spec, versus "do not deploy without reviewing the queue" in
+`docs/superpowers/plans/2026-09-30-load-sync-recovery.md`) are both superseded
+by that choice.
 
 ### 1. Migrations, in order
 
@@ -727,7 +721,7 @@ node scripts/check-selects.mjs && node scripts/check-release-ledger.mjs`; the
 `node --test` list in `ci.yml`; `npx deno check index.ts && npx deno test
 --allow-env --allow-net` in each function that has tests.
 
-### 6. The phone's 10 failed writes (recovery; subject to the open decision)
+### 6. The phone's 10 failed writes (recovery)
 
 The affected iPhone's Unsynced Writes screen shows 10 failed writes, all
 queued by one owner in one session: 7 set inserts refused by the authored-load
@@ -786,6 +780,12 @@ CI runs the same script on the anonymized fixture
 Run against the real export on 2026-10-01: PASS, 7 of 7 assertions. That proves
 the procedure on the schema, not the phone: the phone repair and the production
 readback remain NOT RUN.
+
+Status, 2026-10-01: the owner ran the repair on the phone after the `5a6f97c`
+deploy and reports the sets repaired. NOT yet confirmed: the server readback by
+set UUID (`v_live_sets` for that session; expect 5 live rows with
+`entered_unit` 'lb' at 145, 75, 100 and 115) and the phone's post-repair queue
+count. Treat the phone data as repaired-by-report until that readback is run.
 
 ## Rollback
 

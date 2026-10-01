@@ -148,3 +148,14 @@ there is no request to upload that export to us. The count alone does not
 establish UUID or payload identity. The old export's pre-replay server query
 found none of its seven set UUIDs, two voids, or note. Repair/replay outcome
 and post-replay phone count and server UUID readback remain **NOT RUN**.
+
+## Status, 2026-10-01
+
+Deployed 2026-10-01 at `5a6f97c` (`deploy.yml` run 36938114881: migrations,
+edge functions and Pages all succeeded). The owner chose to deploy and repair
+on the phone (this resolves the open decision in `docs/deploy.md`, "Version D
+release"). The owner ran the Outbox repair on the phone after the deploy and
+reports the failed writes repaired. Server readback by set UUID
+(`v_live_sets` for the session; expect 5 rows with `entered_unit` 'lb' at 145,
+75, 100 and 115) is **NOT yet confirmed**, so the data is repaired by the
+owner's report only.
