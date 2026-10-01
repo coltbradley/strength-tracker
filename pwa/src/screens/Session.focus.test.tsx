@@ -756,6 +756,54 @@ describe("Session focus presentation", () => {
     receiptIdentity.userId = receiptOwner;
   });
 
+  it("F-5: until the workout is ready there is no tappable LOG, and the screen says it is loading", async () => {
+    resetDbForTests();
+    await seed();
+    sessionPrefsMock.read.mockImplementation(() => new Promise(() => undefined));
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect(await screen.findByText("Loading workout choices…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^log/i })).toBeNull();
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
+  });
+
+  it("F-1: a session opened as A holds every write when the live identity flips to B", async () => {
+    resetDbForTests();
+    await seed();
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    const log = await screen.findByRole("button", { name: "LOG SET" });
+    await vi.waitFor(() => expect((log as HTMLButtonElement).disabled).toBe(false));
+
+    const ownerB = "bbbbbbbb-2222-4222-8222-222222222222";
+    receiptIdentity.userId = ownerB;
+    act(() => { for (const listener of receiptIdentity.listeners) listener(ownerB); });
+
+    // LOG is disabled with a reason, a tap enqueues nothing, and nothing is
+    // cached for A's session under B's owner marker.
+    await screen.findByText(/belongs to another account/i);
+    const held = screen.getByRole("button", { name: /log unavailable/i }) as HTMLButtonElement;
+    expect(held.disabled).toBe(true);
+    fireEvent.click(held);
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
+    expect(vi.mocked(outbox.enqueueBatch)).not.toHaveBeenCalled();
+    expect(vi.mocked(outbox.enqueueCorrection)).not.toHaveBeenCalled();
+
+    // The kv cache is cleared for B by claimCacheFor and then marked B's, so
+    // this A-session screen must not write A's skip record into it.
+    const skipButtons = screen.queryAllByRole("button", { name: "Skip" });
+    expect(skipButtons.length).toBeGreaterThan(0);
+    fireEvent.click(skipButtons[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Out of time" }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(await cacheGet(cacheKeys.sessionSkips(active.id))).toBeUndefined();
+
+    // flipping back to A releases the hold
+    receiptIdentity.userId = receiptOwner;
+    act(() => { for (const listener of receiptIdentity.listeners) listener(receiptOwner); });
+    await vi.waitFor(() => expect(screen.queryByText(/belongs to another account/i)).toBeNull());
+  });
+
   it("discards a delayed preference read after A changes to B", async () => {
     resetDbForTests();
     const ownerA = receiptOwner;

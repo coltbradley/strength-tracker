@@ -89,7 +89,12 @@ import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
 import { Sheet } from "../components/Sheet";
-import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
+import {
+  cacheDelete as rawCacheDelete,
+  cacheGet,
+  cacheSet as rawCacheSet,
+  cacheKeys,
+} from "../lib/db";
 import { readSessionPrefs, writeSessionPrefs } from "../lib/sessionPrefs";
 import {
   blockMoveIndex,
@@ -259,6 +264,28 @@ function bodyweightFallback(equipment: string | null) {
 
 export function Session() {
   const navigate = useNavigate();
+  // The owner this workout was opened under (F-1). Bound to the first known
+  // owner for a session id and never rebound: if the live identity later
+  // becomes a DIFFERENT account, this screen still holds A's workout, and a
+  // write made now would be stamped B against A's session (the server refuses
+  // it, so the lifter would see a set "logged" that is lost). Every write
+  // action and every cache write waits behind this instead. It is checked
+  // against the live identity at call time, not against React state, so a tap
+  // that lands between the auth event and the next render is still refused.
+  const sessionOwnerRef = useRef<{ sessionId: string; ownerId: string } | null>(null);
+  const sessionOwnerHeld = (): boolean => {
+    const bound = sessionOwnerRef.current;
+    if (!bound) return false;
+    const live = knownOwner();
+    return live !== null && live !== bound.ownerId;
+  };
+  // The kv cache is not namespaced by owner: `claimCacheFor(B)` clears it and
+  // marks it B's, so a still-mounted screen that kept caching A's session would
+  // leave A's sets and prescriptions under B's marker. Not while held.
+  const cacheSet = (key: string, value: unknown): Promise<void> =>
+    sessionOwnerHeld() ? Promise.resolve() : rawCacheSet(key, value);
+  const cacheDelete = (key: string): Promise<void> =>
+    sessionOwnerHeld() ? Promise.resolve() : rawCacheDelete(key);
   const deviceUnit = useUnit();
   const autoStartRest = useAutoStartRest();
 
@@ -521,6 +548,17 @@ export function Session() {
 
   const sessionId = active?.id ?? null;
   const [identityOwner, setIdentityOwner] = useState(knownOwner);
+  if (sessionId === null) {
+    sessionOwnerRef.current = null;
+  } else if (sessionOwnerRef.current?.sessionId !== sessionId) {
+    sessionOwnerRef.current = identityOwner ? { sessionId, ownerId: identityOwner } : null;
+  } else if (!sessionOwnerRef.current && identityOwner) {
+    sessionOwnerRef.current = { sessionId, ownerId: identityOwner };
+  }
+  const boundOwner = sessionOwnerRef.current;
+  const ownerHeld = boundOwner !== null && identityOwner !== null && identityOwner !== boundOwner.ownerId;
+  const OWNER_HELD_MESSAGE =
+    "This workout belongs to another account, so nothing can be logged here. Go Home and open your own workout, or sign back in as the account that started this one. Nothing already logged is lost.";
   const identityOwnerRef = useRef(identityOwner);
   const identityEpochRef = useRef(0);
   const [identityRevision, setIdentityRevision] = useState(0);
@@ -1469,6 +1507,7 @@ export function Session() {
     !prefsReady ||
     // the order is saved per owner, so it waits for one
     !identityOwner ||
+    ownerHeld ||
     editing !== null ||
     logLocked ||
     logSaving ||
@@ -1489,7 +1528,7 @@ export function Session() {
   const persistEntryOrder = async (keys: string[]) => {
     const ownerId = knownOwner();
     const requestedSession = sessionId;
-    if (!ownerId || !requestedSession) return;
+    if (!ownerId || !requestedSession || sessionOwnerHeld()) return;
     const identityEpoch = identityEpochRef.current;
     const isCurrent = () =>
       identityEpochRef.current === identityEpoch &&
@@ -1932,8 +1971,20 @@ export function Session() {
 
     // setsFailed: see the state declaration — an empty `setsRef` we could not
     // verify would number this set 0 on top of whatever is already logged.
-    if (!entryToLog || !sessionId || logLocked || !setsLoaded || !prefsReady || setsFailed)
+    if (!entryToLog || !sessionId || logLocked) return false;
+    // A refused tap says why (F-1, F-5); it is never silently dropped.
+    if (sessionOwnerHeld()) {
+      setLogError(OWNER_HELD_MESSAGE);
       return false;
+    }
+    if (!setsLoaded || !prefsReady || setsFailed) {
+      setLogError(
+        setsFailed
+          ? "This workout’s sets could not be read, so LOG is unavailable. Reload to try again."
+          : "Still loading this workout. Try again in a moment.",
+      );
+      return false;
+    }
     setLogLocked(true);
     setLogSaving(true);
 
@@ -2339,6 +2390,10 @@ export function Session() {
     // exists only to stop a double LOG tap inserting the same set twice, and
     // a correction is a deliberate edit to a set that already exists.
     if (!editing || !sessionId || editing.saving) return;
+    if (sessionOwnerHeld()) {
+      toast("This workout belongs to another account, so it cannot be corrected here");
+      return;
+    }
     const draft = editing;
     const old = draft.set;
     // The edited number is what was typed; setLoad derives everything else.
@@ -2408,6 +2463,10 @@ export function Session() {
    *  set_voids insert. The row itself is never edited or deleted. */
   const voidSet = async (s: SetInsert) => {
     if (!sessionId) return;
+    if (sessionOwnerHeld()) {
+      toast("This workout belongs to another account, so nothing can be removed here");
+      return;
+    }
     if (pendingSetMutationIdsRef.current.has(s.id)) return;
     pendingSetMutationIdsRef.current.add(s.id);
     setPendingEntryWrites((count) => count + 1);
@@ -2628,6 +2687,10 @@ export function Session() {
    *  durable; a failure keeps the sheet (and what was typed) open. */
   const saveNote = async (setId: string, note: string): Promise<boolean> => {
     if (!sessionId) return false;
+    if (sessionOwnerHeld()) {
+      toast("This workout belongs to another account, so a note cannot be saved here");
+      return false;
+    }
     // never a voided or replaced row: those are not in `sets`
     if (!setsRef.current.some((x) => x.id === setId)) return false;
     try {
@@ -3262,6 +3325,7 @@ export function Session() {
 
   /** "LOG SET", "LOG WARMUP", "LOG EXTRA SET", "DONE", or "Log A1" in a round. */
   const logLabelFor = (entry: ExerciseEntry, draft: SetDraft, tag?: string): string => {
+    if (ownerHeld) return "LOG UNAVAILABLE";
     if (!setsLoaded || !prefsReady) return "LOADING…";
     if (setsFailed) return "LOG UNAVAILABLE";
     if (tag) return `Log ${tag}`;
@@ -3356,6 +3420,14 @@ export function Session() {
           {logError}
         </p>
       )}
+      {ownerHeld && (
+        <p className="form-error session-error" role="alert">
+          {OWNER_HELD_MESSAGE}
+          <button type="button" className="btn btn-outline-ink" onClick={() => navigate("/")}>
+            Go Home
+          </button>
+        </p>
+      )}
       {setsFailed && (
         <p className="microcopy session-error">
           This session’s logged sets could not be read from this device, so a
@@ -3374,7 +3446,7 @@ export function Session() {
         logLabel={logLabelFor(entry, draft, tag)}
         logClassName={`btn ${entryDone(entry) && !inRound ? "btn-outline-ink" : "btn-primary"} btn-log${logHeld ? " is-held" : ""}`}
         saving={logSaving}
-        disabled={!setsLoaded || !prefsReady || setsFailed}
+        disabled={!setsLoaded || !prefsReady || setsFailed || ownerHeld}
         keysSlot={keys}
         memberTag={tag}
         addedLoad={
