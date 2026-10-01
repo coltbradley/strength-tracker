@@ -6044,7 +6044,7 @@
 
   .md code {
     font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * 0.92em);
+    font-size: 0.92em;
     background: rgb(var(--ink-rgb) / 0.06);
     padding: 0 var(--s-2);
     border-radius: var(--radius);

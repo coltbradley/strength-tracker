@@ -33,7 +33,10 @@ describe("DEV preview emulations", () => {
   it("scales declared font sizes and applies the same motion limits as reduced motion", () => {
     const declarations = [...styles.matchAll(/font-size:\s*([^;}]+);/g)];
     expect(declarations.length).toBeGreaterThan(150);
-    expect(declarations.every(([, value]) => value.includes("var(--demo-text-scale, 1)"))).toBe(true);
+    expect(declarations.some(([, value]) => value.includes("var(--demo-text-scale, 1) * var(--fs-"))).toBe(true);
+    const relativeCodeRule = styles.match(/\.md code\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(relativeCodeRule).toMatch(/font-size:\s*0\.92em;/);
+    expect(relativeCodeRule).not.toContain("var(--demo-text-scale, 1)");
     expect(styles).toContain(':root[data-demo-text-scale="130"]');
 
     const emulation = styles.match(/:root\[data-demo-reduced-motion="true"\][\s\S]*?\n  }/);
