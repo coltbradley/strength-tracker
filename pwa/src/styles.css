@@ -2204,6 +2204,39 @@
     margin-top: calc(var(--s-4) - var(--screen-gap));
   }
 
+  .end-summary-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-5);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+  }
+
+  .end-summary-card .end-summary {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--fs-label);
+    line-height: 1.5;
+  }
+
+  .end-screen .rule-section {
+    padding: var(--s-5);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+  }
+
+  .end-screen .btn {
+    min-height: var(--tap-min);
+    border-radius: var(--radius-card);
+  }
+
+  .end-screen > .btn-primary.btn-block {
+    min-height: var(--tap-md);
+  }
+
   /* ---- rest strip: docked and in-flow, not a floating pill ---- */
 
   .rest-timer {

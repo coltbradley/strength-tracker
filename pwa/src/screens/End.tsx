@@ -576,22 +576,25 @@ export function End() {
     : null;
 
   return (
-    <div className="screen">
+    <div className="screen end-screen">
       <h1 className="screen-title">End session</h1>
       {/* the exercise breakdown is device-local; when the set count came from
           the server instead (cold cache) there is no breakdown to show, and
           "0 OF 7 EXERCISES" next to "3 SETS LOGGED" would just be wrong */}
-      <p className="end-summary">
-        {duration !== null && `${duration} · `}
-        {countKnown
-          ? `${setCount} ${setCount === 1 ? "SET" : "SETS"} LOGGED`
-          : "SET COUNT UNKNOWN OFFLINE"}
-        {exercisesDone > 0 &&
-          ` · ${exercisesDone} OF ${Math.max(
-            exercisesTotal,
-            exercisesDone,
-          )} EXERCISES`}
-      </p>
+      <section className="end-summary-card" aria-label="Session summary">
+        <span className="field-label">SESSION SUMMARY</span>
+        <p className="end-summary">
+          {duration !== null && `${duration} · `}
+          {countKnown
+            ? `${setCount} ${setCount === 1 ? "SET" : "SETS"} LOGGED`
+            : "SET COUNT UNKNOWN OFFLINE"}
+          {exercisesDone > 0 &&
+            ` · ${exercisesDone} OF ${Math.max(
+              exercisesTotal,
+              exercisesDone,
+            )} EXERCISES`}
+        </p>
+      </section>
 
       <section className="rule-section">
         <div className="section-head">
@@ -603,6 +606,7 @@ export function End() {
               key={n}
               type="button"
               className={`seg-btn rpe-btn ${rpe === n ? "seg-on" : ""}`}
+              aria-pressed={rpe === n}
               onClick={() => setRpe(rpe === n ? null : n)}
             >
               {n}

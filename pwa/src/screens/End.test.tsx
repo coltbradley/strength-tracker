@@ -11,6 +11,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import {
   cacheDelete,
+  cacheGet,
   cacheKeys,
   cacheSet,
   resetDbForTests,
@@ -129,6 +130,68 @@ describe("formatDuration", () => {
 });
 
 describe("End: session_skips at Finish", () => {
+  it("exposes the session summary as a named region before the finish choices", async () => {
+    render(
+      <MemoryRouter>
+        <End />
+      </MemoryRouter>,
+    );
+
+    const summary = await screen.findByRole("region", { name: "Session summary" });
+    expect(summary.textContent).toMatch(/SET COUNT UNKNOWN OFFLINE|SETS? LOGGED/);
+    expect(screen.getByRole("button", { name: "End session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to session" })).toBeTruthy();
+  });
+
+  it("keeps Finish safe when local zero is not confirmed by the server", async () => {
+    vi.mocked(countServerSessionSets).mockRejectedValueOnce(new Error("offline"));
+    await cacheSet(cacheKeys.sessionSets(active.id), []);
+
+    render(
+      <MemoryRouter>
+        <End />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(/couldn’t reach the server/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "End session" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Discard empty session" })).toBeNull();
+  });
+
+  it("retains the selected session rating and note in the existing Finish payload", async () => {
+    vi.mocked(countServerSessionSets).mockResolvedValueOnce(1);
+
+    render(
+      <MemoryRouter>
+        <End />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("button", { name: "End session" });
+    fireEvent.click(screen.getByRole("button", { name: "7" }));
+    expect(screen.getByRole("button", { name: "7" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "8" }).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
+    fireEvent.change(screen.getByPlaceholderText("How did it go?"), {
+      target: { value: "Kept the last set smooth." },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "End session" }));
+
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledOnce());
+    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
+      kind: "update",
+      table: "sessions",
+      id: active.id,
+      patch: {
+        session_rpe: 7,
+        notes: "Kept the last set smooth.",
+      },
+    });
+    await vi.waitFor(async () =>
+      expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined(),
+    );
+  });
+
   it("enqueues one session_skips row per skipped entry, with every column present", async () => {
     const bench = prescription("bench", "bench-press", "Bench Press");
     const squat = prescription("squat", "back-squat", "Back Squat");
