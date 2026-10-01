@@ -17,7 +17,7 @@
 - “On this phone” requires a committed local enqueue; “Synced” requires the specific operation's server response or verified server readback.
 - Waiting, held, retrying, rejected, and unknown-owner operations cannot appear synced. Do not infer success from an empty queue.
 - Preserve multi-user outbox holding, reload recovery, current aggregate sync status, and exact server readback before release.
-- Do not release while the affected phone queue or Phase 2 browser/phone/readback gate remains open.
+- Do not release while the Phase 2 browser/phone/exact readback gate for new writes remains open. Old failed-record recovery is waived.
 
 ## Review Focus
 

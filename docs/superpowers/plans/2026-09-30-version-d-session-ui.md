@@ -18,7 +18,7 @@
 - Focus/List preserves staged drafts, rest, selection, and notes. More-than-two-member circuits remain List-only.
 - Light mode only. Match D's visible controls, but give the 38 px Focus/List controls at least 44 px actionable areas.
 - Do not show “Already saved”, “Synced”, or “all on the server” for a specific set in this plan.
-- Do not release this UI until the affected phone queue and the roadmap Phase 2 browser/phone/readback gate are verified.
+- Do not release this UI until the roadmap Phase 2 browser/phone/exact readback gate for new writes is verified. Old failed-record recovery is waived.
 
 ## Review Focus
 

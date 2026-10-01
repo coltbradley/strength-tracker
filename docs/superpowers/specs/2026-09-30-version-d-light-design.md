@@ -29,10 +29,10 @@ needed for the first light-session release.
 
 ## Scope and sequence
 
-1. **Record gate.** Finish the affected September 30 phone-queue recovery and
-   the active roadmap's Phase 2 browser, phone, and readback gate before a D
-   release. Design and branch-local UI work may be reviewed while that gate is
-   open; a passing build is not phone recovery.
+1. **Record gate.** Finish the active roadmap's Phase 2 browser, phone, and
+   exact readback checks for new writes before a D release. Branch-local work
+   may proceed while that acceptance remains open. Colt waived recovery of
+   the old September 30 records; retain their historical NOT RUN evidence.
 2. **Light session presentation.** Build D's Focus/List header, scene, utility
    row, and stable dock on the existing `Session.tsx` owner. Keep the existing
    aggregate sync indicator until individual receipts are correct.
@@ -98,7 +98,9 @@ explicit coverage. A staged value remains intact when Focus/List changes.
 The vocabulary is **On this phone**, **Sending**, **Synced**, and **Review**.
 "On this phone" requires a committed local outbox write. "Synced" requires
 the specific operation's successful server response or verified server
-readback. A waiting, held, retrying, or rejected item cannot appear synced.
+readback. Sending requires exact per-operation in-flight evidence; the
+current outbox does not expose it, so this implementation omits that state.
+A waiting, held, retrying, or rejected item cannot appear synced.
 The existing header indicator continues to summarize the whole queue; it
 cannot serve as a receipt for one set. Healthy receipt words may be visually
 quiet in List, but the state must remain available through an accessible
@@ -173,8 +175,8 @@ reachable without covering content, and no screen may overflow horizontally.
 
 Demo scenarios and component tests show UI behavior, not a production
 receipt. Before release, finish Phase 2's seeded multi-account browser test,
-phone logging offline and across an update, exact set UUID readback, and the
-affected phone queue recovery. Record the served SHA and rollback path under
+new phone logging offline and across an update, and exact set UUID readback.
+Old failed-record recovery is waived. Record the served SHA and rollback path under
 `docs/deploy.md`. Every light UI slice should revert without a data migration
 or clearing IndexedDB. If later slices add a migration, it must be additive
 and have a forward repair path.

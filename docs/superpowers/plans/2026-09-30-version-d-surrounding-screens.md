@@ -4,7 +4,7 @@
 
 **Goal:** Carry Version D's proven light visual language through Train, workout preview, End, Program, and Record while preserving their current data and action contracts.
 
-**Architecture:** Restyle existing screens and controlled components with shared light tokens after the session slice passes phone review. Keep screen owners and existing read/write routes. Each screen change is a separate reviewable commit; product behaviors that need new ownership or semantics stay outside this plan.
+**Architecture:** Restyle existing screens and controlled components with shared light tokens alongside the locally tested session slice. Phone acceptance remains required before release. Keep screen owners and existing read/write routes. Each screen change is a separate reviewable commit; product behaviors that need new ownership or semantics stay outside this plan.
 
 **Tech Stack:** React 19, TypeScript, CSS, Vitest, Testing Library, Vite PWA.
 
@@ -82,7 +82,7 @@
 **Files:** Change only defects found during verification; add focused regression tests for those defects. Record observed deployment evidence in the release ledger and runbook under the repo's existing convention.
 
 - [ ] Walk Train -> Preview -> Start -> Focus -> Log -> Rest -> List -> Finish -> Record and Program -> day -> session on a seeded browser account.
-- [ ] Repeat phone offline logging, app background/foreground, update prompt, reconnect, and exact UUID readback after the affected phone recovery has been completed.
+- [ ] Verify new phone offline logging, app background/foreground, update prompt, reconnect, and exact UUID readback. Old failed-record recovery is waived.
 - [ ] Check 320, 390, and 402 x 812 widths, normal and 1.3x text, safe areas, keyboard, long names, and all small controls by touch.
 - [ ] Follow `docs/deploy.md` for an authorized release and record served SHA, results, and rollback. Do not mark the release gate complete from tests or screenshots alone.
 

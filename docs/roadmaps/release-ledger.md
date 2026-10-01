@@ -3,6 +3,8 @@
 Status source of truth for stop-release and Phase 0 re-verification items.
 Do not scatter status in `docs/plan.md` or old implementation plans.
 
+Version D branch-local implementation evidence is in the [2026-10-01 local verification report](../superpowers/plans/2026-10-01-version-d-local-verification.md). It is not a deployment receipt or a closure of the production-proof rows below. Recovery of the old failed phone records is waived, while new-data phone and exact UUID acceptance remain unperformed.
+
 Phase 0 engineering merged 2026-09-21 (PR #8). Phase 1 Slices 1 and 2
 merged 2026-09-21 (PR #10) and 2026-09-24 (PR #12), along with early Phase 2
 plan-write and session-integrity work.

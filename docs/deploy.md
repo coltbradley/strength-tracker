@@ -601,6 +601,12 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
 5. After a migration touching auth or ownership: confirm each person still
    sees their own log and none of anyone else's.
 
+## Version D branch-local evidence
+
+See the [2026-10-01 local verification report](superpowers/plans/2026-10-01-version-d-local-verification.md) before an authorized Version D release. This implementation run has no served SHA or deployment receipt. Follow the normal release runbook and perform new-data phone/update/reconnect/exact UUID readback acceptance. Old failed-record recovery is waived.
+
+Version D changes no database schema or IndexedDB version. Keep device storage during rollback. Its correction relationship witness remains in the outbox outside visible counts and replay. Older code can replay the void idempotently then delete the witness; after KV clearing, that can lose the relation and make the replacement look like an ordinary Synced set. The local evidence report records this limit and storage cost.
+
 ## Rollback
 
 - **PWA:** revert the `gh-pages` commit, or revert the `main` commit that

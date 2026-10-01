@@ -1,5 +1,9 @@
 # Consolidated roadmap, 2026-09-19
 
+## Version D local implementation, 2026-10-01
+
+The light redesign is being implemented and verified on `codex/version-d-light-plan`. See the [local evidence report](../superpowers/plans/2026-10-01-version-d-local-verification.md) for current scope and acceptance limits. This branch work does not change the historical deployed facts below or close Phase 2 phone/server acceptance. Old failed-record recovery is waived; new-write durability remains required.
+
 ## Current status (2026-09-24)
 
 Reconciled against `main` at `4da2c7d` and the live Supabase project on
