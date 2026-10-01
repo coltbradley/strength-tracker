@@ -21,6 +21,7 @@
 //
 // The outbox knows nothing about screens; screens know nothing about sync.
 
+import { assertAcceptedAuthoredLoad, LOAD_MISMATCH_MESSAGE } from "./setLoad";
 import { cacheKeys, type Database, type OutboxItem, type OutboxOp } from "./db";
 import type { SetInsert } from "./types";
 
@@ -157,6 +158,14 @@ export interface Outbox {
 }
 
 interface Deps {
+  /**
+   * The check every op passes before it is queued. Defaults to
+   * `assertQueueable` (a set the database would refuse never enters the
+   * queue). The ONLY reason to pass another is a test modelling the dead
+   * items an older build left on a phone, which is how the load repair is
+   * exercised; production callers never set it.
+   */
+  admit?: (op: OutboxOp) => void;
   getDb: () => Promise<Database>;
   transport: OutboxTransport;
   isOnline?: () => boolean;
@@ -282,8 +291,20 @@ export function isRetryable(item: OutboxItem): boolean {
   return deadKind(item.last_code, item.last_status) !== "rejected";
 }
 
-const LOAD_CONSISTENCY_ERROR =
-  "load_kg must match entered_load, entered_unit, and load_entry";
+const LOAD_CONSISTENCY_ERROR = LOAD_MISMATCH_MESSAGE;
+
+/**
+ * A set whose load fields the database would refuse never reaches the queue.
+ * Refused rows used to be accepted here, retried, and parked as dead writes on
+ * the phone (the 2026-09-30 incident); now the writer gets the error at the
+ * moment it can still ask the lifter to re-enter the weight. Legacy rows with
+ * no authored pair stay accepted, exactly as the database accepts them.
+ */
+function assertQueueable(op: OutboxOp): void {
+  if (op.kind === "insert" && op.table === "sets") {
+    assertAcceptedAuthoredLoad(op.payload, "sets", "set");
+  }
+}
 
 function isLoadRepairCandidate(
   item: OutboxItem,
@@ -345,6 +366,7 @@ interface Row {
 }
 
 export function createOutbox({
+  admit = assertQueueable,
   getDb,
   transport,
   isOnline,
@@ -741,6 +763,7 @@ export function createOutbox({
 
   return {
     async enqueue(op) {
+      admit(op);
       const owner = stampOwner();
       const db = await getDb();
       await db.add("outbox", makePendingItem(op, owner));
@@ -749,6 +772,9 @@ export function createOutbox({
     },
 
     async enqueueBatch(ops) {
+      // Every op is checked before the transaction opens: a throw half way
+      // through would otherwise commit the rows already added.
+      for (const op of ops) admit(op);
       const owner = stampOwner();
       if (ops.length === 0) return;
       const db = await getDb();
@@ -762,6 +788,7 @@ export function createOutbox({
     },
 
     async enqueueCorrection(sessionId, replacement, originalId, note) {
+      admit({ kind: "insert", table: "sets", payload: replacement });
       const owner = stampOwner();
       const db = await getDb();
       const tx = db.transaction(["outbox", "kv"], "readwrite");

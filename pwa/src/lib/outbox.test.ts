@@ -1497,7 +1497,7 @@ describe("outbox visibility", () => {
   it("repairs seven exported sets atomically while preserving keys and training data", async () => {
     let who = ALICE;
     const calls: Call[] = [];
-    const box = createOutbox({ getDb, currentUserId: () => who, isOnline: () => false,
+    const box = createOutbox({ admit: () => undefined, getDb, currentUserId: () => who, isOnline: () => false,
       transport: { async insert(table, payload) { calls.push({ kind: "insert", table, payload }); return null; }, async update() { return null; } } });
     const originals = Array.from({ length: 7 }, (_, i): SetInsert => ({
       ...makeSet(`0000000${i}-1111-4111-8111-111111111111`, i),
@@ -1533,7 +1533,7 @@ describe("outbox visibility", () => {
   it("changes none when one exported row is stale or the owner changes", async () => {
     let who = ALICE;
     const { transport } = makeTransport();
-    const box = createOutbox({ getDb, transport, currentUserId: () => who, isOnline: () => false });
+    const box = createOutbox({ admit: () => undefined, getDb, transport, currentUserId: () => who, isOnline: () => false });
     const authored = [setA, setB].map((set) => ({ ...set, load_entry: "total" as const,
       entered_load: 220.5, entered_unit: "lb" as const }));
     await box.enqueueBatch(authored.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })));
@@ -1571,7 +1571,7 @@ describe("outbox visibility", () => {
       },
       async update() { return null; },
     };
-    const box = createOutbox({ getDb, transport, currentUserId: () => ALICE, isOnline: () => online });
+    const box = createOutbox({ admit: () => undefined, getDb, transport, currentUserId: () => ALICE, isOnline: () => online });
     const authored = [setA, setB].map((set) => ({ ...set, load_entry: "total" as const,
       entered_load: 220.5, entered_unit: "lb" as const }));
     await box.enqueueBatch([
@@ -1617,6 +1617,7 @@ describe("outbox visibility", () => {
       rpe: 8,
     };
     const box = createOutbox({
+      admit: () => undefined, // models dead items queued by a build before the gate
       getDb,
       transport,
       isOnline: () => online,
@@ -1647,7 +1648,7 @@ describe("outbox visibility", () => {
       checkErr,
     ]);
     const authored = { ...setB, load_entry: "total" as const, entered_load: 220.5, entered_unit: "lb" as const };
-    const box = createOutbox({ getDb, transport, isOnline: () => online, currentUserId: () => who });
+    const box = createOutbox({ admit: () => undefined, getDb, transport, isOnline: () => online, currentUserId: () => who });
     await box.enqueue({ kind: "insert", table: "sets", payload: setA });
     who = BOB;
     await box.enqueue({ kind: "insert", table: "sets", payload: authored });
@@ -1699,6 +1700,7 @@ describe("outbox visibility", () => {
       async update() { return null; },
     };
     const box = createOutbox({
+      admit: () => undefined, // models dead items queued by a build before the gate
       getDb,
       transport,
       isOnline: () => online,
@@ -2070,4 +2072,41 @@ describe("successful operation subscribers", () => {
     expect(await box.inspect()).toMatchObject([{ user_id: ALICE, state: "held" }]);
   });
 
+
+  describe("load integrity gate", () => {
+    const bad: SetInsert = {
+      ...setA,
+      load_kg: 100,
+      load_entry: "total",
+      entered_load: 220.5,
+      entered_unit: "lb",
+    };
+    const good: SetInsert = { ...setB, load_kg: 102.06, load_entry: "total", entered_load: 225, entered_unit: "lb" };
+
+    it("refuses a set the database would refuse, on every enqueue path, and queues nothing", async () => {
+      const { calls, transport } = makeTransport();
+      const box = createOutbox({ getDb, transport, isOnline: () => false });
+      await expect(box.enqueue({ kind: "insert", table: "sets", payload: bad })).rejects.toMatchObject({
+        name: "LoadIntegrityError",
+        code: "mismatch",
+      });
+      await expect(box.enqueueBatch([
+        { kind: "insert", table: "sets", payload: good },
+        { kind: "insert", table: "sets", payload: bad },
+      ])).rejects.toMatchObject({ name: "LoadIntegrityError" });
+      await expect(box.enqueueCorrection("s1", bad, "old-id")).rejects.toMatchObject({
+        name: "LoadIntegrityError",
+      });
+      expect(await box.inspect()).toEqual([]);
+      expect(calls).toEqual([]);
+    });
+
+    it("accepts consistent authored sets and legacy sets without provenance", async () => {
+      const { transport } = makeTransport();
+      const box = createOutbox({ getDb, transport, isOnline: () => false });
+      await box.enqueue({ kind: "insert", table: "sets", payload: good });
+      await box.enqueue({ kind: "insert", table: "sets", payload: { ...setA, load_kg: 61.2345 } });
+      expect(await box.inspect()).toHaveLength(2);
+    });
+  });
 });
