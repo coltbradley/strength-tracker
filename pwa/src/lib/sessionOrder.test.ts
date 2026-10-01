@@ -155,6 +155,7 @@ describe("session-local entry order", () => {
       keys(original),
     );
     expect(sessionEntryMoveIndex(original, "mixed-ramp", "down")).toBeNull();
+    expect(keys(moveSessionEntry(original, "mixed-ramp", 2))).toEqual(keys(original));
   });
 
   it("returns a copy for unknown targets and clamps destination indices", () => {

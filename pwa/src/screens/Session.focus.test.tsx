@@ -384,7 +384,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "increase load by 2.5 kg" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     expect(
@@ -596,8 +596,10 @@ describe("Session focus presentation", () => {
     setSetting("unit", "kg");
     await seed();
     const first = render(<MemoryRouter><Session /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: "Show weights in pounds" }));
-    await vi.waitFor(() => expect(cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).resolves.toMatchObject({ unit: "lb" }));
+    const showPounds = await screen.findByRole("button", { name: "Show weights in pounds" });
+    await vi.waitFor(() => expect(showPounds.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(showPounds);
+    await vi.waitFor(async () => expect(await cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).toMatchObject({ unit: "lb" }));
     expect(getUnit()).toBe("kg");
     first.unmount();
 
@@ -610,10 +612,7 @@ describe("Session focus presentation", () => {
     resetDbForTests();
     setSetting("unit", "kg");
     await seed();
-    const first = render(<MemoryRouter><Session /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: "Show weights in pounds" }));
-    await vi.waitFor(() => expect(cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).resolves.toMatchObject({ unit: "lb" }));
-    first.unmount();
+    await cacheSet(cacheKeys.sessionPrefs(receiptOwner, active.id), { unit: "lb" });
 
     render(<MemoryRouter><Session /></MemoryRouter>);
     expect((await screen.findByRole("button", { name: "Show weights in pounds" })).getAttribute("aria-pressed")).toBe("true");
@@ -622,7 +621,11 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() => expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true"));
     expect(await cacheGet(cacheKeys.sessionPrefs(receiptIdentity.userId, active.id))).toBeUndefined();
     receiptIdentity.userId = receiptOwner;
+    const readsBeforeOwnerA = sessionPrefsMock.read.mock.calls.length;
     act(() => { for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId); });
+    await vi.waitFor(() => expect(sessionPrefsMock.read.mock.calls.length).toBeGreaterThan(readsBeforeOwnerA));
+    const ownerARead = sessionPrefsMock.read.mock.results.at(-1)?.value as Promise<sessionPrefs.SessionPrefs> | undefined;
+    await act(async () => { await ownerARead; });
     await vi.waitFor(() => expect(screen.getByRole("button", { name: "Show weights in pounds" }).getAttribute("aria-pressed")).toBe("true"));
     cleanup();
 
@@ -653,8 +656,13 @@ describe("Session focus presentation", () => {
     resetDbForTests();
     const ownerA = receiptOwner;
     const ownerB = "bbbbbbbb-2222-4222-8222-222222222222";
-    await seed();
-    await cacheSet(cacheKeys.sessionPrefs(ownerA, active.id), { unit: "lb" });
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+      prescription("squat", "back-squat", "Back Squat", "reps", null, 2),
+    ]);
+    await cacheSet(cacheKeys.sessionPrefs(ownerA, active.id), {
+      unit: "lb", entryOrder: ["squat", "bench"],
+    });
     let releaseOwnerA: ((prefs: sessionPrefs.SessionPrefs) => void) | undefined;
     sessionPrefsMock.read.mockImplementation((ownerId: string, sessionId: string) => {
       if (ownerId === ownerA) {
@@ -668,9 +676,12 @@ describe("Session focus presentation", () => {
     receiptIdentity.userId = ownerB;
     act(() => { for (const listener of receiptIdentity.listeners) listener(ownerB); });
     expect((await screen.findByRole("button", { name: "Show weights in kilograms" })).getAttribute("aria-pressed")).toBe("true");
-    releaseOwnerA?.({ unit: "lb" });
+    releaseOwnerA?.({ unit: "lb", entryOrder: ["squat", "bench"] });
     await act(async () => { await Promise.resolve(); });
     expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect([...document.querySelectorAll(".wk-list-main .wk-list-name")]
+      .map((node) => node.textContent)).toEqual(["Bench Press", "Back Squat"]);
   });
 
   it("keeps a typed draft and logs its authored unit when session preference saving fails", async () => {
@@ -697,6 +708,135 @@ describe("Session focus presentation", () => {
     expect(payload).toMatchObject({ load_kg: 25, entered_load: 25, entered_unit: "kg", load_entry: "total" });
     expectAcceptedAuthoredLoad(payload);
     stopToastListener();
+  });
+
+  it("reorders only this session, keeps the selected draft, and restores its order after reload", async () => {
+    resetDbForTests();
+    const rows = [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+      prescription("squat", "back-squat", "Back Squat", "reps", null, 2),
+    ];
+    await seed("reps", rows);
+    await cacheSet(cacheKeys.sessionPrefs(receiptOwner, active.id), { unit: "lb" });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "reps value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "9" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
+    fireEvent.click(await screen.findByRole("button", { name: /— current — view full workout$/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Move Bench Press down" }));
+    await vi.waitFor(async () =>
+      expect(await cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).toMatchObject({
+        unit: "lb", entryOrder: ["squat", "bench"],
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
+    expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "reps value — tap to type" }).textContent).toBe("9");
+
+    cleanup();
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /— current — view full workout$/ }));
+    const names = [...document.querySelectorAll(".wk-list-main .wk-list-name")]
+      .map((node) => node.textContent);
+    expect(names).toEqual(["Back Squat", "Bench Press"]);
+    expect(await cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).toMatchObject({
+      unit: "lb", entryOrder: ["squat", "bench"],
+    });
+  });
+
+  it("keeps an optimistic order and staged draft when saving that order fails", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+      prescription("squat", "back-squat", "Back Squat", "reps", null, 2),
+    ]);
+    let rejectWrite!: (error: Error) => void;
+    sessionPrefsMock.write.mockImplementationOnce(
+      () => new Promise<void>((_resolve, reject) => { rejectWrite = reject; }),
+    );
+    const messages: string[] = [];
+    const stopToastListener = onToast(({ message }) => messages.push(message));
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "reps value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "9" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
+    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Bench Press down" }));
+
+    const moveUp = await screen.findByRole("button", { name: "Move Bench Press up" });
+    expect(moveUp.hasAttribute("disabled")).toBe(true);
+    await act(async () => { rejectWrite(new Error("disk full")); });
+    await vi.waitFor(() => expect(messages).toContain("Workout order may reset after reload"));
+    expect(moveUp.hasAttribute("disabled")).toBe(false);
+    const names = [...document.querySelectorAll(".wk-list-main .wk-list-name")]
+      .map((node) => node.textContent);
+    expect(names).toEqual(["Back Squat", "Bench Press"]);
+    expect(await cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).toBeUndefined();
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
+    expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "reps value — tap to type" }).textContent).toBe("9");
+    stopToastListener();
+  });
+
+  it("locks move arrows while a paired round is waiting for its durable local write", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("a1", "bench-press", "Bench Press", "reps", 1, 2),
+      prescription("a2", "back-row", "Back Row", "reps", 1, 2),
+      prescription("next", "pressdown", "Pressdown", "reps", null, 2),
+    ]);
+    let resolveBatch!: () => void;
+    vi.mocked(outbox.enqueueBatch).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveBatch = resolve; }),
+    );
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Log round" }));
+    await vi.waitFor(() => expect(resolveBatch).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    const moveDown = screen.getByRole("button", { name: "Move Bench Press down" });
+    expect(moveDown.hasAttribute("disabled")).toBe(true);
+
+    await act(async () => { resolveBatch(); });
+    await vi.waitFor(() => expect(moveDown.hasAttribute("disabled")).toBe(false));
+  });
+
+  it("locks move arrows during a correction write and restores them when it settles", async () => {
+    resetDbForTests();
+    const old: SetInsert = {
+      id: "bench-order-correction-1", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working", load_kg: 20,
+      reps: 8, performed_at: "2026-09-12T12:05:00.000Z", rest_seconds_actual: null,
+      load_entry: "total", rpe: null,
+    };
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
+      prescription("squat", "back-squat", "Back Squat", "reps", null, 2),
+    ], [old]);
+    vi.mocked(getServerSessionSets).mockResolvedValue([old]);
+    let resolveCorrection!: () => void;
+    vi.mocked(outbox.enqueueCorrection).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveCorrection = resolve; }),
+    );
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Show details for Bench Press" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Correct logged set 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+    await vi.waitFor(() => expect(resolveCorrection).toBeTypeOf("function"));
+    const moveDown = screen.getByRole("button", { name: "Move Bench Press down" });
+    expect(moveDown.hasAttribute("disabled")).toBe(true);
+
+    await act(async () => { resolveCorrection(); });
+    await vi.waitFor(() => expect(moveDown.hasAttribute("disabled")).toBe(false));
+    expect(vi.mocked(outbox.enqueueCorrection).mock.calls[0]?.[1]).toMatchObject({
+      set_index: 0, session_id: active.id,
+    });
   });
 
   it("restores the exact typed pound value when switching back during the same set", async () => {
@@ -2436,8 +2576,10 @@ describe("Session per-set receipts", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
     await vi.waitFor(() => expect(resolveOld).toBeTypeOf("function"));
     receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
-    for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId);
-    resolveOld({ setIds: new Set([set.id]), voidIds: new Set() });
+    await act(async () => {
+      for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId);
+      resolveOld({ setIds: new Set([set.id]), voidIds: new Set() });
+    });
     expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
     expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
   });
@@ -2452,8 +2594,10 @@ describe("Session per-set receipts", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
     await vi.waitFor(() => expect(rejectOld).toBeTypeOf("function"));
     receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
-    for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId);
-    rejectOld(new Error("late account A read failure"));
+    await act(async () => {
+      for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId);
+      rejectOld(new Error("late account A read failure"));
+    });
     expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
     expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
   });

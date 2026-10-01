@@ -3531,6 +3531,14 @@
     padding-inline: var(--s-3);
   }
 
+  .wk-list-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--s-1);
+    padding: 0 var(--s-3) var(--s-2);
+  }
+
   .wk-list-main {
     display: grid;
     flex: 1;
@@ -3588,6 +3596,21 @@
     min-height: var(--tap-min);
     color: var(--text-dim);
     text-align: center;
+  }
+
+  .wk-list-move {
+    align-self: center;
+    flex: none;
+    width: var(--tap-min);
+    min-width: var(--tap-min);
+    height: var(--tap-min);
+    color: var(--text-dim);
+    font-size: var(--fs-body);
+    text-align: center;
+  }
+
+  .wk-list-move:disabled {
+    opacity: 0.38;
   }
 
   .wk-list-body {

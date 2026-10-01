@@ -62,6 +62,11 @@ import {
 } from "../components/Sheet";
 import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { readSessionPrefs, writeSessionPrefs } from "../lib/sessionPrefs";
+import {
+  moveSessionEntry,
+  reconcileEntryOrder,
+  sessionEntryMoveIndex,
+} from "../lib/sessionOrder";
 import type { OutboxOp } from "../lib/db";
 import {
   getExercises,
@@ -487,6 +492,12 @@ export function Session() {
   const [sessionUnitState, setSessionUnitState] = useState<{
     ownerId: string; sessionId: string; unit: Unit;
   } | null>(null);
+  const [sessionEntryOrderState, setSessionEntryOrderState] = useState<{
+    ownerId: string; sessionId: string; keys: string[];
+  } | null>(null);
+  const [orderWritePending, setOrderWritePending] = useState(false);
+  const orderWritePendingRef = useRef(false);
+  const [pendingEntryWrites, setPendingEntryWrites] = useState(0);
   const [prefsReadyScope, setPrefsReadyScope] = useState<string | null>(null);
   const prefsScope =
     identityOwner && sessionId ? `${identityOwner}:${sessionId}` : null;
@@ -507,6 +518,7 @@ export function Session() {
     setPrefsReadyScope(null);
     if (!ownerId || !requestedSession) {
       setSessionUnitState(null);
+      setSessionEntryOrderState(null);
       setPrefsReadyScope(scope);
       return;
     }
@@ -516,6 +528,9 @@ export function Session() {
         getCurrentUserId() !== ownerId || sessionIdRef.current !== requestedSession
       ) return;
       setSessionUnitState(prefs.unit ? { ownerId, sessionId: requestedSession, unit: prefs.unit } : null);
+      setSessionEntryOrderState(prefs.entryOrder
+        ? { ownerId, sessionId: requestedSession, keys: prefs.entryOrder }
+        : null);
       setPrefsReadyScope(scope);
     }).catch((error: unknown) => {
       if (
@@ -524,6 +539,7 @@ export function Session() {
       ) return;
       reportError(error, "read session preferences");
       setSessionUnitState(null);
+      setSessionEntryOrderState(null);
       setPrefsReadyScope(scope);
     });
     return () => { cancelled = true; };
@@ -928,6 +944,15 @@ export function Session() {
     () => buildEntries(rx, extras, sets, allExercises, subs),
     [rx, extras, sets, allExercises, subs],
   );
+  const savedEntryOrder =
+    prefsReady && sessionEntryOrderState?.ownerId === identityOwner &&
+      sessionEntryOrderState.sessionId === sessionId
+      ? sessionEntryOrderState.keys
+      : undefined;
+  const orderedEntries = useMemo(
+    () => savedEntryOrder ? reconcileEntryOrder(entries, savedEntryOrder) : entries,
+    [entries, savedEntryOrder],
+  );
 
   const openEntry = useMemo(
     () => entries.find((e) => e.key === openKey) ?? null,
@@ -1005,15 +1030,15 @@ export function Session() {
     [skips, setsForEntry],
   );
   const doneEntries = entries.filter(entryDone).length;
-  const focusEligible = isFocusEligible(entries);
-  const overviewOnlyCircuit = entries
-    .map((entry) => supersetGroupEntries(entries, entry.key))
+  const focusEligible = isFocusEligible(orderedEntries);
+  const overviewOnlyCircuit = orderedEntries
+    .map((entry) => supersetGroupEntries(orderedEntries, entry.key))
     .find((members) => members.length > 2) ?? null;
   const selectedFocusEntry =
-    entries.find((entry) => entry.key === focusKey) ?? openEntry;
+    orderedEntries.find((entry) => entry.key === focusKey) ?? openEntry;
   const selectedFocusPair = useMemo(
-    () => twoMemberSuperset(entries, selectedFocusEntry?.key ?? null),
-    [entries, selectedFocusEntry?.key],
+    () => twoMemberSuperset(orderedEntries, selectedFocusEntry?.key ?? null),
+    [orderedEntries, selectedFocusEntry?.key],
   );
   const focusSupersetPair =
     selectedFocusPair !== null && !selectedFocusPair.every(entryDone)
@@ -1040,13 +1065,13 @@ export function Session() {
   const entryState = useCallback(
     (e: ExerciseEntry): ProgressState =>
       railState(
-        entries,
+        orderedEntries,
         e,
         currentKeys,
         (x) => Boolean(skips[x.key]),
         entryDone,
       ),
-    [entries, currentKeys, skips, entryDone],
+    [orderedEntries, currentKeys, skips, entryDone],
   );
 
   // default open: first incomplete entry, once, AFTER sets have merged —
@@ -1054,27 +1079,27 @@ export function Session() {
   // user actually is
   const defaultOpened = useRef(false);
   useEffect(() => {
-    if (!setsLoaded || defaultOpened.current || entries.length === 0) return;
+    if (!setsLoaded || !prefsReady || defaultOpened.current || orderedEntries.length === 0) return;
     defaultOpened.current = true;
-    setOpenKey(entries.find((e) => !entryDone(e))?.key ?? null);
-  }, [setsLoaded, entries, entryDone]);
+    setOpenKey(orderedEntries.find((e) => !entryDone(e))?.key ?? null);
+  }, [setsLoaded, prefsReady, orderedEntries, entryDone]);
 
   // Decided once per session start/restore, from the canonical entries this
   // session actually has — never persisted, so a reload always re-derives it
   // rather than promising to restore a visual mode nobody saved.
   const focusPresentationStarted = useRef(false);
   useEffect(() => {
-    if (!setsLoaded || focusPresentationStarted.current) return;
+    if (!setsLoaded || !prefsReady || focusPresentationStarted.current) return;
     focusPresentationStarted.current = true;
     if (!focusEligible) {
       setPresentation("overview");
       return;
     }
-    const key = focusEntryKey(entries, entryDone, openKey);
+    const key = focusEntryKey(orderedEntries, entryDone, openKey);
     setFocusKey(key);
     setOpenKey(key);
     setPresentation("focus");
-  }, [entries, entryDone, focusEligible, openKey, setsLoaded]);
+  }, [orderedEntries, entryDone, focusEligible, openKey, setsLoaded, prefsReady]);
 
   // Focus is meant to read as one exercise at arm's length, so route chrome
   // and the wordmark hide while this screen is actually showing focus. The
@@ -1096,7 +1121,7 @@ export function Session() {
 
   // superset grouping: consecutive entries sharing a non-null group get
   // A1/A2 tags and a bracket rail
-  const supersetInfo = useMemo(() => supersetInfoOf(entries), [entries]);
+  const supersetInfo = useMemo(() => supersetInfoOf(orderedEntries), [orderedEntries]);
 
   // The focus deck's own header, for the one case it isn't just the
   // exercise name: a live round replaces "Romanian Deadlift / SET 1 OF 3"
@@ -1134,8 +1159,8 @@ export function Session() {
 
   /** Does this day have any named part? If not, it needs no headings at all. */
   const hasSections = useMemo(
-    () => entries.some((e) => (e.brackets[0]?.section ?? null) !== null),
-    [entries],
+    () => orderedEntries.some((e) => (e.brackets[0]?.section ?? null) !== null),
+    [orderedEntries],
   );
 
   /**
@@ -1179,9 +1204,9 @@ export function Session() {
   // auto-advance
   const nextEntry = useMemo(() => {
     if (!openEntry || !entryDone(openEntry)) return null;
-    const idx = entries.findIndex((e) => e.key === openEntry.key);
-    return entries.slice(idx + 1).find((e) => !entryDone(e)) ?? null;
-  }, [openEntry, entries, entryDone]);
+    const idx = orderedEntries.findIndex((e) => e.key === openEntry.key);
+    return orderedEntries.slice(idx + 1).find((e) => !entryDone(e)) ?? null;
+  }, [openEntry, orderedEntries, entryDone]);
 
   // Mid-superset the round, not the list, is what comes next: after A1 you
   // do A2, and `nextEntry` above never helps because it only appears once
@@ -1189,8 +1214,8 @@ export function Session() {
   // a superset offered nothing, and the lifter scrolled back up and tapped
   // the partner by hand — every round, of every superset, of every session.
   const partnerEntry = useMemo(
-    () => supersetPartnerOf(entries, openKey, entryDone),
-    [entries, openKey, entryDone],
+    () => supersetPartnerOf(orderedEntries, openKey, entryDone),
+    [orderedEntries, openKey, entryDone],
   );
 
   // The partner leads while the round is unfinished; once it is, the
@@ -1268,7 +1293,7 @@ export function Session() {
       selectedEntryKey,
       openKey,
     );
-    const key = next.focusKey ?? focusEntryKey(entries, entryDone, openKey);
+    const key = next.focusKey ?? focusEntryKey(orderedEntries, entryDone, openKey);
     setOpenKey(key);
     setFocusKey(key);
     setPresentation(next.presentation);
@@ -1277,6 +1302,52 @@ export function Session() {
   const changePresentation = (next: SessionPresentation) => {
     if (next === "focus") enterFocus();
     else showOverview();
+  };
+
+  const moveIndex = useCallback(
+    (key: string, direction: "up" | "down") =>
+      sessionEntryMoveIndex(
+        entries,
+        key,
+        direction,
+        orderedEntries.map((entry) => entry.key),
+      ),
+    [entries, orderedEntries],
+  );
+  const canReorderEntries =
+    prefsReady && editing === null && !logLocked && pendingEntryWrites === 0 &&
+    !orderWritePending;
+  const moveEntry = async (key: string, toIndex: number) => {
+    if (!canReorderEntries || orderWritePendingRef.current) return;
+    const ownerId = getCurrentUserId();
+    const requestedSession = sessionId;
+    if (!ownerId || !requestedSession) return;
+    const identityEpoch = identityEpochRef.current;
+    const isCurrent = () =>
+      identityEpochRef.current === identityEpoch &&
+      getCurrentUserId() === ownerId &&
+      sessionIdRef.current === requestedSession;
+    const next = moveSessionEntry(
+      entries,
+      key,
+      toIndex,
+      orderedEntries.map((entry) => entry.key),
+    );
+    const keys = next.map((entry) => entry.key);
+    if (keys.every((entryKey, index) => entryKey === orderedEntries[index]?.key)) return;
+
+    setSessionEntryOrderState({ ownerId, sessionId: requestedSession, keys });
+    orderWritePendingRef.current = true;
+    setOrderWritePending(true);
+    try {
+      await writeSessionPrefs(ownerId, requestedSession, { entryOrder: keys }, isCurrent);
+    } catch (error) {
+      reportError(error, "save session order");
+      if (isCurrent()) toast("Workout order may reset after reload");
+    } finally {
+      orderWritePendingRef.current = false;
+      setOrderWritePending(false);
+    }
   };
 
   // ---- prefill on entry open / bracket advance -----------------------------
@@ -1719,10 +1790,10 @@ export function Session() {
       // to do is the partner, not a wait. Only the STRIP is held — the clock
       // below always starts, because `rest_seconds_actual` is data and
       // append-only, so a rest not measured now can never be recorded later.
-      const roundOpen = supersetPartnerOf(entries, entryToLog.key, doneAfter);
+      const roundOpen = supersetPartnerOf(orderedEntries, entryToLog.key, doneAfter);
       if (doneAfter(entryToLog) && roundOpen === null) {
-        const index = entries.findIndex((entry) => entry.key === entryToLog.key);
-        const nextEntry = entries.slice(index + 1).find((entry) => !doneAfter(entry));
+        const index = orderedEntries.findIndex((entry) => entry.key === entryToLog.key);
+        const nextEntry = orderedEntries.slice(index + 1).find((entry) => !doneAfter(entry));
         if (nextEntry) {
           setFocusKey(nextEntry.key);
           setOpenKey(nextEntry.key);
@@ -1791,8 +1862,8 @@ export function Session() {
     // a user gesture, not after the durable local queue awaits.
     unlockRestCue();
     if (!sessionId || logLocked || !setsLoaded || !prefsReady || setsFailed) return;
-    const first = entries.find((entry) => entry.key === round.keys[0]);
-    const second = entries.find((entry) => entry.key === round.keys[1]);
+    const first = orderedEntries.find((entry) => entry.key === round.keys[0]);
+    const second = orderedEntries.find((entry) => entry.key === round.keys[1]);
     if (!first || !second) return;
     const members = [first, second] as const;
 
@@ -1909,8 +1980,8 @@ export function Session() {
         entry.key in skips ||
         entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
       if (doneAfter(members[0]) && doneAfter(members[1])) {
-        const index = entries.findIndex((entry) => entry.key === members[1].key);
-        const nextEntry = entries.slice(index + 1).find((entry) => !doneAfter(entry));
+        const index = orderedEntries.findIndex((entry) => entry.key === members[1].key);
+        const nextEntry = orderedEntries.slice(index + 1).find((entry) => !doneAfter(entry));
         if (nextEntry) {
           setFocusKey(nextEntry.key);
           setOpenKey(nextEntry.key);
@@ -2100,6 +2171,7 @@ export function Session() {
     if (pendingSetMutationIdsRef.current.has(old.id)) return;
     const next = correctedSet(old, correction);
     pendingSetMutationIdsRef.current.add(old.id);
+    setPendingEntryWrites((count) => count + 1);
     try {
       await outbox.enqueueCorrection(sessionId, next, old.id);
       const nextVoids = new Set(voids);
@@ -2145,6 +2217,7 @@ export function Session() {
       reportError(e, "correct set");
     } finally {
       pendingSetMutationIdsRef.current.delete(old.id);
+      setPendingEntryWrites((count) => Math.max(0, count - 1));
     }
   };
 
@@ -2168,6 +2241,7 @@ export function Session() {
     if (pendingSetMutationIdsRef.current.has(old.id)) return;
     const next = correctedSet(old, correction);
     pendingSetMutationIdsRef.current.add(old.id);
+    setPendingEntryWrites((count) => count + 1);
     try {
       await outbox.enqueueCorrection(sessionId, next, old.id);
       const nextVoids = new Set(voids);
@@ -2199,6 +2273,7 @@ export function Session() {
       reportError(e, "rate set");
     } finally {
       pendingSetMutationIdsRef.current.delete(old.id);
+      setPendingEntryWrites((count) => Math.max(0, count - 1));
     }
   };
 
@@ -2208,14 +2283,17 @@ export function Session() {
     if (!sessionId) return;
     if (pendingSetMutationIdsRef.current.has(s.id)) return;
     pendingSetMutationIdsRef.current.add(s.id);
+    setPendingEntryWrites((count) => count + 1);
     try {
       await outbox.enqueue({ kind: "insert", table: "set_voids", payload: { set_id: s.id } });
     } catch (e) {
       reportError(e, "remove set");
       pendingSetMutationIdsRef.current.delete(s.id);
+      setPendingEntryWrites((count) => Math.max(0, count - 1));
       return;
     }
     pendingSetMutationIdsRef.current.delete(s.id);
+    setPendingEntryWrites((count) => Math.max(0, count - 1));
     setVoidArm(null);
     if (editing?.set.id === s.id) cancelCorrection();
     // voiding the set that started the current rest cancels the clock —
@@ -3971,7 +4049,7 @@ export function Session() {
 
           {inFocusDeck && focusEntry ? (
             <FocusDeck
-              entries={entries}
+              entries={orderedEntries}
               entry={focusEntry}
               unitSwitch={
                 <UnitSwitch
@@ -4056,11 +4134,14 @@ export function Session() {
                 onChangePresentation={changePresentation}
                 editingEntryKey={editingEntryKey}
                 renderLoggedRows={renderLoggedRows}
-                entries={entries}
+                entries={orderedEntries}
                 selectedEntryKey={selectedEntryKey}
                 expandedEntryKey={openKey}
                 onSelectEntry={setSelectedEntryKey}
                 onToggleEntry={toggleOpen}
+                canReorder={canReorderEntries}
+                moveIndex={moveIndex}
+                onMoveEntry={(key, toIndex) => { void moveEntry(key, toIndex); }}
                 onEnterFocus={enterFocus}
                 focusModeAvailable={focusEligible}
                 entryProgress={entryProgress}

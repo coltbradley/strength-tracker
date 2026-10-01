@@ -14,6 +14,9 @@ export interface WorkoutOverviewProps {
   expandedEntryKey: string | null;
   onSelectEntry(key: string): void;
   onToggleEntry(key: string): void;
+  canReorder?: boolean;
+  moveIndex?(key: string, direction: "up" | "down"): number | null;
+  onMoveEntry?(key: string, toIndex: number): void;
   onEnterFocus(): void;
   focusModeAvailable?: boolean;
   renderEditor(entry: ExerciseEntry, mode?: "focus" | "details" | "correction"): ReactNode;
@@ -46,6 +49,9 @@ export function WorkoutOverview({
   expandedEntryKey,
   onSelectEntry,
   onToggleEntry,
+  canReorder = true,
+  moveIndex,
+  onMoveEntry,
   onEnterFocus,
   focusModeAvailable = true,
   renderEditor,
@@ -167,19 +173,42 @@ export function WorkoutOverview({
                     )}
                     {current && <span className="wk-list-next">NEXT</span>}
                   </button>
-                  {!current && (
-                    <button
-                      type="button"
-                      className="wk-list-details"
-                      aria-expanded={expanded}
-                      aria-label={`${expanded ? "Hide" : "Show"} details for ${entry.name}`}
-                      onClick={() => onToggleEntry(entry.key)}
-                    >
-                      {expanded ? "▾" : "▸"}
-                    </button>
-                  )}
-                  {renderRowAction?.(entry)}
                 </div>
+                {(moveIndex && onMoveEntry || !current || renderRowAction) && (
+                  <div className="wk-list-actions">
+                    {moveIndex && onMoveEntry && (["up", "down"] as const).map((direction) => {
+                      const destination = moveIndex(entry.key, direction);
+                      return (
+                        <button
+                          key={direction}
+                          type="button"
+                          className="wk-list-move"
+                          aria-label={`Move ${entry.name} ${direction}`}
+                          disabled={!canReorder || destination === null}
+                          onClick={() => {
+                            const nextIndex = moveIndex(entry.key, direction);
+                            if (canReorder && nextIndex !== null)
+                              onMoveEntry(entry.key, nextIndex);
+                          }}
+                        >
+                          <span aria-hidden="true">{direction === "up" ? "↑" : "↓"}</span>
+                        </button>
+                      );
+                    })}
+                    {!current && (
+                      <button
+                        type="button"
+                        className="wk-list-details"
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? "Hide" : "Show"} details for ${entry.name}`}
+                        onClick={() => onToggleEntry(entry.key)}
+                      >
+                        {expanded ? "▾" : "▸"}
+                      </button>
+                    )}
+                    {renderRowAction?.(entry)}
+                  </div>
+                )}
                 {(current || expanded) && (
                   <div className="wk-list-body">{body}</div>
                 )}

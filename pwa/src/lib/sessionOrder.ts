@@ -168,6 +168,7 @@ export function moveSessionEntry(
   toIndex: number,
   currentKeys: readonly string[] = entries.map((entry) => entry.key),
 ): ExerciseEntry[] {
+  if (hasMixedSectionRamp(entries)) return [...entries];
   const current = reconcileEntryOrder(entries, currentKeys);
   const blocks = blocksFor(current);
   const sourceIndex = blocks.findIndex((block) => block.entries.some((entry) => entry.key === key));

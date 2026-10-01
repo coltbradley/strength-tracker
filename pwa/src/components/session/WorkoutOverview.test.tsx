@@ -312,4 +312,34 @@ describe("WorkoutOverview", () => {
 
     expect(screen.getByRole("button", { name: "Bench Press" })).toBeTruthy();
   });
+
+  it("exposes accessible move arrows with the same legal destination used by dispatch", () => {
+    const onMoveEntry = vi.fn();
+    const moveIndex = vi.fn((key: string, direction: "up" | "down") =>
+      key === "bench" && direction === "down" ? 1 : null,
+    );
+    const view = render(
+      <WorkoutOverview
+        {...props({ variant: "list", entries: correctionEntries, onMoveEntry, moveIndex })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Move Bench Press up" }).hasAttribute("disabled")).toBe(true);
+    const listItem = screen.getByRole("button", { name: "Bench Press" }).closest(".wk-list-item");
+    expect(listItem?.querySelector(".wk-list-row .wk-list-main")).toBeTruthy();
+    expect(listItem?.querySelector(".wk-list-actions .wk-list-move")).toBeTruthy();
+    expect(listItem?.querySelector(".wk-list-row .wk-list-move")).toBeNull();
+    const down = screen.getByRole("button", { name: "Move Bench Press down" });
+    expect(down.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(down);
+    expect(moveIndex).toHaveBeenCalledWith("bench", "down");
+    expect(onMoveEntry).toHaveBeenCalledWith("bench", 1);
+
+    view.rerender(
+      <WorkoutOverview
+        {...props({ variant: "list", entries: correctionEntries, onMoveEntry, moveIndex, canReorder: false })}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Move Bench Press down" }).hasAttribute("disabled")).toBe(true);
+  });
 });
