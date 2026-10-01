@@ -1661,6 +1661,43 @@ describe("Session per-set receipts", () => {
     expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
   });
 
+  it("F-6: the correction note does not say the original is live on the server while its insert is still queued", async () => {
+    const original = { ...receiptSet(receiptOriginalId) };
+    const replacement = receiptSet("replacement-set-0006");
+    await seedReceiptSets(replacement);
+    const link = { session_id: active.id, replacement_id: replacement.id, original_id: receiptOriginalId };
+    vi.mocked(outbox.correctionLinks).mockResolvedValue({ [replacement.id]: receiptOriginalId });
+    const entry = (key: number, op: any) => ({
+      key, op, table: op.table, created_at: null, retries: 0, last_error: null,
+      user_id: receiptOwner, correction_link: link, state: "waiting", cause: null, retryable: false,
+    });
+    vi.mocked(outbox.inspect).mockResolvedValue([
+      entry(1, { kind: "insert", table: "sets", payload: original }),
+      entry(2, { kind: "insert", table: "sets", payload: replacement }),
+      entry(3, { kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } }),
+    ] as any);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await inList();
+    expect((await screen.findAllByText(/Nothing from this set has been sent yet/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/stays live on the server/)).toBeNull();
+  });
+
+  it("F-6: once the original's insert is no longer queued the note says it is live until the correction lands", async () => {
+    const replacement = receiptSet("replacement-set-0007");
+    await seedReceiptSets(replacement);
+    const link = { session_id: active.id, replacement_id: replacement.id, original_id: receiptOriginalId };
+    vi.mocked(outbox.correctionLinks).mockResolvedValue({ [replacement.id]: receiptOriginalId });
+    vi.mocked(outbox.inspect).mockResolvedValue([{
+      key: 3, op: { kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } },
+      table: "set_voids", created_at: null, retries: 0, last_error: null,
+      user_id: receiptOwner, correction_link: link, state: "waiting", cause: null, retryable: false,
+    }] as any);
+    vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([replacement.id]), voidIds: new Set() });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await inList();
+    expect((await screen.findAllByText(/The original stays live on the server until it lands/)).length).toBeGreaterThan(0);
+  });
+
   it("opens OutboxSheet with the Review reason and leaves correction available", async () => {
     const set = receiptSet();
     await seedReceiptSets(set);

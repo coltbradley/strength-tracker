@@ -3202,7 +3202,13 @@ export function Session() {
       original && original.kind === "insert" && original.table === "sets"
         ? ` It replaces ${lineForSet(original.payload)}.`
         : "";
-    return `Correction waiting to send.${was} The original stays live on the server until it lands.`;
+    // The original's own insert still in the queue means the server has NEITHER
+    // row: "the original stays live on the server" would claim a state nobody
+    // proved. Only an original that is no longer queued can be live there.
+    const tail = original
+      ? "Nothing from this set has been sent yet."
+      : "The original stays live on the server until it lands.";
+    return `Correction waiting to send.${was} ${tail}`;
   };
   const receiptFor = (setId: string, announce = true, mark = false) => {
     const { receipt, kind } = receiptKindOf(setId);
