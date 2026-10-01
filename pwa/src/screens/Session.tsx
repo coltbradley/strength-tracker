@@ -82,7 +82,6 @@ import { CorrectionSheet } from "../components/session/CorrectionSheet";
 import { LoggedSetRow } from "../components/session/LoggedSetRow";
 import { RestLastSetCard } from "../components/session/RestLastSetCard";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
-import { plateText } from "../lib/loadPicture";
 import { buildSetLoad, LoadIntegrityError, typedFromDraft } from "../lib/setLoad";
 import { formatSetLine, setPositionLabel } from "../lib/setLine";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
