@@ -5,6 +5,32 @@ const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const indexHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const viteConfig = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
 
+/** Declarations of the light `:root { … }` block only (the first one in the
+ *  tokens layer), so the dark block's overrides cannot shadow them. */
+function lightTokens(): Record<string, string> {
+  return tokensFrom(blockBody(styles, ":root"));
+}
+
+function darkTokens(): Record<string, string> {
+  return tokensFrom(blockBody(styles, ':root[data-theme="dark"]'));
+}
+
+/** Body of the first `selector {` block, brace-balanced. */
+function blockBody(source: string, selector: string): string {
+  const marker = `${selector} {`;
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error(`Missing CSS selector ${selector}`);
+  let depth = 1;
+  let i = start + marker.length;
+  const from = i;
+  while (i < source.length && depth > 0) {
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}") depth -= 1;
+    i += 1;
+  }
+  return source.slice(from, i - 1);
+}
+
 function tokensFrom(source: string): Record<string, string> {
   return Object.fromEntries(
     [...source.matchAll(/^\s*--([\w-]+)\s*:\s*([^;]+);/gm)].map(([, name, value]) => [
@@ -28,7 +54,7 @@ function ruleBody(source: string, selector: string): string {
 
 describe("Warm Precision color tokens", () => {
   it("binds semantic light-theme roles to the approved palette", () => {
-    const tokens = tokensFrom(styles);
+    const tokens = lightTokens();
 
     expect(tokens).toMatchObject({
       paper: "#f7f6fa",
@@ -77,6 +103,42 @@ describe("Warm Precision color tokens", () => {
   it("keeps raw current-set ochre inside its semantic token declaration", () => {
     expect(styles.match(/--current-set\s*:\s*#855600\s*;/gi)).toHaveLength(1);
     expect(styles.replace(/--current-set\s*:\s*#855600\s*;/gi, "")).not.toMatch(/#855600/i);
+  });
+
+  it("pins the dark palette to the approved design values", () => {
+    expect(darkTokens()).toMatchObject({
+      paper: "#16131c",
+      "paper-raised": "#221e2a",
+      "paper-input": "#2d2836",
+      "ink-rgb": "243 241 246",
+      aubergine: "#e6b04a",
+      "current-set": "#e6b04a",
+      brick: "#ec7a62",
+      teal: "#6fb7c4",
+      "text-inverse": "#16131c",
+    });
+    expect(blockBody(styles, ':root[data-theme="dark"]')).toContain("color-scheme: dark;");
+  });
+
+  it("overrides only tokens in the dark block, and only tokens that exist in light", () => {
+    const light = lightTokens();
+    const dark = darkTokens();
+    for (const name of Object.keys(dark)) {
+      if (name === "color-scheme") continue;
+      expect(light, `--${name} has no light counterpart`).toHaveProperty(name);
+    }
+    // no component rule mentions the theme attribute: exactly one selector does
+    const bare = styles.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(bare.match(/data-theme/g)).toHaveLength(1);
+  });
+
+  it("has no colour literals outside the token layer's palette declarations", () => {
+    const bare = styles.replace(/\/\*[\s\S]*?\*\//g, "");
+    const withoutTokenBlocks = bare
+      .replace(blockBody(bare, ":root"), "")
+      .replace(blockBody(bare, ':root[data-theme="dark"]'), "");
+    expect(withoutTokenBlocks.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).toEqual([]);
+    expect(withoutTokenBlocks.match(/\brgba?\(\s*\d/g) ?? []).toEqual([]);
   });
 
   it("uses the semantic focus progress role in each state selector", () => {

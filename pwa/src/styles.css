@@ -4,11 +4,13 @@
  * it had become load-bearing base (19 selectors lived only there) while
  * re-declaring the entire token block byte-for-byte, so any colour change meant
  * editing two files. The seam that actually earns its keep is the token block
- * below: a future re-skin overrides custom properties, never rules.
+ * below: a re-skin overrides custom properties, never rules. There are TWO
+ * token sets in it — `:root` (light, the default) and `:root[data-theme="dark"]`
+ * (dark) — and nothing else in the file knows which theme is active.
  *
  * Contents
  *   1. @font-face      self-hosted Chivo + Chivo Mono (offline-complete PWA)
- *   2. tokens          palette, ink scale, type, spacing, tap, motion
+ *   2. tokens          palette (light + dark), ink scale, type, spacing, tap, motion
  *   3. base            reset, document, keyframes, reduced-motion
  *   4. components      shell · buttons · forms · today · session · sets ·
  *                      stepper · segmented · rest strip · sync · sheets ·
@@ -19,7 +21,10 @@
  *
  * House rules: modifiers sit immediately after the rule they modify, so source
  * order stops being load-bearing across 1500 lines. Derived values (alpha ink,
- * type steps, spacing) come from tokens — never re-inline an rgba().
+ * type steps, spacing) come from tokens — never re-inline an rgba() or a hex.
+ * A new colour is a token in `:root` AND a value in the dark block; the
+ * contrast test (styles.contrast.test.ts) fails if a pair drops below AA in
+ * either theme.
  */
 
 @layer tokens, base, components, utilities;
@@ -86,17 +91,19 @@
 @layer tokens {
   :root {
     /* The UA paints <input type="date">, scrollbars, autofill and selection
-     * from the page's colour scheme. Without this, a phone in dark mode drew
-     * light-on-light date segments in the plan editor. The design is a paper
-     * index card; there is no dark variant and this says so. */
+     * from the page's colour scheme, so this must always match the palette
+     * below. Light is the default; the dark block further down flips it. */
     color-scheme: light;
 
     /* -- palette: values only, no meaning ---------------------------------
-     * --paper is ALSO hardcoded, and must stay in sync, in three non-CSS
-     * places a custom property cannot reach:
-     *   pwa/index.html      <meta name="theme-color">
+     * --paper is ALSO hardcoded, LIGHT value only, in three static places a
+     * custom property cannot reach:
+     *   pwa/index.html      <meta name="theme-color"> (initial value; at
+     *                       runtime lib/theme.ts rewrites it from the
+     *                       resolved --paper, so dark needs no literal)
      *   pwa/vite.config.ts  manifest.background_color
      *   pwa/vite.config.ts  manifest.theme_color
+     * (a manifest cannot switch themes, so the installed splash stays light.)
      */
     --paper: #f7f6fa;
     --paper-raised: #fcfbfd;
@@ -116,6 +123,8 @@
     --completed-set: #665f71;
     --control-outline: #766e7b;
     --brick: #a8321f;
+    --shadow-rgb: 48 43 58;
+    --plate-edge: rgb(0 0 0 / 0.3);
 
     /* Competition plate colours. These are INFORMATION, not decoration: a
      * lifter reads the stack by colour before reading any number, which is the
@@ -162,7 +171,7 @@
      * Decorative rules above stay lighter on purpose. */
     --control-border-color: var(--control-outline);
 
-    --scrim: rgb(var(--ink-rgb) / 0.35);
+    --scrim: rgb(var(--shadow-rgb) / 0.35);
 
     --accent: var(--aubergine);
     --accent-press: var(--aubergine-press);
@@ -262,7 +271,7 @@
     --bw-thick: 2px;
     --radius: 2px; /* index cards do not have rounded corners */
     --radius-pill: 999px;
-    --shadow-toast: 0 6px 18px rgb(var(--ink-rgb) / 0.14);
+    --shadow-toast: 0 6px 18px rgb(var(--shadow-rgb) / 0.14);
     --rail-accent: inset 3px 0 0 var(--accent);
 
     --z-rail: 1;
@@ -282,6 +291,54 @@
     --motion-fast: 120ms;
     --motion-med: 200ms;
     --ease-out: var(--ease-sheet);
+  }
+
+  /* ======================================================================
+   * DARK THEME — the ONE place dark values live.
+   *
+   * Selected by `<html data-theme="dark">`, which lib/theme.ts sets from the
+   * Appearance setting (and index.html sets pre-paint from localStorage).
+   * Light is the default `:root` above; this block overrides ONLY palette and
+   * role tokens, never a rule. No component selector may mention the theme.
+   *
+   * ADDING A COLOUR (or merging a branch that adds one, e.g. the Version D
+   * redesign): declare the token in `:root` with its light value, then add its
+   * dark value HERE, then run styles.contrast.test.ts. A token missing from
+   * this block silently keeps its light value in dark — that is the failure
+   * this comment exists to prevent. Palette follows the approved design
+   * (Version D - Combined, dark set).
+   *
+   * Names that no longer describe the value (--aubergine is ochre here) keep
+   * their name on purpose: they are palette slots, components use the roles.
+   * ==================================================================== */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --paper: #16131c;
+    --paper-raised: #221e2a;
+    --paper-input: #2d2836;
+    --ink-rgb: 243 241 246;
+    --shadow-rgb: 0 0 0;
+    --scrim: rgb(0 0 0 / 0.6);
+
+    /* the accent is ochre; text ON it is the dark paper (--text-inverse) */
+    --aubergine: #e6b04a;
+    --aubergine-press: #c99530;
+    --current-set: #e6b04a;
+    --completed-set: #9a93a5;
+    --control-outline: #8a8494;
+    --brick: #ec7a62;
+    --teal: #6fb7c4;
+
+    --text-inverse: #16131c;
+    --focus-set-completed-mark: #16131c;
+
+    /* competition plates: same hues, lifted so the dark ones (5 kg, collar)
+     * still separate from the dark page; the edge flips to a light hairline */
+    --plate-5: #5d646f;
+    --plate-collar: #7b828c;
+    --plate-steel: #8f959e;
+    --plate-edge: rgb(255 255 255 / 0.28);
   }
 
   /* Tablet: a wider column and a looser gutter. Type is left alone — the
@@ -1656,7 +1713,7 @@
     aspect-ratio: 4 / 3;
     object-fit: cover;
     border-radius: var(--radius);
-    background: var(--paper-raised);
+    background: var(--bg-raised);
   }
 
   .demo-steps {
@@ -5004,7 +5061,7 @@
   .block-dragging {
     opacity: 0.9;
     background: var(--bg-input);
-    box-shadow: 0 3px 10px rgb(var(--ink-rgb) / 0.22);
+    box-shadow: 0 3px 10px rgb(var(--shadow-rgb) / 0.22);
     touch-action: none;
     position: relative;
     z-index: var(--z-rail);
@@ -5351,7 +5408,7 @@
     width: 13px;
     margin: 0 1px;
     border-radius: 2px;
-    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
+    box-shadow: inset 0 0 0 1px var(--plate-edge);
   }
 
   .pb-collar {

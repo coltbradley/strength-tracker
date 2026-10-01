@@ -14,7 +14,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SettingsSheet } from "./SettingsSheet";
-import { resetAllSettings } from "../lib/settings";
+import { getSetting, resetAllSettings } from "../lib/settings";
 
 const h = vi.hoisted(() => ({
   status: {
@@ -136,5 +136,30 @@ describe("SettingsSheet closed-app rest alerts", () => {
     fireEvent.click(button);
 
     expect(h.testRestAlert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SettingsSheet appearance", () => {
+  it("offers Light | Dark | System, with Light selected by default", () => {
+    h.status = { ...h.status, pending: 0, dead: 0, held: 0 };
+    render(<SettingsSheet open onClose={() => undefined} />);
+    const light = screen.getByRole("button", { name: "Light" });
+    const dark = screen.getByRole("button", { name: "Dark" });
+    const system = screen.getByRole("button", { name: "System" });
+    expect(light.className).toContain("seg-on");
+    expect(dark.className).not.toContain("seg-on");
+    expect(system.className).not.toContain("seg-on");
+  });
+
+  it("writes the choice to the registry and reflects it", () => {
+    h.status = { ...h.status, pending: 0, dead: 0, held: 0 };
+    render(<SettingsSheet open onClose={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Dark" }));
+    expect(getSetting("appearance")).toBe("dark");
+    expect(screen.getByRole("button", { name: "Dark" }).className).toContain(
+      "seg-on",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "System" }));
+    expect(getSetting("appearance")).toBe("system");
   });
 });
