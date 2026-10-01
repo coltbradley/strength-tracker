@@ -51,8 +51,8 @@ function resolve(tokens: Record<string, string>, value: string, depth = 0): stri
   });
 }
 
-function parseColor(tokens: Record<string, string>, token: string): Rgba {
-  const v = resolve(tokens, `var(--${token})`).trim();
+function parseValue(v: string): Rgba {
+  v = v.trim();
   let m = /^#([0-9a-f]{6})$/i.exec(v);
   if (m) {
     const n = parseInt(m[1], 16);
@@ -60,7 +60,17 @@ function parseColor(tokens: Record<string, string>, token: string): Rgba {
   }
   m = /^rgb\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)\s*(?:\/\s*([\d.]+))?\s*\)$/.exec(v);
   if (m) return [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]];
-  throw new Error(`cannot parse --${token}: ${v}`);
+  // color-mix(in srgb, <colour> <p>%, <colour>): the rest-strip surfaces
+  m = /^color-mix\(\s*in srgb\s*,\s*(#[0-9a-f]{6}|rgb\([^)]*\))\s+([\d.]+)%\s*,\s*(#[0-9a-f]{6}|rgb\([^)]*\))\s*\)$/i.exec(v);
+  if (m) {
+    const [a, b, w] = [parseValue(m[1]), parseValue(m[3]), +m[2] / 100];
+    return [0, 1, 2].map((i) => a[i] * w + b[i] * (1 - w)).concat(1) as Rgba;
+  }
+  throw new Error(`cannot parse colour: ${v}`);
+}
+
+function parseColor(tokens: Record<string, string>, token: string): Rgba {
+  return parseValue(resolve(tokens, `var(--${token})`));
 }
 
 function over(fg: Rgba, bg: Rgba): Rgba {
@@ -84,6 +94,8 @@ function ratio(tokens: Record<string, string>, fg: string, bg: string): number {
 }
 
 const SURFACES = ["bg", "bg-raised", "bg-input"];
+// the rest strip sits on its own tinted surfaces, not on a page surface
+const REST = ["rest-surface", "rest-ready-surface"];
 
 // [foreground role, [background roles], minimum ratio, why]
 const PAIRS: [string, string[], number, string][] = [
@@ -94,6 +106,12 @@ const PAIRS: [string, string[], number, string][] = [
   ["warn", SURFACES, 4.5, "warn text"],
   ["info", SURFACES, 4.5, "info text"],
   ["focus-set-current", SURFACES, 4.5, "current-set label"],
+  ["text", REST, 4.5, "rest strip: timer, labels"],
+  ["text-dim", REST, 4.5, "rest strip: next-set line"],
+  ["accent", REST, 4.5, "rest strip: RESTING / REST OVER label (accent as text)"],
+  // selected chips / segments: .chip-on, .seg-on fill with --text and print
+  // --bg on it; .chip-pain.chip-on fills with --danger
+  ["bg", ["text", "danger"], 4.5, "label on a selected chip / segment"],
   ["text-inverse", ["accent", "accent-press", "danger", "text"], 4.5, "text on accent / danger / ink fills"],
   ["focus-set-completed-mark", ["focus-set-completed"], 4.5, "check on completed set"],
   ["control-border-color", SURFACES, 3, "control outlines (WCAG 1.4.11)"],
@@ -128,5 +146,17 @@ describe.each(THEMES)("%s theme check-in heat cell", (_name, tokens) => {
     const text = over(parseColor(tokens, "text"), fill);
     const [a, b] = [lum(text), lum(fill)].sort((x, y) => y - x);
     expect((a + 0.05) / (b + 0.05)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+// Placeholder text. Light keeps Chromium's long-standing #757575 so light mode
+// stays pixel-identical; that is 4.4:1 on the input surface, a known shortfall
+// (darken --placeholder in `:root` to #6f6f6f to reach AA when light may move).
+describe("input placeholder contrast", () => {
+  it("dark >= 4.5:1 on the input surface", () => {
+    expect(ratio(DARK, "placeholder", "bg-input")).toBeGreaterThanOrEqual(4.5);
+  });
+  it("light does not regress below 4.4:1", () => {
+    expect(ratio(LIGHT, "placeholder", "bg-input")).toBeGreaterThanOrEqual(4.4);
   });
 });

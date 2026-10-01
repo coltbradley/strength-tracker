@@ -125,6 +125,7 @@
     --brick: #a8321f;
     --shadow-rgb: 48 43 58;
     --plate-edge: rgb(0 0 0 / 0.3);
+    --placeholder: #757575; /* the UA default, made explicit so dark can move it */
 
     /* Competition plate colours. These are INFORMATION, not decoration: a
      * lifter reads the stack by colour before reading any number, which is the
@@ -324,6 +325,7 @@
     --ink-rgb: 243 241 246;
     --shadow-rgb: 0 0 0;
     --scrim: rgb(0 0 0 / 0.6);
+    --placeholder: rgb(var(--ink-rgb) / 0.6);
 
     /* the accent is ochre; text ON it is the dark paper (--text-inverse) */
     --aubergine: #e6b04a;
@@ -987,6 +989,14 @@
     color: var(--text);
     font-size: var(--fs-base);
     font-family: var(--font-sans);
+  }
+
+  /* The UA placeholder is a fixed #757575 (Chromium) or currentColor at 54%
+   * (Firefox): 3.2:1 on the dark input surface. Route it through a token;
+   * the light value IS Chromium's default, so light is unchanged there. */
+  ::placeholder {
+    color: var(--placeholder);
+    opacity: 1;
   }
 
   .note-input {
