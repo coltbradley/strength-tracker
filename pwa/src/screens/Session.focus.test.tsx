@@ -597,9 +597,22 @@ describe("Session focus presentation", () => {
     setSetting("unit", "kg");
     await seed();
     const first = render(<MemoryRouter><Session /></MemoryRouter>);
-    const showPounds = await screen.findByRole("button", { name: "Show weights in pounds" });
-    await vi.waitFor(() => expect(showPounds.hasAttribute("disabled")).toBe(false));
-    fireEvent.click(showPounds);
+    await screen.findByRole("button", { name: "Show weights in pounds" });
+    await vi.waitFor(() => {
+      const toggle = screen.getByRole("button", { name: "Show weights in pounds" });
+      expect(toggle.isConnected).toBe(true);
+      expect(toggle.hasAttribute("disabled")).toBe(false);
+    });
+    // Reacquire the ready button after async preference hydration.
+    const readyShowPounds = screen.getByRole("button", { name: "Show weights in pounds" });
+    expect(readyShowPounds.isConnected).toBe(true);
+    expect(readyShowPounds.getAttribute("aria-pressed")).toBe("false");
+    const writesBeforeSwitch = sessionPrefsMock.write.mock.calls.length;
+    fireEvent.click(readyShowPounds);
+    expect(sessionPrefsMock.write).toHaveBeenCalledTimes(writesBeforeSwitch + 1);
+    const [writeOwner, writeSession, writePatch, isCurrent] = sessionPrefsMock.write.mock.calls.at(-1)!;
+    expect([writeOwner, writeSession, writePatch]).toEqual([receiptOwner, active.id, { unit: "lb" }]);
+    expect(isCurrent?.()).toBe(true);
     await vi.waitFor(async () => expect(await cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).toMatchObject({ unit: "lb" }));
     expect(getUnit()).toBe("kg");
     first.unmount();
