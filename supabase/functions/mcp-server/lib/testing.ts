@@ -77,8 +77,17 @@ class FakeQuery {
     this.rec.limit = n;
     return this;
   }
-  then<R>(resolve: (r: { data: unknown[]; error: null }) => R) {
-    return Promise.resolve({ data: this.rows, error: null }).then(resolve);
+  /** `.single()` resolves with the first fixture row rather than the array. */
+  single() {
+    this.one = true;
+    return this;
+  }
+  private one = false;
+  then<R>(resolve: (r: { data: unknown; error: null }) => R) {
+    return Promise.resolve({
+      data: this.one ? this.rows[0] ?? null : this.rows,
+      error: null,
+    }).then(resolve);
   }
 }
 

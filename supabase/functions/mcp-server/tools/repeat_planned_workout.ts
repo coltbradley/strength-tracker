@@ -34,6 +34,7 @@ import {
 } from "../lib/errors.ts";
 import { lastTimeFor } from "../lib/lastTime.ts";
 import { log } from "../lib/log.ts";
+import { provenanceForTotal } from "../lib/setLoad.ts";
 import {
   entryOrder,
   firstPerformedAt,
@@ -232,16 +233,19 @@ export function registerRepeatPlannedWorkout(
             from_kg: r.load_kg,
             to_kg: kg,
           });
-          const enteredLoad = r.entered_unit == null || r.load_entry == null
-            ? null
-            : (kg / (r.load_entry === "per_side" ? 2 : 1)) /
-              (r.entered_unit === "lb" ? 0.45359237 : 1);
+          // The authored pair for the replaced total comes from the one
+          // derivation (lib/setLoad.ts, shared with the PWA), never from a
+          // hand-written division: it returns a typed number only when the
+          // database's own rounding reproduces this exact total, otherwise
+          // none, and the row keeps the kg total with no authored pair.
+          const pair = r.entered_unit == null || r.load_entry == null
+            ? { entered_load: null, entered_unit: null }
+            : provenanceForTotal(kg, r.entered_unit, r.load_entry);
           return {
             ...r,
             load_kg: kg,
-            entered_load: enteredLoad === null
-              ? null
-              : Math.round(enteredLoad * 1000) / 1000,
+            entered_load: pair.entered_load,
+            entered_unit: pair.entered_unit,
           };
         });
 
