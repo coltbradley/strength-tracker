@@ -36,6 +36,8 @@ import { useNavigate } from "react-router-dom";
 import { type StepDef } from "../components/Stepper";
 import { Note } from "../components/Note";
 import { RestTimer, type ActiveRest } from "../components/RestTimer";
+import { OutboxSheet } from "../components/OutboxSheet";
+import { SetReceiptStatus } from "../components/session/SetReceiptStatus";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
@@ -59,8 +61,10 @@ import {
   useKeyboardInset,
 } from "../components/Sheet";
 import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
+import type { OutboxOp } from "../lib/db";
 import {
   getExercises,
+  getExactSetReceiptIds,
   getLastActuals,
   getResolvedPrescriptions,
   getServerSessionSets,
@@ -89,6 +93,9 @@ import {
 } from "../lib/entries";
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
+import { getCurrentUserId, onUserChange } from "../lib/currentUser";
+import { projectSetReceipt, type SetReceipt } from "../lib/setReceipt";
+import type { OutboxEntry } from "../lib/outbox";
 import { supersetGroupEntries } from "../lib/sessionFocus";
 import { uuid } from "../lib/uuid";
 import { correctedSet, isNoopCorrection } from "../lib/corrections";
@@ -415,7 +422,8 @@ export function Session() {
   // the one keyboard-covered surface that is not a sheet: the per-set note
   // editor sits deep in the scroller with its Save/Cancel row underneath
   const kbInset = useKeyboardInset();
-  const [sheet, setSheet] = useState<"search" | "swap" | "plates" | null>(null);
+  const [sheet, setSheet] = useState<"search" | "swap" | "plates" | "outbox" | null>(null);
+  const [receiptReviewReason, setReceiptReviewReason] = useState<string | null>(null);
   // Focus mode's one door to everything its default screen hides: RPE, a set
   // note, warmup/working, skip, the plate calculator, correcting or voiding a
   // logged set, last time, and the full LOGGED history. Its own boolean
@@ -457,6 +465,175 @@ export function Session() {
   }, [sheet]);
 
   const sessionId = active?.id ?? null;
+  const [receiptSnapshot, setReceiptSnapshot] = useState<{
+    sessionId: string | null;
+    ownerId: string | null;
+    entries: OutboxEntry[];
+    correctionLinks: Record<string, string>;
+    readError: string | null;
+    serverSetIds: ReadonlySet<string>;
+    serverVoidIds: ReadonlySet<string>;
+  }>({
+    sessionId: null, ownerId: null, entries: [], correctionLinks: {}, readError: null,
+    serverSetIds: new Set(), serverVoidIds: new Set(),
+  });
+  const receiptReadVersion = useRef(0);
+  const receiptSessionRef = useRef(sessionId);
+  receiptSessionRef.current = sessionId;
+
+  const refreshReceiptSnapshot = useCallback(async () => {
+    const requestedSession = sessionId;
+    const ownerId = getCurrentUserId();
+    const version = ++receiptReadVersion.current;
+    const isCurrent = () =>
+      version === receiptReadVersion.current &&
+      receiptSessionRef.current === requestedSession &&
+      getCurrentUserId() === ownerId;
+    if (!requestedSession) return;
+
+    try {
+      const [entries, correctionLinks] = await Promise.all([
+        outbox.inspect(),
+        outbox.correctionLinks(requestedSession),
+      ]);
+      if (!isCurrent()) return;
+      if (!ownerId) {
+        setReceiptSnapshot({
+          sessionId: requestedSession, ownerId: null, entries, correctionLinks: {}, readError: null,
+          serverSetIds: new Set(), serverVoidIds: new Set(),
+        });
+        return;
+      }
+
+      const ids = new Set<string>();
+      for (const set of setsRef.current) {
+        if (set.session_id === requestedSession) ids.add(set.id);
+      }
+      for (const entry of entries) {
+        if (entry.user_id !== ownerId && entry.user_id !== undefined) continue;
+        if (entry.op.kind === "insert" && entry.op.table === "sets" && entry.op.payload.session_id === requestedSession) {
+          ids.add(entry.op.payload.id);
+        } else if (entry.op.kind === "insert" && entry.op.table === "set_voids") {
+          ids.add(entry.op.payload.set_id);
+        }
+      }
+      for (const [replacementId, originalId] of Object.entries(correctionLinks)) {
+        ids.add(replacementId);
+        ids.add(originalId);
+      }
+
+      try {
+        const exact = await getExactSetReceiptIds(requestedSession, ownerId, [...ids]);
+        if (!isCurrent()) return;
+        setReceiptSnapshot((previous) => {
+          const sameScope = previous.sessionId === requestedSession && previous.ownerId === ownerId;
+          return {
+            sessionId: requestedSession, ownerId, entries, correctionLinks, readError: null,
+            // Exact UUID evidence is append-only. A successful empty result
+            // cannot revoke a prior successful ACK or readback.
+            serverSetIds: new Set([...(sameScope ? previous.serverSetIds : []), ...exact.setIds]),
+            serverVoidIds: new Set([...(sameScope ? previous.serverVoidIds : []), ...exact.voidIds]),
+          };
+        });
+      } catch (error) {
+        if (!isCurrent()) return;
+        reportError(error, "read exact set receipt evidence");
+        const readError = error instanceof Error ? error.message : String(error);
+        setReceiptSnapshot((previous) => ({
+          sessionId: requestedSession, ownerId, entries, correctionLinks, readError,
+          serverSetIds: previous.sessionId === requestedSession && previous.ownerId === ownerId ? previous.serverSetIds : new Set(),
+          serverVoidIds: previous.sessionId === requestedSession && previous.ownerId === ownerId ? previous.serverVoidIds : new Set(),
+        }));
+      }
+    } catch (error) {
+      if (!isCurrent()) return;
+      reportError(error, "refresh set receipt queue snapshot");
+    }
+  }, [sessionId]);
+
+  const receiptForSet = useCallback((setId: string): SetReceipt => {
+    const ownerId = getCurrentUserId();
+    if (!ownerId || receiptSnapshot.ownerId !== ownerId || receiptSnapshot.sessionId !== sessionId) {
+      return { state: "review", reason: "The set owner or session is not confirmed on this device." };
+    }
+    const receipt = projectSetReceipt({
+      setId, ownerId,
+      serverSetIds: receiptSnapshot.serverSetIds,
+      serverVoidIds: receiptSnapshot.serverVoidIds,
+      entries: receiptSnapshot.entries,
+      correctionOf: receiptSnapshot.correctionLinks[setId],
+    });
+    const readFailureMayExplain = receipt.reason === "No exact server or queued operation confirms this set." ||
+      receipt.reason === "Exact replacement and original void evidence is incomplete." ||
+      receipt.reason === "The void is confirmed, but the set row was not read back.";
+    return receipt.state === "review" && receiptSnapshot.readError && readFailureMayExplain
+      ? { ...receipt, reason: `Could not verify exact server receipt: ${receiptSnapshot.readError}` }
+      : receipt;
+  }, [receiptSnapshot, sessionId]);
+
+  const openReceiptReview = (receipt: SetReceipt) => {
+    if (receipt.state !== "review") return;
+    setReceiptReviewReason(receipt.reason ?? "Exact server confirmation is missing.");
+    setSheet("outbox");
+  };
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const refresh = () => { void refreshReceiptSnapshot(); };
+    const stopQueue = outbox.subscribe(refresh);
+    const stopSynced = outbox.subscribeSynced((op: OutboxOp, ownerId, correctionLink) => {
+      if (!ownerId || ownerId !== getCurrentUserId() || receiptSessionRef.current !== sessionId) return;
+      let setId: string | null = null;
+      let isVoid = false;
+      if (op.kind === "insert" && op.table === "sets" && op.payload.session_id === sessionId) {
+        setId = op.payload.id;
+      } else if (
+        op.kind === "insert" && op.table === "set_voids" &&
+        correctionLink?.session_id === sessionId &&
+        correctionLink.original_id === op.payload.set_id
+      ) {
+        setId = correctionLink.original_id;
+        isVoid = true;
+      }
+      if (setId) {
+        setReceiptSnapshot((previous) => {
+          if ((previous.sessionId !== null && previous.sessionId !== sessionId) ||
+              (previous.ownerId !== null && previous.ownerId !== ownerId)) return previous;
+          const sameScope = previous.sessionId === sessionId && previous.ownerId === ownerId;
+          const correctionLinks = sameScope ? { ...previous.correctionLinks } : {};
+          if (correctionLink?.session_id === sessionId) {
+            correctionLinks[correctionLink.replacement_id] = correctionLink.original_id;
+          }
+          return {
+            ...previous, sessionId, ownerId, correctionLinks,
+            entries: sameScope ? previous.entries : [],
+            serverSetIds: isVoid ? (sameScope ? previous.serverSetIds : new Set()) : new Set([...(sameScope ? previous.serverSetIds : []), setId!]),
+            serverVoidIds: isVoid ? new Set([...(sameScope ? previous.serverVoidIds : []), setId!]) : (sameScope ? previous.serverVoidIds : new Set()),
+          };
+        });
+      }
+      refresh();
+    });
+    const stopIdentity = onUserChange(() => {
+      receiptReadVersion.current += 1;
+      setReceiptSnapshot({
+        sessionId, ownerId: null, entries: [], correctionLinks: {}, readError: null,
+        serverSetIds: new Set(), serverVoidIds: new Set(),
+      });
+      refresh();
+    });
+    refresh();
+    return () => {
+      receiptReadVersion.current += 1;
+      stopQueue();
+      stopSynced();
+      stopIdentity();
+    };
+  }, [sessionId, refreshReceiptSnapshot]);
+
+  useEffect(() => {
+    if (setsLoaded) void refreshReceiptSnapshot();
+  }, [sets, setsLoaded, refreshReceiptSnapshot]);
 
   // Hold the screen awake for exactly as long as a session is open. A rest
   // interval outlasts every default auto-lock, so without this the strip
@@ -2745,6 +2922,10 @@ export function Session() {
               setSetType("working");
             }}
             lastSetLine={presentation === "focus" ? lastSetLine : null}
+            lastSetReceipt={newestSetForThis ? (() => {
+              const receipt = receiptForSet(newestSetForThis.id);
+              return <SetReceiptStatus receipt={receipt} onReview={() => openReceiptReview(receipt)} />;
+            })() : null}
             focusActions={focusActions}
             onEditLastSet={
               newestSetForThis ? () => startCorrection(newestSetForThis) : undefined
@@ -3257,6 +3438,10 @@ export function Session() {
               onEdit={isTick(entry) ? undefined : () => startCorrection(set)}
               editing={editing?.set.id === set.id}
             />
+            {(() => {
+              const receipt = receiptForSet(set.id);
+              return <SetReceiptStatus receipt={receipt} onReview={() => openReceiptReview(receipt)} />;
+            })()}
           </div>
         ))}
       </div>
@@ -3626,6 +3811,10 @@ export function Session() {
         nextSetLabel={nextSetLabel()}
         lastSetRpe={lastLoggedSet?.rpe ?? null}
         lastSetLabel={lastRestSetLabel()}
+        lastSetReceipt={lastLoggedSet ? (() => {
+          const receipt = receiptForSet(lastLoggedSet.id);
+          return <SetReceiptStatus receipt={receipt} onReview={() => openReceiptReview(receipt)} />;
+        })() : null}
         onRateLastSet={rest && !editing && lastLoggedSet ? rateLastSet : undefined}
         onNoteLastSet={rest && !editing && lastLoggedSet
           ? () => {
@@ -3859,6 +4048,13 @@ export function Session() {
           Finish
         </button>
       </div>
+
+      {sheet === "outbox" && (
+        <OutboxSheet
+          receiptReviewReason={receiptReviewReason}
+          onClose={() => { setSheet(null); setReceiptReviewReason(null); }}
+        />
+      )}
 
       {sheet === "search" && (
         <ExercisePicker

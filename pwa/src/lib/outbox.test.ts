@@ -1840,6 +1840,37 @@ describe("successful operation subscribers", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("passes the durable correction relation with its exact void ACK", async () => {
+    let online = false;
+    let who: string | null = ALICE;
+    const { calls, transport } = makeTransport();
+    const legacyCallback = vi.fn();
+    const box = createOutbox({
+      getDb, transport, isOnline: () => online,
+      currentUserId: () => who, stampUserId: () => who,
+      onSynced: legacyCallback,
+    });
+    const replacement = makeSet("66666666-6666-4666-8666-666666666666", 0);
+    const originalId = "77777777-7777-4777-8777-777777777777";
+    const expectedLink = { session_id: session.id, replacement_id: replacement.id, original_id: originalId };
+    const events: Array<{ op: OutboxOp; ownerId: string | null | undefined; correctionLink?: typeof expectedLink }> = [];
+    box.subscribeSynced((op, ownerId, correctionLink) => events.push({ op, ownerId, correctionLink }));
+    box.subscribeSynced(() => { throw new Error("receipt observer failed"); });
+
+    await box.enqueueCorrection(session.id, replacement, originalId);
+    await box.flush(); // drain the enqueue-triggered flush while offline
+    online = true;
+    await box.flush();
+
+    expect(calls.map((call) => call.table)).toEqual(["sets", "set_voids"]);
+    expect(events).toEqual([
+      { op: { kind: "insert", table: "sets", payload: replacement }, ownerId: ALICE, correctionLink: undefined },
+      { op: { kind: "insert", table: "set_voids", payload: { set_id: originalId } }, ownerId: ALICE, correctionLink: expectedLink },
+    ]);
+    expect(legacyCallback).toHaveBeenCalledTimes(2);
+    expect(await box.inspect()).toEqual([]);
+  });
+
   it("stops retrying an owner's item if auth changes during refresh", async () => {
     let who: string | null = ALICE;
     const { calls, transport } = makeTransport([authErr]);

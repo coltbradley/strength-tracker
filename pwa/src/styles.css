@@ -4270,6 +4270,36 @@
 
   /* "Last: 145 kg × 5 working" — the newest logged set, tappable onto its
    * correction, styled like the last-performance line it sits beside. */
+  .focus-last-set-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .set-receipt {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 1.25rem;
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    line-height: 1.25;
+  }
+
+  .set-receipt-review {
+    min-height: 44px;
+    padding: 0 0.5rem;
+    border: 0;
+    background: transparent;
+    color: var(--accent-dim);
+    font: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
   .focus-last-set {
     text-align: left;
     margin: 0;

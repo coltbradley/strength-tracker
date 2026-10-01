@@ -8,7 +8,7 @@
 // is the announcement that actually reaches the lifter there. Both are
 // attempted; both are silent when they cannot happen.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { formatClock } from "../lib/format";
 import { playRestCue } from "../lib/restCue";
 import { getRestSound } from "../lib/settings";
@@ -49,6 +49,7 @@ interface RestTimerProps {
   nextSetLabel?: string | null;
   lastSetRpe?: number | null;
   lastSetLabel?: string | null;
+  lastSetReceipt?: ReactNode;
   onRateLastSet?(rpe: number | null): void;
   onNoteLastSet?(): void;
 }
@@ -62,6 +63,7 @@ export function RestTimer({
   nextSetLabel = null,
   lastSetRpe = null,
   lastSetLabel = null,
+  lastSetReceipt,
   onRateLastSet,
   onNoteLastSet,
 }: RestTimerProps) {
@@ -205,6 +207,7 @@ export function RestTimer({
         <div className="rest-last-set">
           <span>LAST SET</span>
           <strong>{lastSetLabel}</strong>
+          {lastSetReceipt}
         </div>
       )}
       {(onRateLastSet || onNoteLastSet) && (

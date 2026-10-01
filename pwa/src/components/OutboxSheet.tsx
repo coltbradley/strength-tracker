@@ -132,7 +132,10 @@ const CAUSE_COPY: Record<DeadKind, string> = {
     "The cause was not recorded. Retry is offered because a guess that refuses to try is the worse guess.",
 };
 
-export function OutboxSheet({ onClose }: { onClose: () => void }) {
+export function OutboxSheet({
+  onClose,
+  receiptReviewReason = null,
+}: { onClose: () => void; receiptReviewReason?: string | null }) {
   const unit = useUnit();
   const status = useOutboxStatus();
   const [entries, setEntries] = useState<OutboxEntry[]>([]);
@@ -325,6 +328,11 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
 
   return (
     <Sheet title="UNSYNCED WRITES" onClose={onClose}>
+      {receiptReviewReason && (
+        <p className="microcopy receipt-review-reason" role="alert">
+          This set needs review: {receiptReviewReason}
+        </p>
+      )}
       <section className="settings-group">
         <div className="field-label">ON THIS PHONE</div>
 
@@ -357,13 +365,15 @@ export function OutboxSheet({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        <div className="microcopy">
+        {!receiptReviewReason && (
+          <div className="microcopy">
           {entries.length === 0
             ? "Nothing is waiting. Everything you have logged is on the server."
             : dead.length === 0 && held.length === 0
               ? "Queued on this phone until it can reach the server. This is the normal state offline, and nothing is lost while it waits."
               : "These writes are on this phone and nowhere else. Nothing below is deleted by leaving this screen, by signing out, or by an app update."}
-        </div>
+          </div>
+        )}
       </section>
 
       {dead.length > 0 && (

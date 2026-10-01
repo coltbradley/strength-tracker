@@ -89,6 +89,8 @@ export interface SetEditorProps {
    *  tappable to open its correction. Null (or omitted) when nothing has
    *  been logged yet, or for a tick exercise. */
   lastSetLine?: string | null;
+  /** Shared receipt for the exact last set; Session owns the projection. */
+  lastSetReceipt?: ReactNode;
   onEditLastSet?(): void;
   /** The rest clock, when Session has one running — rendered just above the
    *  bottom bar instead of Session's own fixed strip, so it reads as part of
@@ -168,6 +170,7 @@ export function SetEditor({
   hasWarmupBracket = false,
   onAlreadyWarm,
   lastSetLine = null,
+  lastSetReceipt,
   onEditLastSet,
   restSlot,
   focusActions,
@@ -492,9 +495,12 @@ export function SetEditor({
       )}
 
       {focus && tracking !== "done" && lastSetLine && onEditLastSet && (
-        <button type="button" className="focus-last-set" onClick={onEditLastSet}>
-          {lastSetLine}
-        </button>
+        <div className="focus-last-set-card">
+          <button type="button" className="focus-last-set" onClick={onEditLastSet}>
+            {lastSetLine}
+          </button>
+          {lastSetReceipt}
+        </div>
       )}
 
       {focus && tracking !== "done" && lastPerformance !== null && (

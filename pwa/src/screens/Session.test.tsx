@@ -28,6 +28,7 @@ vi.mock("../lib/data", async () => {
     getLastActuals: vi.fn(async () => ({ data: {} })),
     getServerSessionSets: vi.fn(async () => []),
     getSetNotesByIds: vi.fn(async () => ({})),
+    getExactSetReceiptIds: vi.fn(async () => ({ setIds: new Set<string>(), voidIds: new Set<string>() })),
   };
 });
 
@@ -36,6 +37,11 @@ vi.mock("../lib/sync", () => ({
     pendingSets: vi.fn(async () => []),
     enqueue: vi.fn(async () => undefined),
     enqueueCorrection: vi.fn(async () => undefined),
+    inspect: vi.fn(async () => []),
+    correctionLinks: vi.fn(async () => ({})),
+    subscribe: vi.fn(() => () => undefined),
+    subscribeSynced: vi.fn(() => () => undefined),
+    getStatus: vi.fn(() => ({ pending: 0, dead: 0, held: 0, state: "idle", lastError: null })),
   },
 }));
 

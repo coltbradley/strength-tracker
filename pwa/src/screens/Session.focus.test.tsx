@@ -23,6 +23,16 @@ import {
 } from "../lib/db";
 import { createOutbox, type OutboxTransport } from "../lib/outbox";
 import { resetAllSettings, setSetting } from "../lib/settings";
+const receiptIdentity = vi.hoisted(() => ({
+  userId: "aaaaaaaa-1111-4111-8111-111111111111" as string | null,
+  listeners: new Set<(id: string | null) => void>(),
+  syncedListeners: new Set<(
+    op: any,
+    ownerId: string | null | undefined,
+    correctionLink?: { session_id: string; replacement_id: string; original_id: string },
+  ) => void>(),
+}));
+
 import type {
   ActiveSession,
   ResolvedPrescriptionRow,
@@ -38,8 +48,17 @@ vi.mock("../lib/data", async () => {
     getLastActuals: vi.fn(async () => ({ data: {} })),
     getServerSessionSets: vi.fn(async () => []),
     getSetNotesByIds: vi.fn(async () => ({})),
+    getExactSetReceiptIds: vi.fn(async () => ({ setIds: new Set<string>(), voidIds: new Set<string>() })),
   };
 });
+
+vi.mock("../lib/currentUser", () => ({
+  getCurrentUserId: () => receiptIdentity.userId,
+  onUserChange: (fn: (id: string | null) => void) => {
+    receiptIdentity.listeners.add(fn);
+    return () => receiptIdentity.listeners.delete(fn);
+  },
+}));
 
 vi.mock("../lib/sync", () => ({
   outbox: {
@@ -47,12 +66,20 @@ vi.mock("../lib/sync", () => ({
     enqueue: vi.fn(async () => undefined),
     enqueueBatch: vi.fn(async () => undefined),
     enqueueCorrection: vi.fn(async () => undefined),
+    inspect: vi.fn(async () => []),
+    correctionLinks: vi.fn(async () => ({})),
+    subscribe: vi.fn(() => () => undefined),
+    subscribeSynced: vi.fn((fn: (op: any, ownerId: string | null | undefined) => void) => {
+      receiptIdentity.syncedListeners.add(fn);
+      return () => receiptIdentity.syncedListeners.delete(fn);
+    }),
+    getStatus: vi.fn(() => ({ pending: 0, dead: 0, held: 0, state: "idle", lastError: null })),
   },
 }));
 
 import { Session } from "./Session";
 import { outbox } from "../lib/sync";
-import { getExercises, getLastActuals, getServerSessionSets } from "../lib/data";
+import { getExercises, getExactSetReceiptIds, getLastActuals, getServerSessionSets } from "../lib/data";
 
 const active: ActiveSession = {
   id: "session-focus-1",
@@ -153,6 +180,23 @@ beforeEach(async () => {
   vi.mocked(getExercises).mockReset();
   vi.mocked(getLastActuals).mockReset();
   vi.mocked(getServerSessionSets).mockReset();
+  vi.mocked(getExactSetReceiptIds).mockReset();
+  vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set(), voidIds: new Set() });
+  receiptIdentity.userId = "aaaaaaaa-1111-4111-8111-111111111111";
+  receiptIdentity.listeners.clear();
+  receiptIdentity.syncedListeners.clear();
+  vi.mocked(outbox.inspect).mockReset();
+  vi.mocked(outbox.inspect).mockResolvedValue([]);
+  vi.mocked(outbox.correctionLinks).mockReset();
+  vi.mocked(outbox.correctionLinks).mockResolvedValue({});
+  vi.mocked(outbox.subscribe).mockReset();
+  vi.mocked(outbox.subscribe).mockReturnValue(() => undefined);
+  vi.mocked(outbox.subscribeSynced).mockReset();
+  vi.mocked(outbox.subscribeSynced).mockImplementation((fn) => {
+    receiptIdentity.syncedListeners.add(fn as any);
+    return () => receiptIdentity.syncedListeners.delete(fn as any);
+  });
+  vi.mocked(outbox.getStatus).mockReturnValue({ pending: 0, dead: 0, held: 0, state: "idle", lastError: null });
   vi.mocked(outbox.enqueue).mockReset();
   vi.mocked(outbox.enqueueBatch).mockReset();
   vi.mocked(outbox.enqueueCorrection).mockReset();
@@ -2031,5 +2075,177 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() =>
       expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull(),
     );
+  });
+});
+
+
+const receiptOwner = "aaaaaaaa-1111-4111-8111-111111111111";
+const receiptOriginalId = "original-set-0001";
+const receiptSet = (id = "receipt-set-0001"): SetInsert => ({
+  id, session_id: active.id, exercise_id: "bench-press", prescription_id: "bench",
+  set_index: 0, set_type: "working", load_kg: 20, reps: 8,
+  performed_at: "2026-09-12T12:10:00.000Z", rest_seconds_actual: null,
+});
+
+function receiptEntry(set: SetInsert, state: "waiting" | "held" | "dead" = "waiting") {
+  return {
+    key: 1, op: { kind: "insert" as const, table: "sets" as const, payload: set },
+    table: "sets" as const, created_at: null, retries: 0,
+    last_error: state === "dead" ? "the server rejected this set" : null,
+    user_id: receiptOwner, state, cause: state === "dead" ? "rejected" as const : null, retryable: false,
+  };
+}
+
+async function seedReceiptSets(...sets: SetInsert[]) {
+  await seed("reps", [prescription()], sets);
+  // Session reconciles server and pending rows into its live list. The local
+  // cache supplies load-entry metadata, not a second source of set rows.
+  vi.mocked(getServerSessionSets).mockResolvedValue(sets as any);
+}
+
+describe("Session per-set receipts", () => {
+  it("shows On this phone for a committed queued set, then Review after reload when only cache remains", async () => {
+    const set = receiptSet();
+    await seedReceiptSets(set);
+    vi.mocked(outbox.inspect).mockResolvedValue([receiptEntry(set)] as any);
+    const first = render(<MemoryRouter><Session /></MemoryRouter>);
+    expect(await screen.findByRole("status", { name: "Set status: On this phone" })).toBeTruthy();
+
+    first.unmount();
+    vi.mocked(outbox.inspect).mockResolvedValue([]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+  });
+
+  it("shows Synced only when the exact set UUID is returned by the server read", async () => {
+    const set = receiptSet();
+    await seedReceiptSets(set);
+    vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([set.id]), voidIds: new Set() });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect(await screen.findByRole("status", { name: "Set status: Synced" })).toBeTruthy();
+  });
+
+  it("keeps a partially acknowledged correction local until its linked void is read back", async () => {
+    const replacement = receiptSet("replacement-set-0001");
+    await seedReceiptSets(replacement);
+    vi.mocked(outbox.correctionLinks).mockResolvedValue({ [replacement.id]: receiptOriginalId });
+    vi.mocked(outbox.inspect).mockResolvedValue([{
+      key: 2, op: { kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } },
+      table: "set_voids", created_at: null, retries: 0, last_error: null,
+      user_id: receiptOwner, correction_link: { session_id: active.id, replacement_id: replacement.id, original_id: receiptOriginalId },
+      state: "waiting", cause: null, retryable: false,
+    }] as any);
+    vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([replacement.id]), voidIds: new Set() });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect(await screen.findByRole("status", { name: "Set status: On this phone" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+  });
+
+  it("opens OutboxSheet with the Review reason and leaves correction available", async () => {
+    const set = receiptSet();
+    await seedReceiptSets(set);
+    vi.mocked(getExactSetReceiptIds).mockRejectedValue(new Error("read timed out"));
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await screen.findByRole("button", { name: /Last: 20 kg × 8 working/ });
+    fireEvent.click(await screen.findByRole("button", { name: "Open workout" }));
+    const review = await screen.findByRole("button", { name: /Review sync status: Could not verify exact server receipt: read timed out/i });
+    expect(screen.getByRole("button", { name: "Correct logged set 1" })).toBeTruthy();
+    fireEvent.click(review);
+    expect(await screen.findByText(/Could not verify exact server receipt: read timed out/)).toBeTruthy();
+  });
+
+  it("keeps the dead-write reason visible when exact readback also fails", async () => {
+    const set = receiptSet();
+    await seedReceiptSets(set);
+    vi.mocked(outbox.inspect).mockResolvedValue([receiptEntry(set, "dead")] as any);
+    vi.mocked(getExactSetReceiptIds).mockRejectedValue(new Error("read timed out"));
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect(await screen.findByRole("button", { name: /Review sync status: the server rejected this set/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Could not verify exact server receipt: read timed out/i })).toBeNull();
+  });
+
+  it("uses only the acknowledged set UUID when exact readback is unavailable", async () => {
+    const first = receiptSet("ack-set-0001");
+    const second = { ...receiptSet("ack-set-0002"), set_index: 1, performed_at: "2026-09-12T12:11:00.000Z" };
+    await seedReceiptSets(first, second);
+    vi.mocked(getExactSetReceiptIds).mockRejectedValue(new Error("read unavailable"));
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await vi.waitFor(() => expect(getExactSetReceiptIds).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    const details = screen.queryByRole("button", { name: "Show details for Bench Press" });
+    if (details) fireEvent.click(details);
+    await screen.findByRole("button", { name: "Correct logged set 1" });
+    await vi.waitFor(() => expect(receiptIdentity.syncedListeners.size).toBeGreaterThan(0));
+    const listener = [...receiptIdentity.syncedListeners][0]!;
+    await act(async () => {
+      listener({ kind: "insert", table: "sets", payload: first }, receiptOwner);
+    });
+    expect(await screen.findByRole("status", { name: "Set status: Synced" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Set status: Review" })).toBeTruthy();
+  });
+
+  it("requires both captured correction ACKs when readback is unavailable", async () => {
+    const replacement = receiptSet("correction-replacement-0001");
+    const link = { session_id: active.id, replacement_id: replacement.id, original_id: receiptOriginalId };
+    await seedReceiptSets(replacement);
+    vi.mocked(outbox.correctionLinks).mockResolvedValue({ [replacement.id]: receiptOriginalId });
+    vi.mocked(outbox.inspect).mockResolvedValue([{
+      key: 2, op: { kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } },
+      table: "set_voids", created_at: null, retries: 0, last_error: null,
+      user_id: receiptOwner, correction_link: link, state: "waiting", cause: null, retryable: false,
+    }] as any);
+    vi.mocked(getExactSetReceiptIds).mockRejectedValue(new Error("read unavailable"));
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await vi.waitFor(() => expect(getExactSetReceiptIds).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    const details = screen.queryByRole("button", { name: "Show details for Bench Press" });
+    if (details) fireEvent.click(details);
+    await screen.findByRole("button", { name: "Correct logged set 1" });
+    await vi.waitFor(() => expect(receiptIdentity.syncedListeners.size).toBeGreaterThan(0));
+    const listener = [...receiptIdentity.syncedListeners][0]!;
+
+    await act(async () => {
+      listener({ kind: "insert", table: "sets", payload: replacement }, receiptOwner);
+    });
+    expect(await screen.findByRole("status", { name: "Set status: On this phone" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+
+    await act(async () => {
+      listener({ kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } }, receiptOwner, link);
+    });
+    expect(await screen.findByRole("status", { name: "Set status: Synced" })).toBeTruthy();
+  });
+
+  it("does not promote a late exact read from the prior account", async () => {
+    const set = receiptSet();
+    await seedReceiptSets(set);
+    let resolveOld!: (value: { setIds: Set<string>; voidIds: Set<string> }) => void;
+    vi.mocked(getExactSetReceiptIds)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+      .mockResolvedValue({ setIds: new Set(), voidIds: new Set() });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await vi.waitFor(() => expect(resolveOld).toBeTypeOf("function"));
+    receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
+    for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId);
+    resolveOld({ setIds: new Set([set.id]), voidIds: new Set() });
+    expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+  });
+
+  it("does not let a late failed read overwrite the new account snapshot", async () => {
+    const set = receiptSet();
+    await seedReceiptSets(set);
+    let rejectOld!: (reason: Error) => void;
+    vi.mocked(getExactSetReceiptIds)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject; }))
+      .mockResolvedValue({ setIds: new Set(), voidIds: new Set() });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await vi.waitFor(() => expect(rejectOld).toBeTypeOf("function"));
+    receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
+    for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId);
+    rejectOld(new Error("late account A read failure"));
+    expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
   });
 });

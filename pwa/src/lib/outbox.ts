@@ -107,7 +107,11 @@ export interface Outbox {
   getStatus(): OutboxStatus;
   subscribe(fn: () => void): () => void;
   /** Exact server ACKs with the owner captured immediately before transport. */
-  subscribeSynced(fn: (op: OutboxOp, ownerId: string | null | undefined) => void): () => void;
+  subscribeSynced(fn: (
+    op: OutboxOp,
+    ownerId: string | null | undefined,
+    correctionLink?: OutboxItem["correction_link"],
+  ) => void): () => void;
   /** Queued (unsynced) set inserts for a session — dead ones included, the
    *  user logged them and the UI must reflect them. */
   pendingSets(sessionId: string): Promise<SetInsert[]>;
@@ -362,9 +366,11 @@ export function createOutbox({
   // after I asked"), and two runs can never interleave.
   let chain: Promise<void> = Promise.resolve();
   const listeners = new Set<() => void>();
-  const syncedListeners = new Set<
-    (op: OutboxOp, ownerId: string | null | undefined) => void
-  >();
+  const syncedListeners = new Set<(
+    op: OutboxOp,
+    ownerId: string | null | undefined,
+    correctionLink?: OutboxItem["correction_link"],
+  ) => void>();
 
   const online = isOnline ?? (() => navigator.onLine);
   const whoAmI = currentUserId ?? (() => null);
@@ -608,7 +614,7 @@ export function createOutbox({
             }
             for (const listener of syncedListeners) {
               try {
-                listener(item.op, operationOwner);
+                listener(item.op, operationOwner, item.correction_link);
               } catch {
                 // Receipt listeners cannot turn an ACK into a transport failure.
               }
