@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyPendingToIndex,
+  optimisticPct,
   buildRecordIndex,
   buildRecordLists,
   defaultGoalKg,
@@ -121,5 +123,88 @@ describe("goal targets", () => {
     expect(defaultGoalKg(100, "kg")).toBe(105);
     expect(defaultGoalKg(101, "kg")).toBe(107.5);
     expect(defaultGoalKg(2, "kg")).toBe(4.5);
+  });
+});
+
+describe("applyPendingToIndex (R5): unsent writes over the server index", () => {
+  const server = () =>
+    buildRecordIndex(
+      [
+        { id: "a1", exercise_id: "sq", session_id: "s2", performed_at: at("2026-09-28") },
+        { id: "a2", exercise_id: "sq", session_id: "s1", performed_at: at("2026-09-20") },
+        { id: "b1", exercise_id: "cu", session_id: "s2", performed_at: at("2026-09-28") },
+      ],
+      [
+        { exercise_id: "sq", session_id: "s2", performed_at: at("2026-09-28"), best_e1rm_kg: 125 },
+        { exercise_id: "sq", session_id: "s1", performed_at: at("2026-09-20"), best_e1rm_kg: 120 },
+      ],
+      NOW,
+    );
+  const none = { voidedIds: new Set<string>(), discardedSessions: new Set<string>(), sets: [] };
+
+  it("an unsent set moves its exercise up and marks it on phone, e1RM unchanged", () => {
+    const out = applyPendingToIndex(
+      server(),
+      {
+        ...none,
+        sets: [{ id: "n1", exercise_id: "sq", session_id: "s9", performed_at: at("2026-10-01") }],
+      },
+      NOW,
+    );
+    const sq = out.find((e) => e.exerciseId === "sq")!;
+    expect(sq).toMatchObject({ lastAt: at("2026-10-01"), recentSessions: 3, e1rmKg: 125, onPhone: true });
+  });
+
+  it("an exercise first done on this phone appears, with no e1RM", () => {
+    const out = applyPendingToIndex(
+      server(),
+      { ...none, sets: [{ id: "n1", exercise_id: "new", session_id: "s9", performed_at: at("2026-10-01") }] },
+      NOW,
+    );
+    expect(out.find((e) => e.exerciseId === "new")).toMatchObject({ e1rmKg: null, onPhone: true });
+  });
+
+  it("a pending void of an exercise's only set removes it; of a newer set, the date falls back", () => {
+    let out = applyPendingToIndex(server(), { ...none, voidedIds: new Set(["b1"]) }, NOW);
+    expect(out.find((e) => e.exerciseId === "cu")).toBeUndefined();
+    out = applyPendingToIndex(server(), { ...none, voidedIds: new Set(["a1"]) }, NOW);
+    expect(out.find((e) => e.exerciseId === "sq")).toMatchObject({ lastAt: at("2026-09-20"), recentSessions: 1 });
+  });
+
+  it("a pending discard drops the session and falls back to the older e1RM from the view", () => {
+    const out = applyPendingToIndex(server(), { ...none, discardedSessions: new Set(["s2"]) }, NOW);
+    expect(out.find((e) => e.exerciseId === "cu")).toBeUndefined();
+    expect(out.find((e) => e.exerciseId === "sq")).toMatchObject({ lastAt: at("2026-09-20"), e1rmKg: 120 });
+  });
+
+  it("an unsent set that is itself voided does nothing", () => {
+    const out = applyPendingToIndex(
+      server(),
+      {
+        ...none,
+        voidedIds: new Set(["n1"]),
+        sets: [{ id: "n1", exercise_id: "sq", session_id: "s9", performed_at: at("2026-10-01") }],
+      },
+      NOW,
+    );
+    expect(out.find((e) => e.exerciseId === "sq")!.onPhone).toBe(false);
+  });
+});
+
+describe("optimisticPct (R3)", () => {
+  it("is the view's ratio against the new target, one decimal", () => {
+    expect(optimisticPct(90, 100)).toBe(90);
+    expect(optimisticPct(90, 120)).toBe(75);
+    expect(optimisticPct(null, 120)).toBeNull();
+  });
+});
+
+describe("search (R9)", () => {
+  const idx = [entry("bp", at("2026-09-30"), 1, 100), entry("cu", at("2026-09-30"), 1, 50)];
+  const nm = (id: string) => (id === "bp" ? "Bench Press (Barbell)" : "Curl");
+  it("matches every word in any order, ignoring case and punctuation", () => {
+    expect(buildRecordLists(idx, [], nm, "press bench").recent.map((r) => r.exerciseId)).toEqual(["bp"]);
+    expect(buildRecordLists(idx, [], nm, "barbell, PRESS").recent).toHaveLength(1);
+    expect(buildRecordLists(idx, [], nm, "squat").recent).toHaveLength(0);
   });
 });

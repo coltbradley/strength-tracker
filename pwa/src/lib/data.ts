@@ -20,6 +20,7 @@ import { kgToEnteredLoad } from "./units";
 import {
   buildRecordIndex,
   type RecordE1rmRow,
+  type RecordIndex,
   type RecordIndexEntry,
   type RecordSetRow,
 } from "./record";
@@ -1843,55 +1844,105 @@ export async function getGoalProgress(
 
 // ---- Record list: per-exercise recency, goals (pin) -------------------------
 
-/** Pages newest-first through a view on `performed_at`. Same cursor rule as
- *  the last-actuals scan: strict `lt` can skip rows sharing the boundary
- *  millisecond, which costs at most one session count and never a date. */
-async function scanNewestFirst<T extends { performed_at: string }>(
-  fetchPage: (cursor: string | null) => Promise<T[]>,
-): Promise<T[]> {
+/**
+ * Pages newest-first through a view on `performed_at`.
+ *
+ * The cursor is INCLUSIVE (`lte`) and rows already seen are dropped by `key`,
+ * so rows that share the boundary millisecond are never skipped (corrections
+ * reuse the original `performed_at`, so equal timestamps are not exotic). The
+ * one case an inclusive cursor cannot cross is a whole page of rows with one
+ * timestamp; that stops the scan and reports it as truncated instead of
+ * looping. `truncated` is also true when ACTUALS_MAX_PAGES ran out with more
+ * rows behind it, so the screen can say the oldest exercises may be missing.
+ */
+export async function scanNewestFirst<T extends { performed_at: string }>(
+  fetchPage: (cursor: string | null, strict: boolean) => Promise<T[]>,
+  key: (row: T) => string,
+  pageSize: number = ACTUALS_PAGE,
+  maxPages: number = ACTUALS_MAX_PAGES,
+): Promise<{ rows: T[]; truncated: boolean }> {
   const out: T[] = [];
+  const seen = new Set<string>();
   let cursor: string | null = null;
-  for (let page = 0; page < ACTUALS_MAX_PAGES; page++) {
-    const rows = await fetchPage(cursor);
-    out.push(...rows);
-    if (rows.length < ACTUALS_PAGE) break;
+  let strict = false;
+  let lossy = false;
+  for (let page = 0; page < maxPages; page++) {
+    const rows = await fetchPage(cursor, strict);
+    strict = false;
+    for (const r of rows) {
+      const k = key(r);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(r);
+    }
+    if (rows.length < pageSize) return { rows: out, truncated: lossy };
     const next = rows[rows.length - 1].performed_at;
-    if (next === cursor) break;
+    if (next === cursor) {
+      // a whole page at one instant: step past it, and admit rows tied
+      // beyond the page may have been skipped
+      strict = true;
+      lossy = true;
+    }
     cursor = next;
   }
-  return out;
+  return { rows: out, truncated: true };
 }
 
-/** Last performed date, recent session count and newest e1RM per exercise,
- *  from v_live_sets and v_session_best_e1rm. Ordering is lib/record.ts. */
-export async function getRecordIndex(): Promise<CacheRead<RecordIndexEntry[]>> {
-  return fetchWithCache(cacheKeys.recordIndex, async () => {
-    const [sets, e1rms] = await Promise.all([
-      scanNewestFirst<RecordSetRow>(async (cursor) => {
-        let q = supabase
-          .from("v_live_sets")
-          .select("exercise_id,session_id,performed_at")
-          .order("performed_at", { ascending: false })
-          .limit(ACTUALS_PAGE);
-        if (cursor !== null) q = q.lt("performed_at", cursor);
-        const { data, error } = await q;
-        throwIf(error);
-        return (data ?? []) as RecordSetRow[];
-      }),
-      scanNewestFirst<RecordE1rmRow>(async (cursor) => {
-        let q = supabase
-          .from("v_session_best_e1rm")
-          .select("exercise_id,session_id,performed_at,best_e1rm_kg")
-          .order("performed_at", { ascending: false })
-          .limit(ACTUALS_PAGE);
-        if (cursor !== null) q = q.lt("performed_at", cursor);
-        const { data, error } = await q;
-        throwIf(error);
-        return (data ?? []) as RecordE1rmRow[];
-      }),
-    ]);
-    return buildRecordIndex(sets, e1rms);
-  });
+/** Per-exercise recency, session counts and newest e1RM, from v_live_sets and
+ *  v_session_best_e1rm. Ordering is lib/record.ts; unsent sets and pending
+ *  voids are layered on by the caller (`applyPendingToIndex`). `truncated`:
+ *  the scan hit its page cap, so the oldest exercises may be missing. */
+export async function getRecordIndex(): Promise<CacheRead<RecordIndex>> {
+  const read = await fetchWithCache<RecordIndex | RecordIndexEntry[]>(
+    cacheKeys.recordIndex,
+    async () => {
+      const [sets, e1rms] = await Promise.all([
+        scanNewestFirst<RecordSetRow>(
+          async (cursor, strict) => {
+            let q = supabase
+              .from("v_live_sets")
+              .select("id,exercise_id,session_id,performed_at")
+              .order("performed_at", { ascending: false })
+              .limit(ACTUALS_PAGE);
+            if (cursor !== null)
+              q = strict
+                ? q.lt("performed_at", cursor)
+                : q.lte("performed_at", cursor);
+            const { data, error } = await q;
+            throwIf(error);
+            return (data ?? []) as RecordSetRow[];
+          },
+          (r) => r.id ?? `${r.session_id}|${r.exercise_id}|${r.performed_at}`,
+        ),
+        scanNewestFirst<RecordE1rmRow>(
+          async (cursor, strict) => {
+            let q = supabase
+              .from("v_session_best_e1rm")
+              .select("exercise_id,session_id,performed_at,best_e1rm_kg")
+              .order("performed_at", { ascending: false })
+              .limit(ACTUALS_PAGE);
+            if (cursor !== null)
+              q = strict
+                ? q.lt("performed_at", cursor)
+                : q.lte("performed_at", cursor);
+            const { data, error } = await q;
+            throwIf(error);
+            return (data ?? []) as RecordE1rmRow[];
+          },
+          (r) => `${r.session_id}|${r.exercise_id}`,
+        ),
+      ]);
+      return {
+        entries: buildRecordIndex(sets.rows, e1rms.rows),
+        truncated: sets.truncated || e1rms.truncated,
+      };
+    },
+  );
+  // a value cached by an earlier build was a bare array
+  const data: RecordIndex = Array.isArray(read.data)
+    ? { entries: read.data, truncated: false }
+    : read.data;
+  return { ...read, data };
 }
 
 /** Every goal with its progress. An exercise is PINNED iff it is in here. */
@@ -1924,6 +1975,31 @@ export async function setGoal(
   throwIf(error);
   await cacheDelete(cacheKeys.goals);
   await cacheDelete(cacheKeys.goal(exerciseId));
+}
+
+/**
+ * Put back a goal row exactly as it was (Undo of an unpin): id, target AND
+ * target_date, so a coach-written goal comes back whole. Same upsert key as
+ * setGoal.
+ */
+export async function restoreGoal(prev: {
+  goal_id: string;
+  exercise_id: string;
+  target_e1rm_kg: number;
+  target_date: string | null;
+}): Promise<void> {
+  const { error } = await supabase.from("goals").upsert(
+    {
+      ...(prev.goal_id && prev.goal_id !== "pending" ? { id: prev.goal_id } : {}),
+      exercise_id: prev.exercise_id,
+      target_e1rm_kg: prev.target_e1rm_kg,
+      target_date: prev.target_date,
+    },
+    { onConflict: "user_id,exercise_id" },
+  );
+  throwIf(error);
+  await cacheDelete(cacheKeys.goals);
+  await cacheDelete(cacheKeys.goal(prev.exercise_id));
 }
 
 /** Unpin: delete the goal row (RLS goals_delete: owner only). The sets are

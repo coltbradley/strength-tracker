@@ -23,6 +23,8 @@ import { fromDisplay, toDisplay } from "./units";
 export const RECENT_WINDOW_DAYS = 90;
 
 export interface RecordSetRow {
+  /** v_live_sets.id; dedupes the scan and lets a pending void find its set */
+  id?: string;
   exercise_id: string;
   session_id: string;
   performed_at: string;
@@ -35,6 +37,15 @@ export interface RecordE1rmRow {
   best_e1rm_kg: number;
 }
 
+/** One session's live sets of one exercise, as the scan saw them. */
+export interface RecordSessionStat {
+  id: string;
+  /** live sets of this exercise in this session */
+  n: number;
+  /** newest performed_at among them */
+  at: string;
+}
+
 /** What the list reads: dates and counts per exercise, plus the newest e1RM. */
 export interface RecordIndexEntry {
   exerciseId: string;
@@ -44,6 +55,23 @@ export interface RecordIndexEntry {
   recentSessions: number;
   /** best e1RM of the newest session that has one, null if none (1-8 reps) */
   e1rmKg: number | null;
+  /** Per-session detail kept so `applyPendingToIndex` can subtract a pending
+   *  void or discard and add unsent sets without a rescan. Absent on a bare
+   *  entry (tests, goal-only rows), which is then left as it is. */
+  sessions?: RecordSessionStat[];
+  /** the newest few set ids, so a pending void can be matched to a session */
+  setIds?: { id: string; session_id: string }[];
+  /** v_session_best_e1rm rows, newest first, for the same reason */
+  e1rms?: { session_id: string; at: string; kg: number }[];
+  /** at least one set of this exercise is on this phone and not yet sent */
+  onPhone?: boolean;
+}
+
+/** The index plus whether the scan ran out of pages (oldest exercises may be
+ *  missing). */
+export interface RecordIndex {
+  entries: RecordIndexEntry[];
+  truncated: boolean;
 }
 
 export interface RecordRow extends RecordIndexEntry {
@@ -51,38 +79,193 @@ export interface RecordRow extends RecordIndexEntry {
   goal: GoalProgressRow | null;
 }
 
+/** How many newest set ids an entry remembers for matching pending voids. */
+const KEEP_SET_IDS = 25;
+
+function summarise(
+  sessions: RecordSessionStat[],
+  now: Date,
+): { lastAt: string; recentSessions: number } {
+  const cutoff = now.getTime() - RECENT_WINDOW_DAYS * 86_400_000;
+  let lastAt = "";
+  let recent = 0;
+  for (const s of sessions) {
+    if (s.at > lastAt) lastAt = s.at;
+    if (new Date(s.at).getTime() >= cutoff) recent += 1;
+  }
+  return { lastAt, recentSessions: recent };
+}
+
 export function buildRecordIndex(
   sets: RecordSetRow[],
   e1rms: RecordE1rmRow[],
   now: Date = new Date(),
 ): RecordIndexEntry[] {
-  const cutoff = now.getTime() - RECENT_WINDOW_DAYS * 86_400_000;
   const by = new Map<
     string,
-    { lastAt: string; sessions: Set<string>; e1: RecordE1rmRow | null }
+    {
+      sessions: Map<string, RecordSessionStat>;
+      ids: { id: string; at: string; session_id: string }[];
+      e1: RecordE1rmRow[];
+    }
   >();
   for (const s of sets) {
     const cur = by.get(s.exercise_id) ?? {
-      lastAt: s.performed_at,
-      sessions: new Set<string>(),
-      e1: null,
+      sessions: new Map<string, RecordSessionStat>(),
+      ids: [],
+      e1: [],
     };
-    if (s.performed_at > cur.lastAt) cur.lastAt = s.performed_at;
-    if (new Date(s.performed_at).getTime() >= cutoff)
-      cur.sessions.add(s.session_id);
+    const ss = cur.sessions.get(s.session_id) ?? {
+      id: s.session_id,
+      n: 0,
+      at: s.performed_at,
+    };
+    ss.n += 1;
+    if (s.performed_at > ss.at) ss.at = s.performed_at;
+    cur.sessions.set(s.session_id, ss);
+    if (s.id) cur.ids.push({ id: s.id, at: s.performed_at, session_id: s.session_id });
     by.set(s.exercise_id, cur);
   }
-  for (const r of e1rms) {
-    const cur = by.get(r.exercise_id);
-    if (cur && (cur.e1 === null || r.performed_at > cur.e1.performed_at))
-      cur.e1 = r;
+  for (const r of e1rms) by.get(r.exercise_id)?.e1.push(r);
+  return [...by.entries()].map(([exerciseId, v]) => {
+    const sessions = [...v.sessions.values()];
+    const e1 = v.e1.slice().sort((a, b) => (a.performed_at < b.performed_at ? 1 : -1));
+    return {
+      exerciseId,
+      ...summarise(sessions, now),
+      e1rmKg: e1[0]?.best_e1rm_kg ?? null,
+      sessions,
+      setIds: v.ids
+        .sort((a, b) => (a.at < b.at ? 1 : -1))
+        .slice(0, KEEP_SET_IDS)
+        .map(({ id, session_id }) => ({ id, session_id })),
+      e1rms: e1.map((r) => ({
+        session_id: r.session_id,
+        at: r.performed_at,
+        kg: r.best_e1rm_kg,
+      })),
+    };
+  });
+}
+
+/** An unsent set insert, as far as the list cares. */
+export interface PendingSetRef {
+  id: string;
+  exercise_id: string;
+  session_id: string;
+  performed_at: string;
+}
+
+/**
+ * Lay what is still in this phone's outbox over the server's index: a set
+ * voided or a session discarded here leaves the list before the server knows,
+ * and an unsent set moves its exercise up and marks it "on phone".
+ *
+ * Derived numbers are NOT recomputed. e1RM only ever comes from the views, so
+ * an unsent set adds a date and a session but never an e1RM; a discarded
+ * session's e1RM is dropped and the next older one (also from the view) shows.
+ * A pending void leaves the e1RM as the view had it (accepted gap).
+ */
+export function applyPendingToIndex(
+  index: RecordIndexEntry[],
+  pending: {
+    voidedIds: Set<string>;
+    discardedSessions: Set<string>;
+    sets: PendingSetRef[];
+  },
+  now: Date = new Date(),
+): RecordIndexEntry[] {
+  const { voidedIds, discardedSessions } = pending;
+  const unsent = new Map<string, PendingSetRef[]>();
+  for (const s of pending.sets) {
+    if (voidedIds.has(s.id) || discardedSessions.has(s.session_id)) continue;
+    const l = unsent.get(s.exercise_id) ?? [];
+    l.push(s);
+    unsent.set(s.exercise_id, l);
   }
-  return [...by.entries()].map(([exerciseId, v]) => ({
-    exerciseId,
-    lastAt: v.lastAt,
-    recentSessions: v.sessions.size,
-    e1rmKg: v.e1?.best_e1rm_kg ?? null,
-  }));
+  const out: RecordIndexEntry[] = [];
+  const handled = new Set<string>();
+  for (const e of index) {
+    handled.add(e.exerciseId);
+    const mine = unsent.get(e.exerciseId) ?? [];
+    if (!e.sessions) {
+      if (mine.length === 0) out.push(e);
+      else {
+        const newest = mine.reduce((m, p) => (p.performed_at > m ? p.performed_at : m), e.lastAt);
+        out.push({ ...e, lastAt: newest, onPhone: true });
+      }
+      continue;
+    }
+    const gone = new Map<string, number>();
+    for (const v of e.setIds ?? []) {
+      if (voidedIds.has(v.id))
+        gone.set(v.session_id, (gone.get(v.session_id) ?? 0) + 1);
+    }
+    const sessions: RecordSessionStat[] = [];
+    for (const s of e.sessions) {
+      if (discardedSessions.has(s.id)) continue;
+      const n = s.n - (gone.get(s.id) ?? 0);
+      if (n > 0) sessions.push({ ...s, n });
+    }
+    for (const p of mine) {
+      const ex = sessions.find((s) => s.id === p.session_id);
+      if (ex) {
+        ex.n += 1;
+        if (p.performed_at > ex.at) ex.at = p.performed_at;
+      } else {
+        sessions.push({ id: p.session_id, n: 1, at: p.performed_at });
+      }
+    }
+    if (sessions.length === 0) continue;
+    const e1 = (e.e1rms ?? []).find((r) => !discardedSessions.has(r.session_id));
+    out.push({
+      ...e,
+      ...summarise(sessions, now),
+      e1rmKg: e.e1rms ? (e1?.kg ?? null) : e.e1rmKg,
+      sessions,
+      onPhone: mine.length > 0,
+    });
+  }
+  for (const [exerciseId, mine] of unsent) {
+    if (handled.has(exerciseId)) continue;
+    const sessions: RecordSessionStat[] = [];
+    for (const p of mine) {
+      const ex = sessions.find((s) => s.id === p.session_id);
+      if (ex) {
+        ex.n += 1;
+        if (p.performed_at > ex.at) ex.at = p.performed_at;
+      } else sessions.push({ id: p.session_id, n: 1, at: p.performed_at });
+    }
+    out.push({
+      exerciseId,
+      ...summarise(sessions, now),
+      e1rmKg: null,
+      sessions,
+      onPhone: true,
+    });
+  }
+  return out;
+}
+
+/** The new percentage after a -/+ tap, shown until the view answers: the same
+ *  ratio v_goal_progress computes (recent best / target, one decimal) from the
+ *  view's own recent best. Display only, never stored or sent. */
+export function optimisticPct(
+  recentBestKg: number | null,
+  targetKg: number,
+): number | null {
+  if (recentBestKg === null || targetKg <= 0) return null;
+  return Math.round((recentBestKg / targetKg) * 1000) / 10;
+}
+
+/** Lowercase, accent- and punctuation-insensitive form for matching names. */
+export function searchKey(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 /** Local calendar day of an instant, YYYY-MM-DD. */
@@ -99,7 +282,7 @@ export function compareRecent(a: RecordRow, b: RecordRow): number {
   if (da !== db) return da < db ? 1 : -1;
   if (a.recentSessions !== b.recentSessions)
     return b.recentSessions - a.recentSessions;
-  return a.name.localeCompare(b.name);
+  return a.name.localeCompare(b.name) || a.exerciseId.localeCompare(b.exerciseId);
 }
 
 export interface RecordLists {
@@ -141,8 +324,15 @@ export function buildRecordLists(
       goal: g,
     });
   }
-  const q = search.trim().toLowerCase();
-  const shown = q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows;
+  // every word of the query must appear, in any order ("press bench")
+  const tokens = searchKey(search).split(" ").filter(Boolean);
+  const shown =
+    tokens.length === 0
+      ? rows
+      : rows.filter((r) => {
+          const k = searchKey(r.name);
+          return tokens.every((t) => k.includes(t));
+        });
   shown.sort(compareRecent);
   return {
     pinned: shown.filter((r) => r.goal !== null),

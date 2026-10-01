@@ -372,8 +372,10 @@ export function registerManageExercises(
           if (error.code === "23503") {
             throw new ToolError(
               `'${args.id}' is referenced by logged sets, prescriptions, ` +
-                "training maxes, or goals — it cannot be deleted. Rename it " +
-                "with update_exercise instead.",
+                "training maxes, or goals — it cannot be deleted. A goal " +
+                "(including one pinned in the app's Record tab) blocks it " +
+                "until it is removed there. Otherwise rename it with " +
+                "update_exercise instead.",
             );
           }
           throw new Error(`delete exercise: ${error.message}`);
