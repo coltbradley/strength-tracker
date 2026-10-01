@@ -59,7 +59,7 @@ describe("session-local entry order", () => {
     expectEachKeyOnce(moved, keys(original));
   });
 
-  it("moves a named section run intact and keeps separate same-letter runs separate", () => {
+  it("moves a superset inside a named section intact and keeps separate same-letter runs separate", () => {
     const original = [
       entry("warm-1", { section: "Warmup" }),
       entry("warm-2", { section: "Warmup", superset: 1 }),
@@ -73,7 +73,7 @@ describe("session-local entry order", () => {
     const moved = moveSessionEntry(original, "warm-2", 6);
 
     expect(keys(moved)).toEqual([
-      "main", "late-a1", "late-a2", "finish", "warm-1", "warm-2", "warm-3",
+      "warm-1", "main", "late-a1", "late-a2", "finish", "warm-2", "warm-3",
     ]);
     expect(moved.findIndex((item) => item.key === "late-a1") + 1).toBe(
       moved.findIndex((item) => item.key === "late-a2"),
@@ -103,7 +103,7 @@ describe("session-local entry order", () => {
     expect(keys(moveSessionEntry(original, "a", destination!))).toEqual(["b", "a", "c"]);
   });
 
-  it("moves multi-entry blocks one position in either direction without splitting them", () => {
+  it("moves a superset one position in either direction without splitting it, and a section's exercises one by one", () => {
     const original = [
       entry("lead"),
       entry("pair-1", { superset: 1 }),
@@ -115,19 +115,19 @@ describe("session-local entry order", () => {
     const down = sessionEntryMoveIndex(original, "pair-2", "down");
     const downResult = moveSessionEntry(original, "pair-1", down!);
     const up = sessionEntryMoveIndex(original, "section-2", "up");
-    const upResult = moveSessionEntry(original, "section-1", up!);
+    const upResult = moveSessionEntry(original, "section-2", up!);
 
     expect(keys(downResult)).toEqual([
-      "lead", "section-1", "section-2", "pair-1", "pair-2", "tail",
+      "lead", "section-1", "pair-1", "pair-2", "section-2", "tail",
     ]);
-    expect(up).toBe(1);
+    expect(up).toBe(3);
     expect(keys(upResult)).toEqual([
-      "lead", "section-1", "section-2", "pair-1", "pair-2", "tail",
+      "lead", "pair-1", "pair-2", "section-2", "section-1", "tail",
     ]);
     expectEachKeyOnce(downResult, keys(original));
   });
 
-  it("keeps distinct section runs movable when same-letter supersets are internal, not at their boundary", () => {
+  it("still refuses a move that would join two separate same-letter superset runs, but moves the exercise between them", () => {
     const original = [
       entry("warm-a", { section: "Warmup", superset: 1 }),
       entry("warm-b", { section: "Warmup", superset: 1 }),
@@ -137,12 +137,54 @@ describe("session-local entry order", () => {
       entry("main-tail", { section: "Main" }),
       entry("end"),
     ];
-    const destination = sessionEntryMoveIndex(original, "warm-a", "down");
-
-    expect(destination).toBe(3);
-    expect(keys(moveSessionEntry(original, "warm-a", destination!))).toEqual([
-      "main-a", "main-b", "main-tail", "warm-a", "warm-b", "warm-tail", "end",
+    // the Warmup pair would land right against the Main pair: one superset
+    expect(sessionEntryMoveIndex(original, "warm-a", "down")).toBeNull();
+    expect(sessionEntryMoveIndex(original, "warm-tail", "up")).toBeNull();
+    expect(sessionEntryMoveIndex(original, "warm-tail", "down")).toBeNull();
+    expect(keys(moveSessionEntry(original, "warm-tail", 6))).toEqual(keys(original));
+    // other exercises are free to move, across the section boundary too
+    const down = sessionEntryMoveIndex(original, "main-tail", "down");
+    expect(keys(moveSessionEntry(original, "main-tail", down!))).toEqual([
+      "warm-a", "warm-b", "warm-tail", "main-a", "main-b", "end", "main-tail",
     ]);
+  });
+
+  it("moves one exercise of a section on its own; the section label stays with the exercise", () => {
+    const original = [
+      entry("s1", { section: "Strength" }),
+      entry("s2", { section: "Strength" }),
+      entry("s3", { section: "Strength" }),
+      entry("c1", { section: "Core" }),
+    ];
+    expect(keys(moveSessionEntry(original, "s3", 1))).toEqual(["s1", "s3", "s2", "c1"]);
+    // across the section boundary: it keeps its own section
+    const crossed = moveSessionEntry(original, "s1", 3);
+    expect(keys(crossed)).toEqual(["s2", "s3", "c1", "s1"]);
+    expect(crossed.find((e) => e.key === "s1")!.brackets[0]!.section).toBe("Strength");
+  });
+
+  it("a split section can be put back together by moving the intruder out again", () => {
+    const original = [
+      entry("s1", { section: "Strength" }),
+      entry("s2", { section: "Strength" }),
+      entry("c1", { section: "Core" }),
+    ];
+    const split = moveSessionEntry(original, "c1", 1);
+    expect(keys(split)).toEqual(["s1", "c1", "s2"]);
+    const healed = moveSessionEntry(original, "c1", 2, keys(split));
+    expect(keys(healed)).toEqual(["s1", "s2", "c1"]);
+    expect(sessionEntryMoveIndex(original, "c1", "down", keys(split))).not.toBeNull();
+  });
+
+  it("refuses to join two separate runs of one section by moving the exercise between them", () => {
+    const original = [
+      entry("s1", { section: "Strength" }),
+      entry("core", { section: "Core" }),
+      entry("s2", { section: "Strength" }),
+    ];
+    expect(sessionEntryMoveIndex(original, "core", "down")).toBeNull();
+    expect(sessionEntryMoveIndex(original, "core", "up")).toBeNull();
+    expect(keys(moveSessionEntry(original, "core", 0))).toEqual(keys(original));
   });
 
   it("keeps a ramp with mixed section metadata in canonical order and disables its arrows", () => {
@@ -178,12 +220,13 @@ describe("orderedEntryBlocks / blockMoveIndex — what the Today's workout sheet
     entry("w2", { section: "Cooldown" }),
   ];
 
-  it("returns each movable unit whole: a pair is one block, a named section is one block", () => {
+  it("returns each movable unit whole: a pair is one block, a named section is one row per exercise", () => {
     expect(orderedEntryBlocks(day()).map((block) => keys(block))).toEqual([
       ["squat"],
       ["a1", "a2"],
       ["curl"],
-      ["w1", "w2"],
+      ["w1"],
+      ["w2"],
     ]);
   });
 
@@ -193,7 +236,8 @@ describe("orderedEntryBlocks / blockMoveIndex — what the Today's workout sheet
       ["curl"],
       ["squat"],
       ["a1", "a2"],
-      ["w1", "w2"],
+      ["w1"],
+      ["w2"],
     ]);
   });
 

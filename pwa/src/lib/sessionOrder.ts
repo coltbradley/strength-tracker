@@ -24,67 +24,66 @@ function hasMixedSectionRamp(entries: readonly ExerciseEntry[]): boolean {
   );
 }
 
-function blocksFor(entries: readonly ExerciseEntry[]): EntryBlock[] {
-  if (entries.length === 0) return [];
-  const parents = entries.map((_, index) => index);
-  const find = (index: number): number => {
-    if (parents[index] !== index) parents[index] = find(parents[index]);
-    return parents[index];
-  };
-  const join = (left: number, right: number) => {
-    const a = find(left);
-    const b = find(right);
-    if (a !== b) parents[b] = a;
-  };
+/** Which canonical run each entry belongs to, for sections and for supersets.
+ *  Always read off the CANONICAL entries (the plan's order), never off a
+ *  rearranged one: "these two were separate runs" is a fact about the plan,
+ *  and it must survive any number of moves. Without that, splitting a section
+ *  by dropping a foreign exercise into it could not be undone by moving the
+ *  exercise back out. */
+interface Runs {
+  section: Map<string, string | null>;
+  superset: Map<string, { group: number; id: string } | null>;
+}
 
-  for (let index = 1; index < entries.length; index++) {
-    const previous = entries[index - 1];
-    const current = entries[index];
-    const previousSection = sectionName(previous);
-    const previousGroup = groupNumber(previous);
-    if (
-      (previousSection !== null && previousSection === sectionName(current)) ||
-      (previousGroup !== null && previousGroup === groupNumber(current))
-    ) join(index - 1, index);
-  }
-
+function runsFor(canonical: readonly ExerciseEntry[]): Runs {
+  const section = new Map<string, string | null>();
+  const superset = new Map<string, { group: number; id: string } | null>();
   let sectionRun = -1;
   let previousSection: string | null = null;
   let supersetRun = -1;
   let previousGroup: number | null = null;
-  const sectionIds: Array<string | null> = [];
-  const supersetIds: Array<{ group: number; id: string } | null> = [];
-  for (const entry of entries) {
-    const section = sectionName(entry);
-    if (section !== previousSection) sectionRun++;
-    sectionIds.push(section === null ? null : sectionRun + ":" + section);
-    previousSection = section;
+  for (const entry of canonical) {
+    const name = sectionName(entry);
+    if (name !== previousSection) sectionRun++;
+    section.set(entry.key, name === null ? null : sectionRun + ":" + name);
+    previousSection = name;
 
     const group = groupNumber(entry);
     if (group !== previousGroup) supersetRun++;
-    supersetIds.push(group === null ? null : { group, id: supersetRun + ":" + group });
+    superset.set(entry.key, group === null ? null : { group, id: supersetRun + ":" + group });
     previousGroup = group;
   }
+  return { section, superset };
+}
 
+/**
+ * The movable units of an order. A unit is ONE exercise (its ramp of
+ * brackets is part of that one entry), except that a superset or circuit
+ * (consecutive entries of one canonical superset run) moves as a single
+ * block. A named section is NOT a unit: its exercises move one by one.
+ */
+function blocksFor(order: readonly ExerciseEntry[], runs: Runs): EntryBlock[] {
   const blocks: EntryBlock[] = [];
-  for (let index = 0; index < entries.length; index++) {
-    const root = find(index);
-    let block = blocks[blocks.length - 1];
-    if (!block || find(block.start) !== root) {
-      block = {
-        entries: [],
-        start: index,
-        firstSectionRun: sectionIds[index],
-        lastSectionRun: sectionIds[index],
-        firstSupersetRun: supersetIds[index],
-        lastSupersetRun: supersetIds[index],
-      };
-      blocks.push(block);
+  order.forEach((entry, index) => {
+    const section = runs.section.get(entry.key) ?? null;
+    const superset = runs.superset.get(entry.key) ?? null;
+    const last = blocks[blocks.length - 1];
+    const lastSuperset = last?.lastSupersetRun ?? null;
+    if (last && superset !== null && lastSuperset !== null && lastSuperset.id === superset.id) {
+      last.entries.push(entry);
+      last.lastSectionRun = section;
+      last.lastSupersetRun = superset;
+      return;
     }
-    block.entries.push(entries[index]);
-    block.lastSectionRun = sectionIds[index];
-    block.lastSupersetRun = supersetIds[index];
-  }
+    blocks.push({
+      entries: [entry],
+      start: index,
+      firstSectionRun: section,
+      lastSectionRun: section,
+      firstSupersetRun: superset,
+      lastSupersetRun: superset,
+    });
+  });
   return blocks;
 }
 
@@ -118,7 +117,8 @@ export function reconcileEntryOrder(
   savedKeys: readonly string[],
 ): ExerciseEntry[] {
   if (hasMixedSectionRamp(entries)) return [...entries];
-  const blocks = blocksFor(entries);
+  const runs = runsFor(entries);
+  const blocks = blocksFor(entries, runs);
   const ranks = new Map<string, number>();
   for (const key of savedKeys) {
     if (typeof key === "string" && !ranks.has(key)) ranks.set(key, ranks.size);
@@ -142,7 +142,7 @@ export function sessionEntryMoveIndex(
 ): number | null {
   if (hasMixedSectionRamp(entries)) return null;
   const current = reconcileEntryOrder(entries, currentKeys);
-  const blocks = blocksFor(current);
+  const blocks = blocksFor(current, runsFor(entries));
   const sourceIndex = blocks.findIndex((block) => block.entries.some((entry) => entry.key === key));
   if (sourceIndex < 0) return null;
   const destination = sourceIndex + (direction === "up" ? -1 : 1);
@@ -170,7 +170,7 @@ export function moveSessionEntry(
 ): ExerciseEntry[] {
   if (hasMixedSectionRamp(entries)) return [...entries];
   const current = reconcileEntryOrder(entries, currentKeys);
-  const blocks = blocksFor(current);
+  const blocks = blocksFor(current, runsFor(entries));
   const sourceIndex = blocks.findIndex((block) => block.entries.some((entry) => entry.key === key));
   if (sourceIndex < 0) return [...current];
   const source = blocks[sourceIndex];
@@ -196,9 +196,10 @@ export function moveSessionEntry(
 }
 
 /**
- * The movable units of today, in the order currently shown: each is a whole
- * navigation block (a ramp, a run of one named section, a superset), never a
- * piece of one. This is what the Today's workout sheet draws one row for, so
+ * The movable units of today, in the order currently shown: each is one
+ * exercise (a ramp is part of its one entry) or a whole superset, never a
+ * piece of one. A named section is only a heading: its exercises move one by
+ * one, within it or across it. This is what the Today's workout sheet draws one row for, so
  * a drag or an arrow can only ever offer to move what `moveSessionEntry`
  * will actually move.
  */
@@ -207,7 +208,7 @@ export function orderedEntryBlocks(
   currentKeys: readonly string[] = entries.map((entry) => entry.key),
 ): ExerciseEntry[][] {
   const current = reconcileEntryOrder(entries, currentKeys);
-  return blocksFor(current).map((block) => block.entries);
+  return blocksFor(current, runsFor(entries)).map((block) => block.entries);
 }
 
 /**
