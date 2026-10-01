@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
+import { openDB } from "idb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createOutbox,
@@ -162,6 +163,188 @@ describe("outbox", () => {
     expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toEqual({
       [replacement.id]: setA.id,
     });
+  });
+
+  it("commits an optional correction note and cached note remap with the correction", async () => {
+    const { transport } = makeTransport();
+    const box = createOutbox({ getDb, transport, isOnline: () => false, currentUserId: () => "alice", stampUserId: () => "alice" });
+    const replacement = { ...setA, id: "abababab-abab-4bab-8bab-abababababab" };
+    const db = await getDb();
+    await db.put("kv", { [setA.id]: "Grip felt uneven", unrelated: "Keep me" }, cacheKeys.sessionSetNotes(session.id));
+
+    await box.enqueueCorrection(session.id, replacement, setA.id, "Grip felt uneven");
+
+    expect((await db.getAll("outbox")).map((row) => [row.op.kind, row.op.table, row.user_id])).toEqual([
+      ["insert", "sets", "alice"],
+      ["insert", "set_voids", "alice"],
+      ["insert", "set_notes", "alice"],
+    ]);
+    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toEqual({ [replacement.id]: setA.id });
+    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({
+      unrelated: "Keep me",
+      [replacement.id]: "Grip felt uneven",
+    });
+  });
+
+  it("rolls back the whole correction and leaves cached note data intact when note add aborts", async () => {
+    const { transport } = makeTransport();
+    const db = await getDb();
+    const existing: OutboxItem = {
+      op: { kind: "insert", table: "sets", payload: setB },
+      created_at: "2026-09-30T12:00:00.000Z",
+      retries: 0,
+      last_error: null,
+      status: "pending",
+      user_id: "alice",
+    };
+    await db.add("outbox", existing);
+    await db.put("kv", { [setA.id]: "Grip felt uneven" }, cacheKeys.sessionSetNotes(session.id));
+    await db.put("kv", { prior: "prior-set" }, cacheKeys.sessionCorrectionLinks(session.id));
+    const initialRows = await db.getAll("outbox");
+    const initialNotes = await db.get("kv", cacheKeys.sessionSetNotes(session.id));
+    const initialLinks = await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id));
+    const diskFull = new Error("disk full while adding note");
+    const failingDb = {
+      transaction: (...args: Parameters<Database["transaction"]>) => {
+        const tx = db.transaction(...args);
+        return {
+          done: tx.done,
+          abort: () => tx.abort(),
+          objectStore(name: "outbox" | "kv") {
+            const store = tx.objectStore(name);
+            if (name !== "outbox") return store;
+            return new Proxy(store, {
+              get(target, property) {
+                if (property === "add") {
+                  return (value: OutboxItem, ...args2: unknown[]) => {
+                    if (value.op.kind === "insert" && value.op.table === "set_notes") return Promise.reject(diskFull);
+                    const method = Reflect.get(target, property) as (...methodArgs: unknown[]) => unknown;
+                    return method.call(target, value, ...args2);
+                  };
+                }
+                const value = Reflect.get(target, property, target);
+                return typeof value === "function" ? value.bind(target) : value;
+              },
+            });
+          },
+        };
+      },
+    } as unknown as Database;
+    const box = createOutbox({ getDb: () => Promise.resolve(failingDb), transport, isOnline: () => false,
+      currentUserId: () => "alice", stampUserId: () => "alice" });
+    const replacement = { ...setA, id: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd" };
+
+    await expect(box.enqueueCorrection(session.id, replacement, setA.id, "Grip felt uneven"))
+      .rejects.toThrow("disk full while adding note");
+
+    expect(await db.getAll("outbox")).toEqual(initialRows);
+    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual(initialNotes);
+    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toEqual(initialLinks);
+  });
+
+  it("captures enqueue owner before opening IndexedDB", async () => {
+    const { calls, transport } = makeTransport();
+    let owner: string | null = "alice";
+    let online = false;
+    let resolveDb!: (db: Database) => void;
+    const pendingDb = new Promise<Database>((resolve) => { resolveDb = resolve; });
+    const box = createOutbox({ getDb: () => pendingDb, transport, isOnline: () => online,
+      currentUserId: () => owner, stampUserId: () => owner });
+
+    const admission = box.enqueue({ kind: "insert", table: "sets", payload: setA });
+    owner = "bob";
+    resolveDb(await getDb());
+    await admission;
+    online = true;
+    await box.flush();
+    expect(await box.inspect()).toMatchObject([{ user_id: "alice", state: "held" }]);
+    expect(box.getStatus()).toMatchObject({ held: 1 });
+    expect(calls).toEqual([]);
+
+    owner = "alice";
+    await box.flush();
+    expect(calls.map((call) => [call.table, (call.payload as SetInsert).id])).toEqual([["sets", setA.id]]);
+  });
+
+  it("captures one owner for every batch row before opening IndexedDB", async () => {
+    const { calls, transport } = makeTransport();
+    let owner: string | null = "alice";
+    let online = false;
+    let resolveDb!: (db: Database) => void;
+    const pendingDb = new Promise<Database>((resolve) => { resolveDb = resolve; });
+    const box = createOutbox({ getDb: () => pendingDb, transport, isOnline: () => online,
+      currentUserId: () => owner, stampUserId: () => owner });
+
+    const admission = box.enqueueBatch(roundOps);
+    owner = "bob";
+    resolveDb(await getDb());
+    await admission;
+    online = true;
+    await box.flush();
+    expect(await box.inspect()).toMatchObject([{ user_id: "alice" }, { user_id: "alice" }]);
+    expect(box.getStatus()).toMatchObject({ held: 2 });
+    expect(calls).toEqual([]);
+
+    owner = "alice";
+    await box.flush();
+    expect(calls.map((call) => [call.table, (call.payload as SetInsert).id])).toEqual([
+      ["sets", setA.id], ["sets", setB.id],
+    ]);
+  });
+
+  it("captures correction owner before opening IndexedDB and holds it through unknown identity", async () => {
+    const { calls, transport } = makeTransport();
+    let liveOwner: string | null = "alice";
+    let persistedOwner: string | null = "alice";
+    let online = false;
+    const db = await getDb();
+    await db.put("kv", { [setA.id]: "Grip felt uneven" }, cacheKeys.sessionSetNotes(session.id));
+    let resolveDb!: (db: Database) => void;
+    const pendingDb = new Promise<Database>((resolve) => { resolveDb = resolve; });
+    const box = createOutbox({ getDb: () => pendingDb, transport, isOnline: () => online,
+      currentUserId: () => liveOwner, stampUserId: () => persistedOwner });
+    const replacement = { ...setA, id: "efefefef-efef-4fef-8fef-efefefefefef" };
+
+    const admission = box.enqueueCorrection(session.id, replacement, setA.id, "Grip felt uneven");
+    liveOwner = null;
+    resolveDb(db);
+    await admission;
+    online = true;
+    await box.flush();
+    expect(await box.inspect()).toMatchObject([
+      { user_id: "alice" }, { user_id: "alice" }, { user_id: "alice" },
+    ]);
+    expect(box.getStatus()).toMatchObject({ held: 3 });
+    expect(calls).toEqual([]);
+    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({ [replacement.id]: "Grip felt uneven" });
+
+    liveOwner = "bob";
+    await box.flush();
+    expect(calls).toEqual([]);
+    expect(box.getStatus()).toMatchObject({ held: 3 });
+    liveOwner = "alice";
+    await box.flush();
+    expect(calls.map((call) => [call.table, (call.payload as { id?: string; set_id?: string }).id ?? (call.payload as { set_id?: string }).set_id]))
+      .toEqual([["sets", replacement.id], ["set_voids", setA.id], ["set_notes", replacement.id]]);
+    db.close();
+    const reopened = await openDB(db.name, 1) as Database;
+    expect(await reopened.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({
+      [replacement.id]: "Grip felt uneven",
+    });
+  });
+
+  it("does not place an unknown-owner correction note in the account cache", async () => {
+    const { transport } = makeTransport();
+    const db = await getDb();
+    await db.put("kv", { existing: "current account note" }, cacheKeys.sessionSetNotes(session.id));
+    const box = createOutbox({ getDb, transport, isOnline: () => false,
+      currentUserId: () => null, stampUserId: () => null });
+    const replacement = { ...setA, id: "12121212-1212-4212-8212-121212121212" };
+
+    await box.enqueueCorrection(session.id, replacement, setA.id, "queued under unknown owner");
+
+    expect((await db.getAll("outbox")).map((row) => row.user_id)).toEqual([null, null, null]);
+    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({ existing: "current account note" });
   });
 
   it("rolls back replacement and void when the durable link cannot commit", async () => {

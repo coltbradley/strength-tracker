@@ -82,8 +82,8 @@ export interface OutboxTransport {
 export interface Outbox {
   enqueue(op: OutboxOp): Promise<void>;
   enqueueBatch(ops: readonly OutboxOp[]): Promise<void>;
-  /** Atomically queue replacement then original void and persist their link. */
-  enqueueCorrection(sessionId: string, replacement: SetInsert, originalId: string): Promise<void>;
+  /** Atomically queue replacement, original void, optional note, and durable relations. */
+  enqueueCorrection(sessionId: string, replacement: SetInsert, originalId: string, note?: string): Promise<void>;
   flush(): Promise<void>;
   /**
    * Re-queue the dead items a retry could actually help, and flush. Items
@@ -741,16 +741,17 @@ export function createOutbox({
 
   return {
     async enqueue(op) {
+      const owner = stampOwner();
       const db = await getDb();
-      await db.add("outbox", makePendingItem(op, stampOwner()));
+      await db.add("outbox", makePendingItem(op, owner));
       await refreshCountsAfterCommit();
       void flush();
     },
 
     async enqueueBatch(ops) {
+      const owner = stampOwner();
       if (ops.length === 0) return;
       const db = await getDb();
-      const owner = stampOwner();
       const tx = db.transaction("outbox", "readwrite");
       for (const op of ops) {
         await tx.store.add(makePendingItem(op, owner));
@@ -760,9 +761,9 @@ export function createOutbox({
       void flush();
     },
 
-    async enqueueCorrection(sessionId, replacement, originalId) {
-      const db = await getDb();
+    async enqueueCorrection(sessionId, replacement, originalId, note) {
       const owner = stampOwner();
+      const db = await getDb();
       const tx = db.transaction(["outbox", "kv"], "readwrite");
       const txDone = tx.done;
       // Observe aborts immediately, since a request may reject before we
@@ -789,6 +790,26 @@ export function createOutbox({
         });
         const links = (await kvStore.get(linkKey) as Record<string, string> | undefined) ?? {};
         await kvStore.put({ ...links, [replacement.id]: originalId }, linkKey);
+        if (note !== undefined) {
+          await outboxStore.add(makePendingItem(
+            { kind: "insert", table: "set_notes", payload: { set_id: replacement.id, note } },
+            owner,
+          ));
+          // KV session notes share the existing account-scoped cache marker.
+          // A correction started by A may finish opening IndexedDB after the
+          // device has switched to B or has unresolved identity. Keep A's
+          // durable queue item held, but never repopulate the current cache
+          // with A's note.
+          if (owner !== null && owner !== undefined) {
+            const notesKey = cacheKeys.sessionSetNotes(sessionId);
+            const notes = (await kvStore.get(notesKey) as Record<string, string> | undefined) ?? {};
+            if (stampOwner() === owner) {
+              const nextNotes = { ...notes, [replacement.id]: note };
+              delete nextNotes[originalId];
+              await kvStore.put(nextNotes, notesKey);
+            }
+          }
+        }
         await txDone;
       } catch (error) {
         try { tx.abort(); } catch { /* transaction may already have aborted */ }

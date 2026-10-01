@@ -2171,10 +2171,11 @@ export function Session() {
     }
     if (pendingSetMutationIdsRef.current.has(old.id)) return;
     const next = correctedSet(old, correction);
+    const note = setNotes[old.id] || undefined;
     pendingSetMutationIdsRef.current.add(old.id);
     setPendingEntryWrites((count) => count + 1);
     try {
-      await outbox.enqueueCorrection(sessionId, next, old.id);
+      await outbox.enqueueCorrection(sessionId, next, old.id, note);
       const nextVoids = new Set(voids);
       nextVoids.add(old.id);
       setVoids(nextVoids);
@@ -2187,20 +2188,10 @@ export function Session() {
       cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
         reportError(e, "cache session sets"),
       );
-      // The note follows only after the replacement+void+link commit.
-      const note = setNotes[old.id];
       if (note) {
-        try {
-          await outbox.enqueue({ kind: "insert", table: "set_notes", payload: { set_id: next.id, note } });
-          const nextNotes = { ...setNotes, [next.id]: note };
-          delete nextNotes[old.id];
-          setSetNotes(nextNotes);
-          cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
-            (e: unknown) => reportError(e, "cache set notes"),
-          );
-        } catch (e) {
-          reportError(e, "carry set note");
-        }
+        const nextNotes = { ...setNotes, [next.id]: note };
+        delete nextNotes[old.id];
+        setSetNotes(nextNotes);
       }
 
       setEntryKg(editing.staged.entryKg);
@@ -2241,10 +2232,11 @@ export function Session() {
     if (isNoopCorrection(old, correction)) return;
     if (pendingSetMutationIdsRef.current.has(old.id)) return;
     const next = correctedSet(old, correction);
+    const note = setNotes[old.id] || undefined;
     pendingSetMutationIdsRef.current.add(old.id);
     setPendingEntryWrites((count) => count + 1);
     try {
-      await outbox.enqueueCorrection(sessionId, next, old.id);
+      await outbox.enqueueCorrection(sessionId, next, old.id, note);
       const nextVoids = new Set(voids);
       nextVoids.add(old.id);
       setVoids(nextVoids);
@@ -2255,19 +2247,10 @@ export function Session() {
       cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
         reportError(e, "cache session sets"),
       );
-      const note = setNotes[old.id];
       if (note) {
-        try {
-          await outbox.enqueue({ kind: "insert", table: "set_notes", payload: { set_id: next.id, note } });
-          const nextNotes = { ...setNotes, [next.id]: note };
-          delete nextNotes[old.id];
-          setSetNotes(nextNotes);
-          cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
-            (e: unknown) => reportError(e, "cache set notes"),
-          );
-        } catch (e) {
-          reportError(e, "carry set note");
-        }
+        const nextNotes = { ...setNotes, [next.id]: note };
+        delete nextNotes[old.id];
+        setSetNotes(nextNotes);
       }
       setLastLoggedSet(next);
     } catch (e) {

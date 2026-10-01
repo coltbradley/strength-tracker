@@ -963,6 +963,12 @@ describe("Session focus presentation", () => {
       expect(await cacheGet<string[]>(cacheKeys.sessionVoids(active.id))).toBeUndefined();
       expect(await cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(active.id)))
         .toEqual({ [old.id]: "Grip felt uneven" });
+      expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledWith(
+        active.id,
+        expect.objectContaining({ session_id: active.id, set_index: old.set_index }),
+        old.id,
+        "Grip felt uneven",
+      );
       expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
       fireEvent.click(screen.getByRole("button", { name: "List" }));
@@ -980,15 +986,25 @@ describe("Session focus presentation", () => {
       render(<MemoryRouter><Session /></MemoryRouter>);
       fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
       await screen.findByRole("button", { name: "rpe 6.5" });
+      fireEvent.click(screen.getByRole("button", { name: "Note last set" }));
+      const note = await screen.findByPlaceholderText("Note on this set…");
+      fireEvent.change(note, { target: { value: "Grip felt uneven" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(screen.queryByPlaceholderText("Note on this set…")).toBeNull());
+      fireEvent.click(screen.getByRole("button", { name: "CLOSE" }));
       const before = await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id));
       const restBefore = await cacheGet(cacheKeys.sessionRest(active.id));
       expect(before).toHaveLength(1);
+      const noteBefore = await cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(active.id));
 
       fireEvent.click(screen.getByRole("button", { name: "rpe 6.5" }));
       await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith("[rate set]", expect.any(Error)));
 
       expect(await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id))).toEqual(before);
       expect(await cacheGet<string[]>(cacheKeys.sessionVoids(active.id))).toBeUndefined();
+      expect(await cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(active.id))).toEqual(noteBefore);
+      expect(Object.keys(noteBefore ?? {})).toHaveLength(1);
       expect(await cacheGet(cacheKeys.sessionRest(active.id))).toEqual(restBefore);
       expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
     } finally {
@@ -1063,10 +1079,20 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(screen.queryByPlaceholderText("Note on this set…")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "CLOSE" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
       table: "set_notes",
       payload: { note: "Grip felt uneven" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "rpe 6.5" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueueCorrection).mock.calls[0]).toMatchObject([
+      active.id,
+      expect.objectContaining({ rpe: 6.5 }),
+      expect.any(String),
+      "Grip felt uneven",
+    ]);
   });
 
   it("keeps an ordinary set editable when its local queue write fails", async () => {
