@@ -156,10 +156,8 @@ describe("FocusDeck", () => {
           entryProgress: (candidate) => progressByKey[candidate.key] ?? 0,
           supersetHeading: { title: "Superset A", subtitle: "round 2 of 3" },
           renderEditor: () => (
-            <section className="superset-round-editor">
-              <div className="superset-round-actions">
-                <button type="button">Log round</button>
-              </div>
+            <section className="set-editor-focus">
+              <button type="button">Log A1</button>
             </section>
           ),
         })}
@@ -198,7 +196,7 @@ describe("FocusDeck", () => {
           entry: a1,
           entryProgress: (candidate) => progressByKey[candidate.key] ?? 0,
           supersetHeading: { title: "Superset A", subtitle: "round 1 of 3" },
-          renderEditor: () => <section className="superset-round-editor" />,
+          renderEditor: () => <section className="set-editor-focus" />,
         })}
       />,
     );
