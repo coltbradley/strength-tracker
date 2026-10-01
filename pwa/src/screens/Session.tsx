@@ -150,7 +150,6 @@ import { cancelRestAlert, scheduleRestAlert } from "../lib/push";
 import {
   enteredKg,
   isBodyweightEquipment,
-  loadEntryForSet,
   offersLoadEntry,
   resolveLoadEntry,
   totalKg,
@@ -166,7 +165,8 @@ import {
   PlateMachineIcon,
   StackIcon,
 } from "../components/icons/LoadIcons";
-import { fromDisplay, kgToLb, loadToKg, stagedDisplayLoad, stepKgFor, toDisplay, type Unit } from "../lib/units";
+import { buildSetLoad, LoadIntegrityError, typedFromDraft } from "../lib/setLoad";
+import { fromDisplay, kgToLb, stagedDisplayLoad, stepKgFor, toDisplay, type Unit } from "../lib/units";
 import type {
   ActiveSession,
   ExerciseRow,
@@ -1664,16 +1664,13 @@ export function Session() {
     index: number,
     actualRest: number | null,
   ): SetInsert => {
-    // A display-unit switch does not rewrite how this staged number was
-    // entered. An actual edit clears or replaces the authored pair.
-    const authoredUnit = draft.enteredLoad !== undefined && draft.enteredUnit
-      ? draft.enteredUnit
-      : unit;
-    const enteredLoad = draft.enteredLoad !== undefined && draft.enteredUnit
-      ? draft.enteredLoad
-      : toDisplay(draft.entryKg, unit);
-    const storedLoad = loadToKg(enteredLoad, authoredUnit, entryMode);
+    // lib/setLoad.ts is the only place load_kg and its authored pair are
+    // derived: from what was typed, never from kg plus a separate guess.
+    const typed = typedFromDraft(draft, unit);
     const tick = isTick(entry);
+    const load = tick
+      ? { load_kg: 0, load_entry: "total" as const, entered_load: null, entered_unit: null }
+      : buildSetLoad({ typedValue: typed.value, typedUnit: typed.unit, loadEntry: entryMode });
     const timed = entry.brackets[0]?.tracking === "time";
     return {
       id: uuid(),
@@ -1684,13 +1681,13 @@ export function Session() {
         : (bracket?.id ?? null),
       set_index: index,
       set_type: draft.setType,
-      load_kg: tick ? 0 : Math.round(storedLoad * 100) / 100,
+      load_kg: load.load_kg,
       reps: tick || timed ? 0 : draft.reps,
       performed_at: new Date().toISOString(),
       rest_seconds_actual: actualRest,
-      load_entry: loadEntryForSet(entryMode, storedLoad),
-      entered_load: tick || storedLoad <= 0 ? null : enteredLoad,
-      entered_unit: tick || storedLoad <= 0 ? null : authoredUnit,
+      load_entry: load.load_entry,
+      entered_load: load.entered_load,
+      entered_unit: load.entered_unit,
       rpe: tick ? null : draft.rpe,
       duration_seconds: timed ? Math.round(draft.durationSeconds ?? 60) : null,
     };
@@ -1746,15 +1743,15 @@ export function Session() {
       equipment: equipMap[entryToLog.exercise_id] ?? null,
       name: entryToLog.name,
     });
-    const set = buildSetInsert(
-      entryToLog,
-      loggedDraft,
-      bracket,
-      targetLoadEntry,
-      nextIndex,
-      recordableRest(),
-    );
     try {
+      const set = buildSetInsert(
+        entryToLog,
+        loggedDraft,
+        bracket,
+        targetLoadEntry,
+        nextIndex,
+        recordableRest(),
+      );
       // The outbox is the only durable local copy while offline. A regular
       // set used to update React first and fire this write in the background,
       // so a rejected IndexedDB transaction produced a convincing but false
@@ -1851,7 +1848,11 @@ export function Session() {
       return true;
     } catch (error) {
       reportError(error, "queue set");
-      setLogError("This set could not be saved locally. Check storage and retry.");
+      setLogError(
+        error instanceof LoadIntegrityError
+          ? error.message
+          : "This set could not be saved locally. Check storage and retry.",
+      );
       return false;
     } finally {
       window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
@@ -1922,12 +1923,11 @@ export function Session() {
       second.exercise_id,
       secondBracket?.rest_seconds ?? null,
     );
-    const inserts = [
-      buildRoundSet(first, round.a1, actualRest),
-      buildRoundSet(second, round.a2, null),
-    ];
-
     try {
+      const inserts = [
+        buildRoundSet(first, round.a1, actualRest),
+        buildRoundSet(second, round.a2, null),
+      ];
       // This transaction is the local commit point. No set reaches React or
       // the cache until both queue rows exist together in IndexedDB.
       await outbox.enqueueBatch(
@@ -2008,7 +2008,9 @@ export function Session() {
     } catch (error) {
       reportError(error, "queue superset round");
       setRoundError(
-        "This round could not be saved locally. Check storage and retry.",
+        error instanceof LoadIntegrityError
+          ? error.message
+          : "This round could not be saved locally. Check storage and retry.",
       );
     } finally {
       window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
@@ -2147,22 +2149,31 @@ export function Session() {
     // after logging one silently blocked the NEXT log for up to 400 ms.
     if (!editing || !sessionId) return;
     const old = editing.set;
-    const correctedTotalKg = editing.loadEdited
-      ? Math.round(loadToKg(editing.enteredLoad, editing.enteredUnit, loadEntry) * 100) / 100
-      : old.load_kg;
+    // The edited number is what was typed; setLoad derives everything else.
+    // An unedited load keeps the old row's fields verbatim.
+    let built;
+    try {
+      built = editing.loadEdited
+        ? buildSetLoad({
+            typedValue: editing.enteredLoad,
+            typedUnit: editing.enteredUnit,
+            loadEntry,
+          })
+        : {
+            load_kg: old.load_kg,
+            load_entry: old.load_entry ?? null,
+            entered_load: old.entered_load ?? null,
+            entered_unit: old.entered_unit ?? null,
+          };
+    } catch (e) {
+      reportError(e, "correct set load");
+      toast(e instanceof LoadIntegrityError ? e.message : "That weight could not be saved");
+      return;
+    }
     const correction = {
-      load_kg: correctedTotalKg,
+      ...built,
       reps,
       set_type: setType,
-      load_entry: loadEntryForSet(loadEntry, correctedTotalKg),
-      entered_load: correctedTotalKg === old.load_kg
-        ? old.entered_load ?? null
-        : correctedTotalKg > 0
-          ? editing.enteredLoad
-          : null,
-      entered_unit: correctedTotalKg === old.load_kg
-        ? old.entered_unit ?? null
-        : (correctedTotalKg > 0 ? editing.enteredUnit : null),
       rpe,
     };
     if (isNoopCorrection(old, correction)) {
