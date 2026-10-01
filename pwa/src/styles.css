@@ -6120,6 +6120,12 @@
     }
   }
 
+  /* A skip is a decision, not a hint: ink, not dim. */
+  .focus-skipped {
+    color: var(--text);
+    font-weight: 700;
+  }
+
   /* ---- state vocabulary (StateGlyph.tsx) ----
    * One shape family, reused by the progress rail, FocusSetProgress and
    * WorkoutOverview rows. Circular by default; warmups get a squared-off
