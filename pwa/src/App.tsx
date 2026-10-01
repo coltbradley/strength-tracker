@@ -21,9 +21,13 @@ import { FabDock } from "./components/FabDock";
 import { setSentryUser } from "./lib/errors";
 import { OAuthConsent } from "./screens/OAuthConsent";
 import { isConsentPath } from "./lib/oauthConsent";
+import { SessionHeaderSlotContext } from "./components/session/SessionHeader";
 
 function Shell({ userId }: { userId: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The topbar's session slot (see SessionHeader.tsx). A state, not a ref, so
+  // Session re-renders once the node exists and can portal into it.
+  const [sessionSlot, setSessionSlot] = useState<HTMLElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const topbar = useRef<HTMLElement>(null);
@@ -78,14 +82,20 @@ function Shell({ userId }: { userId: string }) {
   return (
     <div className="shell">
       <header className="topbar" ref={topbar}>
-        <button
-          type="button"
-          className="topbar-title"
-          aria-label="go to Train"
-          onClick={() => navigate("/")}
-        >
-          SET
-        </button>
+        {inSession ? (
+          // Session's own controls (☰ count, Focus | List) take the wordmark's
+          // place; Home stays reachable through Session's own leave flow.
+          <div className="topbar-session" ref={setSessionSlot} />
+        ) : (
+          <button
+            type="button"
+            className="topbar-title"
+            aria-label="go to Train"
+            onClick={() => navigate("/")}
+          >
+            SET
+          </button>
+        )}
         <div
           className="topbar-right"
           role="group"
@@ -114,7 +124,14 @@ function Shell({ userId }: { userId: string }) {
             path="/program"
             element={<Today userId={userId} presentation="program" />}
           />
-          <Route path="/session" element={<Session />} />
+          <Route
+            path="/session"
+            element={
+              <SessionHeaderSlotContext.Provider value={sessionSlot}>
+                <Session />
+              </SessionHeaderSlotContext.Provider>
+            }
+          />
           <Route path="/history" element={<History userId={userId} />} />
           <Route path="/end" element={<End />} />
           <Route path="/plan/:id" element={<Plan />} />

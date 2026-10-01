@@ -875,7 +875,6 @@
   .topbar-title,
   .plate-hint,
   .rpe-reveal,
-  .sync-pill,
   .rest-timer-time,
   .checkin-link {
     position: relative;
@@ -891,7 +890,6 @@
   .topbar-title::after,
   .plate-hint::after,
   .rpe-reveal::after,
-  .sync-pill::after,
   .rest-timer-time::after,
   .checkin-link::after {
     content: "";
@@ -2284,50 +2282,58 @@
     margin-top: var(--s-6);
   }
 
-  /* ---- sync pill: squared, hairline ---- */
+  /* ---- sync chip: round when healthy, widens when it has something to say ----
+   * Always 44px tall, so it is its own tap target and needs no hit-extension.
+   * Synced is a bare round check; every other state adds glyph + label. */
 
   .sync-group {
     display: inline-flex;
     gap: var(--s-3);
   }
 
-  /* Tap-to-retry when a write fails. The pill must stay small: it sits in the
-   * topbar beside a 44px gear and reads as a status mark, not a button. 3px of
-   * bleed, exactly half .sync-group's 6px gap, so two pills never overlap. */
-  .sync-pill {
-    --hit-bleed: 3px;
-    border-radius: var(--radius);
-    padding: var(--s-2) var(--s-5);
+  .sync-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-3);
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    padding: 0 var(--s-6);
+    border-radius: var(--radius-pill);
+    border: var(--bw) solid var(--control-outline);
     font-family: var(--font-mono);
-    font-size: var(--fs-micro);
-    font-weight: 600;
-    letter-spacing: var(--track-2);
-    text-transform: uppercase;
-    border: var(--bw-hair) solid var(--rule-color);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--text);
   }
 
-  .sync-pending,
-  .sync-busy {
+  .sync-chip-glyph {
+    font-size: 1.25em;
+    line-height: 1;
+  }
+
+  .sync-chip-ok {
+    padding: 0;
+    color: var(--text-dim);
+    border-color: var(--rule-color);
+  }
+
+  /* Waiting, sending and held are not faults and must not read as one:
+   * queued work behaving correctly is --info, the same ink as before. */
+  .sync-chip-pending,
+  .sync-chip-busy,
+  .sync-chip-held {
     color: var(--info);
     border-color: var(--info);
   }
 
-  .sync-err {
-    color: var(--danger);
+  /* The one fault: an item the server refused. Filled, so it is not missed. */
+  .sync-chip-dead {
+    color: var(--text-inverse);
+    background: var(--danger);
     border-color: var(--danger);
-  }
-
-  .sync-dead {
-    color: var(--accent-dim);
-    border-color: var(--accent-dim);
-  }
-
-  /* Held is not a fault and must not read as one: someone else's queued work
-     waiting for them is the queue behaving correctly. --info, same ink as
-     PENDING, because that is what it is. */
-  .sync-held {
-    color: var(--info);
-    border-color: var(--info);
   }
 
   /* ---- sheets / drawers ---- */
@@ -3515,6 +3521,165 @@
     min-height: var(--tap-min);
   }
 
+  /* ---- session header (Version D) ----
+   * On /session the topbar's wordmark gives way to the session controls
+   * (App.tsx provides the slot, Session portals into it): a "☰ 9/25" count
+   * that opens Today's workout, and a Focus | List toggle. Both stay visible
+   * in focus mode (only the wordmark is hidden there). */
+
+  .topbar-session {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-width: 0;
+  }
+
+  .topbar-session-inline {
+    padding: var(--s-4) var(--gutter) 0;
+  }
+
+  .session-hd-count {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-height: var(--tap-min);
+    padding: 0 var(--s-6);
+    border-radius: var(--radius-pill);
+    border: var(--bw) solid var(--control-outline);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .session-hd-toggle {
+    display: inline-flex;
+    padding: var(--s-1);
+    border-radius: var(--radius-pill);
+    border: var(--bw) solid var(--control-outline);
+  }
+
+  .session-hd-seg {
+    min-height: var(--tap-min);
+    padding: 0 var(--s-6);
+    border-radius: var(--radius-pill);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    color: var(--text-dim);
+  }
+
+  .session-hd-seg[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--text-inverse);
+  }
+
+  .session-hd-seg:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  @media (max-width: 359px) {
+    .session-hd-count,
+    .session-hd-seg {
+      padding: 0 var(--s-4);
+    }
+  }
+
+  /* Today's workout sheet */
+
+  .tw-units {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    padding: var(--s-5) var(--s-6);
+    border: var(--rule-hair);
+  }
+
+  .tw-units-label {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+  }
+
+  .tw-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* One row: [drag handle slot] [main tap target] — the handle is supplied by
+   * renderRowHandle and sits outside the jump button so dragging never
+   * triggers it. */
+  .tw-row {
+    display: flex;
+    align-items: stretch;
+    border: var(--rule-hair);
+  }
+
+  .tw-row[data-state="current"] {
+    border-color: var(--focus-set-current);
+  }
+
+  .tw-main {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: var(--s-1) var(--s-5);
+    align-items: center;
+    min-height: var(--tap-min);
+    padding: var(--s-5) var(--s-6);
+    text-align: left;
+  }
+
+  .tw-main:disabled {
+    opacity: 0.55;
+  }
+
+  .tw-main .state-glyph {
+    grid-row: 1 / span 2;
+  }
+
+  .tw-name {
+    grid-column: 2;
+    font-size: var(--fs-body);
+    font-weight: 500;
+    line-height: 1.25;
+  }
+
+  .tw-name-skipped {
+    text-decoration: line-through;
+    color: var(--text-dim);
+  }
+
+  .tw-scheme {
+    grid-column: 2;
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    letter-spacing: var(--track-1);
+    color: var(--text-dim);
+  }
+
+  .tw-count {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+  }
+
+  .tw-count-done {
+    color: var(--accent-dim);
+  }
+
   /* ---- session focus deck ----
    * Focus is a presentation of the existing controlled set editor, with no
    * extra state to reconcile after a return to the overview. The compact
@@ -3885,8 +4050,7 @@
   }
 
   body.focus-chrome-hidden .topbar-right {
-    width: 100%;
-    justify-content: flex-end;
+    margin-left: auto;
     gap: var(--s-3);
   }
 

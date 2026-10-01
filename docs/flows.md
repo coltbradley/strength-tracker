@@ -138,14 +138,23 @@ Supabase sends the stock link email and the paste path is the working one.
 - **Switch exercise** — tap any closed row; it opens (previous closes) and
   scrolls into view, prefilled (prescription → this session → last session →
   configured fallback). Tapping the open header collapses it.
+- **Session header** — on the session route the topbar's "SET" wordmark gives
+  way to the session controls (App publishes a slot, Session portals into
+  it): a "☰ 9/25" button (non-voided sets done over the plan's target sets)
+  and a Focus | List toggle (Focus is disabled when the workout cannot be
+  shown in focus). The ☰ button opens "Today's workout": a "Units this
+  session" switch (the only place to change units mid-session, in both
+  modes), one row per exercise in the shared state vocabulary (done, current,
+  next, skipped, upcoming) with its scheme and n/m count — tap to jump to it
+  in focus, or open it in the list — and Finish session. The sheet leaves a
+  slot for a per-row drag handle (reorder is built separately). The sync chip
+  beside the gear is a round 44px ✓ when everything is on the server and
+  widens to "◐ On phone · N", "↑ Sending · N", "‖ Held" or a filled
+  "! Review" when something is waiting, held or failed.
 - **Focus deck** — the default presentation for an eligible session, from
-  Start or restore. The app header and tab bar hide while it is shown, and
-  the screen is deliberately spare: a tap-to-jump progress rail across the
-  top (a real `<ul role="list">` of real `<button>`s, one dot per exercise in
-  the shared state vocabulary — done, current, next, skipped, upcoming —
-  where tapping the current entry's own dot opens the overview and tapping
-  any other jumps focus straight there, replacing the old standalone "View
-  full workout" button), exercise name, `SET n OF m`, one hero value (load
+  Start or restore. The tab bar and wordmark hide while it is shown (the
+  session controls, sync chip, coach and settings stay), and the screen is
+  deliberately spare: exercise name, `SET n OF m`, one hero value (load
   for a loaded implement, reps for bodyweight — whichever is hard to get
   right for the movement), the plate bar or per-hand breakdown when it
   applies (plates vs stack, per exercise and device-local — a stack/cable
@@ -282,7 +291,7 @@ no settings table in Postgres (see decisions.md). Sections:
 - **DANGER** — Reset settings to defaults (two-tap; preferences only, never
   training data), and Sign out (two-tap). Sign out consults the outbox
   first: unsynced sets are the only copy, so it names how many would be lost
-  and points at Sync now, or at the sync pill when items are permanently
+  and points at Sync now, or at the sync chip when items are permanently
   failed.
 
 ## Building a workout in the app
