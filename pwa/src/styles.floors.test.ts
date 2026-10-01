@@ -56,4 +56,14 @@ describe("size floors", () => {
   ])("sizes %s to at least 44px", (selector) => {
     expect(minHeightOf(selector)).toBeGreaterThanOrEqual(44);
   });
+
+  // D11: a narrow-screen rule once shrank the dock steppers to 40px wide. The
+  // LAST flex-basis a selector gets is the one that applies, so read that.
+  it("never lets the dock steppers fall under 44px wide, at any width", () => {
+    const bases = [...styles.matchAll(/(?<![-\w.])\.dock-num-step \{([^}]*)\}/g)]
+      .map((m) => m[1]!.match(/flex-basis:\s*([^;]+);/)?.[1]?.trim())
+      .filter((v): v is string => v !== undefined);
+    const last = bases[bases.length - 1]!;
+    expect(last === "var(--tap-min)" || Number.parseFloat(last) >= 44).toBe(true);
+  });
 });

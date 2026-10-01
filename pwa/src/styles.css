@@ -6112,6 +6112,14 @@
     margin-right: -26px;
   }
 
+  /* 320 px: the - and + steppers had shrunk to 40 px wide; they are the most
+   * tapped controls in the app, so they hold the 44 px floor at every width. */
+  @media (max-width: 359px) {
+    .dock-num-step {
+      flex-basis: var(--tap-min);
+    }
+  }
+
   /* ---- state vocabulary (StateGlyph.tsx) ----
    * One shape family, reused by the progress rail, FocusSetProgress and
    * WorkoutOverview rows. Circular by default; warmups get a squared-off
