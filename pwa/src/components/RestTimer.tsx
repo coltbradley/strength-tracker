@@ -34,6 +34,7 @@ export interface ActiveRest {
 }
 
 interface RestTimerProps {
+  variant?: "strip" | "scene";
   rest: ActiveRest | null;
   onAdjust: (deltaSeconds: number) => void;
   /** tap the clock: type the remaining seconds */
@@ -47,17 +48,20 @@ interface RestTimerProps {
    *  strip falls back to naming what it was recorded against, as before. */
   nextSetLabel?: string | null;
   lastSetRpe?: number | null;
+  lastSetLabel?: string | null;
   onRateLastSet?(rpe: number | null): void;
   onNoteLastSet?(): void;
 }
 
 export function RestTimer({
+  variant = "strip",
   rest,
   onAdjust,
   onEdit,
   onDone,
   nextSetLabel = null,
   lastSetRpe = null,
+  lastSetLabel = null,
   onRateLastSet,
   onNoteLastSet,
 }: RestTimerProps) {
@@ -136,7 +140,7 @@ export function RestTimer({
        four-times-a-second countdown never interrupts anyone mid-set. */
     <div
       key={rest.startedAt}
-      className={`rest-timer ${ready ? "rest-timer-ready" : "rest-timer-rest rest-timer-enter"}`}
+      className={`rest-timer rest-timer-${variant} ${ready ? "rest-timer-ready" : "rest-timer-rest rest-timer-enter"}`}
       role="timer"
       aria-label={ready ? "rest timer complete" : "rest timer"}
     >
@@ -197,6 +201,12 @@ export function RestTimer({
             ? nextSetLabel
             : `Tap to change. Recorded against ${rest.forLabel}.`}
       </div>
+      {variant === "scene" && lastSetLabel && (
+        <div className="rest-last-set">
+          <span>LAST SET</span>
+          <strong>{lastSetLabel}</strong>
+        </div>
+      )}
       {(onRateLastSet || onNoteLastSet) && (
         <div className="rest-actions">
           {onRateLastSet && (

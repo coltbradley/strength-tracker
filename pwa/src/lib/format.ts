@@ -78,6 +78,8 @@ export function formatRxTarget(
   rx: ResolvedPrescriptionRow,
   unit: Unit,
 ): string {
+  if (rx.tracking === "done") return `${rx.sets}×done`;
+  if (rx.tracking === "time") return `${rx.sets}×time`;
   const base = `${rx.sets}×${formatRepRange(rx.reps_min, rx.reps_max)}`;
   const tail = rx.set_type === "warmup" ? " warmup" : "";
   const load = rxLoadKg(rx);

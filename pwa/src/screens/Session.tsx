@@ -2583,6 +2583,39 @@ export function Session() {
             newestSetForThis.load_entry === "per_side" ? "/side" : ""
           } × ${newestSetForThis.reps} ${newestSetForThis.set_type}`;
 
+    const focusActions = presentation === "focus" && !editing ? (
+      <>
+        <button
+          type="button"
+          aria-label={`add an RPE rating to ${entry.name}`}
+          onClick={() =>
+            setRpeAsked((prior) => new Set([...prior, entry.exercise_id]))
+          }
+        >
+          RPE
+        </button>
+        <button type="button" onClick={() => setMoreOpen(true)}>Note</button>
+        <button type="button" onClick={() => skipEntryWithReason(entry, null)}>
+          Skip
+        </button>
+        {plateSplit !== null ? (
+          <button type="button" onClick={() => openSheet("plates", entry.key)}>
+            Plates
+          </button>
+        ) : !swapFrozen(entry) ? (
+          <button type="button" onClick={() => openSheet("swap")}>
+            Swap
+          </button>
+        ) : newestSetForThis ? (
+          <button type="button" onClick={() => startCorrection(newestSetForThis)}>
+            Fix last
+          </button>
+        ) : (
+          <button type="button" onClick={() => setMoreOpen(true)}>More</button>
+        )}
+      </>
+    ) : undefined;
+
     const editorBlock = (
       <>
         {pairedRound && roundA1 && roundA2 ? (
@@ -2603,6 +2636,7 @@ export function Session() {
             error={roundError}
             singleLogLabel={`Log ${focusSupersetPair[0].name} only`}
             pendingMember={pendingRoundMember}
+            focusActions={entry.key === focusSupersetPair[0].key ? focusActions : undefined}
             onLogRound={(drafts) =>
               tapLog(() =>
                 void logRound({
@@ -2718,6 +2752,7 @@ export function Session() {
               setSetType("working");
             }}
             lastSetLine={presentation === "focus" ? lastSetLine : null}
+            focusActions={focusActions}
             onEditLastSet={
               newestSetForThis ? () => startCorrection(newestSetForThis) : undefined
             }
@@ -3235,9 +3270,24 @@ export function Session() {
     );
   };
 
-  /** "1×8-15 @ 90 KG · 3×3-5" — an entry's full prescribed scheme */
+  /** "1×8-15 @ 90 KG · 3×3-5" — an entry's full prescribed scheme. */
   const scheme = (entry: ExerciseEntry): string =>
-    entry.brackets.map((b) => formatRxTarget(b, unit)).join(" · ");
+    entry.brackets
+      .map((b) => {
+        // Tick prescriptions encode reps as zero because there is no numeric
+        // rep target. Quoting the shared rep formatter directly turned that
+        // implementation value into a false "3×0" target in List.
+        if (b.tracking === "done") return `${b.sets}×done`;
+        if (b.tracking === "time") return `${b.sets}×time`;
+        const loadEntry = resolveLoadEntry({
+          override: getExercisePref(entry.exercise_id).loadEntry,
+          prescribed: entry.substitutedFor ? null : (b.load_entry ?? null),
+          equipment: equipMap[entry.exercise_id] ?? null,
+          name: entry.name,
+        });
+        return formatRxTarget({ ...b, load_entry: loadEntry }, unit);
+      })
+      .join(" · ");
 
   /** The load stepper's buttons: coarse pair outside, fine pair inside. Both
    *  the label and the delta come from `stepKgFor`, so a per-exercise or
@@ -3537,8 +3587,31 @@ export function Session() {
       : `Next: ${target.name}, ${position}`;
   };
 
+  const lastRestSetLabel = (): string | null => {
+    if (!lastLoggedSet) return null;
+    const entry = entries.find(
+      (candidate) =>
+        candidate.exercise_id === lastLoggedSet.exercise_id ||
+        candidate.substitutedFor?.exercise_id === lastLoggedSet.exercise_id,
+    );
+    const name = entry?.name ?? "Set";
+    if (entry && isTick(entry)) return `${name} · completed`;
+    if (entry && isTimed(entry)) {
+      const duration = lastLoggedSet.duration_seconds;
+      return `${name} · ${duration == null ? "timed set" : `${formatClock(duration)} held`}`;
+    }
+    if (lastLoggedSet.load_entry === "per_side") {
+      return `${name} · ${toDisplay(enteredKg(lastLoggedSet.load_kg, "per_side"), unit)} ${unit}/hand × ${lastLoggedSet.reps}`;
+    }
+    if (lastLoggedSet.load_entry === "total") {
+      return `${name} · ${toDisplay(lastLoggedSet.load_kg, unit)} ${unit} total × ${lastLoggedSet.reps}`;
+    }
+    return `${name} · ${toDisplay(lastLoggedSet.load_kg, unit)} ${unit} load unclassified × ${lastLoggedSet.reps}`;
+  };
+
   const restTimerEl = (
       <RestTimer
+        variant={presentation === "focus" ? "scene" : "strip"}
         rest={rest}
         onAdjust={(d) => {
           if (!rest) return;
@@ -3559,6 +3632,7 @@ export function Session() {
         }}
         nextSetLabel={nextSetLabel()}
         lastSetRpe={lastLoggedSet?.rpe ?? null}
+        lastSetLabel={lastRestSetLabel()}
         onRateLastSet={rest && !editing && lastLoggedSet ? rateLastSet : undefined}
         onNoteLastSet={rest && !editing && lastLoggedSet
           ? () => {
@@ -3632,7 +3706,26 @@ export function Session() {
               renderEditor={(entry) => renderEditor(entry, false, "hero")}
               onOpenMore={() => setMoreOpen(true)}
               formatScheme={scheme}
-              topSlot={!sheetOpen ? restTimerEl : undefined}
+              stageSlot={
+                <div className="focus-stage-details">
+                  {scheme(focusEntry) && (
+                    <span className="focus-stage-target">
+                      {scheme(focusEntry).toUpperCase()}
+                    </span>
+                  )}
+                  {equipMap[focusEntry.exercise_id] && (
+                    <span className="focus-stage-equipment">
+                      {equipMap[focusEntry.exercise_id]}
+                    </span>
+                  )}
+                  {focusEntry.brackets[0]?.notes && (
+                    <span className="focus-stage-cue">
+                      {focusEntry.brackets[0].notes}
+                    </span>
+                  )}
+                </div>
+              }
+              topSlot={!sheetOpen && rest ? restTimerEl : undefined}
               workoutComplete={workoutDone && !editing}
               extraSetArmed={extraSetArmed}
               onFinishWorkout={finishWorkout}

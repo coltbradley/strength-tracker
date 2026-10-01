@@ -2155,6 +2155,74 @@
     gap: var(--s-6);
   }
 
+  .rest-timer-scene {
+    width: 100%;
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    padding: var(--s-7);
+  }
+
+  .rest-timer-scene .rest-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: center;
+    gap: var(--s-4);
+  }
+
+  .rest-timer-scene .rest-label,
+  .rest-timer-scene .rest-timer-time,
+  .rest-timer-scene .rest-track {
+    grid-column: 1 / -1;
+  }
+
+  .rest-timer-scene .rest-label {
+    font-size: var(--fs-label);
+  }
+
+  .rest-timer-scene .rest-timer-time {
+    justify-self: center;
+    border-bottom: 0;
+    font-size: clamp(64px, 22vw, 88px);
+    line-height: 1;
+  }
+
+  .rest-timer-scene .rest-adjust,
+  .rest-timer-scene .rest-timer-dismiss {
+    width: 100%;
+    min-height: var(--tap-min);
+    border: var(--rule-hair);
+    border-radius: var(--radius);
+  }
+
+  .rest-timer-scene .rest-foot {
+    margin-top: var(--s-5);
+    font-size: var(--fs-sm);
+    letter-spacing: 0;
+  }
+
+  .rest-last-set {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-4) var(--s-5);
+    border: var(--rule-hair);
+    background: var(--bg-raised);
+    border-radius: var(--radius-card);
+  }
+
+  .rest-last-set span {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    letter-spacing: var(--track-1);
+  }
+
+  .rest-last-set strong {
+    font-size: var(--fs-sm);
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+  }
+
   /* The finished state persists until the next set or an optional HIDE tap.
    * Colour and words both change, so expiry is visible without sound. */
   .rest-timer-ready {
@@ -3641,6 +3709,46 @@
     gap: var(--s-5);
   }
 
+  .focus-stage {
+    flex: 1 1 0;
+    min-height: 72px;
+    display: flex;
+    align-items: center;
+    margin-inline: calc(-1 * var(--gutter));
+    padding-inline: var(--gutter);
+  }
+
+  .focus-stage-details {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s-5);
+    width: 100%;
+    text-align: center;
+  }
+
+  .focus-stage-target {
+    color: var(--current-set);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    font-weight: 700;
+    letter-spacing: var(--track-2);
+  }
+
+  .focus-stage-equipment {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    text-transform: uppercase;
+  }
+
+  .focus-stage-cue {
+    max-width: 38ch;
+    color: var(--text-dim);
+    font-size: var(--fs-sm);
+    line-height: 1.4;
+  }
+
   /* Uppercased here, not in the string: a superset's "round 1 of 3" comes
    * from Session.tsx in sentence case and sat beside "SET 1 OF 5" looking
    * like a different component. */
@@ -3666,7 +3774,7 @@
   }
 
   .focus-deck-editor {
-    flex: 1;
+    flex: none;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -3825,7 +3933,7 @@
    * round's shared Log round / Log A1 / Log A2 row sits in normal flow
    * below both, which is already where it belongs. */
   .set-editor-focus {
-    flex: 1;
+    flex: none;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -4251,11 +4359,19 @@
    * below: name/position stay pinned at the top, the bottom bar (its own
    * margin-top: auto, below) stays pinned at the bottom, and this settles
    * into the space left over, however much or little that is. */
-  .focus-hero-group {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-7);
-    margin: auto 0;
+  .focus-dock-values {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+    gap: var(--s-5);
+  }
+
+  .focus-dock-values:has(> .rule-section:only-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .focus-dock-values > .rule-section {
+    min-width: 0;
   }
 
   /* No rule above either section, and no accent underline on the hero
@@ -4276,7 +4392,8 @@
    * focus deck has exactly one number to show at once, so it can have all
    * the room the accordion's shared editor never could. */
   .focus-hero-section .stepper-value {
-    font-size: 84px;
+    max-width: 100%;
+    font-size: clamp(30px, 9vw, 42px);
     border-bottom: none;
     font-variant-numeric: tabular-nums;
   }
@@ -4382,6 +4499,45 @@
     background: var(--accent);
     border: var(--bw) solid var(--accent);
     color: var(--text-inverse);
+  }
+
+  .focus-dock {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    margin-top: 0;
+    padding: var(--s-4);
+    background: var(--bg-raised);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+  }
+
+  .focus-utility-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s-3);
+  }
+
+  .focus-utility-row button {
+    min-width: 0;
+    min-height: var(--tap-min);
+    padding-inline: var(--s-2);
+    border: var(--rule-hair);
+    border-radius: var(--radius);
+    background: var(--paper-raised);
+    color: var(--text);
+    font-size: var(--fs-label);
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  .focus-dock > .rule-section {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .focus-dock .rpe-grid {
+    grid-template-columns: repeat(auto-fit, minmax(var(--tap-min), 1fr));
   }
 
   .focus-bar-spacer {

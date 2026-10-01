@@ -25,6 +25,8 @@ export interface FocusDeckProps {
   onChangePresentation?(next: SessionPresentation): void;
   /** Scene-level state (REST/READY) occupies the top slot when active. */
   topSlot?: ReactNode;
+  /** Movement target, equipment, or authored cue shown in the Focus stage. */
+  stageSlot?: ReactNode;
   workoutComplete?: boolean;
   extraSetArmed?: boolean;
   onFinishWorkout?(): void;
@@ -191,6 +193,7 @@ export function FocusDeck({
   onViewFullWorkout,
   onChangePresentation,
   topSlot,
+  stageSlot,
   workoutComplete = false,
   extraSetArmed = false,
   onFinishWorkout,
@@ -302,8 +305,6 @@ export function FocusDeck({
         )}
       </div>
 
-      {topSlot && <div className="focus-top-slot">{topSlot}</div>}
-
       <div className="focus-deck-status" aria-live="polite">
         <h1 className="focus-deck-name">
           {supersetHeading ? supersetHeading.title : entry.name}
@@ -315,6 +316,12 @@ export function FocusDeck({
           {unitSwitch}
         </div>
       </div>
+
+      {(topSlot || stageSlot) && (
+        <div className="focus-stage">
+          {topSlot ?? stageSlot}
+        </div>
+      )}
 
       {(swapLabel !== null || onSkip || (skipped && onUnskip)) && (
         <div className="focus-deck-secondary-row">

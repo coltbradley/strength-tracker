@@ -171,6 +171,33 @@ describe("WorkoutOverview", () => {
     expect(screen.getAllByText(/^A[1-3]$/)).toHaveLength(3);
   });
 
+  it("shows each paired member's own target and progress when A1 and A2 differ", () => {
+    const pair: ExerciseEntry[] = [
+      { key: "a1", exercise_id: "a1", name: "A1 Press", brackets: [{ sets: 2, set_type: "working" } as never] },
+      { key: "a2", exercise_id: "a2", name: "A2 Row", brackets: [{ sets: 3, set_type: "working" } as never] },
+    ];
+    render(
+      <WorkoutOverview
+        {...props({
+          variant: "list",
+          entries: pair,
+          entryState: (entry) => entry.key === "a1" ? "current" : "upcoming",
+          entryProgress: (entry) => entry.key === "a1" ? 2 : 1,
+          supersetInfo: new Map([
+            ["a1", { tag: "A1", first: true, last: false }],
+            ["a2", { tag: "A2", first: false, last: true }],
+          ]),
+          formatScheme: (entry) => entry.key === "a1" ? "2×8" : "3×10",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("2×8")).toBeTruthy();
+    expect(screen.getByText("3×10")).toBeTruthy();
+    expect(screen.getByText("2/2")).toBeTruthy();
+    expect(screen.getByText("1/3")).toBeTruthy();
+  });
+
   it("marks an overview entry selected without writing a set", () => {
     const onSelectEntry = vi.fn();
     const onLog = vi.fn();

@@ -61,6 +61,21 @@ describe("RestTimer", () => {
     expect(container.querySelector(".rest-timer")).toBeNull();
   });
 
+  it("can present the same active rest as a Focus scene", () => {
+    const { container } = render(
+      <RestTimer
+        rest={{ startedAt: Date.now(), targetSeconds: 60, forLabel: "Squat set 2" }}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+        variant="scene"
+      />,
+    );
+
+    expect(container.querySelector(".rest-timer-scene")).toBeTruthy();
+    expect(screen.getByRole("timer", { name: "rest timer" })).toBeTruthy();
+  });
+
   it("marks the active and completed rest states for their aubergine treatment", () => {
     const { container, rerender } = render(
       <RestTimer

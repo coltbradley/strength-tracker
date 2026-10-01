@@ -1482,11 +1482,25 @@ describe("Session focus presentation", () => {
       await Promise.resolve();
     });
     expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-    act(() => vi.advanceTimersByTime(30_000));
+    fireEvent.click(screen.getByRole("button", { name: "reps value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "9" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
+    fireEvent.click(screen.getByRole("button", { name: "add 30 seconds to the rest target" }));
+    expect(screen.getByRole("timer", { name: /^rest timer/ }).textContent).toContain("1:30");
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(screen.getByRole("button", { name: "reps value — tap to type" }).textContent).toBe("9");
+    expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
+    act(() => vi.advanceTimersByTime(91_000));
 
-    expect(screen.getByText("0:30")).toBeTruthy();
+    expect(screen.getByRole("timer", { name: "rest timer complete" })).toBeTruthy();
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
+    const repsAfterReturn = screen.getByRole("button", {
+      name: "reps value — tap to type",
+    });
+    expect(repsAfterReturn.textContent).toBe("9");
+    expect(screen.getByRole("timer", { name: "rest timer complete" })).toBeTruthy();
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
 

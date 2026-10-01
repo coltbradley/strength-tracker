@@ -77,6 +77,13 @@ describe("formatRxTarget is the one prescription formatter", () => {
     );
   });
 
+  it("names completion and timed targets without exposing their zero reps encoding", () => {
+    expect(formatRxTarget(rx({ tracking: "done", reps_min: 0, reps_max: 0 }), "kg"))
+      .toBe("3×done");
+    expect(formatRxTarget(rx({ tracking: "time", reps_min: 0, reps_max: 0 }), "kg"))
+      .toBe("3×time");
+  });
+
   it("falls back to the percentage when no training max resolves it", () => {
     expect(formatRxTarget(rx({ load_pct_tm: 80 }), "kg")).toBe("3×5 @ 80% TM");
   });

@@ -1,6 +1,8 @@
 import { Stepper, type StepDef } from "../Stepper";
+import type { ReactNode } from "react";
 import { stagedDisplayLoad, toDisplay } from "../../lib/units";
 import type { SetDraft, SetEditorProps } from "./SetEditor";
+import { RpeChips } from "../RpeChips";
 
 export interface SupersetRoundMember {
   tag: string;
@@ -20,6 +22,7 @@ export interface SupersetRoundEditorProps {
   singleLogLabel?: string;
   /** The one member still missing from a partially persisted round. */
   pendingMember?: "a1" | "a2" | null;
+  focusActions?: ReactNode;
   onLogRound(drafts: { a1: SetDraft; a2: SetDraft }): void;
   onLogA1Only(): void;
   onLogA2Only(): void;
@@ -130,6 +133,7 @@ export function SupersetRoundEditor({
   error = null,
   singleLogLabel = `Log ${a1.editor.entry.name} only`,
   pendingMember = null,
+  focusActions,
   onLogRound,
   onLogA1Only,
   onLogA2Only,
@@ -148,6 +152,12 @@ export function SupersetRoundEditor({
           {error}
         </p>
       )}
+      {focusActions && <div className="focus-utility-row">{focusActions}</div>}
+      <RpeChips
+        shown={a1.editor.rpeShown}
+        value={a1.editor.draft.rpe}
+        onChange={(rpe) => a1.editor.onDraftChange({ rpe })}
+      />
       <div className="superset-round-actions">
         {pendingMember === null ? (
           <>

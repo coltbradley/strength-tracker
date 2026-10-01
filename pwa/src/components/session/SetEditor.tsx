@@ -95,6 +95,8 @@ export interface SetEditorProps {
    *  this set rather than a document-level ticker with the log action below
    *  it. Focus mode only; Session keeps its own strip for everything else. */
   restSlot?: ReactNode;
+  /** Session-owned utility actions, arranged in the focus dock. */
+  focusActions?: ReactNode;
   onDraftChange(next: Partial<SetDraft>): void;
   onLog(): void;
   onOpenPlates(): void;
@@ -156,8 +158,6 @@ export function SetEditor({
   unit,
   maxEntryKg,
   loadSteps,
-  nearbyLoads = [],
-  onChooseNearbyLoad,
   rpeShown,
   logLabel,
   logClassName = "btn btn-primary btn-log",
@@ -170,6 +170,7 @@ export function SetEditor({
   lastSetLine = null,
   onEditLastSet,
   restSlot,
+  focusActions,
   onDraftChange,
   onLog,
   onOpenPlates,
@@ -339,20 +340,6 @@ export function SetEditor({
         onChange={(entryKg) => onDraftChange({ entryKg, enteredLoad: undefined, enteredUnit: undefined })}
         steps={focus ? [] : loadSteps}
       />
-      {focus && heroIsLoad && nearbyLoads.length > 0 && onChooseNearbyLoad && (
-        <div className="focus-nearby-loads" aria-label="Nearby standard loads">
-          {nearbyLoads.map((value) => (
-            <button
-              type="button"
-              key={value}
-              aria-label={`Use suggested ${value} ${unit}`}
-              onClick={() => onChooseNearbyLoad(value)}
-            >
-              {value} {unit}
-            </button>
-          ))}
-        </div>
-      )}
       {/* Per-hand count only — never the lb/kg twin conversion the accordion
           shows (loadSub): that's a fine detail for the "more" sheet, not the
           hero. "15 × 2" is this app's own convention for a stored total
@@ -362,7 +349,7 @@ export function SetEditor({
           EACH HAND × 2 · {toDisplay(totalKg, unit)} {unit.toUpperCase()} TOTAL
         </div>
       )}
-      {plateSplit && <PlateBar split={plateSplit} barKg={barKg} unit={unit} />}
+      {!focus && plateSplit && <PlateBar split={plateSplit} barKg={barKg} unit={unit} />}
     </section>
   );
 
@@ -493,14 +480,7 @@ export function SetEditor({
         </div>
       )}
 
-      {/* Focus wraps the hero in one group so the whole thing (not each
-          piece separately) can be given equal auto margins above and below,
-          leaving the name/position pinned at the top and the bottom bar
-          pinned at the bottom. Overview keeps the plain, ungrouped markup it
-          always had — .set-editor's own gap already sets its rhythm. */}
-      {focus ? (
-        <div className="focus-hero-group">{heroContent}</div>
-      ) : (
+      {!focus && (
         <>
           {heroContent}
           <RpeChips
@@ -509,32 +489,6 @@ export function SetEditor({
             onChange={(rpe) => onDraftChange({ rpe })}
           />
         </>
-      )}
-
-      {focus && tracking !== "done" && hasWarmupBracket && (
-        <div className="focus-hero-warmup">
-          <div className="seg seg-types">
-            {SET_TYPES.map((t) => (
-              <button
-                key={t}
-                type="button"
-                className={`seg-btn ${draft.setType === t ? "seg-on" : ""}`}
-                onClick={() => onDraftChange({ setType: t })}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-          {draft.setType === "warmup" && onAlreadyWarm && (
-            <button
-              type="button"
-              className="btn btn-ghost focus-already-warm"
-              onClick={onAlreadyWarm}
-            >
-              Already warm
-            </button>
-          )}
-        </div>
       )}
 
       {focus && tracking !== "done" && lastSetLine && onEditLastSet && (
@@ -547,23 +501,60 @@ export function SetEditor({
         <p className="focus-last-performance">{lastPerformance}</p>
       )}
 
-      {focus && restSlot}
-      {bottomBar}
+      {focus ? (
+        <div className="focus-dock">
+          <div className="focus-dock-values">{heroContent}</div>
+          {tracking !== "done" && hasWarmupBracket && (
+            <div className="focus-hero-warmup">
+              <div className="seg seg-types">
+                {SET_TYPES.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`seg-btn ${draft.setType === t ? "seg-on" : ""}`}
+                    onClick={() => onDraftChange({ setType: t })}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              {draft.setType === "warmup" && onAlreadyWarm && (
+                <button
+                  type="button"
+                  className="btn btn-ghost focus-already-warm"
+                  onClick={onAlreadyWarm}
+                >
+                  Already warm
+                </button>
+              )}
+            </div>
+          )}
+          {restSlot}
+          {focusActions && <div className="focus-utility-row">{focusActions}</div>}
+          <RpeChips
+            shown={rpeShown}
+            value={draft.rpe}
+            onChange={(rpe) => onDraftChange({ rpe })}
+          />
+          {bottomBar}
+          {tracking === "done" && showLog && (
+            <button
+              type="button"
+              className={`${logClassName} focus-bar-log focus-tick-log`}
+              disabled={disabled}
+              onClick={onLog}
+            >
+              {logLabel}
+            </button>
+          )}
+        </div>
+      ) : null}
+      {!focus && bottomBar}
 
       {!focus && showLog && (
         <button
           type="button"
           className={logClassName}
-          disabled={disabled}
-          onClick={onLog}
-        >
-          {logLabel}
-        </button>
-      )}
-      {focus && tracking === "done" && showLog && (
-        <button
-          type="button"
-          className={`${logClassName} focus-bar-log focus-tick-log`}
           disabled={disabled}
           onClick={onLog}
         >

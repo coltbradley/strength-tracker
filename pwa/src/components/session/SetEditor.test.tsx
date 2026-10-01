@@ -419,7 +419,7 @@ describe("SetEditor focus variant", () => {
     expect(screen.queryByRole("button", { name: /log set/i })).toBeNull();
   });
 
-  it("keeps an authored lb value in the Focus hero and offers nearby grid values", () => {
+  it("keeps an authored lb value in the Focus hero without expanding the dock", () => {
     const onChooseNearbyLoad = vi.fn();
     render(
       <SetEditor
@@ -441,7 +441,30 @@ describe("SetEditor focus variant", () => {
     );
 
     expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25");
-    fireEvent.click(screen.getByRole("button", { name: "Use suggested 225 lb" }));
-    expect(onChooseNearbyLoad).toHaveBeenCalledWith(225);
+    expect(screen.queryByRole("button", { name: "Use suggested 225 lb" })).toBeNull();
+    expect(onChooseNearbyLoad).not.toHaveBeenCalled();
+  });
+
+  it("keeps utility actions and optional RPE inside the focus dock", () => {
+    const onDraftChange = vi.fn();
+    const { container } = render(
+      <SetEditor
+        {...props({
+          variant: "focus",
+          focusActions: <><button>RPE</button><button>Note</button><button>Skip</button><button>Plates</button></>,
+          rpeShown: true,
+          onDraftChange,
+        })}
+      />,
+    );
+
+    const dock = container.querySelector(".focus-dock");
+    const utilities = container.querySelector(".focus-utility-row");
+    expect(dock).toBeTruthy();
+    expect(utilities?.contains(screen.getByRole("button", { name: "RPE" }))).toBe(true);
+    expect(utilities?.contains(screen.getByRole("button", { name: "Note" }))).toBe(true);
+    expect(utilities?.contains(screen.getByRole("button", { name: "Skip" }))).toBe(true);
+    expect(utilities?.contains(screen.getByRole("button", { name: "Plates" }))).toBe(true);
+    expect(dock?.contains(screen.getByRole("button", { name: "rpe 7" }))).toBe(true);
   });
 });
