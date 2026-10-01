@@ -295,6 +295,23 @@ export function FocusDeck({
   onUnskip,
 }: FocusDeckProps) {
   const [skipPromptOpen, setSkipPromptOpen] = useState(false);
+  // Is there more in the middle band than shows above the dock? Then it fades
+  // at the bottom edge and says so; with nothing hidden it is left alone.
+  const middleRef = useRef<HTMLDivElement>(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+  useEffect(() => {
+    const el = middleRef.current;
+    if (!el) return;
+    const measure = () =>
+      setMoreBelow(el.scrollHeight - el.clientHeight - el.scrollTop > 4);
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+    };
+  });
   const entryIndex = entries.findIndex(
     (candidate) => candidate.key === entry.key,
   );
@@ -344,7 +361,6 @@ export function FocusDeck({
             {supersetHeading ? supersetHeading.subtitle : setPosition}
             {(warmupRun || warmupPosition) && !supersetHeading ? " · WARMUP" : ""}
           </div>
-          {unitNote && <span className="focus-unit-note">{unitNote}</span>}
           {onOpenMore && (
             <button
               type="button"
@@ -356,10 +372,17 @@ export function FocusDeck({
             </button>
           )}
         </div>
+        {/* Its own line: beside the position it squeezed "SET 1 OF 2 · WARMUP"
+            into one word per row at 320 px. */}
+        {unitNote && <div className="focus-unit-note">{unitNote}</div>}
         <FocusSetProgress progress={progress} target={target} warmup={warmupRun} />
       </div>
 
-      <div className="focus-middle">
+      <div className="focus-middle-wrap">
+      <div
+        className={`focus-middle${moreBelow ? " focus-middle--more" : ""}`}
+        ref={middleRef}
+      >
         {resting ? restSlot : !workoutComplete && !complete && picture}
         {/* Outside the rest branch: a rest often runs after the final set,
             and "+ Extra set" must stay reachable while it does. */}
@@ -453,6 +476,12 @@ export function FocusDeck({
         {!resting && !workoutComplete && !complete && !skipped && lastTime && (
           <p className="focus-last-performance">{lastTime}</p>
         )}
+      </div>
+      {moreBelow && (
+        <span className="focus-more-cue" aria-hidden="true">
+          ▾ MORE
+        </span>
+      )}
       </div>
 
       <div className="focus-dock">
