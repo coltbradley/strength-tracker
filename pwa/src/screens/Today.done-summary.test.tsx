@@ -92,7 +92,11 @@ import { Today } from "./Today";
 import { cacheSet, resetDbForTests } from "../lib/db";
 import { doneSummaryKey } from "./End";
 import { addDays, startOfWeek } from "../lib/calendar";
-import { parseLocalDate, todayLocalIso } from "../lib/format";
+import {
+  formatPlannedDate,
+  parseLocalDate,
+  todayLocalIso,
+} from "../lib/format";
 
 const PROGRAM = {
   id: "prog-1",
@@ -168,6 +172,20 @@ describe("Today: a DONE day's own summary", () => {
 
     expect(await screen.findByText(/4 sets/)).toBeTruthy();
     expect(screen.getByText(/47 MIN/)).toBeTruthy();
+  });
+
+  it("shows the selected calendar date with the Program day", async () => {
+    const datedWorkout = { ...WORKOUT, scheduled_date: todayLocalIso() };
+    getPlannedWorkouts.mockResolvedValue({
+      data: { programs: [PROGRAM], workouts: [datedWorkout] },
+      fromCache: false,
+      stale: null,
+    });
+    render(<Today userId="u1" presentation="program" />);
+
+    expect(
+      await screen.findByText(formatPlannedDate(todayLocalIso())),
+    ).toBeTruthy();
   });
 });
 

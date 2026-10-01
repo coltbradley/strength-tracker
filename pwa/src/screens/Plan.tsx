@@ -932,7 +932,7 @@ export function Plan() {
         : "";
 
   return (
-    <div className="screen">
+    <div className="screen plan-screen">
       <button type="button" className="back-link" onClick={() => navigate("/")}>
         ‹ TODAY
       </button>

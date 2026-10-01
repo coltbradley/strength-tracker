@@ -454,7 +454,7 @@ export function History({ userId }: { userId: string }) {
     !indexLoading && !logLoading && !selected && sessions.length === 0;
 
   return (
-    <div className="screen">
+    <div className="screen history-screen">
       {/* the screen's h1 is the exercise on show; the button is the control */}
       <h1>
         <button

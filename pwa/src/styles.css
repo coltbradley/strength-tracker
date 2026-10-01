@@ -2516,9 +2516,8 @@
 
   .sheet {
     background: var(--bg-raised);
-    border: 0;
-    border-top: var(--bw-hair) solid var(--rule-heavy-color);
-    border-radius: 0;
+    border: var(--rule-hair);
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
     width: 100%;
     max-width: var(--column);
     padding: var(--s-7) var(--gutter) calc(env(safe-area-inset-bottom) + 20px);
@@ -2575,6 +2574,41 @@
     padding-left: 0;
     padding-right: 0;
     gap: 0;
+  }
+
+  .sheet-head {
+    align-items: center;
+  }
+
+  .sheet-title {
+    color: var(--text);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-2);
+  }
+
+  .sheet-close {
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    padding-inline: var(--s-4);
+    border: var(--rule-hair);
+    border-radius: var(--radius-pill);
+    background: var(--paper-raised);
+    color: var(--text-dim);
+  }
+
+  .sheet-row {
+    min-height: var(--tap-min);
+    padding-inline: var(--s-4);
+    border: var(--rule-hair);
+    border-radius: var(--radius);
+    background: var(--paper-raised);
+  }
+
+  @media (min-width: 900px) {
+    .sheet {
+      border-radius: var(--radius-card);
+      box-shadow: var(--shadow-card);
+    }
   }
 
   .sheet-head {
@@ -2978,6 +3012,277 @@
     align-items: center;
     gap: var(--s-5);
     margin-bottom: var(--s-2);
+  }
+
+  .history-screen .history-session {
+    margin-block: var(--s-3);
+    padding: var(--s-5);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+  }
+
+  .history-screen > .rule-section {
+    margin-block: var(--s-4);
+    padding: var(--s-5);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+  }
+
+  .history-screen .history-date {
+    color: var(--text);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    text-transform: none;
+  }
+
+  .history-screen .goal-pct {
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--info) 10%, var(--paper-raised));
+    color: var(--info);
+    font-weight: 700;
+  }
+
+  .history-screen .hist-picker {
+    min-height: var(--tap-md);
+    padding-inline: var(--s-6);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+    color: var(--text);
+    text-align: left;
+  }
+
+  .plan-screen .plan-title-input {
+    min-height: var(--tap-md);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+    padding-inline: var(--s-6);
+    font-size: var(--fs-lg);
+    font-weight: 750;
+  }
+
+  .plan-screen .week-item {
+    margin-block: var(--s-3);
+    border: 0;
+  }
+
+  .plan-screen .week-row-rx {
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto) var(--tap-min);
+    gap: var(--s-2) var(--s-3);
+    align-items: center;
+    min-height: var(--tap-md);
+    padding: var(--s-4) var(--s-4) var(--s-4) var(--s-5);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+    text-align: left;
+  }
+
+  .plan-screen .week-row-rx > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .plan-screen .week-label {
+    color: var(--text);
+    font-size: var(--fs-body);
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  @media (max-width: 380px) {
+    .plan-screen .week-row-rx {
+      grid-template-columns: minmax(0, 1fr) var(--tap-min);
+      grid-template-areas:
+        "name action"
+        "target action";
+      align-items: center;
+    }
+
+    .plan-screen .week-row-rx .week-label {
+      grid-area: name;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+
+    .plan-screen .week-row-rx .week-state {
+      grid-area: target;
+      text-align: left;
+    }
+
+    .plan-screen .week-row-rx .chev {
+      grid-area: action;
+    }
+  }
+
+  .plan-screen .week-state {
+    color: var(--text-dim);
+    font-size: var(--fs-micro);
+    line-height: 1.35;
+    text-align: right;
+  }
+
+  .plan-screen .week-row-rx .chev {
+    width: var(--tap-min);
+    height: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-pill);
+    background: var(--paper);
+  }
+
+  .plan-screen .week-detail {
+    margin: var(--s-2) var(--s-3) var(--s-5);
+    padding: var(--s-5);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+  }
+
+  .plan-screen .ss-group {
+    border-radius: var(--radius-card);
+    background: color-mix(in srgb, var(--accent) 4%, var(--paper-raised));
+  }
+
+  .plan-screen .plan-block-named {
+    border-color: var(--rule-color);
+  }
+
+  .plan-screen .plan-section-head {
+    min-height: var(--tap-min);
+    padding-inline: var(--s-3);
+    border-radius: var(--radius);
+  }
+
+  .plan-screen .plan-done {
+    min-height: var(--tap-md);
+    border-radius: var(--radius-card);
+  }
+
+  [data-presentation="program"] > .rule-section {
+    margin-block: var(--s-4);
+    padding: var(--s-5);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper-raised);
+  }
+
+  [data-presentation="program"] .section-head {
+    align-items: center;
+    margin-bottom: var(--s-4);
+  }
+
+  [data-presentation="program"] .week-track {
+    margin-inline: calc(-1 * var(--s-5));
+  }
+
+  [data-presentation="program"] .week-page {
+    padding-inline: var(--s-5);
+  }
+
+  [data-presentation="program"] .week-cell {
+    border: var(--rule-hair);
+    border-radius: var(--radius);
+    background: var(--paper);
+  }
+
+  [data-presentation="program"] .week-cell-selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--paper-raised));
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  [data-presentation="program"] .week-detail {
+    margin-top: var(--s-4);
+    padding: var(--s-5);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+    background: var(--paper);
+  }
+
+  [data-presentation="program"] .selected-day-head {
+    align-items: center;
+  }
+
+  [data-presentation="program"] .selected-day-identity {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
+  [data-presentation="program"] .selected-day-date {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: var(--fs-micro);
+    font-weight: 700;
+    letter-spacing: var(--track-2);
+  }
+
+  [data-presentation="program"] .selected-day-label {
+    overflow-wrap: anywhere;
+  }
+
+  [data-presentation="program"] .week-row {
+    grid-template-columns: minmax(64px, auto) minmax(0, 1fr) auto var(--tap-min);
+    gap: var(--s-3);
+    align-items: center;
+    min-height: var(--tap-md);
+    padding: var(--s-3) var(--s-2);
+  }
+
+  [data-presentation="program"] .week-row > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  [data-presentation="program"] .week-row .chev {
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-pill);
+    background: var(--paper);
+  }
+
+  [data-presentation="program"] .btn-block {
+    min-height: var(--tap-md);
+    border-radius: var(--radius-card);
+  }
+
+  @media (max-width: 359px) {
+    [data-presentation="program"] .week-page {
+      padding-inline: 0;
+    }
+
+    [data-presentation="program"] .week-track {
+      margin-inline: -23px;
+    }
+
+    [data-presentation="program"] .week-page .week-strip {
+      grid-template-columns: repeat(7, minmax(44px, 1fr));
+      gap: 0;
+      margin-inline: 0;
+    }
+
+    .history-screen .checkin-days {
+      grid-template-columns: repeat(7, minmax(44px, 1fr));
+      overflow-x: auto;
+      padding-left: 0;
+      margin-inline: 0;
+      scrollbar-width: thin;
+    }
+
+    .history-screen .checkin-days button {
+      min-width: 44px;
+    }
   }
 
   /* ---- the week in one line ---- */

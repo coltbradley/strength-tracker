@@ -1701,9 +1701,14 @@ export function Today({
             {selectedWorkout ? (
               <>
                 <div className="selected-day-head">
-                  <h2 className="selected-day-label">
-                    {workoutName(selectedWorkout)}
-                  </h2>
+                  <div className="selected-day-identity">
+                    <span className="selected-day-date">
+                      {formatPlannedDate(selectedDate)}
+                    </span>
+                    <h2 className="selected-day-label">
+                      {workoutName(selectedWorkout)}
+                    </h2>
+                  </div>
                   <span className="section-meta">
                     {stateLabel(states.get(selectedWorkout.id) ?? "UPCOMING")}
                   </span>
@@ -1712,6 +1717,9 @@ export function Today({
               </>
             ) : (
               <>
+                <div className="selected-day-date">
+                  {formatPlannedDate(selectedDate)}
+                </div>
                 <div className="microcopy">
                   {selectedDate === today
                     ? "Nothing scheduled today — rest day."
