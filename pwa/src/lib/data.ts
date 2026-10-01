@@ -17,6 +17,12 @@ import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
 import { kgToEnteredLoad } from "./units";
+import {
+  buildRecordIndex,
+  type RecordE1rmRow,
+  type RecordIndexEntry,
+  type RecordSetRow,
+} from "./record";
 import type {
   AdherenceRow,
   ExerciseRow,
@@ -1833,6 +1839,103 @@ export async function getGoalProgress(
     const rows = (data ?? []) as GoalProgressRow[];
     return rows[0] ?? null;
   });
+}
+
+// ---- Record list: per-exercise recency, goals (pin) -------------------------
+
+/** Pages newest-first through a view on `performed_at`. Same cursor rule as
+ *  the last-actuals scan: strict `lt` can skip rows sharing the boundary
+ *  millisecond, which costs at most one session count and never a date. */
+async function scanNewestFirst<T extends { performed_at: string }>(
+  fetchPage: (cursor: string | null) => Promise<T[]>,
+): Promise<T[]> {
+  const out: T[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < ACTUALS_MAX_PAGES; page++) {
+    const rows = await fetchPage(cursor);
+    out.push(...rows);
+    if (rows.length < ACTUALS_PAGE) break;
+    const next = rows[rows.length - 1].performed_at;
+    if (next === cursor) break;
+    cursor = next;
+  }
+  return out;
+}
+
+/** Last performed date, recent session count and newest e1RM per exercise,
+ *  from v_live_sets and v_session_best_e1rm. Ordering is lib/record.ts. */
+export async function getRecordIndex(): Promise<CacheRead<RecordIndexEntry[]>> {
+  return fetchWithCache(cacheKeys.recordIndex, async () => {
+    const [sets, e1rms] = await Promise.all([
+      scanNewestFirst<RecordSetRow>(async (cursor) => {
+        let q = supabase
+          .from("v_live_sets")
+          .select("exercise_id,session_id,performed_at")
+          .order("performed_at", { ascending: false })
+          .limit(ACTUALS_PAGE);
+        if (cursor !== null) q = q.lt("performed_at", cursor);
+        const { data, error } = await q;
+        throwIf(error);
+        return (data ?? []) as RecordSetRow[];
+      }),
+      scanNewestFirst<RecordE1rmRow>(async (cursor) => {
+        let q = supabase
+          .from("v_session_best_e1rm")
+          .select("exercise_id,session_id,performed_at,best_e1rm_kg")
+          .order("performed_at", { ascending: false })
+          .limit(ACTUALS_PAGE);
+        if (cursor !== null) q = q.lt("performed_at", cursor);
+        const { data, error } = await q;
+        throwIf(error);
+        return (data ?? []) as RecordE1rmRow[];
+      }),
+    ]);
+    return buildRecordIndex(sets, e1rms);
+  });
+}
+
+/** Every goal with its progress. An exercise is PINNED iff it is in here. */
+export async function getGoals(): Promise<CacheRead<GoalProgressRow[]>> {
+  return fetchWithCache(cacheKeys.goals, async () => {
+    const { data, error } = await supabase.from("v_goal_progress").select("*");
+    throwIf(error);
+    return (data ?? []) as GoalProgressRow[];
+  });
+}
+
+/**
+ * Pin an exercise, or change its target: one `goals` row per (user, exercise),
+ * upserted on that key. A direct write rather than the outbox, like
+ * deleteObservation: the outbox is for the append-only training record and its
+ * upsert conflicts on `id`, and a goal is a single editable row. Online only;
+ * the caller reports a failure and the screen keeps what it had. user_id is
+ * the column default (auth.uid()).
+ */
+export async function setGoal(
+  exerciseId: string,
+  targetE1rmKg: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from("goals")
+    .upsert(
+      { exercise_id: exerciseId, target_e1rm_kg: targetE1rmKg },
+      { onConflict: "user_id,exercise_id" },
+    );
+  throwIf(error);
+  await cacheDelete(cacheKeys.goals);
+  await cacheDelete(cacheKeys.goal(exerciseId));
+}
+
+/** Unpin: delete the goal row (RLS goals_delete: owner only). The sets are
+ *  untouched; only the target goes. */
+export async function removeGoal(exerciseId: string): Promise<void> {
+  const { error } = await supabase
+    .from("goals")
+    .delete()
+    .eq("exercise_id", exerciseId);
+  throwIf(error);
+  await cacheDelete(cacheKeys.goals);
+  await cacheDelete(cacheKeys.goal(exerciseId));
 }
 
 // ---- adherence (prescribed vs achieved) ------------------------------------

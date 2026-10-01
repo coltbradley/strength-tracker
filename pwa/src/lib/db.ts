@@ -344,6 +344,8 @@ const P = {
   e1rm: "e1rm:",
   volume: "volume:",
   goal: "goal:",
+  goals: "goals",
+  recordIndex: "recordIndex",
   recentSets: "recent:",
   sessionMeta: "sessionMeta:",
   setNotes: "setNotes:",
@@ -386,6 +388,10 @@ export const cacheKeys = {
   e1rm: (exerciseId: string) => `${P.e1rm}${exerciseId}`,
   volume: (exerciseId: string) => `${P.volume}${exerciseId}`,
   goal: (exerciseId: string) => `${P.goal}${exerciseId}`,
+  /** every goal with its progress (v_goal_progress): Record's PINNED set */
+  goals: P.goals,
+  /** per-exercise last date, recent session count and newest e1RM (Record) */
+  recordIndex: P.recordIndex,
   recentSets: (exerciseId: string) => `${P.recentSets}${exerciseId}`,
   /** notes/sRPE/bodyweight for the sessions behind one exercise's history */
   sessionMeta: (exerciseId: string) => `${P.sessionMeta}${exerciseId}`,
@@ -433,6 +439,8 @@ export const cacheFamilies = {
     P.e1rm,
     P.volume,
     P.goal,
+    P.goals,
+    P.recordIndex,
     P.sessionMeta,
     P.setNotes,
     P.adherence,

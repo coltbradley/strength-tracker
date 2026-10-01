@@ -1,4 +1,13 @@
-// History: per-exercise e1RM chart (goal % in teal), weekly working-set bars,
+// Record (the /history tab). Two views in one screen:
+//
+// LIST (nothing selected): search, PINNED GOALS (an exercise with a row in
+// `goals`: e1RM, target, % and a progress bar), RECENT (most recently
+// performed first, "most done" breaks ties, see lib/record.ts), a way into the
+// full library, then the day-shaped sections below. Pinning is a quiet
+// text toggle; the progress bar is the emphasis, not the button.
+//
+// DETAIL (an exercise selected): goal card (-/+ when pinned, "Pin as goal"
+// when not), per-exercise e1RM chart (goal % in teal), weekly working-set bars,
 // recent sets grouped by session date. Exactly two charts.
 //
 // Then the same record read the OTHER way round. Everything above is
@@ -30,8 +39,10 @@ import {
   getAdherence,
   getE1rmSeries,
   getExercises,
-  getGoalProgress,
-  getLoggedExerciseIds,
+  getGoals,
+  getRecordIndex,
+  removeGoal,
+  setGoal,
   getObservations,
   getRecentSets,
   getServerSessionSets,
@@ -63,6 +74,14 @@ import { cacheGet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { useUnit } from "../hooks/useUnit";
 import { toDisplay, type Unit } from "../lib/units";
+import {
+  buildRecordLists,
+  defaultGoalKg,
+  stepGoalKg,
+  RECENT_WINDOW_DAYS,
+  type RecordIndexEntry,
+  type RecordRow,
+} from "../lib/record";
 import { useArmed } from "../hooks/useArmed";
 import { ExercisePicker } from "../components/ExercisePicker";
 import type {
@@ -103,16 +122,23 @@ function latestTonnage(weeks: WeeklyVolumeRow[]): WeeklyVolumeRow | null {
   return weeks.length === 0 ? null : weeks[weeks.length - 1];
 }
 
+/** A row that happened must never render nameless: fall back to the id. */
+function nameOf(exercises: ExerciseRow[], id: string): string {
+  return exercises.find((e) => e.id === id)?.name ?? id;
+}
+
 export function History({ userId }: { userId: string }) {
   const unit = useUnit();
   const [exercises, setExercises] = useState<ExerciseRow[]>([]);
-  const [withData, setWithData] = useState<Set<string>>(new Set());
+  const [index, setIndex] = useState<RecordIndexEntry[]>([]);
+  /** every goal; an exercise is PINNED exactly when it has one */
+  const [goals, setGoals] = useState<GoalProgressRow[]>([]);
+  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const [series, setSeries] = useState<SessionBestE1rmRow[]>([]);
   const [volume, setVolume] = useState<WeeklyVolumeRow[]>([]);
-  const [goal, setGoal] = useState<GoalProgressRow | null>(null);
   const [recent, setRecent] = useState<SetInsert[]>([]);
   const [meta, setMeta] = useState<Record<string, SessionMetaRow>>({});
   /** session_id -> what each prescription in it asked for */
@@ -165,18 +191,20 @@ export function History({ userId }: { userId: string }) {
         if (!cancelled) setExercises(r.data);
       })
       .catch((e: unknown) => reportError(e, "load exercises"));
-    // only which exercises have data — not every set ever logged
-    getLoggedExerciseIds()
+    // per-exercise last date, recent session count and newest e1RM
+    getRecordIndex()
       .then((r) => {
-        if (cancelled) return;
-        const ids = new Set(r.data);
-        setWithData(ids);
-        setSelected((cur) => cur ?? [...ids][0] ?? null);
+        if (!cancelled) setIndex(r.data);
       })
-      .catch((e: unknown) => reportError(e, "load history index"))
+      .catch((e: unknown) => reportError(e, "load record index"))
       .finally(() => {
         if (!cancelled) setIndexLoading(false);
       });
+    getGoals()
+      .then((r) => {
+        if (!cancelled) setGoals(r.data);
+      })
+      .catch((e: unknown) => reportError(e, "load goals"));
     return () => {
       cancelled = true;
     };
@@ -273,7 +301,6 @@ export function History({ userId }: { userId: string }) {
     if (shownFor.current !== null && shownFor.current !== selected) {
       setSeries([]);
       setVolume([]);
-      setGoal(null);
       setRecent([]);
       setMeta({});
       setNotes({});
@@ -283,10 +310,9 @@ export function History({ userId }: { userId: string }) {
     setDetailLoading(true);
     void (async () => {
       try {
-        const [e1, vol, g, rec] = await Promise.all([
+        const [e1, vol, rec] = await Promise.all([
           getE1rmSeries(selected),
           getWeeklyVolume(selected),
-          getGoalProgress(selected),
           getRecentSets(selected),
         ]);
         if (cancelled) return;
@@ -307,7 +333,6 @@ export function History({ userId }: { userId: string }) {
         );
         setSeries(e1.data);
         setVolume(vol.data);
-        setGoal(g.data);
         setRecent(live);
         setStale(worstStale(e1.stale, vol.stale, rec.stale));
         // post-workout notes + sRPE for the visible sessions; cached so
@@ -354,9 +379,87 @@ export function History({ userId }: { userId: string }) {
   }, [selected, reloadTick]);
 
   const selectedName = useMemo(
-    () => exercises.find((e) => e.id === selected)?.name ?? selected ?? "",
+    () => nameOf(exercises, selected ?? ""),
     [exercises, selected],
   );
+
+  const goal = useMemo(
+    () => goals.find((g) => g.exercise_id === selected) ?? null,
+    [goals, selected],
+  );
+  const goalsRef = useRef(goals);
+  goalsRef.current = goals;
+
+  const lists = useMemo(
+    () => buildRecordLists(index, goals, (id) => nameOf(exercises, id), search),
+    [index, goals, exercises, search],
+  );
+  const indexById = useMemo(
+    () => new Map(index.map((e) => [e.exerciseId, e])),
+    [index],
+  );
+
+  // Goal writes are direct and strictly serial: a -/+ tapped three times in a
+  // row is three upserts that must land in order, and the view is re-read
+  // (never recomputed here) once the last one has.
+  const writeChain = useRef<Promise<void>>(Promise.resolve());
+  const pendingWrites = useRef(0);
+  const queueGoalWrite = (write: () => Promise<void>, what: string) => {
+    pendingWrites.current += 1;
+    writeChain.current = writeChain.current
+      .then(write)
+      .catch((e: unknown) => reportError(e, what))
+      .then(async () => {
+        pendingWrites.current -= 1;
+        if (pendingWrites.current > 0) return;
+        try {
+          setGoals((await getGoals()).data);
+        } catch (e) {
+          reportError(e, "refresh goals");
+        }
+      });
+  };
+  const setGoalsNow = (next: GoalProgressRow[]) => {
+    goalsRef.current = next;
+    setGoals(next);
+  };
+
+  const pinExercise = (exerciseId: string, e1rmKg: number | null) => {
+    if (e1rmKg === null || goalsRef.current.some((g) => g.exercise_id === exerciseId))
+      return;
+    const target = defaultGoalKg(e1rmKg, unit);
+    setGoalsNow([
+      ...goalsRef.current,
+      {
+        goal_id: "pending",
+        exercise_id: exerciseId,
+        exercise_name: nameOf(exercises, exerciseId),
+        target_e1rm_kg: target,
+        target_date: null,
+        recent_best_e1rm_kg: null,
+        alltime_best_e1rm_kg: null,
+        pct_of_target: null,
+      },
+    ]);
+    queueGoalWrite(() => setGoal(exerciseId, target), "pin goal");
+  };
+
+  const unpinExercise = (exerciseId: string) => {
+    setGoalsNow(goalsRef.current.filter((g) => g.exercise_id !== exerciseId));
+    queueGoalWrite(() => removeGoal(exerciseId), "unpin goal");
+  };
+
+  const stepGoal = (exerciseId: string, dir: 1 | -1) => {
+    const cur = goalsRef.current.find((g) => g.exercise_id === exerciseId);
+    if (!cur) return;
+    const target = stepGoalKg(cur.target_e1rm_kg, dir, unit);
+    setGoalsNow(
+      goalsRef.current.map((g) =>
+        g.exercise_id === exerciseId ? { ...g, target_e1rm_kg: target } : g,
+      ),
+    );
+    queueGoalWrite(() => setGoal(exerciseId, target), "change goal");
+  };
 
   /** Late correction: void a set noticed after the session ended. Same
    *  append-only mechanism as in-session voiding. */
@@ -451,23 +554,53 @@ export function History({ userId }: { userId: string }) {
   /** First run: no logged exercise AND no finished session. One empty state,
    *  not three stacked ones saying the same thing in different words. */
   const bare =
-    !indexLoading && !logLoading && !selected && sessions.length === 0;
+    !indexLoading &&
+    !logLoading &&
+    index.length === 0 &&
+    goals.length === 0 &&
+    sessions.length === 0;
+
+  const e1Text = (kg: number | null) =>
+    kg === null ? "—" : `${toDisplay(kg, unit)} ${unit}`;
+  const metaOf = (r: RecordRow) =>
+    r.lastAt === ""
+      ? "NOT LOGGED YET"
+      : `${formatSessionDate(r.lastAt)} · ${r.recentSessions} IN ${RECENT_WINDOW_DAYS}D`;
+
+  const detailE1 =
+    series.length > 0
+      ? series[series.length - 1].best_e1rm_kg
+      : (indexById.get(selected ?? "")?.e1rmKg ?? null);
 
   return (
     <div className="screen">
-      {/* the screen's h1 is the exercise on show; the button is the control */}
-      <h1>
-        <button
-          type="button"
-          className="hist-picker"
-          onClick={() => setPickerOpen(true)}
-        >
-          <span>{(selectedName || "Pick exercise").toUpperCase()}</span>
-          <span className="chev" aria-hidden="true">
-            ▾
-          </span>
-        </button>
-      </h1>
+      {selected === null ? (
+        <>
+          <h1 className="screen-title">Record</h1>
+          <input
+            className="input rec-search"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search your exercises"
+            aria-label="Search your exercises"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="rec-back"
+            onClick={() => setSelected(null)}
+          >
+            ‹ Record
+          </button>
+          <h1 className="screen-title">{selectedName}</h1>
+        </>
+      )}
 
       {stale === "offline" && (
         <div className="cache-note">offline — showing cached data</div>
@@ -478,21 +611,177 @@ export function History({ userId }: { userId: string }) {
         </div>
       )}
 
-      {indexLoading && !selected && <p className="muted">Loading…</p>}
+      {selected === null && indexLoading && index.length === 0 && (
+        <p className="muted">Loading…</p>
+      )}
 
-      {bare && (
-        <p className="muted">
-          Nothing logged yet — finish a session and it shows up here.
+      {selected === null && bare && (
+        <p className="rec-empty">
+          Your record starts with your first finished session.
         </p>
       )}
 
-      {selected && (
+      {selected === null && !bare && !indexLoading && (
         <>
+          {lists.pinned.length > 0 && (
+            <section className="rec-section" aria-label="Pinned goals">
+              <div className="field-label">PINNED GOALS</div>
+              {lists.pinned.map((r) => {
+                const g = r.goal as GoalProgressRow;
+                const best = g.recent_best_e1rm_kg ?? g.alltime_best_e1rm_kg;
+                const pct = g.pct_of_target;
+                return (
+                  <div key={r.exerciseId} className="rec-card">
+                    <div className="rec-card-head">
+                      <button
+                        type="button"
+                        className="rec-open"
+                        onClick={() => setSelected(r.exerciseId)}
+                      >
+                        <b className="rec-name">{r.name}</b>
+                        <span className="rec-meta">{metaOf(r)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="rec-pin rec-pin-on"
+                        aria-pressed="true"
+                        aria-label={`Unpin ${r.name}`}
+                        onClick={() => unpinExercise(r.exerciseId)}
+                      >
+                        ◆ Pinned
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="rec-open rec-progress"
+                      onClick={() => setSelected(r.exerciseId)}
+                    >
+                      <span className="rec-progress-row">
+                        <span className="rec-e1">{e1Text(best)}</span>
+                        <span className="rec-meta">
+                          {e1Text(g.target_e1rm_kg)}
+                          {pct !== null ? ` · ${Math.round(pct)}%` : ""}
+                        </span>
+                      </span>
+                      <span className="rec-bar" aria-hidden="true">
+                        <span
+                          className="rec-bar-fill"
+                          style={{
+                            width: `${Math.min(100, Math.max(0, pct ?? 0))}%`,
+                          }}
+                        />
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+            </section>
+          )}
+
+          <section className="rec-section" aria-label="Recent">
+            <div className="field-label">RECENT</div>
+            {lists.recent.map((r) => (
+              <div key={r.exerciseId} className="rec-row">
+                <button
+                  type="button"
+                  className="rec-open"
+                  onClick={() => setSelected(r.exerciseId)}
+                >
+                  <b className="rec-name">{r.name}</b>
+                  <span className="rec-meta">{metaOf(r)}</span>
+                </button>
+                <span className="rec-row-e1">{e1Text(r.e1rmKg)}</span>
+                <button
+                  type="button"
+                  className="rec-pin"
+                  aria-pressed="false"
+                  aria-label={`Pin ${r.name}`}
+                  disabled={r.e1rmKg === null}
+                  onClick={() => pinExercise(r.exerciseId, r.e1rmKg)}
+                >
+                  ◇ Pin
+                </button>
+              </div>
+            ))}
+            {lists.recent.length === 0 && lists.pinned.length === 0 && (
+              <p className="muted">
+                Nothing matches “{search.trim()}”. Try the full library.
+              </p>
+            )}
+          </section>
+
+          <button
+            type="button"
+            className="rec-library"
+            onClick={() => setPickerOpen(true)}
+          >
+            Search the full library
+          </button>
+        </>
+      )}
+
+      {selected !== null && (
+        <>
+          <section className="rec-goalcard" aria-label="Goal">
+            <div>
+              <span className="field-label">GOAL · ESTIMATED 1RM</span>
+              <b className="rec-goal-val">
+                {goal ? e1Text(goal.target_e1rm_kg) : "No goal yet"}
+              </b>
+              {goal?.pct_of_target != null && (
+                <span className="goal-pct">{goal.pct_of_target}% OF GOAL</span>
+              )}
+            </div>
+            {goal ? (
+              <div className="rec-goal-actions">
+                <button
+                  type="button"
+                  className="rec-step"
+                  aria-label="Lower goal"
+                  onClick={() => stepGoal(selected, -1)}
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  className="rec-step"
+                  aria-label="Raise goal"
+                  onClick={() => stepGoal(selected, 1)}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className="rec-pin rec-pin-on"
+                  aria-pressed="true"
+                  aria-label={`Unpin ${selectedName}`}
+                  onClick={() => unpinExercise(selected)}
+                >
+                  ◆ Pinned
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary rec-pin-goal"
+                disabled={detailE1 === null}
+                onClick={() => pinExercise(selected, detailE1)}
+              >
+                Pin as goal
+              </button>
+            )}
+          </section>
+          {!goal && detailE1 === null && !detailLoading && (
+            <p className="microcopy">
+              A goal needs a working set of 1–8 reps to measure against.
+            </p>
+          )}
+
           <section className="rule-section">
             <div className="section-head">
               <span className="field-label">E1RM · {unit.toUpperCase()}</span>
-              {goal?.pct_of_target != null && (
-                <span className="goal-pct">{goal.pct_of_target}% OF GOAL</span>
+              {detailE1 !== null && (
+                <span className="section-meta">LATEST {e1Text(detailE1)}</span>
               )}
             </div>
             {detailLoading && series.length === 0 ? (
@@ -625,7 +914,13 @@ export function History({ userId }: { userId: string }) {
         </>
       )}
 
-      {!bare && (
+      {/* A standing fact about the person, not about any one exercise's
+          history — same component, same behaviour as the identical row
+          on Today, rendered regardless of `bare` for the same reason
+          Today doesn't gate it on having a program either. */}
+      {selected === null && <BodyweightRow />}
+
+      {selected === null && !bare && (
         <>
           <section className="rule-section">
             <div className="section-head">
@@ -704,17 +999,12 @@ export function History({ userId }: { userId: string }) {
         </>
       )}
 
-      {/* A standing fact about the person, not about any one exercise's
-          history — same component, same behaviour as the identical row
-          on Today, rendered regardless of `bare` for the same reason
-          Today doesn't gate it on having a program either. */}
-      <BodyweightRow />
 
       {pickerOpen && (
         <ExercisePicker
           title="EXERCISE"
           exercises={exercises}
-          badge={(ex) => (withData.has(ex.id) ? "LOGGED" : null)}
+          badge={(ex) => (indexById.has(ex.id) ? "LOGGED" : null)}
           preferBadged
           onPick={(ex) => {
             setSelected(ex.id);
