@@ -801,6 +801,21 @@ export function createOutbox({
     }
   }
 
+  /** The payload `repairDeadLoadSet(s)` would write (authored pair unknown),
+   *  run through the admission gate as a sets insert. */
+  function repairedPayloadAccepted(payload: SetInsert): boolean {
+    try {
+      admit({
+        kind: "insert",
+        table: "sets",
+        payload: { ...payload, entered_load: null, entered_unit: null },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function applyOp(op: OutboxOp): Promise<TransportError | null> {
     try {
       if (op.kind === "insert")
@@ -951,6 +966,9 @@ export function createOutbox({
     },
 
     async repairDeadLoadSet(key, expected) {
+      // The rewritten payload meets the same admission gate as a new write
+      // (F-4): a repair must not requeue a row the database would refuse again.
+      if (!repairedPayloadAccepted(expected)) return false;
       const db = await getDb();
       const tx = db.transaction("outbox", "readwrite");
       const item = await tx.store.get(key);
@@ -1007,11 +1025,15 @@ export function createOutbox({
           saved.cause === deadKind(item.last_code, item.last_status) &&
           JSON.stringify(saved.op) === JSON.stringify(item.op));
       });
-      if (!valid || whoAmI() !== owner) {
+      // All or nothing: one row the admission gate would refuse again (F-4)
+      // leaves every row dead, decided before anything is written.
+      const gated = eligible.every(({ item }) => Boolean(item && isLoadRepairCandidate(item, owner) && repairedPayloadAccepted(item.op.payload)));
+      if (!valid || !gated || whoAmI() !== owner) {
         await tx.done;
         return false;
       }
       for (const { key, item } of eligible) {
+        // All or nothing: one row the gate would refuse leaves every row dead.
         if (!item || !isLoadRepairCandidate(item, owner)) {
           tx.abort();
           return false;

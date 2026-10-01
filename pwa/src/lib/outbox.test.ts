@@ -1542,6 +1542,37 @@ describe("outbox visibility", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("F-4: repair runs the admission gate on the rewritten payload; a row the gate refuses stays dead, all or nothing", async () => {
+    const { calls, transport } = makeTransport();
+    // queued by a build before the gate, so the dead rows can exist at all
+    const legacy = createOutbox({ admit: () => undefined, getDb, transport, currentUserId: () => ALICE, isOnline: () => false });
+    // good: an ordinary mismatch the repair can fix. bad: per_side at 0 kg, which
+    // would be refused again once its authored pair is nulled.
+    const good = { ...setA, load_kg: 100, load_entry: "total" as const, entered_load: 220.5, entered_unit: "lb" as const };
+    const bad = { ...setB, load_kg: 0, load_entry: "per_side" as const, entered_load: 20, entered_unit: "lb" as const };
+    await legacy.enqueueBatch([good, bad].map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })));
+    const db = await getDb();
+    for (const key of await db.getAllKeys("outbox")) {
+      const item = (await db.get("outbox", key))!;
+      await db.put("outbox", { ...item, status: "dead", retries: 1, last_code: "23514", last_status: 400,
+        last_error: "load_kg must match entered_load, entered_unit, and load_entry" }, key);
+    }
+    // the production gate (default admit)
+    const box = createOutbox({ getDb, transport, currentUserId: () => ALICE, isOnline: () => false });
+    const exported = await box.inspect();
+    expect(exported.every((e) => e.loadRepairable)).toBe(true);
+    expect(await box.repairDeadLoadSets(exported)).toBe(false);
+    for (const key of await db.getAllKeys("outbox")) {
+      expect((await db.get("outbox", key))?.status).toBe("dead");
+    }
+    // the single-row path refuses the bad one and still repairs the good one
+    expect(await box.repairDeadLoadSet(exported[1].key, bad)).toBe(false);
+    expect((await db.get("outbox", exported[1].key))?.status).toBe("dead");
+    expect(await box.repairDeadLoadSet(exported[0].key, good)).toBe(true);
+    expect(calls).toHaveLength(0); // offline: nothing was sent
+    expect((await db.get("outbox", exported[0].key))?.status).toBe("pending");
+  });
+
   it("changes none when one exported row is stale or the owner changes", async () => {
     let who = ALICE;
     const { transport } = makeTransport();
