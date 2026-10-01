@@ -130,103 +130,113 @@ Supabase sends the stock link email and the paste path is the working one.
 
 ## In-session work
 
-- **See the whole workout** — the session screen IS the workout: one
-  accordion list under the workout's name and an "n OF m DONE" count. Every
-  exercise is visible (name, target scheme, logged/total count, skip state,
-  superset A1/A2 tags with a bracket rail), exactly one open at a time with
-  the accent inset. The first incomplete exercise opens on entry.
-- **Switch exercise** — tap any closed row; it opens (previous closes) and
-  scrolls into view, prefilled (prescription → this session → last session →
-  configured fallback). Tapping the open header collapses it.
-- **Focus deck** — the default presentation for an eligible session, from
-  Start or restore. The app header and tab bar hide while it is shown, and
-  the screen is deliberately spare: a tap-to-jump progress rail across the
-  top (a real `<ul role="list">` of real `<button>`s, one dot per exercise in
-  the shared state vocabulary — done, current, next, skipped, upcoming —
-  where tapping the current entry's own dot opens the overview and tapping
-  any other jumps focus straight there, replacing the old standalone "View
-  full workout" button), exercise name, `SET n OF m`, one hero value (load
-  for a loaded implement, reps for bodyweight — whichever is hard to get
-  right for the movement), the plate bar or per-hand breakdown when it
-  applies (plates vs stack, per exercise and device-local — a stack/cable
-  exercise gets no calculator at all, since a weight pin has no plates to
-  show), the secondary field with its target quietly beside it, a "Last: 145
-  kg × 5 working" line once something is logged (tapping it opens the same
-  correction flow as ✕ in the full history), and a bottom row of
-  `−step / LOG SET / +step`. WARMUP | WORKING sits on the hero itself next to
-  LOG whenever the entry has a prescribed warmup, with "Already warm" beside
-  it to stage working and log nothing; swap and skip are visible secondary
-  actions on the hero rather than a level down, and skip offers an optional
-  reason chip row (Equipment taken, Already warm, Out of time, Didn't feel
-  right) or free text. Everything else the accordion shows inline — the same
-  warmup/working toggle kept for parity, RPE, the plate calculator, the
-  per-hand/total toggle, skip, last time, and the full logged-set history
-  (void, note, correct) — still lives one tap away behind the quiet "•••"
-  control, in a sheet scoped to the current entry (or both members of an
-  open superset round). Starting a correction from that sheet closes it and
-  reveals the full inline editor (type, RPE, fine adjustment) on the main
-  screen, exempt from the minimalism — and from LOG's 200ms duplicate-tap
-  lock — for as long as the correction is open. In overview, selecting an
-  exercise name chooses the next focus destination without opening its
-  editor. "Focus mode" returns to that selection, or to the entry that was
-  focused before overview if nothing was selected. Selection and expansion
-  stay separate, and switching views preserves staged values and the running
-  rest clock. Selecting either member of an unfinished superset returns to
-  its canonical A1/A2 round.
-- **Focus-mode limitation** — duration-tracked workouts stay in overview and
-  explain that duration tracking is unavailable in focus mode. The focus deck
-  currently supports reps and tick-only exercises; it does not approximate a
-  timed set as a completion tick.
-- **Log a set** — inside the open item: a context line (TARGET, NOW x–y REPS
-  on a ramp, REST, NO TM SET), a WARMUP | WORKING toggle (backoff is not
-  offered; the enum value stays legal for history), REPS stepper above LOAD
-  stepper, both tap-to-type via the in-app pad, load with a plate hint that
-  opens the plate sheet, then "LOG SET n OF m" — working sets against the
-  plan; warmups don't consume the count. Step sizes come from settings
-  (coarse and fine, per unit, with an optional per-exercise override). Ramp
-  brackets (consecutive same-exercise prescriptions) are ONE entry walked in
-  order: each set links to its bracket, crossing a bracket re-prefills its
-  targets. Append-only, offline-first, rest clock starts, auto-unskips.
-  When the plan is met the log button demotes to LOG EXTRA SET (outline) and
-  "Next · [exercise]" becomes the primary — a deliberate tap, never an
-  auto-advance. LOG (and Log round) locks for 200ms after each tap, so a
-  double-tap or a tap that lands twice through a slow frame inserts one set,
-  not two; a correction's Save is never gated, since it is a deliberate,
-  one-off edit rather than a rapid repeat.
-- **Note a set** — "+ NOTE" under any logged set expands a small editor;
-  notes save to the database (editable, last-write-wins) and read back in
-  History under the exact set.
-- **Fix a wrong set** — ✕ on the logged row → VOID? (append-only void +
-  relog; the record keeps both). Voiding the set that started the rest
-  clock cancels the clock.
-- **Skip / unskip an exercise** — the action on each closed row (collapse
-  the open one first). Session-local; the analytical record is the sets.
-- **Undo adding an exercise** — the same slot reads UNDO ADD, two-tap, but
-  only for an extra added this session with nothing logged into it. A
-  prescribed exercise, or one with sets, can only be skipped.
-- **Add an exercise** — bottom of the list → search sheet.
-- **Rest** — strip counts down then over, naming the NEXT set ("Next: Squat
-  145 × 5, set 3 of 4") rather than the one just finished, with optional RPE
-  chips underneath for the set that WAS just logged — tapping one rates it,
-  leaving it alone keeps it unrated, which is the ordinary case. Adjust,
-  type, or dismiss the clock; it keeps running for rest stamping either way.
-  Survives leaving the screen. Rest alerts opt in via Settings (notification
-  permission). The strip hides while a sheet or the number pad is open.
-- **Log a superset round** — "Log round" queues both ordinary set inserts in
-  one IndexedDB transaction. The session marks neither member logged unless
-  that local batch is durable; a local failure leaves both drafts available
-  for retry. Offline rounds appear in Outbox and replay one operation at a
-  time in enqueue order when connectivity returns. That preserves order, but
-  the server does not commit the two rows as one transaction: if replay stops
-  after one row, the Outbox shows the remaining state and the unfinished
-  member can be completed on its own.
+The session screen has two views of the same entries, switched by the Focus |
+List toggle in the header. Neither owns state: staged values, the running rest
+clock, a correction in progress and queued sets survive a switch. Focus is the
+default for an eligible session (two-member supersets, reps, timed and
+tick-only work); a circuit of three or more members opens in List and says
+why.
+
+- **Header** — a round ☰ count ("9/25", skipped exercises excluded so it can
+  reach its total), the Focus | List toggle, and a round sync chip. The chip
+  reads the queue: ✓ only when the queue has been read and is empty; a neutral
+  dashed mark until then; "On phone · n", "Sending · n", "Held" (everything
+  waiting belongs to another account) and "Retrying" are different words for
+  different states, and an unreadable queue never shows a check. A tap opens
+  the Outbox sheet.
+- **Today's workout (☰)** — one sheet for everything that is about the whole
+  session: the unit for THIS session (lb | kg, with what Settings keeps), every
+  exercise as a row with its state glyph, target, count and a quiet roll-up of
+  its per-set receipts, tap to jump, today's order, "+ Add exercise", "Back to
+  Train (the session keeps running)" and "Finish session". A superset or a
+  named-section run is one movable block whose members are each their own jump
+  button. Order is session-local (`sessionOrder`): drag the ⠿ handle, press
+  ArrowUp/ArrowDown on it, or use the visible Move up / Move down keys; all
+  three reach the same guarded move and the plan and set indices never change.
+  A move the block rules refuse says so, and the keys disable while a log or a
+  correction is in flight. Rows pinned by an open correction are disabled, not
+  silent.
+- **Focus** — three bands and a dock. Top: exercise name (or "Superset A" and
+  "round n of m"), `SET n OF m` and the segmented progress, and the quiet •••
+  more control. Middle (the only part that scrolls, above the dock, at 320 px
+  and at 130% text): the picture of the load — plates, dumbbells, a generic
+  weight stack that never implies a pin position, or the bodyweight card —
+  then the coach cue in ink and last time. Dock: load and reps side by side
+  (a timed set keeps its load beside the duration; a bodyweight set is
+  reps-first with "+ Add load"), four small keys — RPE, Note, Skip, and Swap
+  (before any set) or Fix last — and one full-width Log that reads "Saving…"
+  and refuses a second tap while its write is in flight. A finished exercise
+  has no next set to stage: the dock leads with the next exercise (or Finish),
+  keeps Note and Fix last, and "+ Extra set" arms the editor again.
+- **Load picture** — plate-loaded exercises show the plates per side and the
+  base ("Bar 20 kg · change"); the sled/stack switch is offered only for
+  plausible plate machines (leg press, hack squat, smith, chest press, calf
+  raise) and never for a cable; an unset sled base reads "Set sled weight".
+  Dumbbells show the pair and the total. The plate sheet edits the base, the
+  type and the per-exercise choice, device-local.
+- **Log a set** — Log appends one set at the next `set_index`, stamps the rest
+  it ended, starts the rest clock and advances. Working sets count against the
+  plan, warmups do not. Ramp brackets are one entry walked in order; crossing a
+  bracket re-prefills its targets. A 200 ms lock after each tap stops a double
+  tap inserting twice; a correction's Save is never gated. A failed local write
+  keeps the draft, says so, and offers retry; nothing is shown as logged
+  unless it is durable on this phone.
+- **Rest** — the clock replaces the picture in the middle band: ◷ RESTING with
+  −30 / +30, tap the clock to type a time, and a single-line "Next: Barbell
+  Row · set 3 of 4". When the target passes it becomes a REST OVER card
+  ("Ready when you are") and never logs, skips or finishes anything by itself.
+  Below it: LAST SET (the set just saved, its receipt word, and Fix) and LOAD
+  NEXT (the plates for the next set, tapping opens the plate sheet). The dock
+  is tagged "NEXT SET · SET 4 OF 6" with "End rest now ›". The tone and
+  notification fire once per rest — however many sheets, remounts or
+  Focus/List switches happen — and "End rest now" is silent. List shows the
+  same clock as a compact strip with a Hide.
+- **LAST SET and receipts** — every logged set carries a receipt in words and a
+  glyph: ◐ On this phone (a committed local write), ↑ Sending… (the queue is
+  flushing and this set's writes are waiting in it), ✓ Saved (the server
+  returned that exact set UUID, or acknowledged it), ! Needs review (rejected,
+  or only the cache remains), ‖ Held (queued under another account). The LAST
+  SET card shows only what the receipt proves; it never says "already saved"
+  on its own. After a correction it names the replacement row.
+- **RPE and Note** — RPE opens a focused sheet. During a rest it rates the set
+  just saved ("Rate set 2, just saved"); with no rest it stages the next set
+  ("RPE for the next set"). A rating on a saved set is a correction underneath.
+  Note opens a focused editor for the newest live set of what is on screen,
+  never a voided row; it saves to `set_notes` and waits for the local write.
+- **Fix a wrong set** — "Fix last" (the dock), "Fix" (the LAST SET card) or a
+  logged row in List opens the correction as its own sheet with its own
+  draft, in the SET's own exercise's load convention, so a set of exercise X is
+  never corrected under Y's editor and the staged next set is never touched.
+  The save is one atomic local bundle: the replacement at the same
+  `set_index` and `performed_at`, the void of the original, the link between
+  them and the set's note. Failure keeps the sheet open with everything typed.
+  ✕ on a logged row (List) is a two-tap void.
+- **Skip / unskip** — the Skip key opens reason chips (Equipment taken,
+  Already warm, Out of time, Didn't feel right) or free text; a skipped entry
+  shows "Skipped. Unskip to log it." Session-local; the record is the sets.
+- **Superset rounds** — a two-member superset is logged member by member. The
+  middle band shows an A1 card and an A2 card (● NOW, ✓ done this round,
+  ○ NEXT, – SKIPPED), a one-line hint, and the NOW member's load picture; the
+  dock edits and logs only the NOW member ("Log A1"). Each member is its own
+  durable insert. There is no rest between A1 and A2; the clock starts after
+  the round's last member, in non-final rounds only, and A2's
+  `rest_seconds_actual` is null (the gap is not a rest). A skipped member counts
+  as finished, so the partner is NOW and loggable; tap a card to log that
+  member next (an A2-first round), or "Unskip A1" on a skipped card.
+- **List** — the whole workout as a ledger: one open card (the exercise you are
+  on) with its logged sets, their receipt marks and the same dock; every other
+  exercise one quiet row (done collapsed, the rest dim). Tap a row to make it
+  the open card.
+- **Switch exercise** — ☰ or a List row; staged values are kept per exercise.
+- **Add an exercise** — ☰ → "+ Add exercise" (or the List footer) → search
+  sheet. **Undo add** is two-tap, only for an extra with nothing logged.
 - **Plates** — per-exercise bar choice in the plate sheet (NO BAR for
-  plate-loaded machines like the leg press); persists per exercise.
-- **Read the day's notes** — plan note and coach note render at the top of
-  the session screen, clamped with MORE/LESS.
-- **Leave mid-session** — footer Home (the session keeps running). Today and
-  History stay fully usable; RESUME + Finish sit in the banner. The footer
-  is Home and Finish only.
+  plate-loaded machines); persists per exercise.
+- **Read the day's notes** — plan and coach notes sit in the ••• sheet and at
+  the top of List.
+- **Leave mid-session** — ☰ → "Back to Train" in Focus, or Home in List's
+  footer (the session keeps running). If a set has been edited but not logged
+  the app asks first; logging a set and leaving never triggers that prompt.
 
 ## Notes
 

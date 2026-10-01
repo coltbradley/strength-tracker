@@ -3231,3 +3231,85 @@ the note cache. Composite owner foreign keys would refuse the wrong-owner
 rows, so the fixed risk was stranded writes, not demonstrated server-side
 misattribution. This is a local PWA change at `125d203`; phone/server acceptance
 and deployment remain separate checks.
+
+## 2026-10-01 Version D live-workout UI ported onto the codex session
+
+The approved Version D live-workout UI (Focus deck, rest band, ☰ Today's
+workout, List ledger, member-by-member supersets) was re-implemented on the
+codex `Session.tsx` instead of merged from `feat/live-workout-d`. A merge left
+about 35 type errors and would have overwritten corrections, per-set receipts,
+session units, session order and owner-bound writes, which are kept as they
+were. A second audit of the first port (`Phase 1 code`, `08 ux`) found two
+critical and several high defects; they are fixed by design below, each with a
+test named for its finding. Recorded as one entry because the choices depend on
+each other.
+
+- **A correction is its own sheet with its own draft.** The correction draft
+  carries the SET's own exercise load convention. Before, it was derived from
+  whichever entry was open, so "Fix" on the LAST SET card after the deck had
+  advanced to a per-side exercise saved `load_kg` 25 / `per_side` for a bench
+  set (C1). The next-set staged draft is never touched.
+- **LAST SET, Fix last and the Note target come from the live `sets`**, newest
+  by `performed_at` then `set_index`, not from a held copy; a second fix
+  therefore voids the replacement once, never the already-voided original (C2),
+  and a note never lands on a voided or foreign-entry row (M2).
+- **LAST SET claims only receipt-proven state.** It shows that set's own
+  receipt word (◐ On this phone, ↑ Sending…, ✓ Saved, ! Needs review, ‖ Held),
+  not the prototype's "already saved". Saved needs the exact set UUID from the
+  server. Sending means "the queue is flushing and this set is waiting in it";
+  the outbox has no per-operation in-flight evidence, so it is deliberately
+  weaker than "this set has left the phone", and its accessible label says so.
+- **The header chip is silent until it knows.** `outbox.isStatusKnown()` is
+  true only after the queue has been read; before that the chip is a neutral
+  dashed mark, never ✓. `Held` requires something pending and all of it held;
+  an empty queue in an error state reads "Retrying" (M4).
+- **RPE rates the set just saved while a rest runs** ("Rate set 2, just
+  saved"), else it stages the next set ("RPE for the next set"), and the sheet
+  title says which, so a rating cannot land on the following set (M1).
+- **Supersets are logged member by member.** Each member is its own durable
+  insert (the atomic "Log round" is gone). Round logic is one pure function
+  (`supersetRoundView`, `roundPlacement` in `lib/sessionFocus.ts`) used by the
+  card, the dock label, the heading and the rest decision. A skipped member
+  counts as finished, so the partner is NOW and loggable (H1). No rest runs
+  between A1 and A2 and the clock is not reset by that gap; A2's
+  `rest_seconds_actual` is null and the next A1 carries the measured rest of
+  the whole round (H3). Rest starts only after the round's last member in
+  non-final rounds. Known limit: warmups in a superset advance by working
+  progress, and the partner's warmup is reached by tapping its card.
+- **The rest tone fires once per rest.** `useRestCue` is mounted once in
+  Session and remembers announced rests by `startedAt` in module scope, because
+  a component ref is discarded with every sheet and Focus/List switch and the
+  tone replayed (H2). "End rest now" marks the rest announced and uses the
+  floored elapsed time, so ending a rest on purpose is silent (L1).
+- **One RestTimer API** with a panel (Focus) and a strip (List) presentation;
+  tone and notification are not its job.
+- **☰ Today's workout replaces the progress rail and the FocusListSwitch.** One
+  sheet holds the unit for this session, jump, today's order (drag, arrow keys
+  and visible Move up/down, all through the codex `sessionOrder` guards), Add
+  exercise, Back to Train and Finish, so Focus needs no footer. Each exercise
+  line inside a superset or section block is its own jump button, and rows
+  pinned by an open correction are disabled, not silent (L3). The reorder drag
+  measures the other rows' midpoints at pointer-down, so a row grabbed in its
+  lower half can be dragged up (M5).
+- **One dock editor**, also inside List's open card; the legacy "overview"
+  editor is removed. A timed set keeps its load beside the duration (M3); a
+  bodyweight set is reps-first with "+ Add load". A finished exercise keeps
+  Note and Fix last in the dock so its last set stays correctable. The deck is
+  keyed by the focused entry, so an open skip prompt cannot follow a jump (M6).
+- **Leave prompt counts only the lifter's own edits**, evaluated at click time,
+  so logging a set and leaving no longer claims "Unlogged set changes".
+- **Load picture is honest about what it knows.** The stack drawing never
+  implies a pin position; the sled/stack switch is offered only for plausible
+  plate machines and never for a cable; an unknown sled weight reads "Set sled
+  weight"; `plateText` names the base ("Sled only", not "Bar only", L5).
+  Authored `entered_load`/`entered_unit` are quoted as authored in lb mode.
+- **Light only, tokens only.** One stylesheet; all colour through role tokens so
+  a dark theme is a token swap; the smallest type is 11 px (`--fs-micro`,
+  `--fs-label`) and targets are at least 44 px; dead rules, classes and the
+  orphaned PlateBar/RpeChips/LoadIcons/loadGrid are deleted. Test-pinned in
+  `styles.floors.test.ts`.
+
+Not done: the Phase 2 browser gate has updated selectors but was NOT RUN (no
+Docker daemon here, so no local Supabase); real-phone offline logging and exact
+set UUID readback are still open acceptance items; the demo marks sets Saved
+immediately and is not production evidence.

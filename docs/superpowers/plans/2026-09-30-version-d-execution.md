@@ -83,3 +83,15 @@ Cost: one metadata row per correction remains locally until app data is cleared;
 The original authored-load consistency cause was fixed at `40676f5`; the recovery tool remains available. Colt waived recovery of the old failed records. Its historical NOT RUN evidence remains intact.
 
 Final local verification, limits and rollback are recorded in [the tracked evidence report](2026-10-01-version-d-local-verification.md). Ignored `.superpowers/sdd/2026-09-30-version-d-execution/` reports preserve detailed commands and review artifacts; they are not deployed-state evidence.
+
+## 2026-10-01 Port onto the codex branch
+
+The Version D live-workout UI from `origin/feat/live-workout-d` was
+re-implemented on `feat/version-d` (base `origin/codex/version-d-light-plan`)
+instead of merged. Codex's corrections, per-set receipts, session units and
+order, owner-bound writes and load-sync recovery are kept; the UI, round logic,
+rest and header are the new Version D. Product decisions and the audit
+findings fixed (C1, C2, H1 to H3, M1 to M6, L1 to L6) are recorded in the spec
+and in `docs/decisions.md`. The Phase 2 browser gate's selectors were updated
+for the new screen; it has not been run (no Docker daemon in the porting
+environment).

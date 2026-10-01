@@ -10,6 +10,17 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-30-version-d-light-design.md`
 
+**Status 2026-10-01 (feat/version-d):** Tasks 1 to 4 are shipped, re-implemented
+against the codex `Session.tsx` rather than merged. Deviations from the task
+text, each recorded with its reason in the spec's "Shipped on feat/version-d"
+section and in `docs/decisions.md`: the header carries a ☰ count that opens
+Today's workout beside the Focus | List toggle (there is no `FocusListSwitch`
+or progress rail); the paired superset is logged member by member instead of by
+an atomic `Log round`; the correction is its own sheet; RPE and Note are focused
+sheets; the LAST SET card shows the set's receipt, never "already saved". Task 5
+(review on a phone) is open: screenshots at 390x844, 320x700 and 130% text were
+inspected in the demo, the real-phone and Phase 2 browser gate runs are NOT RUN.
+
 ## Global Constraints
 
 - Start from `d5e7b64` or re-audit changed source before editing; the ZIP prototype is design data, not code to embed.

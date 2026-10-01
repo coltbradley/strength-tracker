@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-30-version-d-light-design.md`
 
+> **Status 2026-10-01:** shipped with a renamed vocabulary (On this phone,
+> Sending, Saved, Needs review, Held) and a bounded Sending state: it means the
+> queue is flushing and the set's writes are waiting in it, because the outbox
+> still has no per-operation in-flight evidence. Saved still needs the exact set
+> UUID from the server (readback or acknowledgement).
+
 ## Global Constraints
 
 - `sets` and `set_voids` stay append-only, with PWA-only writes and client UUID idempotency.

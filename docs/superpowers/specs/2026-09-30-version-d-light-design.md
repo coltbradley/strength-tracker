@@ -84,22 +84,30 @@ continue to use the existing rest owner. List shows the same clock in a
 compact strip. Timer expiry changes the visible state to Ready and never
 logs, skips, or finishes automatically. RPE and Note remain one tap away.
 
-The first light slice retains the existing paired-superset write contract:
-`Log round` persists two ordinary rows in one local IndexedDB batch, while
-partial A1/A2 actions persist only the chosen member. D's A1/A2 highlighting
-can improve orientation without changing this commit contract. Sequential
-one-member-at-a-time logging is a later behavior proposal, not an implicit
-consequence of the visual translation. Timed, completion-only, bodyweight,
-per-hand, warmup, extra-set, correction, and unequal-pair states all receive
-explicit coverage. A staged value remains intact when Focus/List changes.
+**Superseded 2026-10-01.** The first slice kept an atomic `Log round` that
+queued both members in one batch. The shipped design logs a paired superset
+member by member: the A1/A2 cards show ● NOW / ✓ / ○ NEXT, the dock edits and
+logs only the NOW member ("Log A1"), and each member is its own durable
+outbox write. Reasons: the design draws it that way and it matches how the
+sets are performed; one durable write per member means a failure can only
+affect the member being logged; and a skipped or unequal partner needs no
+"only" variants. The cost is that audit findings H1 (skipped members) and H3
+(the in-round gap is not a rest) had to be closed in the round logic, which is
+now one pure function (`lib/sessionFocus.ts`). Timed, completion-only,
+bodyweight, per-hand, warmup, extra-set, correction, and unequal-pair states
+all have explicit coverage. A staged value remains intact when Focus/List
+changes.
 
 ## Receipt contract
 
-The vocabulary is **On this phone**, **Sending**, **Synced**, and **Review**.
-"On this phone" requires a committed local outbox write. "Synced" requires
-the specific operation's successful server response or verified server
-readback. Sending requires exact per-operation in-flight evidence; the
-current outbox does not expose it, so this implementation omits that state.
+The vocabulary is **On this phone**, **Sending**, **Saved**, **Needs review**
+and **Held** (renamed from Synced/Review on 2026-10-01; the glyphs are
+◐ ↑ ✓ ! ‖). "On this phone" requires a committed local outbox write. "Saved"
+requires the specific operation's successful server response or verified
+server readback of that exact set UUID. Sending was omitted from the first
+slice because the outbox has no per-operation in-flight evidence; it now means
+only "the queue is flushing and this set's writes are waiting in it", which
+the aggregate status can prove, and the accessible label says exactly that.
 A waiting, held, retrying, or rejected item cannot appear synced.
 The existing header indicator continues to summarize the whole queue; it
 cannot serve as a receipt for one set. Healthy receipt words may be visually
@@ -121,9 +129,11 @@ append-only database semantics. Exact void readback requires an authenticated
 `set_voids` SELECT; the current `v_live_sets` read cannot prove a void landed.
 
 The D prototype's "Already saved" and "all on the server" copy is used only
-when these statements are evidenced. Until individual receipts ship, the
-last-set label is neutral and the current aggregate queue state remains the
-source of sync information.
+when these statements are evidenced. The LAST SET card therefore shows the
+set's own receipt word and never the prototype's "already saved" line: a card
+that claims saved before the server has said so is exactly the false claim this
+contract forbids. The header chip likewise shows a neutral mark, never a
+check, until the queue has actually been read.
 
 ## Session-local state
 
@@ -184,3 +194,58 @@ and have a forward repair path.
 ## September 30 implementation authorization
 
 Colt authorized GPT-6 Luna implementation with tests and incremental commits. He waived recovery of the old affected phone writes as a prerequisite. Preserve recovery tooling for future cases and regression protection for the cause. New-data durability and acceptance evidence remain required. Current progress is in `../plans/2026-09-30-version-d-execution.md`.
+
+## Shipped on feat/version-d (2026-10-01)
+
+The light-session slice (scope items 2 to 4) is implemented against the codex
+`Session.tsx`, not merged from the earlier D branch (a merge left about 35
+type errors and would have dropped corrections, receipts, session units and
+order). What shipped:
+
+- Focus deck as three bands plus a dock; one dock editor shared with List;
+  load picture (plates, dumbbells, generic stack, bodyweight); rest band with
+  LAST SET and LOAD NEXT; ☰ Today's workout with units, reorder (drag, keys,
+  visible Move up/down), receipts and Finish; Focus | List toggle and a round
+  sync chip; member-by-member supersets; RPE, Note and Fix as focused sheets;
+  per-set receipts; the List ledger. Dark mode, surrounding screens (item 5),
+  pinned goals, bodyweight added-load meaning and the coach Apply button are
+  not part of this slice. Bodyweight "+ Add load" records the added kg as the
+  set's `load_kg`; "added" is stated beside it so it is not read as total mass.
+
+Product decisions and why:
+
+- **Correction is its own sheet with an independent draft** that carries the
+  set's own exercise load convention. The old shared editor derived the
+  convention from whichever entry was open, which corrupted `load_kg` (C1) and
+  let the next-set draft be overwritten.
+- **Last set, Fix last and Note target are derived from the live sets**
+  (newest by `performed_at`, then `set_index`), never a held copy, so a card
+  cannot describe a voided row (C2, M2).
+- **RPE during rest rates the set just saved** and the sheet title says which
+  set; with no rest it stages the next set (M1).
+- **Rest band** shows the rest, not the cue: the cue and last time return when
+  the next set is staged without a rest. "Next:" is one line. LAST SET claims
+  only receipt-proven state.
+- **No progress rail, no FocusListSwitch.** The ☰ sheet is the navigation: one
+  place for jump, order, units and Finish, so Focus needs no footer and no
+  second navigation model.
+- **The legacy "overview" editor is gone.** One dock editor everywhere means
+  one set of controls to keep in step.
+- **Reorder blocks follow the codex rules** (a section run or a superset is one
+  block); each exercise line in a block is its own jump button so a block can
+  never hide an exercise from "tap to jump".
+- **The rest cue is announced once per rest**, remembered by `startedAt` in
+  module scope, because a component ref dies with every sheet and view switch
+  (H2). "End rest now" is the lifter's own act and is silent (L1).
+- **Sync chip**: unknown is neutral; "Held" requires something pending and all
+  of it held (M4).
+- **Spurious leave prompt**: only edits the lifter made count as unlogged
+  changes, evaluated when Home is pressed.
+- **Type floor 11 px and 44 px targets**, all colour through role tokens so a
+  dark theme is a token swap; one stylesheet, dead rules deleted.
+
+Known limitations: warmups inside a superset advance by working progress (the
+partner's warmup is reached by tapping its card); the Phase 2 browser gate's
+selectors are updated but it has not been run (it needs local Supabase and
+Docker); real-phone and exact UUID readback acceptance remain open, as the
+Verification section requires.

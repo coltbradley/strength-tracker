@@ -53,6 +53,28 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   `set_notes` is the one editable set-adjacent row (a user annotation,
   last-write-wins) — the sessions.notes mutability class, never a way to
   edit the set itself.
+- Live-workout (Version D) invariants. Each has a test named for it:
+  - **LAST SET claims only receipt-proven state.** The card, the List marks and
+    the ☰ roll-up show one set's own receipt (On this phone, Sending, Saved,
+    Needs review, Held). Saved needs the exact set UUID from the server;
+    Sending means only "the queue is flushing and this set's writes are in
+    it"; never write "already saved". The header chip shows a neutral mark,
+    never ✓, until `outbox.isStatusKnown()`, and `Held` needs pending > 0.
+  - A correction is an independent draft in the SET's own exercise's load
+    convention; it never reads or writes the staged next-set draft. LAST SET,
+    Fix last and the Note target are derived from the live `sets` (newest by
+    `performed_at`, then `set_index`), never a held copy, so nothing targets a
+    voided row.
+  - A superset is logged member by member, each its own durable outbox write.
+    A skipped member counts as finished; the in-round gap is not a rest (the
+    second member records `rest_seconds_actual` null); rest starts only after
+    the round's last member. The round maths lives in `lib/sessionFocus.ts`
+    only.
+  - The rest-over tone and notification fire once per rest (remembered by
+    `startedAt` outside any component) and never for "End rest now".
+  - One dock editor, one RestTimer API. Colour comes from role tokens only,
+    type is never below 11 px, controls are at least 44 px, and the middle
+    band scrolls above the dock.
 - `session_skips` (20260917000000) is the record of an exercise the
   lifter skipped mid-session, WHY they skipped it (an optional
   200-character reason), and whether the whole slot was skipped or only
