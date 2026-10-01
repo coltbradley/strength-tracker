@@ -360,6 +360,26 @@ describe("FocusDeck", () => {
     expect(onUnskip).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps All planned sets logged and + Extra set beside a rest that runs after the last set", () => {
+    const onAddExtraSet = vi.fn();
+    render(
+      <FocusDeck
+        {...props({
+          entryDone: () => true,
+          workoutComplete: true,
+          onAddExtraSet,
+          onFinishWorkout: vi.fn(),
+          restSlot: <div data-testid="rest">REST 1:20</div>,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("rest")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "+ Extra set" }));
+    expect(onAddExtraSet).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Finish session" })).toBeTruthy();
+  });
+
   it("shows the NEXT EXERCISE card instead of the editor when the entry is done", () => {
     const onChooseNext = vi.fn();
     render(

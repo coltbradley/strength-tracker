@@ -291,24 +291,20 @@ export function FocusDeck({
       </div>
 
       <div className="focus-middle">
-        {resting ? (
-          restSlot
-        ) : (
-          <>
-            {!workoutComplete && picture}
-            {workoutComplete && (
-              <div className="focus-complete">
-                <div className="focus-complete-title">All planned sets logged.</div>
-                {onAddExtraSet && !extraSetArmed && (
-                  <button type="button" className="focus-chip-btn" onClick={onAddExtraSet}>
-                    + Extra set
-                  </button>
-                )}
-              </div>
+        {resting ? restSlot : !workoutComplete && picture}
+        {/* Outside the rest branch: a rest often runs after the final set,
+            and "+ Extra set" must stay reachable while it does. */}
+        {workoutComplete && (
+          <div className="focus-complete">
+            <div className="focus-complete-title">All planned sets logged.</div>
+            {onAddExtraSet && !extraSetArmed && (
+              <button type="button" className="focus-chip-btn" onClick={onAddExtraSet}>
+                + Extra set
+              </button>
             )}
-            {skipped && <p className="focus-skipped">Skipped. Unskip to log it.</p>}
-          </>
+          </div>
         )}
+        {!resting && skipped && <p className="focus-skipped">Skipped. Unskip to log it.</p>}
         {onSkip && !skipped && skipPromptOpen && (
           <div className="skip-reason-prompt chip-row" role="group" aria-label="Skip reason">
             {SKIP_REASON_CHIPS.map((chip) => (
