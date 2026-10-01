@@ -4181,6 +4181,12 @@
     scrollbar-width: thin;
   }
 
+  /* At short viewports the deck itself may scroll, but its movement stage
+   * keeps enough height to show a meaningful visual and cue before scrolling. */
+  .focus-deck .focus-stage {
+    min-height: 100px;
+  }
+
   .focus-load-stage {
     display: flex;
     width: 100%;

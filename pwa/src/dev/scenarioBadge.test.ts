@@ -42,4 +42,9 @@ describe("DEV preview emulations", () => {
     expect(emulation?.[0]).toContain("transition-duration: 0.01ms !important");
     expect(emulation?.[0]).toContain("scroll-behavior: auto !important");
   });
+
+  it("keeps a useful Focus stage in short viewports while allowing the page to scroll", () => {
+    expect(styles).toMatch(/\.focus-deck \.focus-stage\s*\{\s*min-height:\s*100px;/);
+    expect(styles).toContain("overflow-y: auto;");
+  });
 });
