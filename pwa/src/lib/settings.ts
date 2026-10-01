@@ -77,7 +77,13 @@ export interface ExercisePref {
   restSeconds?: number;
   /** coarse stepper increment in kg (the fine step stays global) */
   loadStepKg?: number;
-  /** authored load unit for this movement, independent of the device default */
+  /** RESERVED. The column `exercise_prefs.load_unit` exists and this field is
+   *  parsed and round-tripped through sync so a value written elsewhere is
+   *  never clobbered, but NOTHING sets or reads it: the unit a lifter sees is
+   *  the device default, or this session's own choice (`sessionPrefs`), and a
+   *  set's authored unit is the typed pair on the row. Do not read it for
+   *  display or authoring without a decision entry (docs/decisions.md,
+   *  2026-10-01 "Final fix pass on the integrated branch"); a test pins its readers. */
   loadUnit?: LoadUnit;
   /** whether this movement's load is typed per side or as the whole system;
    *  absent = fall back to the prescription, then to the equipment guess

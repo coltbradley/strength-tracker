@@ -122,7 +122,10 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   today's exercise order live in `sessionPrefs` (kv key per owner and session),
   never sync, and never touch the plan, a set index or the device default;
   per-exercise prefs (`ExercisePref`) are the account-synced record. Do not
-  merge the two in code or in copy. The session screen does not wait for
+  merge the two in code or in copy. `ExercisePref.loadUnit` (column
+  `exercise_prefs.load_unit`) is RESERVED: parsed and round-tripped so sync
+  never clobbers it, set and read by nothing; the unit is the device default or
+  the session's own choice, never a per-exercise pref. The session screen does not wait for
   identity: it opens on the known owner (live, else persisted), or on the device
   unit and canonical order with none, and the outbox stamps or holds each write
   (identity is not authorization).

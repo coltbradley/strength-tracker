@@ -7,6 +7,8 @@
 // jsdom run would silently exercise the "storage unavailable" path instead of
 // the real one.
 
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_BAR_KG,
@@ -644,5 +646,31 @@ describe("appearance", () => {
     setSetting("appearance", "system");
     expect(envelope().v).toBe(2);
     expect(envelope().values.appearance).toBe("system");
+  });
+});
+
+describe("ExercisePref.loadUnit is reserved (F-9)", () => {
+  // The column and the parse/round-trip exist so a value written elsewhere is
+  // never clobbered. Nothing may set or READ it for display or authoring: the
+  // unit is the device default or the session's own choice. A new reader needs
+  // a decision entry first, and this list updated with it.
+  it("is touched only by the parser, the sync mapping and the select list", () => {
+    const root = join(__dirname, "..");
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((name) => {
+        const p = join(dir, name);
+        if (statSync(p).isDirectory()) return name === "node_modules" ? [] : walk(p);
+        return /\.(ts|tsx)$/.test(name) && !/\.test\./.test(name) ? [p] : [];
+      });
+    const users = walk(root)
+      .filter((p) => /\bloadUnit\b|\bload_unit\b/.test(readFileSync(p, "utf8")))
+      .map((p) => p.slice(root.length + 1))
+      .sort();
+    expect(users).toEqual([
+      "lib/data.ts",
+      "lib/exercisePrefsSync.ts",
+      "lib/settings.ts",
+      "lib/types.ts",
+    ]);
   });
 });
