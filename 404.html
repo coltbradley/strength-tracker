@@ -6,14 +6,34 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <!-- keep in sync with --paper in src/styles.css (and the two manifest
-         colours in vite.config.ts) -->
+    <!-- Light-theme initial value; keep in sync with --paper in src/styles.css
+         (and the two manifest colours in vite.config.ts). At runtime
+         src/lib/theme.ts rewrites it from the resolved theme's --paper. -->
     <meta name="theme-color" content="#f7f6fa" />
+    <!-- Pre-paint theme, so a dark choice never flashes light. COUPLED to
+         src/lib/settings.ts: it reads localStorage "strength-log.settings"
+         (envelope { v, values: { appearance } }) and mirrors resolveTheme() in
+         src/lib/theme.ts. Change the key/shape there -> change it here. Fully
+         defensive: any failure leaves light, the default. -->
+    <script>
+      (function () {
+        try {
+          var t = "light";
+          var e = JSON.parse(localStorage.getItem("strength-log.settings"));
+          if (typeof e.v !== "number" || !e.values) throw 0; // settings.ts load() rejects this too
+          var a = e.values.appearance;
+          if (a === "dark") t = "dark";
+          else if (a === "system" && matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+          document.documentElement.dataset.theme = t;
+          document.documentElement.style.colorScheme = t;
+        } catch (e) {}
+      })();
+    </script>
     <link rel="icon" href="/strength-tracker/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/strength-tracker/icons/icon-192.png" />
     <title>Strength Log</title>
-    <script type="module" crossorigin src="/strength-tracker/assets/index-9NBzhJ6N.js"></script>
-    <link rel="stylesheet" crossorigin href="/strength-tracker/assets/index-CKrS-0t_.css">
+    <script type="module" crossorigin src="/strength-tracker/assets/index-D264XAqf.js"></script>
+    <link rel="stylesheet" crossorigin href="/strength-tracker/assets/index-DemvK571.css">
   <link rel="manifest" href="/strength-tracker/manifest.webmanifest"></head>
   <body>
     <div id="root"></div>
