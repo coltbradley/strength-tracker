@@ -10,6 +10,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -2462,8 +2463,8 @@ describe("Session per-set receipts", () => {
     await act(async () => {
       listener({ kind: "insert", table: "sets", payload: first }, receiptOwner);
     });
-    expect(await screen.findByRole("status", { name: "Set status: Synced" })).toBeTruthy();
-    expect(screen.getByRole("status", { name: "Set status: Review" })).toBeTruthy();
+    expect(await screen.findByRole("note", { name: "Set status: Synced" })).toBeTruthy();
+    expect(screen.getByRole("note", { name: "Set status: Review" })).toBeTruthy();
   });
 
   it("does not report a replacement Synced while its durable link snapshot is delayed", async () => {
@@ -2496,26 +2497,26 @@ describe("Session per-set receipts", () => {
     await act(async () => {
       listener({ kind: "insert", table: "sets", payload: replacement }, receiptOwner, link);
     });
-    expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    expect(await screen.findByRole("note", { name: "Set status: Review" })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: "Set status: Synced" })).toBeNull();
 
     await vi.waitFor(() => expect(waitingReads.length).toBeGreaterThan(0));
     await act(async () => {
       for (const resolve of olderReads) resolve({});
     });
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    expect(screen.queryByRole("note", { name: "Set status: Synced" })).toBeNull();
     linksReleased = true;
     await act(async () => {
       const currentReads = waitingReads.splice(0);
       for (const resolve of currentReads) resolve({ [replacement.id]: receiptOriginalId });
     });
-    expect(await screen.findByRole("status", { name: "Set status: On this phone" })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    expect(await screen.findByRole("note", { name: "Set status: On this phone" })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: "Set status: Synced" })).toBeNull();
 
     await act(async () => {
       listener({ kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } }, receiptOwner, link);
     });
-    expect(await screen.findByRole("status", { name: "Set status: Synced" })).toBeTruthy();
+    expect(await screen.findByRole("note", { name: "Set status: Synced" })).toBeTruthy();
   });
 
   it("keeps a correction in Review when its linked void is dead", async () => {
@@ -2557,13 +2558,13 @@ describe("Session per-set receipts", () => {
     await act(async () => {
       listener({ kind: "insert", table: "sets", payload: replacement }, receiptOwner);
     });
-    expect(await screen.findByRole("status", { name: "Set status: On this phone" })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    expect(await screen.findByRole("note", { name: "Set status: On this phone" })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: "Set status: Synced" })).toBeNull();
 
     await act(async () => {
       listener({ kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } }, receiptOwner, link);
     });
-    expect(await screen.findByRole("status", { name: "Set status: Synced" })).toBeTruthy();
+    expect(await screen.findByRole("note", { name: "Set status: Synced" })).toBeTruthy();
   });
 
   it("does not promote a late exact read from the prior account", async () => {
@@ -2600,5 +2601,55 @@ describe("Session per-set receipts", () => {
     });
     expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
     expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+  });
+});
+
+describe("Focus movement scene integration", () => {
+  it("updates with the controlled draft, survives List, and advances to the current bracket cue", async () => {
+    const first = {
+      ...prescription("squat-warmup-1", "squat", "Squat", "reps", null, 1),
+      position: 0,
+      set_type: "warmup" as const,
+      load_kg: 20,
+      resolved_load_kg: 20,
+      notes: "Earlier bracket cue.",
+    };
+    const current = {
+      ...prescription("squat-warmup-2", "squat", "Squat", "reps", null, 1),
+      position: 1,
+      set_type: "warmup" as const,
+      load_kg: 40,
+      resolved_load_kg: 40,
+      notes: "Current bracket cue.",
+    };
+    const working = {
+      ...prescription("squat-working", "squat", "Squat", "reps", null, 2),
+      position: 2,
+      set_type: "working" as const,
+      load_kg: 60,
+      resolved_load_kg: 60,
+      notes: "Working bracket cue.",
+    };
+    await seed("reps", [first, current, working]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "LOG SET" }).hasAttribute("disabled")).toBe(false);
+    });
+    fireEvent.click(screen.getByText("warmup", { selector: "button", exact: true }));
+    expect(screen.getByText("Earlier bracket cue.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "increase load by 2.5 kg" }));
+    expect(screen.getByText("22.5 kg total")).toBeTruthy();
+    expect(outbox.enqueue).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(screen.getByText(/22\.5/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
+    expect(screen.getByText("22.5 kg total")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /hide the rest timer/ }));
+    expect(await screen.findByText("Current bracket cue.")).toBeTruthy();
+    expect(screen.getByText("40 kg total")).toBeTruthy();
   });
 });

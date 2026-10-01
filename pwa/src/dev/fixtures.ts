@@ -21,6 +21,8 @@ export interface DemoStore {
   set_notes: Row[];
   /** Empty by default, matching the real `coach_access` default of enabled. */
   coach_access: Row[];
+  /** empty by default; Record reads this relation in the real app */
+  coach_observations: Row[];
   /** weigh-ins with no session attached; unioned with sessions.bodyweight_kg
    *  by the v_bodyweight stand-in, the same as in SQL */
   bodyweight_log: Row[];
@@ -31,7 +33,7 @@ export interface DemoStore {
 }
 
 export type DemoScenario =
-  "default" | "empty" | "orphan" | "active" | "undated" | "offline";
+  "default" | "empty" | "orphan" | "active" | "undated" | "offline" | "versiond" | "versiond-circuit";
 
 export const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -184,8 +186,8 @@ interface RxSpec {
   set_type?: "warmup" | "working" | "backoff";
   /** heading this row sits under; absent = the main body */
   section?: string | null;
-  /** 'reps' (default) or 'done', a completion tick */
-  tracking?: "reps" | "done";
+  /** 'reps' (default), 'time', or 'done', a timed set or completion tick */
+  tracking?: "reps" | "done" | "time";
 }
 
 function rxRows(workoutId: string, specs: RxSpec[]): Row[] {
@@ -826,6 +828,7 @@ function emptyStore(): DemoStore {
     set_voids: [],
     set_notes: [],
     coach_access: [],
+    coach_observations: [],
     bodyweight_log: [],
     checkins: [],
     symptom_episodes: [],
@@ -1215,12 +1218,99 @@ function resolvedFor(
         plate_load_kg:
           resolved === null ? null : Math.round(resolved / 2.5) * 2.5,
         superset_group: p.superset_group as number | null,
+        load_entry: (p.load_entry ?? null) as "total" | "per_side" | null,
+        set_type: (p.set_type ?? "working") as "warmup" | "working" | "backoff",
+        section: (p.section ?? null) as string | null,
+        tracking: (p.tracking ?? "reps") as "reps" | "done" | "time",
       };
     });
 }
 
+function versionDScenario(circuit: boolean): ScenarioResult {
+  const store = defaultStore({ dated: true });
+  const today = dayIso(new Date());
+  const workoutId = circuit ? "pw-versiond-circuit" : "pw-versiond";
+  const programId = circuit ? "prog-versiond-circuit" : "prog-versiond";
+  const label = circuit ? "Version D · Three station circuit" : "Version D · Focus and entry modes";
+  store.programs.push({
+    id: programId,
+    user_id: DEMO_USER_ID,
+    name: "Version D DEV scenarios",
+    source_note: null,
+    created_at: at(today, 7),
+    confirmed_at: at(today, 7),
+  });
+  const workout: Row = {
+    id: workoutId,
+    user_id: DEMO_USER_ID,
+    program_id: programId,
+    day_index: 0,
+    label,
+    notes: null,
+    scheduled_date: today,
+    plan_note: null,
+    skipped_at: null,
+    created_at: at(today, 7),
+  };
+  store.planned_workouts.push(workout);
+
+  const specs: RxSpec[] = circuit
+    ? [
+        { exercise_id: "Barbell_Squat", sets: 2, reps_min: 5, reps_max: 5, load_kg: 80, notes: "Long circuit cue: use a smooth tempo and clear the lane for the next station.", section: "Main work" },
+        { exercise_id: "Face_Pull", sets: 3, reps_min: 12, reps_max: 15, load_kg: 25, superset_group: 2, section: "Circuit · three stations" },
+        { exercise_id: "Plank", sets: 2, reps_min: 0, reps_max: 0, tracking: "done", superset_group: 2, section: "Circuit · three stations" },
+        { exercise_id: "Farmers_Walk", sets: 3, reps_min: 0, reps_max: 0, tracking: "time", superset_group: 2, section: "Circuit · three stations", notes: "Walk tall; turn before the rack." },
+        { exercise_id: "Barbell_Deadlift", sets: 3, reps_min: 3, reps_max: 5, load_kg: 120, notes: LONG_COACH_NOTE },
+      ]
+    : [
+        { exercise_id: "Barbell_Squat", sets: 1, reps_min: 8, reps_max: 10, load_kg: 60, set_type: "warmup", notes: "Earlier warmup cue." },
+        { exercise_id: "Barbell_Squat", sets: 1, reps_min: 5, reps_max: 6, load_kg: 80, set_type: "warmup", notes: "Current bracket cue: brace before unracking." },
+        { exercise_id: "Barbell_Squat", sets: 2, reps_min: 4, reps_max: 5, load_kg: 100, notes: "Long top-set cue: stop when speed changes, reset your breath, and keep the bar over mid-foot." },
+        { exercise_id: "Farmers_Walk", sets: 2, reps_min: 0, reps_max: 0, tracking: "time", notes: "Timed carry; keep walking until the clock ends." },
+        { exercise_id: "Plank", sets: 2, reps_min: 0, reps_max: 0, tracking: "done", section: "Accessories" },
+        { exercise_id: "Pullups", sets: 3, reps_min: 5, reps_max: 8, section: "Accessories" },
+        { exercise_id: "Seated_Dumbbell_Press", sets: 3, reps_min: 8, reps_max: 10, load_kg: 40, load_entry: "per_side", section: "Accessories" },
+        { exercise_id: "Face_Pull", sets: 3, reps_min: 12, reps_max: 15, load_kg: 25, superset_group: 1, section: "Pair · unequal target" },
+        { exercise_id: "Triceps_Pushdown", sets: 2, reps_min: 10, reps_max: 12, load_kg: 30, superset_group: 1, section: "Pair · unequal target" },
+        { exercise_id: "Single_Arm_Half_Kneeling_Landmine_Press", sets: 2, reps_min: 10, reps_max: 12, load_kg: 25, notes: LONG_COACH_NOTE, section: "Accessories" },
+      ];
+  store.prescriptions.push(...rxRows(workoutId, specs));
+
+  const startedAt = new Date(Date.now() - 12 * 60_000).toISOString();
+  const sessionId = circuit ? "sess-versiond-circuit" : "sess-versiond";
+  store.sessions.push({
+    id: sessionId,
+    user_id: DEMO_USER_ID,
+    planned_workout_id: workoutId,
+    started_at: startedAt,
+    ended_at: null,
+    session_rpe: null,
+    bodyweight_kg: null,
+    notes: null,
+    discarded_at: null,
+    created_at: startedAt,
+  });
+  return {
+    store,
+    activeSessionCache: {
+      session: {
+        id: sessionId,
+        planned_workout_id: workoutId,
+        started_at: startedAt,
+        workout_label: label,
+        plan_note: null,
+        coach_note: null,
+      },
+      prescriptions: resolvedFor(store, workoutId),
+    },
+  };
+}
+
 export function buildScenario(scenario: DemoScenario): ScenarioResult {
   const today = dayIso(new Date());
+
+  if (scenario === "versiond") return versionDScenario(false);
+  if (scenario === "versiond-circuit") return versionDScenario(true);
 
   if (scenario === "empty") {
     return { store: emptyStore(), activeSessionCache: null };

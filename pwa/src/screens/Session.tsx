@@ -38,6 +38,7 @@ import { Note } from "../components/Note";
 import { RestTimer, type ActiveRest } from "../components/RestTimer";
 import { OutboxSheet } from "../components/OutboxSheet";
 import { SetReceiptStatus } from "../components/session/SetReceiptStatus";
+import { FocusLoadStage } from "../components/session/FocusLoadStage";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
@@ -3789,6 +3790,17 @@ export function Session() {
       : null;
     const plateSplit =
       roundLoadStyle === "plates" ? split(storedLoad, barKg, inventory) : null;
+    const styleIcon: SetEditorProps["loadPresentation"]["styleIcon"] =
+      !roundLoadStyleEligible
+        ? null
+        : equipment === "barbell"
+          ? { Icon: BarbellIcon, label: "barbell — loaded with plates" }
+          : {
+              Icon: roundLoadStyle === "plates" ? PlateMachineIcon : StackIcon,
+              label: roundLoadStyle === "plates"
+                ? "plate-loaded machine — switch to a weight stack"
+                : "weight stack — switch to plate-loaded",
+            };
     const hint = plateSplit
       ? plateSplit.plates.length > 0
         ? plateSplit.plates
@@ -3804,7 +3816,9 @@ export function Session() {
     return {
       entry,
       draft,
-      tracking: "reps" as const,
+      tracking: isTick(entry) ? "done" as const : isTimed(entry) ? "time" as const : "reps" as const,
+      cue: bracket?.notes ?? null,
+      equipment,
       loadPresentation: {
         perSide,
         totalKg: storedLoad,
@@ -3812,6 +3826,7 @@ export function Session() {
         barKg,
         hint,
         noLoad: isBodyweightEquipment(equipment) && storedLoad === 0,
+        styleIcon,
         canToggleEntry: offersLoadEntry({
           override: getExercisePref(entry.exercise_id).loadEntry,
           prescribed: entry.substitutedFor
@@ -3960,6 +3975,57 @@ export function Session() {
     return `${name} · ${toDisplay(lastLoggedSet.load_kg, unit)} ${unit} load unclassified × ${lastLoggedSet.reps}`;
   };
 
+  const focusStageNode = focusEntry ? (() => {
+    const renderStage = (target: ExerciseEntry, draft: SetDraft) => {
+      const stage = roundEditorFor(target, draft);
+      return (
+        <FocusLoadStage
+          key={target.key}
+          entry={target}
+          draft={stage.draft}
+          tracking={stage.tracking}
+          loadPresentation={stage.loadPresentation}
+          unit={stage.unit}
+          equipment={stage.equipment}
+          cue={stage.cue}
+        />
+      );
+    };
+    if (focusSupersetPair) {
+      return (
+        <div className="focus-load-stage-pair">
+          {focusSupersetPair.map((member) => renderStage(member, roundDraftFor(member)))}
+        </div>
+      );
+    }
+    return (
+      <FocusLoadStage
+        entry={focusEntry}
+        draft={{
+          entryKg,
+          reps,
+          setType: setType as BracketKind,
+          rpe,
+          durationSeconds,
+          enteredLoad: editing?.enteredLoad ?? currentDraft?.enteredLoad,
+          enteredUnit: editing?.enteredUnit ?? currentDraft?.enteredUnit,
+        }}
+        tracking={isTick(focusEntry) ? "done" : isTimed(focusEntry) ? "time" : "reps"}
+        loadPresentation={{
+          perSide,
+          totalKg: totalLoadKg,
+          plateSplit,
+          barKg: exerciseBarKg,
+          noLoad: noLoadEditor,
+          styleIcon,
+        }}
+        unit={inputUnit}
+        equipment={equipment}
+        cue={currentBracket?.notes ?? null}
+      />
+    );
+  })() : null;
+
   const restTimerEl = (
       <RestTimer
         variant={presentation === "focus" ? "scene" : "strip"}
@@ -4075,25 +4141,7 @@ export function Session() {
               renderEditor={(entry) => renderEditor(entry, false, "hero")}
               onOpenMore={() => setMoreOpen(true)}
               formatScheme={scheme}
-              stageSlot={
-                <div className="focus-stage-details">
-                  {scheme(focusEntry) && (
-                    <span className="focus-stage-target">
-                      {scheme(focusEntry).toUpperCase()}
-                    </span>
-                  )}
-                  {equipMap[focusEntry.exercise_id] && (
-                    <span className="focus-stage-equipment">
-                      {equipMap[focusEntry.exercise_id]}
-                    </span>
-                  )}
-                  {focusEntry.brackets[0]?.notes && (
-                    <span className="focus-stage-cue">
-                      {focusEntry.brackets[0].notes}
-                    </span>
-                  )}
-                </div>
-              }
+              stageSlot={focusStageNode}
               topSlot={!sheetOpen && rest ? restTimerEl : undefined}
               workoutComplete={workoutDone && !editing}
               extraSetArmed={extraSetArmed}

@@ -30,6 +30,8 @@ const SCENARIOS: DemoScenario[] = [
   "active",
   "undated",
   "offline",
+  "versiond",
+  "versiond-circuit",
 ];
 
 /** `?demo=active` picks the scenario; it is remembered for the session so a

@@ -1,17 +1,6 @@
-// Dev-only marker for a non-default demo scenario.
-//
-// `readScenario` remembers the picked scenario in sessionStorage, because a
-// router navigation drops the query string and the scenario has to survive it.
-// The cost is that `?demo=offline` keeps applying to every later load of a
-// bare `/`, and the app then renders a truthful-looking "offline — showing
-// cached plan" with nothing on screen saying the offline is fabricated. That
-// reads as a broken app, not as a scenario.
-//
-// So: whenever the active scenario is NOT the default, say so, and give it an
-// exit. Nothing renders on `default`, which is what an unattended screenshot
-// or overflow sweep runs. Styles are inline on purpose — styles.css is the
-// production stylesheet and this element never ships (the whole src/dev/ tree
-// is dead-code-eliminated unless VITE_DEMO=1).
+// Dev-only marker for a non-default demo scenario and its optional preview
+// emulations. The ?demo= choice is remembered for router navigation, while
+// text/motion modes stay explicit in the URL so a rendered check is repeatable.
 
 import type { DemoScenario } from "./fixtures";
 
@@ -19,17 +8,28 @@ export function mountScenarioBadge(scenario: DemoScenario): void {
   if (scenario === "default") return;
   if (document.getElementById("demo-scenario-badge")) return;
 
+  const query = new URLSearchParams(window.location.search);
+  const textScale = query.get("demoTextScale") === "130";
+  const reducedMotion = query.get("demoReducedMotion") === "1";
+  if (textScale) document.documentElement.dataset.demoTextScale = "130";
+  if (reducedMotion) document.documentElement.dataset.demoReducedMotion = "true";
+
   const badge = document.createElement("button");
   badge.id = "demo-scenario-badge";
   badge.type = "button";
-  badge.textContent = `DEMO · ${scenario.toUpperCase()} ✕`;
-  badge.title = `Fake "${scenario}" scenario — click to return to the default demo data`;
+  const modes = [
+    ...(textScale ? ["TEXT 1.3× EMULATION"] : []),
+    ...(reducedMotion ? ["REDUCED-MOTION EMULATION"] : []),
+  ];
+  badge.textContent = `DEMO · ${scenario.toUpperCase()}${modes.length ? ` · ${modes.join(" · ")}` : ""} ✕`;
+  badge.title = `Fake "${scenario}" data${textScale ? "; 1.3× text emulation" : ""}${reducedMotion ? "; reduced-motion emulation" : ""}. Click to return to the default demo data.`;
 
   Object.assign(badge.style, {
     position: "fixed",
     top: "0",
     left: "0",
     zIndex: "9999",
+    maxWidth: "100vw",
     margin: "0",
     padding: "4px 8px",
     border: "0",
@@ -37,7 +37,8 @@ export function mountScenarioBadge(scenario: DemoScenario): void {
     background: "var(--accent, #57417f)",
     color: "var(--text-inverse, #fcfbfd)",
     font: "600 10px/1.4 var(--font-mono, ui-monospace, monospace)",
-    letterSpacing: "0.08em",
+    letterSpacing: "0.04em",
+    textAlign: "left",
     cursor: "pointer",
   } satisfies Partial<CSSStyleDeclaration>);
 
