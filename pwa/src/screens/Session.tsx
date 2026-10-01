@@ -528,7 +528,11 @@ export function Session() {
         setReceiptSnapshot((previous) => {
           const sameScope = previous.sessionId === requestedSession && previous.ownerId === ownerId;
           return {
-            sessionId: requestedSession, ownerId, entries, correctionLinks, readError: null,
+            sessionId: requestedSession, ownerId, entries,
+            // Queue relations are immutable for a session. Keep one already
+            // observed while an older, empty snapshot resolves after an ACK.
+            correctionLinks: sameScope ? { ...previous.correctionLinks, ...correctionLinks } : correctionLinks,
+            readError: null,
             // Exact UUID evidence is append-only. A successful empty result
             // cannot revoke a prior successful ACK or readback.
             serverSetIds: new Set([...(sameScope ? previous.serverSetIds : []), ...exact.setIds]),
@@ -539,11 +543,16 @@ export function Session() {
         if (!isCurrent()) return;
         reportError(error, "read exact set receipt evidence");
         const readError = error instanceof Error ? error.message : String(error);
-        setReceiptSnapshot((previous) => ({
-          sessionId: requestedSession, ownerId, entries, correctionLinks, readError,
-          serverSetIds: previous.sessionId === requestedSession && previous.ownerId === ownerId ? previous.serverSetIds : new Set(),
-          serverVoidIds: previous.sessionId === requestedSession && previous.ownerId === ownerId ? previous.serverVoidIds : new Set(),
-        }));
+        setReceiptSnapshot((previous) => {
+          const sameScope = previous.sessionId === requestedSession && previous.ownerId === ownerId;
+          return {
+            sessionId: requestedSession, ownerId, entries,
+            correctionLinks: sameScope ? { ...previous.correctionLinks, ...correctionLinks } : correctionLinks,
+            readError,
+            serverSetIds: sameScope ? previous.serverSetIds : new Set(),
+            serverVoidIds: sameScope ? previous.serverVoidIds : new Set(),
+          };
+        });
       }
     } catch (error) {
       if (!isCurrent()) return;

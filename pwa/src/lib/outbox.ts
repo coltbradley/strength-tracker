@@ -598,6 +598,19 @@ export function createOutbox({
           const operationOwner = item.user_id ?? requestOwner;
           const err = await applyOp(item.op);
           if (err === null) {
+            let linkedCorrection: OutboxItem["correction_link"];
+            if (item.op.kind === "insert" && item.op.table === "sets" && typeof operationOwner === "string") {
+              const replacement = item.op.payload;
+              linkedCorrection = rows.find(({ item: candidate }) => {
+                if (candidate.op.kind !== "insert" || candidate.op.table !== "set_voids") return false;
+                const link = candidate.correction_link;
+                return typeof candidate.user_id === "string" && candidate.user_id === operationOwner &&
+                  link?.session_id === replacement.session_id &&
+                  link.replacement_id === replacement.id &&
+                  link.original_id === candidate.op.payload.set_id;
+              })?.item.correction_link;
+            }
+            const ackCorrectionLink = item.correction_link ?? linkedCorrection;
             if (item.correction_link && typeof item.user_id === "string") {
               // Keep only the owner-bound relation after the append-only void
               // is acknowledged. Queue readers exclude status=receipt; exact
@@ -614,7 +627,7 @@ export function createOutbox({
             }
             for (const listener of syncedListeners) {
               try {
-                listener(item.op, operationOwner, item.correction_link);
+                listener(item.op, operationOwner, ackCorrectionLink);
               } catch {
                 // Receipt listeners cannot turn an ACK into a transport failure.
               }

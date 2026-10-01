@@ -2185,6 +2185,74 @@ describe("Session per-set receipts", () => {
     expect(screen.getByRole("status", { name: "Set status: Review" })).toBeTruthy();
   });
 
+  it("does not report a replacement Synced while its durable link snapshot is delayed", async () => {
+    const replacement = receiptSet("delayed-link-replacement-0001");
+    const link = { session_id: active.id, replacement_id: replacement.id, original_id: receiptOriginalId };
+    let linksReleased = false;
+    const waitingReads: Array<(links: Record<string, string>) => void> = [];
+    await seedReceiptSets(replacement);
+    vi.mocked(outbox.correctionLinks).mockImplementation(() => {
+      if (linksReleased) return Promise.resolve({ [replacement.id]: receiptOriginalId });
+      return new Promise((resolve) => { waitingReads.push(resolve); });
+    });
+    vi.mocked(outbox.inspect).mockResolvedValue([{
+      key: 2, op: { kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } },
+      table: "set_voids", created_at: null, retries: 0, last_error: null,
+      user_id: receiptOwner, correction_link: link, state: "waiting", cause: null, retryable: false,
+    }] as any);
+    vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([replacement.id]), voidIds: new Set() });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await screen.findByRole("button", { name: /Last: 20 kg × 8 working/ });
+    fireEvent.click(screen.getByRole("button", { name: "Open workout" }));
+    await screen.findByRole("button", { name: "Correct logged set 1" });
+    await vi.waitFor(() => {
+      expect(receiptIdentity.syncedListeners.size).toBeGreaterThan(0);
+      expect(waitingReads.length).toBeGreaterThan(0);
+    });
+    const olderReads = waitingReads.splice(0);
+    const listener = [...receiptIdentity.syncedListeners][0]!;
+
+    await act(async () => {
+      listener({ kind: "insert", table: "sets", payload: replacement }, receiptOwner, link);
+    });
+    expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+
+    await vi.waitFor(() => expect(waitingReads.length).toBeGreaterThan(0));
+    await act(async () => {
+      for (const resolve of olderReads) resolve({});
+    });
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    linksReleased = true;
+    await act(async () => {
+      const currentReads = waitingReads.splice(0);
+      for (const resolve of currentReads) resolve({ [replacement.id]: receiptOriginalId });
+    });
+    expect(await screen.findByRole("status", { name: "Set status: On this phone" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+
+    await act(async () => {
+      listener({ kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } }, receiptOwner, link);
+    });
+    expect(await screen.findByRole("status", { name: "Set status: Synced" })).toBeTruthy();
+  });
+
+  it("keeps a correction in Review when its linked void is dead", async () => {
+    const replacement = receiptSet("dead-void-replacement-0001");
+    const link = { session_id: active.id, replacement_id: replacement.id, original_id: receiptOriginalId };
+    await seedReceiptSets(replacement);
+    vi.mocked(outbox.correctionLinks).mockResolvedValue({ [replacement.id]: receiptOriginalId });
+    vi.mocked(outbox.inspect).mockResolvedValue([{
+      key: 2, op: { kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } },
+      table: "set_voids", created_at: null, retries: 1, last_error: "original set void was refused",
+      user_id: receiptOwner, correction_link: link, state: "dead", cause: "blocked", retryable: true,
+    }] as any);
+    vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([replacement.id]), voidIds: new Set() });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect(await screen.findByRole("button", { name: /Review sync status: original set void was refused/i })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+  });
+
   it("requires both captured correction ACKs when readback is unavailable", async () => {
     const replacement = receiptSet("correction-replacement-0001");
     const link = { session_id: active.id, replacement_id: replacement.id, original_id: receiptOriginalId };

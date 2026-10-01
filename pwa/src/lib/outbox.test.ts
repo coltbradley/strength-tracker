@@ -1864,7 +1864,7 @@ describe("successful operation subscribers", () => {
 
     expect(calls.map((call) => call.table)).toEqual(["sets", "set_voids"]);
     expect(events).toEqual([
-      { op: { kind: "insert", table: "sets", payload: replacement }, ownerId: ALICE, correctionLink: undefined },
+      { op: { kind: "insert", table: "sets", payload: replacement }, ownerId: ALICE, correctionLink: expectedLink },
       { op: { kind: "insert", table: "set_voids", payload: { set_id: originalId } }, ownerId: ALICE, correctionLink: expectedLink },
     ]);
     expect(legacyCallback).toHaveBeenCalledTimes(2);
