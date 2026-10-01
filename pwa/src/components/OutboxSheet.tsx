@@ -361,8 +361,8 @@ export function OutboxSheet({
       )}
       {!nothingWaiting && !online && !receiptReviewReason && (
         <p className="microcopy outbox-offline" role="status">
-          Offline. This is the normal state without a connection: writes wait
-          on this phone and go up on their own when it reconnects.
+          Offline right now. Writes go up on their own when the phone
+          reconnects.
         </p>
       )}
       {receiptReviewReason && (

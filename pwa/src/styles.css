@@ -3144,6 +3144,12 @@
     }
   }
 
+  /* Icon-only coach in the session: the offline dot sits on the icon's corner. */
+  .topbar:has(.topbar-session) .fab-off-dot {
+    top: 12px;
+    right: 9px;
+  }
+
   /* The count never wraps or clips in the fixed chip. */
   .sync-chip[data-count]::after {
     font-variant-numeric: tabular-nums;
@@ -3238,6 +3244,12 @@
     letter-spacing: 0;
   }
 
+  @media (min-width: 361px) {
+    .end-screen .rpe-grid {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+  }
+
   .end-screen .rpe-btn.seg-on {
     background: var(--accent);
     color: var(--text-on-accent);
@@ -3280,6 +3292,54 @@
     justify-content: space-between;
     align-items: baseline;
     gap: var(--s-4);
+  }
+
+  /* bodyweight stepper as the design draws it: [-]  80 kg  [+] */
+  .end-bw .stepper {
+    margin-top: 0;
+  }
+
+  .end-bw .stepper-inline {
+    display: grid;
+    grid-template-columns: var(--tap-key) minmax(0, 1fr) var(--tap-key);
+    align-items: center;
+    gap: var(--s-4);
+  }
+
+  .end-bw .stepper-inline > :nth-child(1) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .end-bw .stepper-inline > :nth-child(2) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .end-bw .stepper-inline > :nth-child(3) {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .end-bw .stepper-btn {
+    min-width: 0;
+    min-height: var(--tap-key);
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-key);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
+  }
+
+  .end-bw .stepper-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: center;
+    border-bottom: 0;
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-title));
+    font-weight: 800;
   }
 
   .end-bw-head .end-question {
@@ -6972,8 +7032,8 @@
 
   .fab-off-dot {
     position: absolute;
-    top: 12px;
-    right: 9px;
+    top: 8px;
+    right: 0;
     width: 8px;
     height: 8px;
     border-radius: var(--radius-pill);
