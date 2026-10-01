@@ -290,7 +290,7 @@ describe("Session focus load picture", () => {
     expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 
-  it("has no LOAD NEXT card for a dumbbell exercise, which draws its pair instead", async () => {
+  it("D6: a dumbbell exercise keeps its pair as a compact LOAD NEXT card while resting, and the card still switches one/two", async () => {
     equipment(["db-press", "Dumbbell Press", "dumbbell"]);
     await seed([rx("db", "db-press", "Dumbbell Press", 40)]);
     renderSession();
@@ -301,7 +301,28 @@ describe("Session focus load picture", () => {
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
 
     await screen.findByText("LAST SET");
-    expect(screen.queryByText("LOAD NEXT")).toBeNull();
+    const card = screen.getByText("LOAD NEXT").closest(".focus-load-next") as HTMLElement;
+    expect(card.querySelectorAll(".lp-db")).toHaveLength(2);
+    const before = card.textContent;
+    fireEvent.click(card);
+    const after = (screen.getByText("LOAD NEXT").closest(".focus-load-next") as HTMLElement);
+    expect(after.querySelectorAll(".lp-db")).toHaveLength(1);
+    expect(after.textContent).not.toBe(before);
+  });
+
+  it("D6: a pin-stack exercise keeps its pin picture as LOAD NEXT while resting", async () => {
+    equipment(["leg-ext", "Leg Extensions", "machine"]);
+    await seed([rx("le", "leg-ext", "Leg Extensions", 40)]);
+    renderSession();
+
+    await screen.findByRole("heading", { name: "Leg Extensions" });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+
+    await screen.findByText("LAST SET");
+    const card = screen.getByText("LOAD NEXT").closest(".focus-load-next") as HTMLElement;
+    expect(card.querySelector(".lp-stack")).not.toBeNull();
+    expect(card.textContent).toMatch(/Pin at 40 kg/);
   });
 });
 

@@ -211,6 +211,19 @@ describe("Session supersets", () => {
     expect(queuedSets()[0]!.id).not.toBe(queuedSets()[1]!.id);
   });
 
+  it("D6/D18: the rest after a round keeps the NOW member's picture as LOAD NEXT, tagged A1", async () => {
+    equipment(["bench-press", "Bench Press", "barbell"], ["barbell-row", "Barbell Row", "barbell"]);
+    await seed(pair());
+    renderSession();
+    await screen.findByText("round 1 of 2");
+    await logMember("A1", 1);
+    await logMember("A2", 2);
+    await screen.findByRole("timer", { name: /^rest timer/ });
+
+    const card = screen.getByText("LOAD NEXT").closest(".focus-load-next") as HTMLElement;
+    expect(card.textContent).toContain("A1 · ");
+  });
+
   it("H3: A2 records rest_seconds_actual null and the next A1 carries the round's measured rest", async () => {
     await seed(pair(3));
     renderSession();

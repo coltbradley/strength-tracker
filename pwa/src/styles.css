@@ -6082,6 +6082,36 @@
     margin-top: var(--s-7);
   }
 
+  /* ---- session UX fixes (final) ---- */
+
+  /* LOAD NEXT for dumbbells and pin stacks: the same compact card as the
+   * plates, with a thumbnail that keeps the card one line tall. */
+  .lp-dbs-compact {
+    flex: none;
+    width: auto;
+    height: 40px;
+    gap: var(--s-3);
+    transform-origin: left center;
+  }
+
+  .lp-dbs-compact .lp-db-handle {
+    width: 12px;
+  }
+
+  .lp-stack-compact {
+    flex: none;
+    display: flex;
+    align-items: center;
+    height: 40px;
+    overflow: hidden;
+  }
+
+  .lp-stack-compact .lp-stack {
+    transform: scale(0.6);
+    transform-origin: left center;
+    margin-right: -26px;
+  }
+
   /* ---- state vocabulary (StateGlyph.tsx) ----
    * One shape family, reused by the progress rail, FocusSetProgress and
    * WorkoutOverview rows. Circular by default; warmups get a squared-off

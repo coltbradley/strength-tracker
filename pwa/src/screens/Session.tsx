@@ -66,8 +66,8 @@ import { DockKeys, FocusDeck, type FocusKeys } from "../components/session/Focus
 import { FocusMoreSheet } from "../components/session/FocusMoreSheet";
 import { WorkoutOverview } from "../components/session/WorkoutOverview";
 import {
+  LoadNextCard,
   LoadPicture,
-  PlateDiagram,
   type LoadPictureModel,
 } from "../components/session/LoadPicture";
 import { SupersetRound, type RoundMemberCard } from "../components/session/SupersetRound";
@@ -3433,6 +3433,7 @@ export function Session() {
         ),
         pair: view.perSide,
         word: view.bellWord,
+        tag: tagPrefix,
         onToggle: view.canToggleEntry
           ? () => toggleLoadEntryFor(entry, view.mode)
           : undefined,
@@ -3594,7 +3595,18 @@ export function Session() {
     return `${name} · ${positionOfSet(s).text} · ${lineForSet(s)}`;
   };
 
-  const loadNextView = nowEntry ? viewFor(nowEntry, draftOf(nowEntry)) : null;
+  // The picture of the NEXT set, in the same vocabulary as the big one: plates,
+  // dumbbells or a pin; in a superset, the NOW member's, tagged A1/A2 (D6).
+  const loadNextModel =
+    nowEntry && nowDraft
+      ? pictureFor(
+          nowEntry,
+          nowDraft,
+          focusSupersetPair
+            ? (supersetInfo.get(nowEntry.key)?.tag ?? "")
+            : "",
+        )
+      : null;
   const focusRestSlot = rest ? (
     <>
       <RestTimer
@@ -3612,25 +3624,9 @@ export function Session() {
           onFix={() => startCorrection(lastSet)}
         />
       )}
-      {nowEntry &&
-        !entryDone(nowEntry) &&
-        loadNextView?.style === "plates" &&
-        loadNextView.plateSplit &&
-        loadNextView.baseKnown && (
-          <button
-            type="button"
-            className="focus-load-next"
-            onClick={() => openSheet("plates", memberKeyFor(nowEntry))}
-          >
-            <PlateDiagram split={loadNextView.plateSplit} unit={unit} compact />
-            <span>
-              <span className="focus-card-eyebrow">LOAD NEXT</span>
-              <span className="focus-load-next-text">
-                {plateText(loadNextView.plateSplit, loadNextView.baseKg, unit, loadNextView.baseName)}
-              </span>
-            </span>
-          </button>
-        )}
+      {nowEntry && nowDraft && !entryDone(nowEntry) && loadNextModel && (
+        <LoadNextCard model={loadNextModel} unit={unit} />
+      )}
     </>
   ) : null;
 

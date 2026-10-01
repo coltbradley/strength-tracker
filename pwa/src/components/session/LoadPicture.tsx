@@ -41,6 +41,8 @@ export type LoadPictureModel =
       displayLoad?: number;
       pair: boolean;
       word: "dumbbell" | "kettlebell";
+      /** "A1 · " in a superset; named by the LOAD NEXT card */
+      tag?: string;
       onToggle?(): void;
     }
   | {
@@ -246,5 +248,98 @@ export function LoadPicture({ model, unit }: { model: LoadPictureModel; unit: Un
           )}
         </div>
       );
+  }
+}
+
+/**
+ * The compact picture of the NEXT set, under the rest clock: LOAD NEXT with
+ * the plates, the dumbbell pair or the pin. The same card for every kind of
+ * load, so the picture the lifter had a moment ago does not vanish for the
+ * rest. It is the same control as the big picture (plate sheet, one/two
+ * dumbbell switch, machine switcher). Bodyweight has no load to show.
+ */
+export function LoadNextCard({ model, unit }: { model: LoadPictureModel; unit: Unit }) {
+  switch (model.kind) {
+    case "plates": {
+      if (model.baseKnown === false) return null;
+      return (
+        <button type="button" className="focus-load-next" onClick={model.onOpen}>
+          <PlateDiagram split={model.split} unit={unit} compact />
+          <span>
+            <span className="focus-card-eyebrow">LOAD NEXT</span>
+            <span className="focus-load-next-text">
+              {model.tag}
+              {plateText(model.split, model.baseKg, unit, model.baseName)}
+            </span>
+          </span>
+        </button>
+      );
+    }
+    case "dumbbell": {
+      const look = dumbbellLook(model.implementKg);
+      const text = dumbbellText(
+        model.implementKg,
+        model.pair,
+        unit,
+        model.word,
+        model.displayLoad,
+      );
+      const body = (
+        <>
+          <span className="lp-dbs lp-dbs-compact" aria-hidden="true">
+            <Dumbbell cls={look.cls} height={look.height} />
+            {model.pair && <Dumbbell cls={look.cls} height={look.height} />}
+          </span>
+          <span>
+            <span className="focus-card-eyebrow">LOAD NEXT</span>
+            <span className="focus-load-next-text">
+              {model.tag}
+              {text}
+            </span>
+            {model.onToggle && (
+              <span className="focus-card-eyebrow">
+                Tap for {model.pair ? `one ${model.word}` : `two ${model.word}s`}
+              </span>
+            )}
+          </span>
+        </>
+      );
+      return model.onToggle ? (
+        <button
+          type="button"
+          className="focus-load-next"
+          onClick={model.onToggle}
+          aria-label={`Load next: ${model.tag ?? ""}${text}. Switch to ${model.pair ? `one ${model.word}` : `two ${model.word}s`}`}
+        >
+          {body}
+        </button>
+      ) : (
+        <div className="focus-load-next">{body}</div>
+      );
+    }
+    case "stack": {
+      const body = (
+        <>
+          <span className="lp-stack-compact">
+            <StackDrawing />
+          </span>
+          <span>
+            <span className="focus-card-eyebrow">LOAD NEXT</span>
+            <span className="focus-load-next-text">
+              {model.tag}Pin at {toDisplay(model.totalKg, unit)} {unit}
+            </span>
+          </span>
+        </>
+      );
+      return model.canSwitch && model.onOpen ? (
+        <button type="button" className="focus-load-next" onClick={model.onOpen}>
+          {body}
+        </button>
+      ) : (
+        <div className="focus-load-next">{body}</div>
+      );
+    }
+    case "bodyweight":
+      return null;
   }
 }
