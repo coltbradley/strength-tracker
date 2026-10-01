@@ -493,3 +493,44 @@ describe("other confirmed programs", () => {
     expect(screen.getByText(/Also confirmed, not shown here: Spring block/)).toBeTruthy();
   });
 });
+
+describe("TrainHome: decimals sweep", () => {
+  for (const unit of ["kg", "lb"] as const) {
+    it(`up-next targets read at human precision in ${unit}`, () => {
+      const ugly = [
+        { ...prescription("a", "bench", "Bench press", 3), load_kg: 102.06, resolved_load_kg: 102.06,
+          load_entry: "total" as const, entered_load: 225, entered_unit: "lb" as const },
+        { ...prescription("b", "row", "Row", 3), load_kg: 21.25, resolved_load_kg: 21.25,
+          load_entry: "total" as const, entered_load: 21.25, entered_unit: "kg" as const },
+        { ...prescription("c", "sq", "Squat", 3), load_kg: 100, resolved_load_kg: 100 },
+        { ...prescription("d", "db", "Dumbbell press", 3), load_kg: 99.79, resolved_load_kg: 99.79,
+          load_entry: "per_side" as const, entered_load: 110, entered_unit: "lb" as const },
+      ];
+      render(
+        <MemoryRouter>
+          <TrainHome
+            dateContext="TODAY"
+            programName="P"
+            loading={false}
+            loadIssue={null}
+            workout={{ workout, state: "TODAY" }}
+            prescriptions={ugly}
+            prescriptionLoadState="loaded"
+            active={null}
+            recovery={null}
+            startEnabled
+            onStart={vi.fn()}
+            onOpenCoach={vi.fn()}
+            unit={unit}
+          />
+        </MemoryRouter>,
+      );
+      const text = document.body.textContent ?? "";
+      expect(text).toMatch(unit === "lb" ? /225 lb/ : /102\.1 kg/);
+      expect(text.match(/\d+\.\d{2,}|\b\d+\.0\b/g) ?? []).toEqual(
+        // 21.25 (a typed 1.25 kg plate) in kg mode is exact
+        unit === "kg" ? ["21.25"] : [],
+      );
+    });
+  }
+});

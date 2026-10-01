@@ -1987,3 +1987,93 @@ describe("Focus movement scene integration", () => {
     await waitFor(() => expect(dockValue("load")).toBe("40"));
   });
 });
+
+// ---- display sweep: no odd decimals on any live-workout surface -------------
+//
+// lib/displayLoad.ts rules 1-2: a number the lifter typed is shown as typed;
+// anything converted has at most one decimal. This renders the Focus dock,
+// LAST SET, last time, the plate sheet and the List ledger for the awkward
+// values (lb typed beside a 2-decimal kg total, a 1.25 kg plate, a legacy
+// total with no typed number, a per-hand pair) in both units and fails on any
+// number with more than one decimal that is not a typed value.
+describe("decimals sweep", () => {
+  const TYPED_ALLOWED = new Set(["21.25", "225.25"]);
+  const scan = (label: string, root: ParentNode = document.body) => {
+    // one string per text node: adjacent nodes ("1/2" then "21.25") must not
+    // be read as one number
+    const texts: string[] = [];
+    const walker = document.createTreeWalker(root as Node, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n.textContent ?? "");
+    root.querySelectorAll?.("[aria-label]").forEach((el) => texts.push(el.getAttribute("aria-label") ?? ""));
+    const bad: string[] = [];
+    for (const t of texts) {
+      // ids and timestamps are not loads: drop ISO dates and clock times first
+      const cleaned = t.replace(/\d{4}-\d{2}-\d{2}[T\d:.\-+Z]*/g, " ");
+      for (const m of cleaned.matchAll(/\d+\.\d{2,}/g)) {
+        if (!TYPED_ALLOWED.has(m[0])) bad.push(`${label}: ${m[0]} in "${t.slice(Math.max(0, (m.index ?? 0) - 25), (m.index ?? 0) + 25)}"`);
+      }
+      for (const m of cleaned.matchAll(/\b\d+\.0\b(?!\d)/g)) bad.push(`${label}: ${m[0]} (trailing .0)`);
+    }
+    return bad;
+  };
+
+  type Case = { name: string; ex: string; load_kg: number; entered?: [number, "kg" | "lb"]; entry?: "total" | "per_side" };
+  const CASES: Case[] = [
+    { name: "Bench Press", ex: "bench-press", load_kg: 102.06, entered: [225, "lb"], entry: "total" },
+    { name: "Squat", ex: "squat", load_kg: 100, entered: [100, "kg"], entry: "total" },
+    { name: "Dumbbell Bench Press", ex: "dumbbell-bench", load_kg: 100, entered: [50, "kg"], entry: "per_side" },
+    { name: "Overhead Press", ex: "overhead-press", load_kg: 21.25, entered: [21.25, "kg"], entry: "total" },
+    { name: "Row", ex: "row", load_kg: 102.06 },
+    { name: "Deadlift", ex: "deadlift", load_kg: 102.17, entered: [225.25, "lb"], entry: "total" },
+  ];
+
+  for (const unit of ["kg", "lb"] as const) {
+    for (const c of CASES) {
+      it(`${c.name} in ${unit}: dock, last set, last time, plates and list read cleanly`, async () => {
+        setSetting("unit", unit);
+        const rx = {
+          ...prescription("bench", c.ex, c.name),
+          load_kg: c.load_kg,
+          resolved_load_kg: c.load_kg,
+          ...(c.entered ? { entered_load: c.entered[0], entered_unit: c.entered[1], load_entry: c.entry } : {}),
+        } as ResolvedPrescriptionRow;
+        const logged: SetInsert = {
+          ...receiptSet(),
+          exercise_id: c.ex,
+          load_kg: c.load_kg,
+          ...(c.entered ? { entered_load: c.entered[0], entered_unit: c.entered[1], load_entry: c.entry } : {}),
+        } as SetInsert;
+        await seed("reps", [rx], [logged]);
+        vi.mocked(getServerSessionSets).mockResolvedValue([logged] as any);
+        vi.mocked(getLastActuals).mockResolvedValue({
+          data: {
+            [c.ex]: {
+              load_kg: c.load_kg,
+              reps: 5,
+              ...(c.entered ? { entered_load: c.entered[0], entered_unit: c.entered[1], load_entry: c.entry } : {}),
+              run: [{ load_kg: c.load_kg, reps: 5 }, { load_kg: 20, reps: 8 }],
+            },
+          },
+          fromCache: false,
+          stale: null,
+        } as any);
+        render(<MemoryRouter><Session /></MemoryRouter>);
+        await screen.findByRole("button", { name: "List" });
+        await waitFor(() => expect(document.body.textContent).toMatch(/LAST SET|Last time/i));
+        const bad = scan(`${c.name}/${unit}/focus`);
+
+        const plates = screen.queryAllByRole("button", { name: /plates|change ›/i });
+        if (plates[0]) {
+          fireEvent.click(plates[0]);
+          const dialog = await screen.findByRole("dialog");
+          bad.push(...scan(`${c.name}/${unit}/plates`, dialog));
+          fireEvent.click(within(dialog).getByRole("button", { name: /CLOSE/i }));
+        }
+        fireEvent.click(screen.getByRole("button", { name: "List" }));
+        await waitFor(() => expect(document.body.textContent).toMatch(/\d/));
+        bad.push(...scan(`${c.name}/${unit}/list`));
+        expect(bad).toEqual([]);
+      });
+    }
+  }
+});

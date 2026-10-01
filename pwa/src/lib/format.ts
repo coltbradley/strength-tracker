@@ -130,14 +130,16 @@ export function formatRxSetLine(
 /**
  * A plate or bar weight, as it is LABELLED on the iron.
  *
- * `toDisplay` rounds to one decimal, which is correct for a LOAD (a 102.06 kg
- * total is "102.1 kg") and wrong for a plate: the standard 1.25 kg plate —
- * one of the kg defaults in settings.ts — renders as "1.3", and no rack has a
- * 1.3. The lifter is matching this string against a number stamped on metal,
- * so a plate gets two decimals with trailing zeros trimmed: "1.25", "2.5",
- * "20", and "20.41" for a 45 lb plate read in kg mode.
+ * A LOAD is quoted at one decimal when converted (`formatLoad`), which would
+ * turn the standard 1.25 kg plate into "1.3": no rack has a 1.3. The lifter is
+ * matching this string against a number stamped on metal, so a plate in its
+ * own unit keeps its real label ("1.25", "2.5", "45"; `plateDisplayValue`
+ * snaps a stored lb plate back: 20.41 kg is "45", never "44.99"). A plate
+ * from the OTHER unit is a conversion and follows the same one-decimal rule as
+ * every other converted number: a 20 kg bar read in lb is "44.1", an lb plate
+ * read in kg is "20.4".
  *
- * Loads keep `toDisplay`. Only the things you physically pick up use this.
+ * Only the things you physically pick up use this; totals use `formatLoad`.
  */
 export function formatPlate(kg: number, unit: Unit): string {
   // plateDisplayValue snaps a stored 2-decimal-kg lb plate back to the real

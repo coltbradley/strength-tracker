@@ -3903,3 +3903,60 @@ rule; two decisions need a sentence.
   not. Items from `main` (no `correction_link`, owner in `user_id`) read and
   repair unchanged, and their voids and notes stay parked behind their parents.
 
+
+## 2026-10-01 Human-precision loads: typed exact, converted rounded, prefill on the grid
+
+The lifter should never read "102.06 kg", "225.97 lb" or have to load
+"220.5 lb". Display only; nothing here changes a stored value, `buildSetLoad`
+is still the only derivation of load fields, and the typed number plus its unit
+is still the source of truth for a draft. All of it lives in ONE module,
+`pwa/src/lib/displayLoad.ts` (`formatLoad`, `loadableDefault`, `stageLoad`).
+
+1. **What the lifter typed is shown exactly as typed**, in the unit typed
+   (21.25 kg stays 21.25; 145 lb stays 145).
+2. **Anything converted is shown at human precision**: at most one decimal,
+   trailing ".0" dropped, no float artefacts, in both units. One reading of
+   "converted": a stored kg total read in kg with nothing typed to quote keeps
+   a second decimal only when it is a quarter-kg (the 1.25 kg plate: 21.25), so
+   a real plate load is not rounded away. Everything else, including an lb
+   plate read in kg (20.41 kg is "20.4") and a 20 kg bar read in lb ("44.1"), is
+   rounded.
+3. **Prefill across units stages the nearest loadable value.** A kg plan, or a
+   kg last-time value, viewed in lb (and the reverse) stages the nearest value
+   on that exercise's step grid in the lifter's unit (per-exercise step, else
+   5 lb / 2.5 kg; a dumbbell on its own per-hand step; never below one step for
+   a positive load) as a TYPED number, and the dock quotes the source quietly
+   beside it ("plan 100 kg", "last 145 lb"). Logging it unchanged logs the
+   loadable value they saw, through `buildSetLoad` from that typed value. A
+   conversion already on the grid within the database's 0.01 kg is that grid
+   point, so 100 lb stays 100. The source's own number is kept as `planRef` on
+   the staged draft and shown only while the units differ.
+   Consequence worth knowing: a 100 kg plan viewed in lb now logs 220 lb
+   (99.79 kg), not 220.5 lb (100.02 kg). The lifter can still type 220.5.
+4. **Totals and derived numbers follow rule 2 in the display unit**: e1RM,
+   tonnage, goals, the e1RM chart label, bodyweight trend, plate totals
+   ("closest is ..."), the plate sheet total, the outbox review, the training
+   max, History, Record, the Train targets and every coach-visible string the
+   PWA builds (`coachContext.ts`). A plate LABEL in its own unit is a real plate
+   and stays exact (1.25, 2.5, 45); a plate from the other unit is converted.
+5. **Bodyweight**: a typed value round-trips (`toStoredKg`, unchanged); a
+   converted one follows rule 2.
+- **A cross-unit draft after a unit switch** (typed 225 lb, switched to kg)
+  now quotes 102.1 kg, not 102.06. The write is unchanged: the typed 225 lb
+  logs, and the row reads back as the same 102.1 kg, so the dock and the log
+  agree (this closes the "unresolved" note in the load-integrity audit).
+- **Deliberately left raw**: the OutboxSheet repair-review lines that quote a
+  failed set's stored `load_kg` kg total (the exact value the server keeps is
+  the point of that dialog) and the plan-table summary in MCP `upsert_program`
+  for a number the coach typed.
+- **Coach and MCP.** The coach prompt tells the model to quote converted loads
+  at one decimal, typed loads exactly, and to propose a load the lifter can put
+  on the bar (nearest 5 lb / 2.5 kg). MCP `upsert_program` derived per-side
+  figures go through `humanKg`.
+- **Tests.** `pwa/src/lib/displayLoad.test.ts` (both grids, both units, every
+  conversion: converted strings match `^\d+(\.\d)?$`, typed ones reproduce
+  exactly, never "x.0"); render sweeps in `Session.focus.test.tsx` (dock, LAST
+  SET, last time, plate sheet, List ledger), `History.decimals.test.tsx`
+  (Record list and detail), `End.test.tsx`, `TrainHome.test.tsx`; Deno tests for
+  `humanKg` and the coach prompt. The live gate's display check was updated for
+  rule 3 (see `pwa/e2e/live-load-sync.mjs`).

@@ -7,7 +7,7 @@ import "fake-indexeddb/auto";
 
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import {
   cacheDelete,
@@ -355,4 +355,36 @@ describe("End: session_skips at Finish", () => {
     );
     expect(vi.mocked(outbox.enqueueBatch)).not.toHaveBeenCalled();
   });
+});
+
+describe("End: decimals sweep", () => {
+  for (const unit of ["kg", "lb"] as const) {
+    it(`bodyweight reads at human precision in ${unit}`, async () => {
+      const { setSetting, resetAllSettings } = await import("../lib/settings");
+      setSetting("unit", unit);
+      // a converted lb bodyweight stored at 2 decimals of kg
+      await cacheSet("lastBodyweightKg", 81.87);
+      render(<MemoryRouter><End /></MemoryRouter>);
+      await screen.findByRole("region", { name: "Session summary" });
+      fireEvent.click(screen.getByRole("button", { name: /bodyweight/i }));
+      await screen.findByRole("region", { name: "Bodyweight" });
+      await waitFor(() =>
+        expect(screen.getByRole("region", { name: "Bodyweight" }).textContent).toMatch(
+          unit === "lb" ? /180\.5/ : /81\.9/,
+        ),
+      );
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      const odd: string[] = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        for (const m of (n.textContent ?? "").matchAll(/\d+\.\d{2,}|\b\d+\.0\b/g)) odd.push(m[0]);
+      }
+      expect(odd).toEqual([]);
+      await waitFor(() =>
+        expect(screen.getByRole("region", { name: "Bodyweight" }).textContent).toMatch(
+          unit === "lb" ? /180\.5/ : /81\.9/,
+        ),
+      );
+      resetAllSettings();
+    });
+  }
 });

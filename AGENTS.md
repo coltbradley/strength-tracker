@@ -136,6 +136,22 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   keeps two decimals (`toTypedDisplay`; the column is numeric(6,2), a 1.25 kg
   step is 21.25), lb one. `toDisplay` is for read-only quotes of a converted
   value. The write path never rounds: `buildSetLoad` takes the typed value.
+- Display precision (`pwa/src/lib/displayLoad.ts` is the ONE formatter; route
+  every load, total, e1RM, volume, goal, bodyweight and plate total through
+  `formatLoad`, never a raw `toFixed` / `Math.round` / `toDisplay` in a string):
+  (1) what the lifter typed shows exactly as typed, in the unit typed; (2)
+  anything converted shows at most one decimal, no trailing ".0", no float
+  artefacts, in both units (never 102.06, 44.09, 225.97); the only second
+  decimal is a quarter-kg read in kg with nothing typed (21.25); (3) a
+  plan / last-time number arriving from the other unit is STAGED as the nearest
+  loadable value on the exercise's step grid (`stageLoad` /
+  `loadableDefault`), as a typed number, with the source quoted beside it
+  ("plan 100 kg") and logged through `buildSetLoad` like any typed value; (4)
+  totals and derived numbers, plate totals and every coach-visible string
+  follow (2); (5) a typed bodyweight round-trips, a converted one follows (2).
+  Never change a stored value to make the display nice. A new surface that
+  prints a load needs a case in the decimals sweeps (`Session.focus.test.tsx`
+  "decimals sweep", `History.decimals.test.tsx`).
 - A correction's void is HELD behind its replacement in the outbox (insert
   before void, never the reverse) and `receipt` is an outbox status: a witness
   row kept after a correction's void is acknowledged, excluded from counts,
