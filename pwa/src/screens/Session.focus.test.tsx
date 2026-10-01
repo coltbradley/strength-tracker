@@ -610,7 +610,7 @@ describe("Session focus presentation", () => {
     });
   });
 
-  it("logs the rounded visible lb value of a kg-authored total", async () => {
+  it("stages the nearest loadable lb for a kg-authored total and logs exactly that", async () => {
     resetDbForTests();
     setSetting("unit", "lb");
     const bench = { ...prescription(), load_kg: 100, resolved_load_kg: 100,
@@ -618,11 +618,13 @@ describe("Session focus presentation", () => {
     await seed("reps", [bench]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    await vi.waitFor(() => expect(dockValue("load")).toBe("220.5"));
+    await vi.waitFor(() => expect(dockValue("load")).toBe("220"));
+    // the plan's own number rides quietly beside it
+    expect(screen.getByText("plan 100 kg")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
-    expect(payload).toMatchObject({ load_kg: 100.02, entered_load: 220.5, entered_unit: "lb", load_entry: "total" });
+    expect(payload).toMatchObject({ load_kg: 99.79, entered_load: 220, entered_unit: "lb", load_entry: "total" });
     expectAcceptedAuthoredLoad(payload);
   });
 
@@ -635,11 +637,11 @@ describe("Session focus presentation", () => {
     await seed("reps", [pair]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    await vi.waitFor(() => expect(dockValue("load")).toBe("110.2"));
+    await vi.waitFor(() => expect(dockValue("load")).toBe("110"));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
-    expect(payload).toMatchObject({ load_kg: 99.97, entered_load: 110.2, entered_unit: "lb", load_entry: "per_side" });
+    expect(payload).toMatchObject({ load_kg: 99.79, entered_load: 110, entered_unit: "lb", load_entry: "per_side" });
     expectAcceptedAuthoredLoad(payload);
   });
 
@@ -678,7 +680,8 @@ describe("Session focus presentation", () => {
 
     switchUnit("Show weights in kilograms");
     expect(unitPressed("Show weights in kilograms")).toBe("true");
-    expect(dockValue("load")).toBe("102.06");
+    // typed 225 lb quoted in kg is a conversion: human precision, never 102.06
+    expect(dockValue("load")).toBe("102.1");
 
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(unitPressed("Show weights in kilograms")).toBe("true");

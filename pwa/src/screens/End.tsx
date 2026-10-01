@@ -34,9 +34,9 @@ import {
   fromDisplay,
   MAX_BODYWEIGHT_KG,
   stepKg,
-  toDisplay,
   toStoredKg,
 } from "../lib/units";
+import { formatLoad } from "../lib/displayLoad";
 import { formatStoredTwin } from "../lib/format";
 import { readSkipsCache, sessionSkipRows, type SkipRecord } from "../lib/skips";
 import type {
@@ -632,7 +632,7 @@ export function End() {
     ? {
         label: `BODYWEIGHT · ${unit.toUpperCase()}`,
         action: "SET WEIGHT",
-        initial: String(toDisplay(bwKg, unit)),
+        initial: formatLoad(bwKg, unit),
         allowDecimal: true,
         onCommit: (v) => {
           const kg = Math.min(MAX_BODYWEIGHT_KG, Math.max(1, fromDisplay(v, unit)));
@@ -733,7 +733,7 @@ export function End() {
             <Stepper
               label="bodyweight"
               inline
-              display={String(toDisplay(bwKg, unit))}
+              display={formatLoad(bwKg, unit)}
               onTapValue={() => setBwPad(true)}
               value={bwKg}
               min={1}

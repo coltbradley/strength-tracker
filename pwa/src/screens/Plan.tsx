@@ -64,6 +64,7 @@ import { useDragList } from "../hooks/useDragList";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { cacheGet, cacheKeys } from "../lib/db";
 import { fromDisplay, stepKg, toTypedDisplay } from "../lib/units";
+import { formatLoad } from "../lib/displayLoad";
 import {
   enteredKg,
   offersLoadEntry,
@@ -172,6 +173,14 @@ export function draftFrom(
     section: r.section ?? "",
     tracking: r.tracking ?? "reps",
   };
+}
+
+/** The load a plan draft's stepper shows: what was typed in this unit, as
+ *  typed; otherwise the human-precision conversion (displayLoad rules 1-2). */
+function draftLoadText(d: RxDraft, unit: LoadUnit): string {
+  return formatLoad(d.load_kg, unit, {
+    typed: d.entered_load != null && d.entered_unit ? { value: d.entered_load, unit: d.entered_unit } : null,
+  });
 }
 
 /** Did the draft actually change anything? */
@@ -945,7 +954,7 @@ export function Plan() {
     draft?.mode === "pct"
       ? `${draft.load_pct}% TM`
       : draft
-        ? `${toTypedDisplay(draft.load_kg, unit)} ${unit}`
+        ? `${draftLoadText(draft, unit)} ${unit}`
         : "";
 
   return (
@@ -1235,7 +1244,12 @@ export function Plan() {
                       entered, so the summary and the editor agree and a pair
                       of 20s never reads as a single 40. */}
                   {r.load_kg !== null
-                    ? ` · ${toTypedDisplay(enteredKg(r.load_kg, r.load_entry ?? "total"), unit)} ${unit}${
+                    ? ` · ${formatLoad(enteredKg(r.load_kg, r.load_entry ?? "total"), unit, {
+                        typed:
+                          r.entered_load != null && r.entered_unit
+                            ? { value: r.entered_load, unit: r.entered_unit }
+                            : null,
+                      })} ${unit}${
                         r.load_entry === "per_side" ? "/hand" : ""
                       }`
                     : r.load_pct_tm !== null
@@ -1416,7 +1430,7 @@ export function Plan() {
                               : "ONE TOTAL WEIGHT"
                           } IN ${unit.toUpperCase()}`,
                           action: "SET",
-                          initial: String(toTypedDisplay(draft.load_kg, unit)),
+                          initial: draftLoadText(draft, unit),
                           allowDecimal: true,
                           onCommit: (v) =>
                             setDraft({
@@ -1447,12 +1461,12 @@ export function Plan() {
                         {
                           label: "−",
                           delta: -stepKg(unit, false),
-                          announce: `${toTypedDisplay(stepKg(unit, false), unit)} ${unit}`,
+                          announce: `${formatLoad(stepKg(unit, false), unit)} ${unit}`,
                         },
                         {
                           label: "+",
                           delta: stepKg(unit, false),
-                          announce: `${toTypedDisplay(stepKg(unit, false), unit)} ${unit}`,
+                          announce: `${formatLoad(stepKg(unit, false), unit)} ${unit}`,
                         },
                       ]}
                     />

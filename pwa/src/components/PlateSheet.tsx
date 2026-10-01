@@ -26,6 +26,7 @@ import {
 } from "../hooks/useSettings";
 import { formatPlate } from "../lib/format";
 import { fromDisplay, toDisplay, type Unit } from "../lib/units";
+import { formatLoad } from "../lib/displayLoad";
 
 interface PlateSheetProps {
   exerciseId: string;
@@ -73,8 +74,7 @@ export function PlateSheet({
   const baseKnown = useExerciseBaseKnown(exerciseId, equipment);
 
   const result = split(targetKg, barKg, inventory, unit);
-  const disp = (kg: number) => toDisplay(kg, unit);
-  const total = disp(targetKg);
+  const total = formatLoad(targetKg, unit);
 
   const stepBase = (dir: 1 | -1) => {
     const cur = toDisplay(barKg, unit);
@@ -148,7 +148,7 @@ export function PlateSheet({
           {baseKnown && !result.exact && (
             <div className="plate-warn" role="alert">
               Can’t make {total} {unit} exactly with your plates. Closest is{" "}
-              {formatPlate(result.achievedKg, unit)} {unit}.
+              {formatLoad(result.achievedKg, unit)} {unit}.
             </div>
           )}
           <div className={`plate-base${baseKnown ? "" : " plate-base-unset"}`}>

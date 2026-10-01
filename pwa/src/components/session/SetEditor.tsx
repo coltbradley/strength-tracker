@@ -16,6 +16,7 @@ import type { ReactNode } from "react";
 import { stepTo, type StepDef } from "../Stepper";
 import type { BracketKind, ExerciseEntry } from "../../lib/entries";
 import { stagedDisplayLoad, type Unit } from "../../lib/units";
+import { formatPlanRef, type PlanRef } from "../../lib/displayLoad";
 
 export type SetDraft = {
   entryKg: number;
@@ -26,6 +27,8 @@ export type SetDraft = {
   /** Exact authored input, kept beside canonical kg while a draft is staged. */
   enteredLoad?: number;
   enteredUnit?: Unit;
+  /** Where a staged number that crossed units came from ("plan 100 kg"). */
+  planRef?: PlanRef;
 };
 
 export interface SetEditorProps {
@@ -79,6 +82,7 @@ export function DockNumber({
   up,
   snap = false,
   big = false,
+  note,
   onChange,
   onTap,
 }: {
@@ -92,6 +96,8 @@ export function DockNumber({
   up: StepDef;
   snap?: boolean;
   big?: boolean;
+  /** Quiet reference under the caption ("plan 100 kg"). */
+  note?: string | null;
   onChange(next: number): void;
   onTap?(): void;
 }) {
@@ -101,6 +107,7 @@ export function DockNumber({
     <>
       <span className="dock-num-value">{display}</span>
       <span className="dock-num-caption">{caption}</span>
+      {note && <span className="dock-num-note">{note}</span>}
     </>
   );
   return (
@@ -189,6 +196,7 @@ export function SetEditor({
       down={coarseDown}
       up={coarseUp}
       snap
+      note={formatPlanRef(draft.planRef, unit)}
       onChange={setLoad}
       onTap={onOpenPad ? () => onOpenPad("load") : undefined}
     />

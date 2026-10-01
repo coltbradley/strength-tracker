@@ -40,7 +40,8 @@ import { reportError, toast } from "../lib/errors";
 import { formatPlannedDate, todayLocalIso } from "../lib/format";
 import { useArmed } from "../hooks/useArmed";
 import { useUnit } from "../hooks/useUnit";
-import { fromDisplay, toDisplay } from "../lib/units";
+import { fromDisplay } from "../lib/units";
+import { formatLoad } from "../lib/displayLoad";
 import type { ExerciseRow, TrainingMaxRow } from "../lib/types";
 
 /** A training max is a working number, not a world record; anything outside
@@ -126,7 +127,7 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
     const kg = fromDisplay(displayValue, unit);
     if (!(kg > 0) || kg > MAX_TM_KG) {
       toast(
-        `Training max must be between 0 and ${toDisplay(MAX_TM_KG, unit)} ${unit}`,
+        `Training max must be between 0 and ${formatLoad(MAX_TM_KG, unit)} ${unit}`,
         "error",
       );
       return;
@@ -134,7 +135,7 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
     setTrainingMax(exerciseId, Math.round(kg * 100) / 100, effective)
       .then(() => {
         toast(
-          `${names.get(exerciseId) ?? exerciseId} training max ${toDisplay(kg, unit)} ${unit} from ${formatPlannedDate(effective)}`,
+          `${names.get(exerciseId) ?? exerciseId} training max ${formatLoad(kg, unit)} ${unit} from ${formatPlannedDate(effective)}`,
         );
         setDirty(true);
         setReloadTick((t) => t + 1);
@@ -148,7 +149,7 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
     setPad({
       label: `${(names.get(exerciseId) ?? exerciseId).toUpperCase()} · TM IN ${unit.toUpperCase()}`,
       action: "SET TM",
-      initial: cur === null ? "" : String(toDisplay(cur.value_kg, unit)),
+      initial: cur === null ? "" : formatLoad(cur.value_kg, unit),
       allowDecimal: true,
       onCommit: (v) => {
         setPad(null);
@@ -271,7 +272,7 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
                 <span className="sheet-row-value">
                   {cur === null
                     ? "NOT IN FORCE"
-                    : `${toDisplay(cur.value_kg, unit)}\u00a0${unit}`}
+                    : `${formatLoad(cur.value_kg, unit)}\u00a0${unit}`}
                 </span>
               </button>
               {/* No REMOVE on the value in force: re-setting the same date
@@ -281,7 +282,7 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
               {rest.map((r) => (
                 <div key={r.id} className="sheet-row override-row">
                   <span className="muted-mono">
-                    {`${toDisplay(r.value_kg, unit)}\u00a0${unit}`} ·{" "}
+                    {`${formatLoad(r.value_kg, unit)}\u00a0${unit}`} ·{" "}
                     {formatPlannedDate(r.effective_date)}
                     {r.effective_date > today ? " · SCHEDULED" : ""}
                   </span>

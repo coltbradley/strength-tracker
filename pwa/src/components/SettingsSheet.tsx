@@ -49,7 +49,8 @@ import {
   usePlatesOnHand,
   useSettingRaw,
 } from "../hooks/useSettings";
-import { fromDisplay, toDisplay, toTypedDisplay, type Unit } from "../lib/units";
+import { fromDisplay, toTypedDisplay, type Unit } from "../lib/units";
+import { formatLoad } from "../lib/displayLoad";
 import {
   currentTrainingMax,
   getExercises,
@@ -883,7 +884,7 @@ function PlateInventory({
               onCommit: (v) => {
                 if (!addPlate(unit, fromDisplay(v, unit))) {
                   toast(
-                    `Plate must be between 0 and ${toDisplay(MAX_PLATE_KG, unit)} ${unit} and not already on the list`,
+                    `Plate must be between 0 and ${formatLoad(MAX_PLATE_KG, unit)} ${unit} and not already on the list`,
                     "error",
                   );
                 }
@@ -898,7 +899,7 @@ function PlateInventory({
       <div className="microcopy">
         {smallest === null
           ? "No plates on hand — the calculator will only offer the bar."
-          : `Smallest jump ${toDisplay(smallest * 2, unit)} ${unit} — plates load in pairs.`}
+          : `Smallest jump ${formatLoad(smallest * 2, unit)} ${unit} — plates load in pairs.`}
       </div>
     </div>
   );
@@ -929,7 +930,7 @@ function BarInventory({
             className={`chip ${nearKg(b, selected) ? "chip-on" : ""}`}
             onClick={() => setBarKg(unit, b)}
           >
-            BAR {toDisplay(b, unit)}
+            BAR {formatPlate(b, unit)}
           </button>
         ))}
         <button
@@ -944,7 +945,7 @@ function BarInventory({
               onCommit: (v) => {
                 if (!addBar(unit, fromDisplay(v, unit))) {
                   toast(
-                    `Bar must be between 0 and ${toDisplay(MAX_BAR_KG, unit)} ${unit} and not already on the list`,
+                    `Bar must be between 0 and ${formatLoad(MAX_BAR_KG, unit)} ${unit} and not already on the list`,
                     "error",
                   );
                 }
@@ -965,7 +966,7 @@ function BarInventory({
               }
             }}
           >
-            REMOVE {toDisplay(selected, unit)}
+            REMOVE {formatPlate(selected, unit)}
           </button>
         )}
       </div>

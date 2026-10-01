@@ -3787,6 +3787,16 @@
     white-space: nowrap;
   }
 
+  /* The plan's own number when the staged one crossed units: quiet, never
+     competes with the value. */
+  .dock-num-note {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
+    white-space: nowrap;
+    opacity: 0.85;
+  }
+
   /* Reps (or seconds) as the one big number: bodyweight and timed holds. */
   .dock-num-big {
     min-height: 88px;

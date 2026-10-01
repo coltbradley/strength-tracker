@@ -25,7 +25,8 @@ import { cacheGet, cacheKeys } from "./db";
 import { getTrainingPlan, type TrainingPlanRead } from "./data";
 import { supabase } from "./supabase";
 import { getUnit, getWeekStartsOn } from "./settings";
-import { toDisplay, type Unit } from "./units";
+import type { Unit } from "./units";
+import { formatLoad } from "./displayLoad";
 import { parseLocalDate, todayLocalIso, workoutName } from "./format";
 import { weekDates } from "./calendar";
 import type {
@@ -35,9 +36,24 @@ import type {
   SetInsert,
 } from "./types";
 
-function load(kg: number | null, unit: Unit): string {
+function load(
+  kg: number | null,
+  unit: Unit,
+  row?: {
+    load_entry?: string | null;
+    entered_load?: number | null;
+    entered_unit?: Unit | null;
+  },
+): string {
   if (kg === null) return "by feel";
-  return `${toDisplay(kg, unit)} ${unit}`;
+  // a TOTAL typed in this unit is quoted as typed; everything else at human
+  // precision (rule 2, lib/displayLoad.ts). A per-side number is one side and
+  // this line is the total, so it is never quoted as typed.
+  const typed =
+    row?.load_entry === "total" && row.entered_load != null && row.entered_unit
+      ? { value: row.entered_load, unit: row.entered_unit }
+      : null;
+  return `${formatLoad(kg, unit, { typed })} ${unit}`;
 }
 
 /** The plan as the app caches it. Only the program ids are needed here. */
@@ -417,15 +433,15 @@ export function formatTrendsLine(d: TrendDigest | null, unit: Unit): string {
   if (d === null) return "\nTRENDS: not enough data yet.";
   const parts: string[] = [];
   if (d.bw_latest_kg !== null) {
-    let bw = `bodyweight ${toDisplay(d.bw_latest_kg, unit)} ${unit}`;
+    let bw = `bodyweight ${formatLoad(d.bw_latest_kg, unit)} ${unit}`;
     if (d.bw_7d_n > 0 && d.bw_7d_mean_kg !== null) {
-      bw += ` (7d avg ${toDisplay(d.bw_7d_mean_kg, unit)} ${unit}, n=${d.bw_7d_n}`;
+      bw += ` (7d avg ${formatLoad(d.bw_7d_mean_kg, unit)} ${unit}, n=${d.bw_7d_n}`;
       if (d.bw_28d_n > 0 && d.bw_28d_mean_kg !== null) {
         const slope = d.bw_28d_slope_kg_per_week ?? 0;
         const sign = slope >= 0 ? "+" : "";
         bw +=
-          `; 28d avg ${toDisplay(d.bw_28d_mean_kg, unit)} ${unit}, ` +
-          `n=${d.bw_28d_n}, ${sign}${toDisplay(slope, unit)} ${unit}/wk`;
+          `; 28d avg ${formatLoad(d.bw_28d_mean_kg, unit)} ${unit}, ` +
+          `n=${d.bw_28d_n}, ${sign}${formatLoad(slope, unit)} ${unit}/wk`;
       }
       bw += ")";
     }
@@ -439,11 +455,11 @@ export function formatTrendsLine(d: TrendDigest | null, unit: Unit): string {
   for (const l of d.lifts) {
     const latest =
       l.e1rm_latest_kg !== null
-        ? `${toDisplay(l.e1rm_latest_kg, unit)} ${unit}`
+        ? `${formatLoad(l.e1rm_latest_kg, unit)} ${unit}`
         : "no e1RM yet";
     const was =
       l.e1rm_4w_ago_kg !== null
-        ? ` (was ${toDisplay(l.e1rm_4w_ago_kg, unit)} ${unit} 4w ago)`
+        ? ` (was ${formatLoad(l.e1rm_4w_ago_kg, unit)} ${unit} 4w ago)`
         : "";
     parts.push(
       `${l.name} e1RM ${latest}${was}, ${l.working_sets_this_week} sets ` +
@@ -610,7 +626,7 @@ export async function buildCoachContext(): Promise<string> {
         lines.push(`${sets.length} sets logged so far, most recent last:`);
         for (const s of sets.slice(-12)) {
           lines.push(
-            `  - ${s.exercise_id}: ${load(s.load_kg ?? null, unit)} x ${s.reps} (${s.set_type})`,
+            `  - ${s.exercise_id}: ${load(s.load_kg ?? null, unit, s)} x ${s.reps} (${s.set_type})`,
           );
         }
       }
@@ -643,7 +659,7 @@ export async function buildCoachContext(): Promise<string> {
             const target =
               r.load_pct_tm !== null
                 ? `${r.load_pct_tm}% TM`
-                : load(r.load_kg ?? r.resolved_load_kg ?? null, unit);
+                : load(r.load_kg ?? r.resolved_load_kg ?? null, unit, r);
             lines.push(
               `  - ${r.exercise_name}: ${r.sets}x${r.reps_min === r.reps_max ? r.reps_min : `${r.reps_min}-${r.reps_max}`} @ ${target}` +
                 `${r.set_type && r.set_type !== "working" ? ` [${r.set_type}]` : ""}` +

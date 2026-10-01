@@ -14,7 +14,8 @@
 
 import type { PlateSplit } from "./plates";
 import { formatPlate } from "./format";
-import { kgToLb, toDisplay, type Unit } from "./units";
+import { kgToLb, type Unit } from "./units";
+import { formatLoad } from "./displayLoad";
 
 /** The competition colour classes, named by their kg plate. The token for
  *  each lives in styles.css (`--plate-25` …) — this only names which one. */
@@ -109,7 +110,7 @@ export function plateText(
         : "No plates";
   return split.exact
     ? words
-    : `${words} · closest is ${formatPlate(split.achievedKg, unit)} ${unit}`;
+    : `${words} · closest is ${formatLoad(split.achievedKg, unit)} ${unit}`;
 }
 
 /**
@@ -140,8 +141,11 @@ export function dumbbellText(
   word = "dumbbell",
   shown?: number,
 ): string {
-  const one = shown ?? toDisplay(implementKg, unit);
-  const both = shown !== undefined ? Math.round(shown * 2 * 100) / 100 : toDisplay(implementKg * 2, unit);
+  const typed = shown !== undefined ? { value: shown, unit } : null;
+  const one = formatLoad(implementKg, unit, { typed });
+  const both = formatLoad(implementKg * 2, unit, {
+    typed: shown !== undefined ? { value: Math.round(shown * 2 * 100) / 100, unit } : null,
+  });
   return pair
     ? `${one} + ${one} = ${both} ${unit} total`
     : `${one} ${unit} · one ${word} is the total`;

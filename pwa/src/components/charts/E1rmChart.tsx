@@ -4,7 +4,7 @@
 
 import { useUnit } from "../../hooks/useUnit";
 import { formatMonth, formatShortDate } from "../../lib/format";
-import { toDisplay } from "../../lib/units";
+import { formatLoad } from "../../lib/displayLoad";
 import type { SessionBestE1rmRow } from "../../lib/types";
 
 interface E1rmChartProps {
@@ -68,7 +68,7 @@ export function E1rmChart({ series, goalKg }: E1rmChartProps) {
           viewBox={`0 0 ${W} ${H}`}
           className="chart"
           role="img"
-          aria-label={`e1RM trend, latest ${toDisplay(last.best_e1rm_kg, unit)} ${unit}`}
+          aria-label={`e1RM trend, latest ${formatLoad(last.best_e1rm_kg, unit)} ${unit}`}
         >
           {goalKg !== null && (
             <line

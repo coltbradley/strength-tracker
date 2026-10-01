@@ -37,7 +37,7 @@ import { buildQueueExport, downloadText, exportFilename } from "../lib/export";
 import { reportError, toast } from "../lib/errors";
 import { APP_VERSION } from "../lib/build";
 import { useUnit } from "../hooks/useUnit";
-import { toDisplay } from "../lib/units";
+import { formatLoad } from "../lib/displayLoad";
 import type { DeadKind, OutboxEntry } from "../lib/outbox";
 import type { OutboxOp } from "../lib/db";
 import { repairAuthoredLoad } from "../lib/setLoad";
@@ -229,7 +229,7 @@ export function OutboxSheet({
   const repairable = dead.filter((e) => e.loadRepairable === true);
   const review = repairable.find((e) => e.key === reviewKey);
   const reviewTotal = review?.op.kind === "insert" && review.op.table === "sets"
-    ? `${unit === "kg" ? review.op.payload.load_kg : toDisplay(review.op.payload.load_kg, unit)} ${unit}`
+    ? `${formatLoad(review.op.payload.load_kg, unit)} ${unit}`
     : null;
   const reviewRepair = review?.op.kind === "insert" && review.op.table === "sets"
     ? describeRepairedLoad(review.op.payload)
@@ -539,8 +539,8 @@ export function OutboxSheet({
               {repairable.map((row) => row.op.kind === "insert" && row.op.table === "sets" && (
                 <div key={row.key}>
                   {names[row.op.payload.exercise_id] ?? "Set logged"} · set {row.op.payload.set_index + 1}: {describeRepairedLoad(row.op.payload).text} · {row.op.payload.load_kg} kg total
-                  {unit !== "kg" ? ` (${toDisplay(row.op.payload.load_kg, unit)} ${unit} total)` : ""}
-                  {row.op.payload.load_entry === "per_side" ? `, ${toDisplay(row.op.payload.load_kg / 2, unit)} ${unit}/side` : ""}
+                  {unit !== "kg" ? ` (${formatLoad(row.op.payload.load_kg, unit)} ${unit} total)` : ""}
+                  {row.op.payload.load_entry === "per_side" ? `, ${formatLoad(row.op.payload.load_kg / 2, unit)} ${unit}/side` : ""}
                   {` · ID ${row.op.payload.id}`}
                 </div>
               ))}
@@ -579,7 +579,7 @@ export function OutboxSheet({
               {unit !== "kg" && <div>In your unit: {reviewTotal} total</div>}
               {reviewRepair && <div>{reviewRepair.restored ? "Typed weight restored" : "Typed weight"}: {reviewRepair.text}</div>}
               {review.op.payload.load_entry === "per_side" && (
-                <div>Per side: {toDisplay(review.op.payload.load_kg / 2, unit)} {unit}/side</div>
+                <div>Per side: {formatLoad(review.op.payload.load_kg / 2, unit)} {unit}/side</div>
               )}
               <div>Rejected row&apos;s entered fields: {review.op.payload.entered_load} {review.op.payload.entered_unit} ({review.op.payload.load_entry ?? "unknown"}). These may be stale.</div>
               <div>Reps: {review.op.payload.reps}</div>

@@ -264,8 +264,9 @@ describe("formatPlate", () => {
     expect(labels).toEqual(["45", "35", "25", "10", "5", "2.5"]);
   });
 
-  it("keeps two decimals for an lb plate read in kg mode", () => {
-    expect(formatPlate(lbToKg(45), "kg")).toBe("20.41");
+  it("quotes an lb plate read in kg mode at one decimal (converted)", () => {
+    expect(formatPlate(lbToKg(45), "kg")).toBe("20.4");
+    expect(formatPlate(1.25, "kg")).toBe("1.25"); // a real kg plate stays exact
   });
 });
 

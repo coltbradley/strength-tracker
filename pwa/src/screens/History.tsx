@@ -76,7 +76,8 @@ import { getCurrentUserId } from "../lib/currentUser";
 import { outbox } from "../lib/sync";
 import type { OutboxEntry } from "../lib/outbox";
 import { useUnit } from "../hooks/useUnit";
-import { toDisplay, type Unit } from "../lib/units";
+import { type Unit } from "../lib/units";
+import { convertedLoadValue, formatLoad } from "../lib/displayLoad";
 import {
   applyPendingToIndex,
   buildRecordLists,
@@ -676,7 +677,7 @@ export function History({ userId }: { userId: string }) {
           : g,
       ),
     );
-    setAnnounce(`Goal now ${toDisplay(target, unit)} ${unit}`);
+    setAnnounce(`Goal now ${formatLoad(target, unit)} ${unit}`);
     queueGoalWrite(() => setGoal(exerciseId, target), "change goal", snapshot);
   };
 
@@ -782,7 +783,7 @@ export function History({ userId }: { userId: string }) {
     sessions.length === 0;
 
   const e1Text = (kg: number | null) =>
-    kg === null ? "—" : `${toDisplay(kg, unit)} ${unit}`;
+    kg === null ? "—" : `${formatLoad(kg, unit)} ${unit}`;
   const metaOf = (r: RecordRow) => {
     if (r.lastAt === "") return "NOT LOGGED YET";
     const n = r.recentSessions;
@@ -1090,7 +1091,7 @@ export function History({ userId }: { userId: string }) {
               {tonnage !== null && (
                 <span className="section-meta">
                   {Math.round(
-                    toDisplay(tonnage.tonnage_kg, unit),
+                    convertedLoadValue(tonnage.tonnage_kg, unit),
                   ).toLocaleString()}{" "}
                   {unit} LAST WEEK
                 </span>
@@ -1150,7 +1151,7 @@ export function History({ userId }: { userId: string }) {
                         rpe != null ? `sRPE ${rpe}` : null,
                         // captured on the End screen and, until now, never read
                         // back anywhere
-                        bw != null ? `BW ${toDisplay(bw, unit)} ${unit}` : null,
+                        bw != null ? `BW ${formatLoad(bw, unit)} ${unit}` : null,
                       ]
                         .filter(Boolean)
                         .join(" · ")}

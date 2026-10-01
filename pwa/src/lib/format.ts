@@ -1,8 +1,9 @@
 // Small shared display formatters (Today, Session, End, History, charts).
 
 import type { ResolvedPrescriptionRow } from "./types";
-import { kgToLb, toDisplay, type Unit } from "./units";
+import type { Unit } from "./units";
 import { plateDisplayValue } from "./plates";
+import { formatLoad, convertedLoadValue } from "./displayLoad";
 
 /**
  * What to call a planned day.
@@ -43,11 +44,12 @@ export function formatAuthoredLoad(
   enteredUnit: Unit | null | undefined,
   displayUnit: Unit,
 ): string {
-  if (enteredLoad != null && enteredUnit === displayUnit && loadEntry != null) {
-    return `${enteredLoad} ${enteredUnit}${loadEntry === "per_side" ? "/side" : ""}`;
-  }
   const entry = loadEntry === "per_side" ? loadKg / 2 : loadKg;
-  return `${toDisplay(entry, displayUnit)} ${displayUnit}${loadEntry === "per_side" ? "/side" : ""}`;
+  const typed =
+    enteredLoad != null && enteredUnit != null && loadEntry != null
+      ? { value: enteredLoad, unit: enteredUnit }
+      : null;
+  return `${formatLoad(entry, displayUnit, { typed })} ${displayUnit}${loadEntry === "per_side" ? "/side" : ""}`;
 }
 
 /**
@@ -140,7 +142,13 @@ export function formatRxSetLine(
 export function formatPlate(kg: number, unit: Unit): string {
   // plateDisplayValue snaps a stored 2-decimal-kg lb plate back to the real
   // plate: 20.41 kg is "45", not "44.99".
-  return String(plateDisplayValue(kg, unit));
+  const v = plateDisplayValue(kg, unit);
+  // A plate that is a quarter-multiple in this unit is a real plate (1.25,
+  // 2.5, 45). Anything else is a plate from the OTHER unit being converted
+  // (a 20 kg plate read in lb), which is quoted at one decimal like every
+  // other converted number: 44.1, never 44.09.
+  if (Math.abs(v * 4 - Math.round(v * 4)) < 1e-9) return String(v);
+  return String(convertedLoadValue(kg, unit));
 }
 
 /**
@@ -152,8 +160,9 @@ export function formatPlate(kg: number, unit: Unit): string {
  * be able to word it differently. In kg it is just the lb equivalent.
  */
 export function formatStoredTwin(kg: number, unit: Unit): string {
-  const round1 = (n: number) => Math.round(n * 10) / 10;
-  return unit === "lb" ? `${round1(kg)} kg stored` : `${round1(kgToLb(kg))} lb`;
+  return unit === "lb"
+    ? `${formatLoad(kg, "kg")} kg stored`
+    : `${formatLoad(kg, "lb")} lb`;
 }
 
 /** "2:30" — clocks and rest figures. */

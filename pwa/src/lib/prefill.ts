@@ -36,6 +36,9 @@ export interface PrefillResult {
   /** Set only when the load came from an EARLIER SET that recorded what was
    *  typed: the number, unit and convention to hand back unchanged. */
   entered?: { load: number; unit: "kg" | "lb"; entry: "total" | "per_side" };
+  /** Where the load came from, so a staged number that crossed units can say
+   *  "plan 100 kg" or "last 145 lb" beside itself. */
+  source?: "plan" | "last" | "default";
 }
 
 /** Last-resort values when a movement has no prescription and no history.
@@ -45,6 +48,7 @@ export function getPrefillFallback(): PrefillResult {
   return {
     loadKg: getSetting("fallbackLoad")[getUnit()],
     reps: getSetting("fallbackReps"),
+    source: "default",
   };
 }
 
@@ -83,5 +87,13 @@ export function prefillSet(
     lastSession?.reps ??
     fallback.reps;
 
-  return entered ? { loadKg, reps, entered } : { loadKg, reps };
+  const from: PrefillResult["source"] =
+    rxLoad !== null
+      ? "plan"
+      : lastThisSession?.load_kg != null || lastSession?.load_kg != null
+        ? "last"
+        : "default";
+  return entered
+    ? { loadKg, reps, entered, source: from }
+    : { loadKg, reps, source: from };
 }

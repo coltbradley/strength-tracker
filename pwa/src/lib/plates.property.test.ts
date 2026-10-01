@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { split, type PlateSplit } from "./plates";
 import { formatPlate } from "./format";
+import { convertedLoadValue, formatLoad } from "./displayLoad";
 import { plateText, plateVisuals } from "./loadPicture";
 import { KG_PER_LB, lbToKg, toDisplay, type Unit } from "./units";
 
@@ -36,19 +37,31 @@ export function violations(
   const out: Violation[] = [];
   const input = `target=${targetKg}kg bar=${barKg}kg unit=${unit} inv=[${inventoryKg.map((p) => formatPlate(p, unit))}]`;
   const r: PlateSplit = split(targetKg, barKg, inventoryKg, unit);
-  const shown = toDisplay(targetKg, unit);
-  const achieved = num(formatPlate(r.achievedKg, unit));
+  const shown = convertedLoadValue(targetKg, unit);
+  // the screens print the achieved TOTAL with formatLoad (human precision)
+  const achieved = num(formatLoad(r.achievedKg, unit));
   const bar = num(formatPlate(barKg, unit));
   const perSide = r.plates.reduce(
     (a, p) => a + num(formatPlate(p.plate, unit)) * p.count,
     0,
   );
   // (a) bar + 2 x plates == the achieved total, exactly, in display units
-  if (r2(bar + 2 * perSide) !== r2(achieved))
+  // A plate that belongs to the OTHER unit (a 20 kg bar read in lb, an lb
+  // plate read in kg) is a converted number and is shown to one decimal, so
+  // the sum may be off by that rounding (0.05 per label); real plates in
+  // their own unit still add up exactly.
+  const barAndPlates = [bar, ...r.plates.flatMap((p) => Array(p.count).fill(num(formatPlate(p.plate, unit))))];
+  const converted = barAndPlates.some((v) => Math.abs(v * 4 - Math.round(v * 4)) > 1e-9);
+  const slack = converted ? 0.05 * (1 + 2 * (barAndPlates.length - 1)) + 1e-9 : 0;
+  if (Math.abs(r2(bar + 2 * perSide) - r2(achieved)) > slack + 1e-9)
     out.push({ rule: "a", input, got: `${bar}+2x${perSide} != ${achieved}` });
   // (b) exact flag tells the truth about the SHOWN total; never over target
   const isExact = r2(achieved) === r2(shown);
-  if (r.exact !== isExact)
+  // A 2-decimal plate set (lb-equivalent kg plates) can miss the target by
+  // less than the one decimal the screen prints; the screen then prints the same
+  // number twice. Only that exotic inventory can do it.
+  const sameOnScreen = formatLoad(r.achievedKg, unit) === formatLoad(targetKg, unit);
+  if (r.exact !== isExact && !(sameOnScreen && !r.exact))
     out.push({ rule: "b-flag", input, got: `exact=${r.exact} shown=${shown} achieved=${achieved}` });
   if (r.plates.length > 0 && achieved > shown + 1e-9)
     out.push({ rule: "b-over", input, got: `shown=${shown} achieved=${achieved}` });
@@ -65,7 +78,7 @@ export function violations(
   const labels = plateVisuals(r, unit).map((v) => v.label);
   if (r.plates.length && !text.startsWith(labels.join(" + ")))
     out.push({ rule: "text", input, got: text });
-  if (!r.exact && !text.includes(`closest is ${formatPlate(r.achievedKg, unit)}`))
+  if (!r.exact && !sameOnScreen && !text.includes(`closest is ${formatLoad(r.achievedKg, unit)}`))
     out.push({ rule: "text-closest", input, got: text });
   return out;
 }
@@ -207,9 +220,9 @@ describe("base weights: sleds, bars, zero", () => {
     expect(split(typedKg(45, "lb"), lbToKg(45), inv(LB_PLATES, "lb"), "lb").exact).toBe(true);
   });
   it("a 20 kg bar loaded while the display is lb is not mislabelled", () => {
-    // 20 kg = 44.09 lb: honest, not "45"
+    // 20 kg = 44.09 lb: honest, not "45"; converted, so one decimal (44.1)
     const r = split(lbToKg(135), 20, inv(LB_PLATES, "lb"), "lb");
-    expect(formatPlate(20, "lb")).toBe("44.09");
+    expect(formatPlate(20, "lb")).toBe("44.1");
     expect(violations(lbToKg(135), 20, inv(LB_PLATES, "lb"), "lb", LB_PLATES)).toEqual([]);
     expect(r.exact).toBe(false); // 44.09 + 2x45 = 134.09, and it says so
   });

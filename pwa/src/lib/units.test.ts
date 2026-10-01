@@ -63,7 +63,7 @@ describe("bodyweight and staged display precision", () => {
     expect(stagedDisplayLoad(102.5, 102.5, "kg", "lb")).toBe(226);
     expect(stagedDisplayLoad(72.5, 72.5, "kg", "lb")).toBe(159.8);
     expect(stagedDisplayLoad(25, 55.1, "lb", "kg")).toBe(25);
-    expect(stagedDisplayLoad(27.22, 60, "lb", "kg")).toBe(27.22);
+    expect(stagedDisplayLoad(27.22, 60, "lb", "kg")).toBe(27.2); // converted: one decimal
     expect(stagedDisplayLoad(21.25, 21.25, "kg", "kg")).toBe(21.25);
   });
 });

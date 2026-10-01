@@ -155,6 +155,7 @@ import { getPrefillFallback, prefillSet } from "../lib/prefill";
 import { split } from "../lib/plates";
 import {
   formatClock,
+  formatPlate,
   formatRepRange,
   formatRxSetLine,
   formatRxTarget,
@@ -207,13 +208,12 @@ import {
 } from "../lib/loadStyle";
 import {
   fromDisplay,
-  kgToLb,
   stagedDisplayLoad,
   stepKgFor,
-  toDisplay,
   toTypedDisplay,
   type Unit,
 } from "../lib/units";
+import { stageLoad, formatLoad } from "../lib/displayLoad";
 import type {
   ActiveSession,
   ExerciseRow,
@@ -1439,7 +1439,7 @@ export function Session() {
   const loadSteps = (exerciseId: string, u: Unit): StepDef[] => {
     const coarse = stepKgFor(exerciseId, u, false);
     const fine = stepKgFor(exerciseId, u, true);
-    const label = (kg: number) => toTypedDisplay(kg, u);
+    const label = (kg: number) => formatLoad(kg, u);
     // `announce` says the step in the unit the lifter reads. Without it the
     // spoken label carried the kg equivalent of a five-pound plate —
     // "increase load by 2.2679618500000003".
@@ -1495,9 +1495,9 @@ export function Session() {
         set.entered_load != null &&
         set.entered_unit === unit &&
         (set.load_entry ?? null) === entryMode;
-      const value = typedHere
-        ? set.entered_load
-        : toDisplay(enteredKg(set.load_kg, entryMode), unit);
+      const value = formatLoad(enteredKg(set.load_kg, entryMode), unit, {
+        typed: typedHere ? { value: set.entered_load as number, unit } : null,
+      });
       return `${value} ${unit}${entryMode === "per_side" ? "/side" : ""}`;
     };
     if (latestOnly)
@@ -1757,6 +1757,7 @@ export function Session() {
     durationSeconds,
     enteredLoad: currentDraft?.enteredLoad,
     enteredUnit: currentDraft?.enteredUnit,
+    planRef: currentDraft?.planRef,
   };
   const openView = openEntry ? viewFor(openEntry, openDraft) : null;
   // The open entry's convention and equipment, which the prefill effect and
@@ -1860,21 +1861,31 @@ export function Session() {
         : null,
       lastSession: lastActuals[openEntry.exercise_id] ?? null,
     }, bodyweightFallback(equipment));
-    // every source above is a TOTAL; the steppers hold what gets typed
-    const sourceEntryKg = bracket?.entered_load != null && bracket.entered_unit
-      ? Math.round(fromDisplay(bracket.entered_load, bracket.entered_unit) * 100) / 100
+    // every source above is a TOTAL; the steppers hold what gets typed. The
+    // staged number is what the lifter will see AND log: typed in this unit it
+    // is exactly that; from the other unit it is the nearest loadable value on
+    // this exercise's grid, with the source's own number quoted beside it
+    // (lib/displayLoad.ts, rule 3).
+    const planAuthored =
+      p.source === "plan" && bracket?.entered_load != null && bracket.entered_unit
+        ? { value: bracket.entered_load, unit: bracket.entered_unit }
+        : null;
+    const sourceEntryKg = planAuthored
+      ? Math.round(fromDisplay(planAuthored.value, planAuthored.unit) * 100) / 100
       : Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
-    const authoredInDisplayUnit = bracket?.entered_load != null && bracket.entered_unit === unit;
-    // An earlier set typed in this unit and convention comes back as typed.
-    const repeatTyped =
-      p.entered && p.entered.unit === unit && p.entered.entry === loadEntry
-        ? p.entered.load
-        : undefined;
-    const prefilledLoad = authoredInDisplayUnit
-      ? sourceEntryKg
-      : repeatTyped !== undefined
-        ? Math.round(fromDisplay(repeatTyped, unit) * 100) / 100
-        : Math.round(fromDisplay(toTypedDisplay(sourceEntryKg, unit), unit) * 100) / 100;
+    const staged = stageLoad({
+      unit,
+      stepKg: stepKgFor(openEntry.exercise_id, unit, false),
+      sourceEntryKg,
+      origin:
+        planAuthored
+          ? planAuthored
+          : p.entered && p.entered.entry === loadEntry
+            ? { value: p.entered.load, unit: p.entered.unit }
+            : null,
+      label: p.source === "plan" || p.source === "last" ? p.source : null,
+    });
+    const prefilledLoad = staged.entryKg;
     setEntryKg(prefilledLoad);
     setReps(p.reps);
     stagedDraftsRef.current[draftKey] = {
@@ -1885,8 +1896,9 @@ export function Session() {
       setType: fresh ? openingKind : stagedKind,
       rpe: fresh ? null : rpe,
       durationSeconds,
-      enteredLoad: authoredInDisplayUnit ? bracket?.entered_load ?? undefined : repeatTyped,
-      enteredUnit: authoredInDisplayUnit || repeatTyped !== undefined ? unit : undefined,
+      enteredLoad: staged.enteredLoad,
+      enteredUnit: staged.enteredUnit,
+      planRef: staged.planRef,
     };
     // Only on a fresh open. After that the toggle belongs to the lifter (and
     // to logSet, which advances it as the plan's warmups are used up):
@@ -2375,9 +2387,7 @@ export function Session() {
       // round-trips exactly even if the toggle was flipped since the set.
       enteredLoad: oldAuthored
         ? live.entered_load!
-        : unit === "kg"
-          ? typedKg
-          : round2(kgToLb(typedKg)),
+        : toTypedDisplay(typedKg, unit),
       enteredUnit: oldAuthored ? live.entered_unit! : unit,
       loadEdited: false,
       saving: false,
@@ -2843,7 +2853,7 @@ export function Session() {
           isMachineBase ? "BASE WEIGHT" : "BAR WEIGHT"
         } IN ${unit.toUpperCase()}`,
         action: "BACK TO PLATES",
-        initial: String(toTypedDisplay(currentBaseKg, unit)),
+        initial: formatPlate(currentBaseKg, unit),
         allowDecimal: true,
         onCommit: (value) => {
           const kg = Math.min(
@@ -3052,30 +3062,32 @@ export function Session() {
         : null,
       lastSession: lastActuals[entry.exercise_id] ?? null,
     }, bodyweightFallback(equipMap[entry.exercise_id] ?? null));
-    const authoredLoad = bracket?.entered_load ?? null;
-    const authoredUnit = bracket?.entered_unit ?? null;
+    const authoredLoad = prefill.source === "plan" ? (bracket?.entered_load ?? null) : null;
+    const authoredUnit = prefill.source === "plan" ? (bracket?.entered_unit ?? null) : null;
     const sourceEntryKg = authoredLoad !== null && authoredUnit !== null
         ? Math.round(fromDisplay(authoredLoad, authoredUnit) * 100) / 100
         : Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100;
-    const authoredInDisplayUnit = authoredLoad !== null && authoredUnit === unit;
-    const repeatTyped =
-      prefill.entered && prefill.entered.unit === unit && prefill.entered.entry === entryMode
-        ? prefill.entered.load
-        : undefined;
+    const staged = stageLoad({
+      unit,
+      stepKg: stepKgFor(entry.exercise_id, unit, false),
+      sourceEntryKg,
+      origin:
+        authoredLoad !== null && authoredUnit !== null
+          ? { value: authoredLoad, unit: authoredUnit }
+          : prefill.entered && prefill.entered.entry === entryMode
+            ? { value: prefill.entered.load, unit: prefill.entered.unit }
+            : null,
+      label: prefill.source === "plan" || prefill.source === "last" ? prefill.source : null,
+    });
     return {
-      entryKg: authoredInDisplayUnit
-        ? sourceEntryKg
-        : repeatTyped !== undefined
-          ? Math.round(fromDisplay(repeatTyped, unit) * 100) / 100
-          : Math.round(fromDisplay(toTypedDisplay(sourceEntryKg, unit), unit) * 100) / 100,
+      entryKg: staged.entryKg,
       reps: prefill.reps,
       setType: kind,
       rpe: null,
-      ...(authoredInDisplayUnit
-        ? { enteredLoad: authoredLoad, enteredUnit: unit }
-        : repeatTyped !== undefined
-          ? { enteredLoad: repeatTyped, enteredUnit: unit }
-          : {}),
+      ...(staged.enteredLoad !== undefined
+        ? { enteredLoad: staged.enteredLoad, enteredUnit: staged.enteredUnit }
+        : {}),
+      ...(staged.planRef ? { planRef: staged.planRef } : {}),
     };
   };
 

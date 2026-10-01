@@ -7,6 +7,7 @@
 
 import { getExerciseStepKg, getLoadStepKg } from "./settings";
 import { KG_PER_LB } from "./setLoad";
+import { convertedLoadValue } from "./displayLoad";
 
 export type Unit = "kg" | "lb";
 
@@ -44,10 +45,12 @@ export function toTypedDisplay(kg: number, unit: Unit): number {
 }
 
 /** The number a staged draft shows in `unit`. What the lifter typed, when it
- * was typed in this unit; otherwise the converted value at the unit's own
- * precision (`toTypedDisplay`): lb one decimal, kg two only when the stored
- * kg has them. A converted lb figure never carries hundredths (225.97 lb is
- * noise; the stored kg is untouched either way). */
+ * was typed in this unit. When it was typed in the OTHER unit the screen is
+ * quoting a conversion, at human precision (`convertedLoadValue`: 102.1 kg,
+ * never 102.06); what gets written is still the typed number and its unit
+ * (`typedFromDraft`), which reads back as that same one-decimal conversion.
+ * A draft with no typed value is a stepper result on the step grid, shown at
+ * the unit's own precision (`toTypedDisplay`: lb one decimal, kg two). */
 export function stagedDisplayLoad(
   entryKg: number,
   enteredLoad: number | undefined,
@@ -55,6 +58,8 @@ export function stagedDisplayLoad(
   unit: Unit,
 ): number {
   if (enteredLoad !== undefined && enteredUnit === unit) return enteredLoad;
+  if (enteredLoad !== undefined && enteredUnit !== undefined)
+    return convertedLoadValue(entryKg, unit);
   return toTypedDisplay(entryKg, unit);
 }
 

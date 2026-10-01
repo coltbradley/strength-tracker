@@ -19,13 +19,13 @@ import {
   type BodyweightPoint,
 } from "../lib/data";
 import { formatStoredTwin } from "../lib/format";
+import { formatLoad } from "../lib/displayLoad";
 import { reportError } from "../lib/errors";
 import { useUnit } from "../hooks/useUnit";
 import {
   fromDisplay,
   MAX_BODYWEIGHT_KG,
   stepKg,
-  toDisplay,
   toStoredKg,
 } from "../lib/units";
 
@@ -103,7 +103,7 @@ export function BodyweightRow() {
     ? {
         label: `BODYWEIGHT · ${unit.toUpperCase()}`,
         action: "SET WEIGHT",
-        initial: String(toDisplay(kg, unit)),
+        initial: formatLoad(kg, unit),
         allowDecimal: true,
         onCommit: (v) => {
           setKg(Math.min(MAX_BODYWEIGHT_KG, Math.max(1, fromDisplay(v, unit))));
@@ -135,7 +135,7 @@ export function BodyweightRow() {
           <Stepper
             label="bodyweight"
             inline
-            display={String(toDisplay(kg, unit))}
+            display={formatLoad(kg, unit)}
             onTapValue={() => setPad(true)}
             value={kg}
             min={1}
@@ -166,7 +166,7 @@ export function BodyweightRow() {
               <span className="microcopy">No weigh-ins yet</span>
             ) : (
               <>
-                {toDisplay(latest.weight_kg, unit)} {unit}
+                {formatLoad(latest.weight_kg, unit)} {unit}
                 <span className="bw-when">
                   {" · "}
                   {agoLabel(latest.measured_at, new Date())}

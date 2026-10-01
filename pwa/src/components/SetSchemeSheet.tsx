@@ -20,6 +20,7 @@ import { Stepper } from "./Stepper";
 import { NumberPad, type PadRequest } from "./NumberPad";
 import { formatClock, formatStoredTwin } from "../lib/format";
 import { fromDisplay, stepKg, toTypedDisplay, type Unit } from "../lib/units";
+import { convertedLoadValue, formatLoad } from "../lib/displayLoad";
 import { getDefaultRestSeconds } from "../lib/settings";
 import {
   enteredKg,
@@ -76,9 +77,11 @@ export interface PlannedSet {
 /** The number to show for a planned set: what was typed when it was typed in
  *  this unit, else the stepper's own reading of the kg total. */
 function shownPlannedLoad(s: PlannedSet, unit: Unit): number {
-  return s.enteredLoad !== undefined && s.enteredUnit === unit
-    ? s.enteredLoad
-    : toTypedDisplay(s.loadKg, unit);
+  if (s.enteredLoad !== undefined && s.enteredUnit === unit) return s.enteredLoad;
+  // typed in the other unit: a conversion, quoted at human precision (it is
+  // still saved as what was typed, groupSets above)
+  if (s.enteredLoad !== undefined) return convertedLoadValue(s.loadKg, unit);
+  return toTypedDisplay(s.loadKg, unit);
 }
 
 const MAX_SETS = 20;
@@ -547,12 +550,12 @@ export function SetSchemeSheet({
                   {
                     label: "−",
                     delta: -stepKg(unit, false),
-                    announce: `${toTypedDisplay(stepKg(unit, false), unit)} ${unit}`,
+                    announce: `${formatLoad(stepKg(unit, false), unit)} ${unit}`,
                   },
                   {
                     label: "+",
                     delta: stepKg(unit, false),
-                    announce: `${toTypedDisplay(stepKg(unit, false), unit)} ${unit}`,
+                    announce: `${formatLoad(stepKg(unit, false), unit)} ${unit}`,
                   },
                 ]}
               />

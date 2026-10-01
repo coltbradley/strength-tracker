@@ -10,7 +10,7 @@
 // A void hides this append-only row from the live log. Name the operation so
 // the lifter can distinguish it from correcting the set or removing a plan.
 
-import { shownLoadValue } from "../lib/setLoad";
+import { formatSetLoad } from "../lib/displayLoad";
 import type { Unit } from "../lib/units";
 import type { SetInsert } from "../lib/types";
 
@@ -42,7 +42,7 @@ export function SetRow({
 }: SetRowProps) {
   const numbers = (
     <>
-      {shownLoadValue(set, unit)}{" "}
+      {formatSetLoad(set, unit)}{" "}
       {unit}
       {set.load_entry === "per_side" ? "/side" : ""} × {set.reps}
       {/* The rating rides INSIDE the numbers rather than in a column of its

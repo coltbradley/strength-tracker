@@ -16,7 +16,8 @@
 import { supabase } from "./supabase";
 import { cacheGet, cacheSet } from "./db";
 import { parseLocalDate, todayLocalIso, workoutName } from "./format";
-import { toDisplay, type Unit } from "./units";
+import type { Unit } from "./units";
+import { convertedLoadValue } from "./displayLoad";
 import type { SetInsert } from "./types";
 
 /**
@@ -382,7 +383,7 @@ export function describeWeek(
   // bodyweight and mobility work genuinely moved no load.
   if (tonnage > 0)
     parts.push(
-      `${Math.round(toDisplay(tonnage, unit)).toLocaleString()} ${unit.toUpperCase()}`,
+      `${Math.round(convertedLoadValue(tonnage, unit)).toLocaleString()} ${unit.toUpperCase()}`,
     );
   return { effort: parts.join(" · "), plan, idle: false };
 }

@@ -34,7 +34,8 @@
 // DOWN. Unbounded targets fall back to a plate-capped greedy so it always
 // terminates.
 
-import { KG_PER_LB, toDisplay, type Unit } from "./units";
+import { KG_PER_LB, type Unit } from "./units";
+import { convertedLoadValue } from "./displayLoad";
 
 export interface PlateCount {
   /** plate weight in kg (one plate; it goes on both sides) */
@@ -129,7 +130,7 @@ export function split(
   const finite = Number.isFinite(targetKg) && Number.isFinite(barKg);
   const barC = Number.isFinite(barKg) ? Math.max(0, centi(barKg, u)) : 0;
   // the total the lifter is shown, on the same 0.01 grid
-  const targetC = finite ? Math.round(toDisplay(targetKg, u) * 100) : NaN;
+  const targetC = finite ? Math.round(convertedLoadValue(targetKg, u) * 100) : NaN;
   const wantedSide = finite ? Math.floor((targetC - barC) / 2) : 0;
 
   const counts = new Map<number, number>();

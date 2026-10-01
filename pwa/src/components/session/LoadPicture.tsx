@@ -15,7 +15,8 @@ import {
   type PlateVisual,
 } from "../../lib/loadPicture";
 import { formatPlate } from "../../lib/format";
-import { toDisplay, type Unit } from "../../lib/units";
+import { formatLoad } from "../../lib/displayLoad";
+import type { Unit } from "../../lib/units";
 
 export type LoadPictureModel =
   | {
@@ -207,7 +208,7 @@ export function LoadPicture({ model, unit }: { model: LoadPictureModel; unit: Un
       );
     }
     case "stack": {
-      const text = `${model.tag ?? ""}Pin at ${toDisplay(model.totalKg, unit)} ${unit}`;
+      const text = `${model.tag ?? ""}Pin at ${formatLoad(model.totalKg, unit)} ${unit}`;
       const sub = model.canSwitch
         ? "Pin-stack machine · tap to switch to the plate sled"
         : "Pin-stack machine · the number on the pin is the load";
@@ -326,7 +327,7 @@ export function LoadNextCard({ model, unit }: { model: LoadPictureModel; unit: U
           <span>
             <span className="focus-card-eyebrow">LOAD NEXT</span>
             <span className="focus-load-next-text">
-              {model.tag}Pin at {toDisplay(model.totalKg, unit)} {unit}
+              {model.tag}Pin at {formatLoad(model.totalKg, unit)} {unit}
             </span>
           </span>
         </>
