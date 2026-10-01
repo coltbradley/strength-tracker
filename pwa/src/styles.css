@@ -2654,6 +2654,10 @@
   .note-sheet-input {
     width: 100%;
     min-height: 96px;
+    border: var(--rule-hair);
+    border-radius: var(--r-card);
+    background: var(--paper-raised);
+    font-family: var(--font-sans);
   }
 
   /* ---- logged sets as ledger rows ---- */
@@ -3093,7 +3097,10 @@
   }
 
   .focus-chip-btn,
-  .focus-middle .chip {
+  .focus-middle .chip,
+  .note-sheet .chip,
+  .rpe-sheet .chip,
+  .correction-sheet .chip {
     min-height: var(--tap-md);
     padding: 0 var(--s-8);
     border: 0;
@@ -3118,6 +3125,8 @@
   .note-sheet .btn,
   .correction-sheet .btn,
   .wk-list-dock .btn,
+  .plate-base .btn,
+  .session-footer .btn,
   .focus-deck .btn,
   .sheet .tw-units + .microcopy ~ .btn {
     justify-content: center;
@@ -3143,6 +3152,9 @@
   }
 
   .focus-middle .chip:active,
+  .note-sheet .chip:active,
+  .rpe-sheet .chip:active,
+  .correction-sheet .chip:active,
   .focus-chip-btn:active {
     background: var(--surface-key-press);
   }
@@ -4378,8 +4390,9 @@
   }
 
   .plate-base {
-    border: var(--bw-hair) solid var(--control-border-color);
-    border-radius: var(--radius);
+    border: var(--rule-hair);
+    border-radius: var(--r-card);
+    background: var(--paper-raised);
     padding: var(--s-6);
     display: flex;
     flex-direction: column;
