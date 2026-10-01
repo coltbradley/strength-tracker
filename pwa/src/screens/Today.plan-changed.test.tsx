@@ -72,15 +72,21 @@ vi.mock("../lib/data", () => ({
   throwIf: () => {},
 }));
 
-vi.mock("../lib/sync", () => ({
+vi.mock("../lib/sync", () => {
+  const status = { pending: 0, dead: 0, held: 0, state: "idle", lastError: null };
+  return {
   outbox: {
+    subscribe: () => () => {},
+    getStatus: () => status,
+    pendingSets: vi.fn().mockResolvedValue([]),
     flush: vi.fn().mockResolvedValue(undefined),
     pendingSessionUpdateIds: vi.fn().mockResolvedValue(new Set()),
     pendingRatedSessionIds: vi.fn().mockResolvedValue(new Set()),
     inspect: vi.fn().mockResolvedValue([]),
     enqueue: vi.fn(),
   },
-}));
+  };
+});
 
 vi.mock("../lib/errors", () => ({
   reportError: vi.fn(),
@@ -209,9 +215,20 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
 
     render(<Today presentation="train" userId="u1" />);
 
-    expect(await screen.findByRole("heading", { name: "Rest day" })).toBeTruthy();
+    // Finishing is confirmed first; only then does the screen talk about rest.
+    expect(await screen.findByRole("heading", { name: "Recover." })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe(
+      "✓ Upper strength finished · all sets on the server",
+    );
+    expect(screen.queryByText("Rest day")).toBeNull();
     expect(screen.getByText("Lower strength")).toBeTruthy();
-    expect(screen.getByText(formatPlannedDate(tomorrow))).toBeTruthy();
+    // the week strip says DONE for today (ended session) and NEXT for tomorrow
+    const words = [...document.querySelectorAll(".train-day-word")].map(
+      (n) => n.textContent,
+    );
+    expect(words.filter((w) => w === "DONE")).toHaveLength(1);
+    expect(words.filter((w) => w === "NEXT")).toHaveLength(1);
+    expect(screen.getByText(`NEXT · ${formatPlannedDate(tomorrow)}`)).toBeTruthy();
     const go = screen.getByRole("button", { name: "Go" });
     expect(go.className).toContain("btn-primary");
     const viewRecord = screen.getByRole("link", { name: "View record" });
@@ -222,6 +239,43 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     expect(screen.getByRole("dialog", { name: "Lower strength preview" })).toBeTruthy();
     expect(outbox.enqueue).not.toHaveBeenCalled();
     expect(await cacheGet(cacheKeys.activeSession)).toBeUndefined();
+  });
+
+  it("an open session never makes today DONE, and a DRAFT today is never missed", async () => {
+    const today = todayLocalIso();
+    const open = { ...WORKOUT, id: "open", label: "Upper", scheduled_date: today };
+    getPlannedWorkouts.mockResolvedValue({
+      data: { programs: [PROGRAM], workouts: [open] },
+      fromCache: false,
+      stale: null,
+    });
+    // getDoneWorkoutIds only ever returns ended sessions; an open one is absent
+    getDoneWorkoutIds.mockResolvedValue({ data: [], fromCache: false, stale: null });
+
+    const view = render(<Today presentation="train" userId="u1" />);
+    await screen.findByRole("button", { name: "Go" });
+    expect(screen.queryByText(/finished/)).toBeNull();
+    const words = () =>
+      [...document.querySelectorAll(".train-day-word")].map((n) => n.textContent);
+    expect(words().filter((w) => w === "TODAY")).toHaveLength(1);
+    expect(words()).not.toContain("DONE");
+    view.unmount();
+
+    // an empty planned day dated in the past is a draft, not a missed workout
+    const past = new Date(`${today}T12:00:00`);
+    past.setDate(past.getDate() - 1);
+    const pastIso = todayLocalIso(past);
+    const draft = { ...WORKOUT, id: "draft", label: "Unwritten", scheduled_date: pastIso, exercise_count: 0 };
+    getPlannedWorkouts.mockResolvedValue({
+      data: { programs: [PROGRAM], workouts: [draft, { ...open, id: "t2" }] },
+      fromCache: false,
+      stale: null,
+    });
+    render(<Today presentation="train" userId="u1" />);
+    await screen.findByRole("button", { name: "Go" });
+    const w2 = words();
+    expect(w2).toContain("DRAFT");
+    expect(w2).not.toContain("MISSED");
   });
 
   it("keeps the newer plan when an older read answers last (A-13)", async () => {
@@ -264,9 +318,11 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     render(<Today presentation="train" userId="u1" />);
 
     expect(await screen.findByRole("button", { name: "Go" })).toBeTruthy();
-    expect(screen.getByText("Rest day")).toBeTruthy();
+    expect(screen.getByText("REST DAY")).toBeTruthy();
     expect(screen.getByText("Lower strength")).toBeTruthy();
     expect(screen.queryByText("Unwritten")).toBeNull();
+    // no confirmation when nothing was finished today
+    expect(screen.queryByText(/finished/)).toBeNull();
     expect(screen.getByRole("button", { name: "Go" })).toBeTruthy();
   });
 
@@ -413,9 +469,6 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     await screen.findByText("Day 1");
     expect(await screen.findByText("1 movement · 3 sets")).toBeTruthy();
     expect(screen.getByText("Squat")).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: "View program" }).getAttribute("href"),
-    ).toBe("/program");
     expect(screen.queryByText("THIS WEEK")).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(screen.queryByText("3×5")).toBeNull();

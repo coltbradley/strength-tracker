@@ -71,15 +71,21 @@ vi.mock("../lib/data", () => ({
     }),
 }));
 
-vi.mock("../lib/sync", () => ({
+vi.mock("../lib/sync", () => {
+  const status = { pending: 0, dead: 0, held: 0, state: "idle", lastError: null };
+  return {
   outbox: {
+    subscribe: () => () => {},
+    getStatus: () => status,
+    pendingSets: vi.fn().mockResolvedValue([]),
     flush: vi.fn().mockResolvedValue(undefined),
     pendingSessionUpdateIds: vi.fn().mockResolvedValue(new Set()),
     pendingRatedSessionIds: vi.fn().mockResolvedValue(new Set()),
     inspect: vi.fn().mockResolvedValue([]),
     enqueue: vi.fn(),
   },
-}));
+  };
+});
 
 vi.mock("../lib/errors", () => ({
   reportError: vi.fn(),

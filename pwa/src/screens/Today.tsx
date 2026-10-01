@@ -24,7 +24,8 @@ import { RateSessionCard } from "../components/RateSessionCard";
 import { CalendarSheet, type CalendarDay } from "../components/CalendarSheet";
 import { TemplateSheet } from "../components/TemplateSheet";
 import { CheckInSheet } from "../components/CheckInSheet";
-import { TrainHome } from "../components/TrainHome";
+import { TrainHome, type TrainWeekDay } from "../components/TrainHome";
+import { useOutboxStatus } from "../hooks/useOutboxStatus";
 import {
   applyTemplate,
   createPlannedWorkout,
@@ -36,6 +37,7 @@ import {
   getResolvedPrescriptions,
   getServerSessionSets,
   invalidateForSessionClose,
+  mergeSets,
   staleReason,
   syncOpenSessions,
   updatePlannedWorkout,
@@ -56,7 +58,12 @@ import {
   type EndedSession,
 } from "../lib/review";
 import { useOnline } from "../hooks/useFabDrag";
-import { addDays, startOfWeek, weekDates } from "../lib/calendar";
+import {
+  addDays,
+  startOfWeek,
+  weekDates,
+  weekDates as calendarWeek,
+} from "../lib/calendar";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import type { OutboxEntry } from "../lib/outbox";
@@ -1210,6 +1217,50 @@ export function Today({
   useEffect(() => {
     if (presentation === "train" && trainWorkoutId) loadRx(trainWorkoutId);
   }, [presentation, trainWorkoutId, loadRx]);
+  // The Train strip is THIS week, anchored on today (Program's strip follows
+  // its own selection). A program with no dates has no calendar to draw.
+  const trainWeek: TrainWeekDay[] | null =
+    list !== null && anyDates
+      ? calendarWeek(today, weekStart).map((iso) => {
+          const w = byDate.get(iso) ?? null;
+          const d = parseLocalDate(iso);
+          return {
+            iso,
+            letter: formatWeekdayLetter(iso),
+            name: `${d.toLocaleDateString("en-GB", { weekday: "long" })} ${d.getDate()}`,
+            state: w ? ((states.get(w.id) ?? "UPCOMING") as TrainWeekDay["state"]) : "REST",
+            isToday: iso === today,
+          };
+        })
+      : null;
+  const outboxStatus = useOutboxStatus();
+  // Sets logged in the open session: what the server has plus what this phone
+  // still holds. null until known; never a guess.
+  const [activeSetCount, setActiveSetCount] = useState<number | null>(null);
+  const activeId = active?.id ?? null;
+  const activePlannedId = active?.planned_workout_id ?? null;
+  useEffect(() => {
+    if (presentation !== "train" || !activeId) {
+      setActiveSetCount(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [server, pending] = await Promise.all([
+          getServerSessionSets(activeId),
+          outbox.pendingSets(activeId),
+        ]);
+        if (!cancelled) setActiveSetCount(mergeSets(server, pending).length);
+      } catch {
+        if (!cancelled) setActiveSetCount(null);
+      }
+    })();
+    if (activePlannedId) loadRx(activePlannedId);
+    return () => {
+      cancelled = true;
+    };
+  }, [presentation, activeId, activePlannedId, loadRx]);
   const orphanRecovery = orphan ? (
     <div className="orphan-card">
       <div className="orphan-title">
@@ -1276,7 +1327,7 @@ export function Today({
     return (
       <div className="screen" data-presentation={presentation}>
         <TrainHome
-          dateContext={formatTodayHeading()}
+          dateContext={formatTodayHeading().replace(/^TODAY · /, "")}
           programName={program?.name ?? null}
           loading={list === null && loadError === null}
           loadIssue={loadError}
@@ -1288,6 +1339,31 @@ export function Today({
           recovery={recovery}
           startEnabled={canStart}
           completedToday={promoteNextWorkout}
+          finishedToday={
+            trainWorkoutToday?.state === "DONE"
+              ? trainWorkoutToday.workout
+              : null
+          }
+          sync={{
+            waiting: Math.max(0, outboxStatus.pending - outboxStatus.held),
+            dead: outboxStatus.dead,
+          }}
+          week={trainWeek}
+          activeProgress={
+            active
+              ? {
+                  setsDone: activeSetCount,
+                  setsPlanned: (() => {
+                    const rows = active.planned_workout_id
+                      ? rx[active.planned_workout_id]
+                      : undefined;
+                    return rows && rows.length > 0
+                      ? rows.reduce((n, r) => n + r.sets, 0)
+                      : null;
+                  })(),
+                }
+              : null
+          }
           unit={unit}
           onStart={(workout) => void start(workout)}
           onOpenCoach={() => openCoach()}

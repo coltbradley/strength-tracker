@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { groupRamps } from "../lib/entries";
 import type { Unit } from "../lib/units";
@@ -7,11 +7,76 @@ import type {
   PlannedWorkoutRow,
   ResolvedPrescriptionRow,
 } from "../lib/types";
-import { formatPlannedDate } from "../lib/format";
+import { formatPlannedDate, formatRxTarget } from "../lib/format";
 import { WorkoutPreviewSheet } from "./WorkoutPreviewSheet";
 
 export type TrainWorkoutState =
   "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE" | "DRAFT";
+
+/** What one day of the Train week strip is, in the app's own state words. */
+export type TrainDayState = TrainWorkoutState | "REST";
+
+export interface TrainWeekDay {
+  iso: string;
+  /** one-letter weekday, "M" */
+  letter: string;
+  /** spoken name, "Wednesday 30" */
+  name: string;
+  state: TrainDayState;
+  isToday: boolean;
+}
+
+/**
+ * The short word under each day. Derived from the SAME state the Program
+ * strip uses, never recomputed: a DRAFT is DRAFT (never missed) and DONE
+ * already means the session has `ended_at`.
+ */
+export function trainDayWord(state: TrainDayState): string {
+  switch (state) {
+    case "DONE":
+      return "DONE";
+    case "SKIPPED":
+      return "SKIP";
+    case "TODAY":
+      return "TODAY";
+    case "UPCOMING":
+      return "NEXT";
+    case "DRAFT":
+      return "DRAFT";
+    case "REST":
+      return "REST";
+    case "MISSED":
+      return "MISSED";
+    default:
+      return "";
+  }
+}
+
+const DAY_GLYPH: Record<TrainDayState, string> = {
+  DONE: "✓",
+  SKIPPED: "–",
+  TODAY: "●",
+  UPCOMING: "○",
+  DRAFT: "◌",
+  REST: "·",
+  MISSED: "!",
+  "NO DATE": "○",
+};
+
+/** What the confirmation says about the server. `null` = unknown, say nothing. */
+export interface TrainSyncSummary {
+  /** queued on THIS phone and not yet sent */
+  waiting: number;
+  /** refused by the server and needing a look */
+  dead: number;
+}
+
+export interface TrainActiveProgress {
+  /** sets logged so far; null while it cannot be known */
+  setsDone: number | null;
+  /** sets the plan prescribes for the day; null when the day has no plan rows */
+  setsPlanned: number | null;
+}
 
 export interface TrainWorkout {
   workout: PlannedWorkoutRow;
@@ -42,6 +107,32 @@ export function summarizeTrainWorkout(
   };
 }
 
+/** First movement and the one after it, each with its prescribed scheme. */
+export function trainUpNext(
+  prescriptions: ResolvedPrescriptionRow[],
+  unit: Unit,
+): { name: string; scheme: string }[] {
+  return groupRamps(prescriptions)
+    .slice(0, 2)
+    .map((group) => ({
+      name: group[0].exercise_name,
+      scheme: group.map((r) => formatRxTarget(r, unit)).join(" · "),
+    }));
+}
+
+function minutesSince(iso: string, now: number): number {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? 0 : Math.max(0, Math.floor((now - t) / 60000));
+}
+
+function syncLine(sync: TrainSyncSummary): string {
+  if (sync.dead > 0)
+    return `${sync.dead} ${sync.dead === 1 ? "set needs" : "sets need"} review`;
+  if (sync.waiting > 0)
+    return `${sync.waiting} waiting to send from this phone`;
+  return "all sets on the server";
+}
+
 export function TrainHome({
   dateContext,
   programName,
@@ -55,6 +146,10 @@ export function TrainHome({
   recovery,
   startEnabled,
   completedToday,
+  finishedToday = null,
+  sync = null,
+  week = null,
+  activeProgress = null,
   unit = "lb",
   onStart,
   onOpenCoach,
@@ -79,14 +174,87 @@ export function TrainHome({
   recovery: ReactNode;
   startEnabled: boolean;
   completedToday?: boolean;
+  /** Today's own workout, when its session has ended. Drives the confirmation. */
+  finishedToday?: PlannedWorkoutRow | null;
+  sync?: TrainSyncSummary | null;
+  /** Seven days of this week; null for a program with no dates. */
+  week?: TrainWeekDay[] | null;
+  activeProgress?: TrainActiveProgress | null;
   unit?: Unit;
   onStart: (workout: PlannedWorkoutRow) => void;
   onOpenCoach: () => void;
   onCheckIn?: () => void;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Only the in-progress card has a clock, so only it keeps one.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [active]);
   const summary =
     prescriptions === null ? null : summarizeTrainWorkout(prescriptions);
+  const upNext = prescriptions === null ? [] : trainUpNext(prescriptions, unit);
+  const coachNote = workout?.workout.notes?.trim() || null;
+
+  const shapeLine =
+    summary === null ? null : (
+      <p className="train-shape">
+        {summary.movementCount}{" "}
+        {summary.movementCount === 1 ? "movement" : "movements"} ·{" "}
+        {summary.prescribedSetCount}{" "}
+        {summary.prescribedSetCount === 1 ? "set" : "sets"}
+      </p>
+    );
+  const detailStatus =
+    summary === null ? (
+      <p className="train-quiet">
+        {prescriptionLoadState === "offline"
+          ? "Workout details are unavailable offline. Refresh your plan to retry."
+          : prescriptionLoadState === "error"
+            ? "Couldn’t load workout details. Refresh your plan to retry."
+            : "Workout details are loading."}
+      </p>
+    ) : prescriptionLoadState === "cached-offline" ||
+      prescriptionLoadState === "cached-error" ? (
+      <p className="train-cache-note" role="status">
+        {prescriptionLoadState === "cached-offline"
+          ? "Offline, showing saved workout details."
+          : "Couldn’t refresh, showing saved workout details."}
+      </p>
+    ) : null;
+  const goButton = (
+    <button
+      type="button"
+      className="btn btn-primary btn-block train-go"
+      disabled={!startEnabled}
+      onClick={() => setPreviewOpen(true)}
+    >
+      Go
+    </button>
+  );
+  // A DONE workout is, by the app's one definition, a session with ended_at.
+  const finished =
+    finishedToday ?? (workout?.state === "DONE" ? workout.workout : null);
+  const confirmation = finished ? (
+    <div className="train-finished" role="status">
+      <span aria-hidden="true">✓</span>{" "}
+      {finished.label ?? "Workout"} finished
+      {sync ? ` · ${syncLine(sync)}` : ""}
+    </div>
+  ) : null;
+  const planLink = (
+    <Link className="train-link" to="/program">
+      See the plan
+    </Link>
+  );
+  const recordLink = completedToday || finished ? (
+    <Link className="train-link" to="/history">
+      View record
+    </Link>
+  ) : null;
 
   return (
     <section className="train-home" aria-label="Train">
@@ -94,22 +262,70 @@ export function TrainHome({
         <div className="train-date">{dateContext}</div>
         {onCheckIn && (
           <button type="button" className="checkin-link" onClick={onCheckIn}>
-            Check in <span aria-hidden="true">→</span>
+            Check in
           </button>
         )}
       </div>
+      {week && (
+        <nav className="train-week" aria-label="This week">
+          {week.map((d) => {
+            const word = trainDayWord(d.state);
+            return (
+              <Link
+                key={d.iso}
+                to="/program"
+                className={`train-day train-day-${d.state
+                  .toLowerCase()
+                  .replace(" ", "-")}${d.isToday ? " train-day-today" : ""}`}
+                aria-current={d.isToday ? "date" : undefined}
+                aria-label={`${d.name}, ${
+                  d.state === "UPCOMING"
+                    ? "upcoming"
+                    : d.state === "SKIPPED"
+                      ? "skipped"
+                      : word.toLowerCase() || "no date"
+                }`}
+              >
+                <span className="train-day-letter" aria-hidden="true">
+                  {d.letter}
+                </span>
+                <span className="train-day-glyph" aria-hidden="true">
+                  {DAY_GLYPH[d.state]}
+                </span>
+                <span className="train-day-word" aria-hidden="true">
+                  {word}
+                </span>
+              </Link>
+            );
+          })}
+        </nav>
+      )}
       {stale && (
-        <p className="train-cache-note">
+        <p className="train-note" role="status">
           {stale === "offline"
-            ? "Offline, showing your saved plan."
-            : "Couldn’t refresh, showing your saved plan."}
+            ? "◌ Offline — showing the plan saved on this phone."
+            : "! Couldn’t refresh. Showing the saved plan; logging works."}
         </p>
       )}
 
       {active ? (
         <div className="train-state">
-          <div className="train-kicker">SESSION IN PROGRESS</div>
-          <Link className="btn btn-primary btn-block" to="/session">
+          <div className="train-kicker">
+            IN PROGRESS · {minutesSince(active.started_at, now)} MIN
+          </div>
+          <h1 className="train-title">
+            {active.workout_label ?? workout?.workout.label ?? "Workout"}
+          </h1>
+          {activeProgress && activeProgress.setsDone !== null && (
+            <p className="train-shape">
+              {activeProgress.setsDone}
+              {activeProgress.setsPlanned !== null
+                ? `/${activeProgress.setsPlanned}`
+                : ""}{" "}
+              sets
+            </p>
+          )}
+          <Link className="btn btn-primary btn-block train-go" to="/session">
             Resume
           </Link>
         </div>
@@ -135,44 +351,57 @@ export function TrainHome({
           <p className="train-quiet">
             Build your plan in Program, or ask the coach to help write it.
           </p>
-          <Link className="btn btn-primary btn-block" to="/program">
+          <Link className="btn btn-primary btn-block train-go" to="/program">
             View program
           </Link>
           <button type="button" className="train-link" onClick={onOpenCoach}>
             Ask the coach
           </button>
         </div>
-      ) : workout === null ? (
+      ) : workout === null || workout.state === "DONE" ? (
+        // Nothing left to do today. After a finished session this is where the
+        // app CONFIRMS it, instead of calling the day a rest day and moving on.
         <div className="train-state">
-          <div className="train-kicker">TODAY</div>
-          <h1 className="train-title">Rest day</h1>
-          <p className="train-quiet">Nothing is scheduled for today.</p>
-          <Link className="train-link" to="/program">
-            View program
-          </Link>
-        </div>
-      ) : workout.state === "DONE" ? (
-        <div className="train-state">
-          <div className="train-kicker">COMPLETE</div>
-          <h1 className="train-title">{workout.workout.label ?? "Workout"}</h1>
-          <Link className="btn btn-primary btn-block" to="/history">
-            View record
-          </Link>
-          <Link className="train-link" to="/program">
-            View program
-          </Link>
+          {confirmation}
+          <div className="train-kicker train-kicker-dim">REST DAY</div>
+          <h1 className="train-title">Recover.</h1>
+          {workout === null && !finished && (
+            <p className="train-quiet">Nothing is scheduled for today.</p>
+          )}
+          {planLink}
+          {recordLink}
         </div>
       ) : workout.state === "DRAFT" ? (
         // A dated day nobody has filled in yet. It is not a rest day and
         // never a missed one: say what it is and send the way to fill it.
         <div className="train-state">
           <h1 className="train-title">{workout.workout.label ?? "Workout"}</h1>
-          <p className="train-quiet">No exercises planned yet.</p>
-          <Link className="train-link" to="/program">
-            View program
+          <p className="train-note">
+            ◌ Draft — nothing planned in it yet. Not a missed day.
+          </p>
+          <Link
+            className="btn btn-secondary btn-block train-go"
+            to={`/plan/${workout.workout.id}`}
+          >
+            Fill in this day
           </Link>
         </div>
-      ) : workout.state !== "TODAY" && workout.state !== "UPCOMING" ? (
+      ) : workout.state === "UPCOMING" ? (
+        <div className="train-state">
+          {confirmation}
+          <div className="train-kicker train-kicker-dim">REST DAY</div>
+          <h1 className="train-title">Recover.</h1>
+          <div className="train-next-workout">
+            <span>NEXT · {formatPlannedDate(workout.workout.scheduled_date!)}</span>
+            <strong>{workout.workout.label ?? "Workout"}</strong>
+            {shapeLine}
+          </div>
+          {detailStatus}
+          {goButton}
+          {planLink}
+          {recordLink}
+        </div>
+      ) : workout.state !== "TODAY" ? (
         <div className="train-state">
           <h1 className="train-title">Rest day</h1>
           <p className="train-quiet">Nothing is ready to start today.</p>
@@ -182,61 +411,47 @@ export function TrainHome({
         </div>
       ) : (
         <div className="train-state">
-          <div className="train-kicker">
-            {workout.state === "UPCOMING" ? "REST DAY · NEXT WORKOUT" : programName}
-          </div>
-          <h1 className="train-title">
-            {workout.state === "UPCOMING" ? "Rest day" : workout.workout.label ?? "Workout"}
-          </h1>
-          {workout.state === "UPCOMING" && (
-            <div className="train-next-workout">
-              <span>{formatPlannedDate(workout.workout.scheduled_date!)}</span>
-              <strong>{workout.workout.label ?? "Workout"}</strong>
+          <div className="train-kicker">TODAY · {programName}</div>
+          <h1 className="train-title">{workout.workout.label ?? "Workout"}</h1>
+          {/* No "about N min": nothing in the plan or the log yields a
+              duration we can stand behind, so none is shown. */}
+          {shapeLine}
+          {detailStatus}
+          {upNext.length > 0 && (
+            <div className="train-first-up">
+              <span>FIRST UP</span>
+              <strong>{upNext[0].name}</strong>
+              <em>{upNext[0].scheme}</em>
+              {upNext[1] && (
+                <small>
+                  then {upNext[1].name} · {upNext[1].scheme}
+                </small>
+              )}
             </div>
           )}
-          {summary === null ? (
-            <p className="train-quiet">
-              {prescriptionLoadState === "offline"
-                ? "Workout details are unavailable offline. Refresh your plan to retry."
-                : prescriptionLoadState === "error"
-                  ? "Couldn’t load workout details. Refresh your plan to retry."
-                  : "Workout details are loading."}
-            </p>
-          ) : (
-            <>
-              <p className="train-shape">
-                {summary.movementCount}{" "}
-                {summary.movementCount === 1 ? "movement" : "movements"} ·{" "}
-                {summary.prescribedSetCount}{" "}
-                {summary.prescribedSetCount === 1 ? "set" : "sets"}
+          {coachNote && (
+            <div className="train-coach">
+              <svg
+                className="train-coach-icon"
+                viewBox="0 0 16 16"
+                width="16"
+                height="16"
+                aria-hidden="true"
+              >
+                <path
+                  d="M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v6A1.5 1.5 0 0 1 12.5 11H7l-3 3v-3H3.5A1.5 1.5 0 0 1 2 9.5z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <p>
+                <b>Coach</b> {coachNote}
               </p>
-              {(prescriptionLoadState === "cached-offline" ||
-                prescriptionLoadState === "cached-error") && (
-                <p className="train-cache-note" role="status">
-                  {prescriptionLoadState === "cached-offline"
-                    ? "Offline, showing saved workout details."
-                    : "Couldn’t refresh, showing saved workout details."}
-                </p>
-              )}
-              {summary.firstUp && (
-                <div className="train-first-up">
-                  <span>First up</span>
-                  <strong>{summary.firstUp}</strong>
-                </div>
-              )}
-            </>
+            </div>
           )}
-          <button
-            type="button"
-            className="btn btn-primary btn-block"
-            disabled={!startEnabled}
-            onClick={() => setPreviewOpen(true)}
-          >
-            Go
-          </button>
-          <Link className="train-link" to={completedToday ? "/history" : "/program"}>
-            {completedToday ? "View record" : "View program"}
-          </Link>
+          {goButton}
         </div>
       )}
       {previewOpen && workout && programName && (

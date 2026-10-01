@@ -3,7 +3,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { TrainHome, summarizeTrainWorkout } from "./TrainHome";
+import {
+  TrainHome,
+  summarizeTrainWorkout,
+  trainDayWord,
+  type TrainWeekDay,
+} from "./TrainHome";
 import type { PlannedWorkoutRow, ResolvedPrescriptionRow } from "../lib/types";
 
 afterEach(cleanup);
@@ -103,11 +108,11 @@ describe("TrainHome", () => {
 
     expect(screen.getByText("Upper strength")).toBeTruthy();
     expect(screen.getByText("3 movements · 10 sets")).toBeTruthy();
-    expect(screen.getByText("First up")).toBeTruthy();
+    expect(screen.getByText("FIRST UP")).toBeTruthy();
     expect(screen.getByText("Bench press")).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: "View program" }).getAttribute("href"),
-    ).toBe("/program");
+    expect(screen.getByText(/then Chest-supported row/)).toBeTruthy();
+    // no duration is fabricated: the plan has none to compute one from
+    expect(screen.queryByText(/about \d+ min/)).toBeNull();
     expect(screen.queryByRole("button", { name: /check in/i })).toBeNull();
     expect(screen.queryByText(/weigh/i)).toBeNull();
     expect(screen.queryByText(/calendar/i)).toBeNull();
@@ -132,6 +137,7 @@ describe("TrainHome", () => {
     expect(
       screen.getByRole("link", { name: "Resume" }).getAttribute("href"),
     ).toBe("/session");
+    expect(screen.getByText(/IN PROGRESS · \d+ MIN/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
     expect(screen.queryByText("Bench press")).toBeNull();
   });
@@ -139,6 +145,7 @@ describe("TrainHome", () => {
   it("treats a completed workout as a Record action", () => {
     renderHome({ workout: { workout, state: "DONE" } });
 
+    expect(screen.getByText(/Upper strength finished/)).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "View record" }).getAttribute("href"),
     ).toBe("/history");
@@ -149,12 +156,13 @@ describe("TrainHome", () => {
     renderHome({ workout: { workout, state: "DRAFT" }, prescriptions: [] });
 
     expect(screen.getByText("Upper strength")).toBeTruthy();
-    expect(screen.getByText("No exercises planned yet.")).toBeTruthy();
-    expect(screen.queryByText("Rest day")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    expect(screen.getByText(/Draft — nothing planned in it yet/)).toBeTruthy();
+    expect(screen.getByText(/Not a missed day/)).toBeTruthy();
+    expect(screen.queryByText(/rest day/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Go" })).toBeNull();
     expect(
-      screen.getByRole("link", { name: "View program" }).getAttribute("href"),
-    ).toBe("/program");
+      screen.getByRole("link", { name: "Fill in this day" }).getAttribute("href"),
+    ).toBe("/plan/push");
   });
 
   it("keeps loading and load failures truthful without a dashboard", () => {
@@ -224,8 +232,10 @@ describe("TrainHome", () => {
   it("routes rest days and first runs to Program or existing coach access", () => {
     const onOpenCoach = vi.fn();
     const { rerender } = renderHome({ workout: null });
-    expect(screen.getByText("Rest day")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "View program" })).toBeTruthy();
+    expect(screen.getByText("REST DAY")).toBeTruthy();
+    expect(screen.getByText("Recover.")).toBeTruthy();
+    expect(screen.queryByText(/finished/)).toBeNull();
+    expect(screen.getByRole("link", { name: "See the plan" })).toBeTruthy();
 
     rerender(
       <MemoryRouter>
@@ -262,5 +272,87 @@ describe("check in link", () => {
   it("is absent when there is no one to check in", () => {
     renderHome();
     expect(screen.queryByRole("button", { name: /check in/i })).toBeNull();
+  });
+});
+
+const day = (
+  iso: string,
+  letter: string,
+  state: TrainWeekDay["state"],
+  isToday = false,
+): TrainWeekDay => ({ iso, letter, name: `Day ${iso}`, state, isToday });
+
+describe("week strip state words", () => {
+  it("maps every state to the short word the design names", () => {
+    expect(trainDayWord("DONE")).toBe("DONE");
+    expect(trainDayWord("SKIPPED")).toBe("SKIP");
+    expect(trainDayWord("TODAY")).toBe("TODAY");
+    expect(trainDayWord("REST")).toBe("REST");
+    expect(trainDayWord("UPCOMING")).toBe("NEXT");
+    expect(trainDayWord("DRAFT")).toBe("DRAFT");
+  });
+
+  it("draws a word under each glyph and never reads a DRAFT as missed", () => {
+    renderHome({
+      week: [
+        day("2026-09-07", "M", "DONE"),
+        day("2026-09-08", "T", "SKIPPED"),
+        day("2026-09-09", "W", "DRAFT"),
+        day("2026-09-10", "T", "REST"),
+        day("2026-09-11", "F", "UPCOMING"),
+        day("2026-09-12", "S", "TODAY", true),
+        day("2026-09-13", "S", "MISSED"),
+      ],
+    });
+    const nav = screen.getByRole("navigation", { name: "This week" });
+    const words = [...nav.querySelectorAll(".train-day-word")].map(
+      (n) => n.textContent,
+    );
+    expect(words).toEqual(["DONE", "SKIP", "DRAFT", "REST", "NEXT", "TODAY", "MISSED"]);
+    // the DRAFT cell is named draft, not missed
+    const draft = nav.querySelector(".train-day-draft")!;
+    expect(draft.getAttribute("aria-label")).toBe("Day 2026-09-09, draft");
+    expect(draft.className).not.toContain("missed");
+    expect(nav.querySelector("[aria-current=date]")?.className).toContain(
+      "train-day-today",
+    );
+  });
+
+  it("omits the strip for a program with no dates", () => {
+    renderHome({ week: null });
+    expect(screen.queryByRole("navigation", { name: "This week" })).toBeNull();
+  });
+});
+
+describe("finished today", () => {
+  const props = {
+    workout: { workout: { ...workout, id: "next", label: "Lower B" }, state: "UPCOMING" as const },
+    finishedToday: { ...workout, label: "Lower A" },
+    completedToday: true,
+  };
+
+  it("confirms the finished session before the rest-day content", () => {
+    renderHome({ ...props, sync: { waiting: 0, dead: 0 } });
+    const confirm = screen.getByRole("status");
+    expect(confirm.textContent).toContain("Lower A finished");
+    expect(confirm.textContent).toContain("all sets on the server");
+    expect(screen.getByText("REST DAY")).toBeTruthy();
+    expect(
+      confirm.compareDocumentPosition(screen.getByText("Recover.")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByText("Lower B")).toBeTruthy();
+  });
+
+  it("does not claim everything is on the server while sets are queued", () => {
+    renderHome({ ...props, sync: { waiting: 3, dead: 0 } });
+    const text = screen.getByRole("status").textContent!;
+    expect(text).not.toContain("on the server");
+    expect(text).toContain("3 waiting to send from this phone");
+  });
+
+  it("says when the server refused something", () => {
+    renderHome({ ...props, sync: { waiting: 0, dead: 1 } });
+    expect(screen.getByRole("status").textContent).toContain("1 set needs review");
   });
 });
