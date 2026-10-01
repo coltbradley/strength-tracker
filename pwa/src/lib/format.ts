@@ -2,6 +2,7 @@
 
 import type { ResolvedPrescriptionRow } from "./types";
 import { kgToLb, toDisplay, type Unit } from "./units";
+import { plateDisplayValue } from "./plates";
 
 /**
  * What to call a planned day.
@@ -109,8 +110,9 @@ export function formatRxTarget(
  * Loads keep `toDisplay`. Only the things you physically pick up use this.
  */
 export function formatPlate(kg: number, unit: Unit): string {
-  const v = unit === "kg" ? kg : kgToLb(kg);
-  return String(Math.round(v * 100) / 100);
+  // plateDisplayValue snaps a stored 2-decimal-kg lb plate back to the real
+  // plate: 20.41 kg is "45", not "44.99".
+  return String(plateDisplayValue(kg, unit));
 }
 
 /**
