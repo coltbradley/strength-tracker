@@ -1,4 +1,8 @@
 # Warm Precision Redesign
+> **Superseded in part (2026-10-01).** Version D changes the sync chip (a round check mark stays visible when healthy), Train (week strip, Check in and state words return; no duration estimate stays), and the superset commit action. Where this
+> document disagrees, `docs/superpowers/specs/2026-10-01-version-d-design.md`
+> wins once its phase merges; until then this describes shipped behaviour.
+
 
 ## Goal
 

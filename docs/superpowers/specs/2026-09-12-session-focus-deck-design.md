@@ -1,4 +1,8 @@
 # Session focus deck design
+> **Superseded in part (2026-10-01).** Version D changes the focus deck's default screen (a drawn load picture, four keys and a load-and-reps dock are now on it instead of behind `•••`), supersets (member by member, no **Log round**), and rest (a middle band, not the strip). Where this
+> document disagrees, `docs/superpowers/specs/2026-10-01-version-d-design.md`
+> wins once its phase merges; until then this describes shipped behaviour.
+
 
 ## Status
 

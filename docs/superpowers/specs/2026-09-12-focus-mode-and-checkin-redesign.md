@@ -1,5 +1,12 @@
 # Focus mode that looks like focus, and a passive check-in
 
+> **Superseded in part (2026-10-01).** Part 1's "quiet next line and view
+> workout are the only chrome" and the spare default screen are replaced by
+> Version D: a drawn load picture and four keys are on the default screen. See
+> `docs/superpowers/specs/2026-10-01-version-d-design.md`. Part 2 (check-in) is
+> unchanged.
+
+
 Decided with Colt on 2026-09-12 after the first focus deck shipped. Two
 independent pieces of work.
 

@@ -3177,3 +3177,100 @@ on every visibility change and every minute. A session left open for days
 delays the update that long unless the app is closed, which activates the
 waiting worker on the next launch; the overnight sweep closes stale sessions.
 
+
+## 2026-10-01 Version D session redesign
+
+Spec: `docs/superpowers/specs/2026-10-01-version-d-design.md`. Plan:
+`docs/superpowers/plans/2026-10-01-version-d-implementation.md`. Source: the
+Claude Design review of 2026-09-30 (Versions A to D), the user's requirements
+in that conversation, and its 14-point usability review, all applied to
+Version D. This entry records what it changes in earlier decisions. Presentation
+only, except where flagged below.
+
+**Delivery and scope (decided by the user).** Three phased PRs: Phase 1 live
+workout, Phase 2 Train, Phase 3 Record. Light mode only for now; every colour
+stays a token so dark mode is a later token swap, not a second stylesheet.
+Per-exercise prefs (base weight, sled or stack, one or two dumbbells) will sync
+through a new Supabase table in a separate PR on `feat/exercise-prefs-sync`,
+which writes its own entry; this one does not repeat it. Until it merges,
+Version D uses the device-local `ExercisePref` exactly as shipped.
+
+**The default session screen is no longer spare.** The 2026-09-12 focus-deck
+specs, `docs/flows.md` and the live-session-adaptation work put one hero value
+on the screen and everything else behind `•••` ("a quiet next line and view
+workout are the only chrome"). Version D puts a drawn load picture and four
+keys (`RPE`, `Note`, `Skip`, `Swap` or `Fix last`) on the default screen. Why:
+the user said "I like in C how we have RPE, NOTE, SKIP, and Plates as little
+buttons," asked for "different size for different weights" on the plates and for
+one-or-two dumbbell drawings, and asked for the diagram to stay during rest "for
+the active exercise." The review then removed the duplicate Plates key (tapping
+the diagram opens plates) and moved load and reps side by side so the dock is
+about 90 px shorter. The cost, accepted: more on screen at 320 px and 1.3x text,
+which the spec turns into acceptance checks. The warm-precision line "does not
+use ... workout illustrations" is relaxed for these drawings only, because each
+is a depiction of a fact the app holds (plate inventory, per-side convention,
+load), never decoration.
+
+**Superset logs member by member.** The 2026-09-12 and 2026-09-23 decisions made
+**Log round** the primary action, one durable local batch of two inserts, with
+**Log A1 only** as recovery. Version D logs `Log A1`, then `Log A2`, each a
+single ordinary insert, with rest after A2. Why: the user said of C, "I'm not sure the
+superset works well," and the A1-then-A2 flow with a NOW state is what the
+design review then judged clear ("the superset 'NOW' state is clear"); the
+user's reply to the result was "This is looking pretty good."
+The invariants hold (two ordinary `SetInsert` rows, no superset record, idempotent
+replay); what is given up is the all-or-nothing local commit of a pair. A
+half-logged round is now a normal state. `enqueueBatch` is not removed by this
+decision.
+
+**Rest takes the middle band, not the top slot.** Training-scenes put REST at the
+top and the other controls in the menu. Version D shows rest in the middle band
+with the last saved set (`LAST SET . ALREADY SAVED`, with Fix) and `LOAD NEXT`
+plates, and adds `End rest now` as a text link. The user's question, "if I change
+the weight during a rest, am I changing the weight for a previous set?", is
+answered by the card: the dock edits the next set, the saved one changes only
+through Fix. Ending early changes the view, never the log or the stamped rest.
+
+**A healthy sync state stays visible.** Warm-precision (and its plan) hid the
+healthy sync pill. Version D keeps a round check mark, widening to words only when
+writes are waiting, sending, held or failed. Why: the review's headline finding,
+"nothing says a set was saved." The chip is a glyph plus accessible name, not a
+pill.
+
+**Reorder moves into the session, and is session-only.** Training-scenes kept
+arrows as the first-release reorder and called drag an enhancement. Version D adds
+drag to "Today's workout" with the plan untouched: the order lives in the
+session's local mirror and writes nothing, so the plan lock (2026-09-24) is not
+involved. Arrows (move up and down) stay as the accessible path.
+
+**Units this session.** The shipped switch changes the device preference from the
+header. Version D moves it into the workout sheet as an override for this session
+only, with the header showing a note while it is active. Stored values remain kg.
+
+**Train changes.** The week strip returns to Train with state words (`DONE`,
+`SKIP`, `TODAY`, `REST`, `NEXT`, `DRAFT`, plus `MISS`), `Check in` returns to
+Train, and the content is top-aligned. The prototype's "about 65 min" is not
+adopted: the model stores no duration and warm-precision already ruled out
+estimating one.
+
+**Record: pin is a goal.** Recent-first with most sessions breaking ties, a bare
+`RECENT` label, and a quiet `◆ Pinned` / `◇ Pin` toggle. Pinning writes a `goals`
+row from the PWA for the first time (until now only the coach's `set_goal` did),
+with a starting target of the current e1RM x 1.1 rounded up; an exercise with no
+e1RM cannot be pinned. Per-exercise recency comes from a new view over
+`v_live_sets`, never a stored column.
+
+**Not decided here, and blocking.** Bodyweight "added load" reverses a declined
+item of 2026-08-27 ("bodyweight + added load ... considered and declined") and
+conflicts with `load_kg` as the total system load: `v_e1rm` filters on
+`load_kg > 0`, so an added-mass-only `load_kg` would yield a belt-only e1RM. The
+UI row is built behind one constant; the write path waits for an answer
+(spec open question 8). Likewise the pin-stack drawing must not imply a pin
+position the app does not know (2026-09-12 non-goal), so it is illustrative with
+the caption number as the only claim.
+
+**Superseded statements.** Marked with a pointer, not rewritten, until the code
+ships: the three 2026-09-12 and 2026-09-23 specs, the focus-mode spec, and
+`docs/flows.md` (Focus deck, Rest, Log a superset round, Plates). `AGENTS.md`'s
+"Settings are DEVICE-LOCAL ... there is no `exercise_prefs` table" stays true
+until `feat/exercise-prefs-sync` merges and is that PR's to change.
