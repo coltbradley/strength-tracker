@@ -11,7 +11,16 @@ import { formatPlannedDate, formatRxTarget } from "../lib/format";
 import { WorkoutPreviewSheet } from "./WorkoutPreviewSheet";
 
 export type TrainWorkoutState =
-  "DONE" | "SKIPPED" | "TODAY" | "MISSED" | "UPCOMING" | "NO DATE" | "DRAFT";
+  | "DONE"
+  | "SKIPPED"
+  | "TODAY"
+  | "MISSED"
+  /** a past day whose completion this device could not check: not knowing is
+   *  not failing, so it is never worded as MISSED */
+  | "PAST"
+  | "UPCOMING"
+  | "NO DATE"
+  | "DRAFT";
 
 /** What one day of the Train week strip is, in the app's own state words. */
 export type TrainDayState = TrainWorkoutState | "REST";
@@ -47,6 +56,8 @@ export function trainDayWord(state: TrainDayState): string {
       return "REST";
     case "MISSED":
       return "MISSED";
+    case "PAST":
+      return "PAST";
     default:
       return "";
   }
@@ -57,18 +68,49 @@ const DAY_GLYPH: Record<TrainDayState, string> = {
   SKIPPED: "–",
   TODAY: "●",
   UPCOMING: "○",
-  DRAFT: "◌",
+  DRAFT: "…",
   REST: "·",
   MISSED: "!",
+  PAST: "○",
   "NO DATE": "○",
 };
 
-/** What the confirmation says about the server. `null` = unknown, say nothing. */
+/** The spoken state for a strip cell. PAST says it was not checked. */
+function daySpoken(state: TrainDayState): string {
+  switch (state) {
+    case "UPCOMING":
+      return "upcoming";
+    case "SKIPPED":
+      return "skipped";
+    case "PAST":
+      return "past, completion not checked";
+    case "NO DATE":
+      return "no date";
+    default:
+      return trainDayWord(state).toLowerCase();
+  }
+}
+
+/**
+ * What the confirmation may say about the server. Every field is about SET
+ * writes on this phone's outbox; other writes (session end, voids, notes,
+ * bodyweight) are counted apart and never called sets. `null` for the whole
+ * object = say nothing.
+ */
 export interface TrainSyncSummary {
-  /** queued on THIS phone and not yet sent */
+  /** the outbox has been read at least once; false = "checking…" */
+  checked: boolean;
+  /** who is signed in is known. Unknown identity holds every queued write. */
+  identityKnown: boolean;
+  /** set writes queued on THIS phone that it will send */
   waiting: number;
-  /** refused by the server and needing a look */
+  /** set writes this phone will NOT send (other account, or no owner yet).
+   *  They are not on the server. */
+  held: number;
+  /** set writes refused by the server and needing a look */
   dead: number;
+  /** non-set writes still queued (waiting, held or dead) */
+  otherPending: number;
 }
 
 export interface TrainActiveProgress {
@@ -120,17 +162,51 @@ export function trainUpNext(
     }));
 }
 
-function minutesSince(iso: string, now: number): number {
+/** An open session older than this is not "N MIN" any more. */
+const LONG_OPEN_MIN = 12 * 60;
+
+/** The in-progress kicker clock: minutes, or when it started once that is a
+ *  claim nobody is timing ("1440 MIN" is a session left open overnight). */
+export function inProgressClock(iso: string, now: number): string {
   const t = Date.parse(iso);
-  return Number.isNaN(t) ? 0 : Math.max(0, Math.floor((now - t) / 60000));
+  if (Number.isNaN(t)) return "0 MIN";
+  const mins = Math.max(0, Math.floor((now - t) / 60000));
+  if (mins < LONG_OPEN_MIN) return `${mins} MIN`;
+  const started = new Date(t);
+  const sameDay = started.toDateString() === new Date(now).toDateString();
+  if (sameDay)
+    return `STARTED ${String(started.getHours()).padStart(2, "0")}:${String(started.getMinutes()).padStart(2, "0")}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (started.toDateString() === yesterday.toDateString())
+    return "STARTED YESTERDAY";
+  return `STARTED ${started
+    .toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+    .toUpperCase()}`;
 }
 
-function syncLine(sync: TrainSyncSummary): string {
+/**
+ * "all sets on the server" is a claim, so it needs proof: identity known, the
+ * outbox read, and no set write waiting, held or dead. Anything less says what
+ * IS true. Held counts as not on the server: a held write is queued on this
+ * phone and will not be sent by it.
+ */
+export function syncLine(sync: TrainSyncSummary): string {
+  if (!sync.checked) return "checking…";
+  const parts: string[] = [];
   if (sync.dead > 0)
-    return `${sync.dead} ${sync.dead === 1 ? "set needs" : "sets need"} review`;
-  if (sync.waiting > 0)
-    return `${sync.waiting} waiting to send from this phone`;
-  return "all sets on the server";
+    parts.push(`${sync.dead} ${sync.dead === 1 ? "needs" : "need"} review`);
+  const onPhone = sync.waiting + sync.held;
+  if (onPhone > 0) parts.push(`${onPhone} waiting on this phone`);
+  if (parts.length === 0) {
+    if (!sync.identityKnown) return "checking…";
+    parts.push("all sets on the server");
+  }
+  if (sync.otherPending > 0)
+    parts.push(
+      `${sync.otherPending} other ${sync.otherPending === 1 ? "change" : "changes"} waiting`,
+    );
+  return parts.join(" · ");
 }
 
 export function TrainHome({
@@ -148,6 +224,7 @@ export function TrainHome({
   completedToday,
   finishedToday = null,
   sync = null,
+  otherPrograms = [],
   week = null,
   activeProgress = null,
   unit = "lb",
@@ -177,6 +254,9 @@ export function TrainHome({
   /** Today's own workout, when its session has ended. Drives the confirmation. */
   finishedToday?: PlannedWorkoutRow | null;
   sync?: TrainSyncSummary | null;
+  /** Confirmed programs this screen is NOT showing (undated ones beyond the
+   *  first). Named so a second program is never silently hidden. */
+  otherPrograms?: string[];
   /** Seven days of this week; null for a program with no dates. */
   week?: TrainWeekDay[] | null;
   activeProgress?: TrainActiveProgress | null;
@@ -278,13 +358,7 @@ export function TrainHome({
                   .toLowerCase()
                   .replace(" ", "-")}${d.isToday ? " train-day-today" : ""}`}
                 aria-current={d.isToday ? "date" : undefined}
-                aria-label={`${d.name}, ${
-                  d.state === "UPCOMING"
-                    ? "upcoming"
-                    : d.state === "SKIPPED"
-                      ? "skipped"
-                      : word.toLowerCase() || "no date"
-                }`}
+                aria-label={`${d.name}, ${daySpoken(d.state)}, open program`}
               >
                 <span className="train-day-letter" aria-hidden="true">
                   {d.letter}
@@ -300,10 +374,15 @@ export function TrainHome({
           })}
         </nav>
       )}
+      {otherPrograms.length > 0 && (
+        <p className="train-note">
+          Also confirmed, not shown here: {otherPrograms.join(", ")}.
+        </p>
+      )}
       {stale && (
         <p className="train-note" role="status">
           {stale === "offline"
-            ? "◌ Offline — showing the plan saved on this phone."
+            ? "○ Offline — showing the plan saved on this phone."
             : "! Couldn’t refresh. Showing the saved plan; logging works."}
         </p>
       )}
@@ -311,18 +390,20 @@ export function TrainHome({
       {active ? (
         <div className="train-state">
           <div className="train-kicker">
-            IN PROGRESS · {minutesSince(active.started_at, now)} MIN
+            IN PROGRESS · {inProgressClock(active.started_at, now)}
           </div>
           <h1 className="train-title">
             {active.workout_label ?? workout?.workout.label ?? "Workout"}
           </h1>
+          {/* Unknown (a failed read) shows nothing rather than a 0. The logged
+              count includes warmups and extras, so it is not "n of m". */}
           {activeProgress && activeProgress.setsDone !== null && (
             <p className="train-shape">
-              {activeProgress.setsDone}
+              {activeProgress.setsDone}{" "}
+              {activeProgress.setsDone === 1 ? "set" : "sets"} logged
               {activeProgress.setsPlanned !== null
-                ? `/${activeProgress.setsPlanned}`
-                : ""}{" "}
-              sets
+                ? ` · ${activeProgress.setsPlanned} planned`
+                : ""}
             </p>
           )}
           <Link className="btn btn-primary btn-block train-go" to="/session">
@@ -377,7 +458,7 @@ export function TrainHome({
         <div className="train-state">
           <h1 className="train-title">{workout.workout.label ?? "Workout"}</h1>
           <p className="train-note">
-            ◌ Draft — nothing planned in it yet. Not a missed day.
+            ○ Draft — nothing planned in it yet. Not a missed day.
           </p>
           <Link
             className="btn btn-secondary btn-block train-go"

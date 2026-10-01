@@ -5,7 +5,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import {
   TrainHome,
+  inProgressClock,
+  syncLine,
   summarizeTrainWorkout,
+  type TrainSyncSummary,
   trainDayWord,
   type TrainWeekDay,
 } from "./TrainHome";
@@ -129,7 +132,7 @@ describe("TrainHome", () => {
       active: {
         id: "session-1",
         planned_workout_id: workout.id,
-        started_at: "2026-09-12T12:00:00.000Z",
+        started_at: new Date().toISOString(),
         workout_label: workout.label,
       },
     });
@@ -311,7 +314,7 @@ describe("week strip state words", () => {
     expect(words).toEqual(["DONE", "SKIP", "DRAFT", "REST", "NEXT", "TODAY", "MISSED"]);
     // the DRAFT cell is named draft, not missed
     const draft = nav.querySelector(".train-day-draft")!;
-    expect(draft.getAttribute("aria-label")).toBe("Day 2026-09-09, draft");
+    expect(draft.getAttribute("aria-label")).toBe("Day 2026-09-09, draft, open program");
     expect(draft.className).not.toContain("missed");
     expect(nav.querySelector("[aria-current=date]")?.className).toContain(
       "train-day-today",
@@ -324,6 +327,16 @@ describe("week strip state words", () => {
   });
 });
 
+const sync = (over: Partial<TrainSyncSummary> = {}): TrainSyncSummary => ({
+  checked: true,
+  identityKnown: true,
+  waiting: 0,
+  held: 0,
+  dead: 0,
+  otherPending: 0,
+  ...over,
+});
+
 describe("finished today", () => {
   const props = {
     workout: { workout: { ...workout, id: "next", label: "Lower B" }, state: "UPCOMING" as const },
@@ -332,7 +345,7 @@ describe("finished today", () => {
   };
 
   it("confirms the finished session before the rest-day content", () => {
-    renderHome({ ...props, sync: { waiting: 0, dead: 0 } });
+    renderHome({ ...props, sync: sync() });
     const confirm = screen.getByRole("status");
     expect(confirm.textContent).toContain("Lower A finished");
     expect(confirm.textContent).toContain("all sets on the server");
@@ -345,14 +358,91 @@ describe("finished today", () => {
   });
 
   it("does not claim everything is on the server while sets are queued", () => {
-    renderHome({ ...props, sync: { waiting: 3, dead: 0 } });
+    renderHome({ ...props, sync: sync({ waiting: 3 }) });
     const text = screen.getByRole("status").textContent!;
     expect(text).not.toContain("on the server");
-    expect(text).toContain("3 waiting to send from this phone");
+    expect(text).toContain("3 waiting on this phone");
   });
 
   it("says when the server refused something", () => {
-    renderHome({ ...props, sync: { waiting: 0, dead: 1 } });
-    expect(screen.getByRole("status").textContent).toContain("1 set needs review");
+    renderHome({ ...props, sync: sync({ dead: 1 }) });
+    expect(screen.getByRole("status").textContent).toContain("1 needs review");
+  });
+
+  it("never says all sets are on the server while sets are held (T1)", () => {
+    renderHome({ ...props, sync: sync({ held: 2 }) });
+    const text = screen.getByRole("status").textContent!;
+    expect(text).not.toContain("on the server");
+    expect(text).toContain("2 waiting on this phone");
+  });
+
+  it("says nothing it cannot prove before the outbox is read or identity is known", () => {
+    expect(syncLine(sync({ checked: false }))).toBe("checking…");
+    expect(syncLine(sync({ identityKnown: false }))).toBe("checking…");
+    expect(syncLine(sync({ identityKnown: false, held: 4 }))).toBe(
+      "4 waiting on this phone",
+    );
+  });
+
+  it("does not let other writes pose as sets (T2)", () => {
+    expect(syncLine(sync({ otherPending: 1 }))).toBe(
+      "all sets on the server · 1 other change waiting",
+    );
+    expect(syncLine(sync({ otherPending: 2, dead: 1 }))).toBe(
+      "1 needs review · 2 other changes waiting",
+    );
+  });
+
+  it("renders no sync claim at all without a summary", () => {
+    renderHome({ ...props, sync: null });
+    expect(screen.getByRole("status").textContent).not.toContain("server");
+  });
+});
+
+describe("in-progress card", () => {
+  const active = {
+    id: "session-1",
+    planned_workout_id: workout.id,
+    started_at: new Date().toISOString(),
+    workout_label: workout.label,
+  };
+
+  it("shows nothing for an unknown set count, never 0", () => {
+    renderHome({ active, activeProgress: { setsDone: null, setsPlanned: 12 } });
+    expect(screen.queryByText(/sets? logged/)).toBeNull();
+    expect(screen.queryByText(/0\/12/)).toBeNull();
+  });
+
+  it("separates logged sets from planned sets", () => {
+    renderHome({ active, activeProgress: { setsDone: 14, setsPlanned: 12 } });
+    expect(screen.getByText("14 sets logged · 12 planned")).toBeTruthy();
+  });
+
+  it("does not read a day-old open session as minutes (T7)", () => {
+    const now = Date.parse("2026-10-01T10:00:00");
+    expect(inProgressClock("2026-10-01T09:30:00", now)).toBe("30 MIN");
+    expect(inProgressClock("2026-09-30T09:00:00", now)).toBe("STARTED YESTERDAY");
+    expect(inProgressClock("2026-09-25T09:00:00", now)).toMatch(/^STARTED 25 SEP/);
+  });
+});
+
+describe("PAST", () => {
+  it("is a neutral word, never MISSED, and the cell says it was not checked", () => {
+    expect(trainDayWord("PAST")).toBe("PAST");
+    renderHome({ week: [day("2026-09-07", "M", "PAST")] });
+    const cell = screen
+      .getByRole("navigation", { name: "This week" })
+      .querySelector("a")!;
+    expect(cell.getAttribute("aria-label")).toBe(
+      "Day 2026-09-07, past, completion not checked, open program",
+    );
+    expect(cell.className).not.toContain("missed");
+  });
+});
+
+describe("other confirmed programs", () => {
+  it("names a confirmed program it is not showing", () => {
+    renderHome({ otherPrograms: ["Spring block"] });
+    expect(screen.getByText(/Also confirmed, not shown here: Spring block/)).toBeTruthy();
   });
 });

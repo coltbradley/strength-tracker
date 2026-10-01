@@ -1392,6 +1392,7 @@
 
   .train-day-done,
   .train-day-skipped,
+  .train-day-past,
   .train-day-rest {
     color: var(--text-dim);
   }

@@ -1757,7 +1757,20 @@ export function resolveSessionSetCount(
 
 export async function getServerSessionSets(
   sessionId: string,
-): Promise<SetInsert[]> {
+): Promise<SetInsert[]>;
+/**
+ * `orNull`: a caller that must not turn "could not read" into "zero sets"
+ * (Train's in-progress count) gets `null` on a failed read with no cache, and
+ * the failure is NOT toasted: that screen has nothing to retry.
+ */
+export async function getServerSessionSets(
+  sessionId: string,
+  opts: { orNull: true },
+): Promise<SetInsert[] | null>;
+export async function getServerSessionSets(
+  sessionId: string,
+  opts?: { orNull?: boolean },
+): Promise<SetInsert[] | null> {
   const key = cacheKeys.sessionSets(sessionId);
   try {
     const { data, error } = await supabase
@@ -1772,6 +1785,7 @@ export async function getServerSessionSets(
   } catch (e) {
     const cached = await cacheGet<SetInsert[]>(key);
     if (cached) return cached;
+    if (opts?.orNull) return null;
     reportError(e, "load session sets");
     return [];
   }
