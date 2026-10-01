@@ -240,23 +240,36 @@ Supabase sends the stock link email and the paste path is the working one.
 
 ## History and corrections
 
-- **Record list** — `/history` opens on a list: a search field, PINNED GOALS
-  (each a card with the newest e1RM, target, % and a progress bar, plus a quiet
-  `◆ Pinned` text toggle), then RECENT (most recently performed day first;
-  ties broken by how many sessions in the last 90 days included the exercise,
-  then name; each row shows its e1RM and a `◇ Pin` toggle), then "Search the
-  full library" (the picker sheet), then bodyweight, then the week, check-ins,
-  coach observations and session log. Empty: "Your record starts with your
-  first finished session." Tapping a row opens its detail; `‹ Record` returns.
-  Selection is component state: switching tabs and back resets it.
+- **Record list** — `/history` opens on a list: a search field (every word
+  must match, any order), PINNED GOALS (each a card with the newest e1RM,
+  target, % and a progress bar, plus a quiet `◆ Pinned` toggle), then RECENT
+  (most recently performed day first; ties broken by how many sessions in the
+  last 90 days included the exercise, then name; each row shows the date, "5
+  sessions in 90 days", its e1RM and a `◇ Pin` toggle), then "Search the full
+  library" (the picker sheet), then bodyweight, the week, check-ins, coach
+  observations and the session log. Empty: "Your record starts with your first
+  finished session." A failed read with nothing cached shows "Couldn't load
+  your record" with Try again. Cached data carries the offline / "couldn't
+  refresh" note. Sets logged on this phone and not yet sent move their
+  exercise up and read "on phone, not sent yet"; sets voided or sessions
+  discarded here leave the list at once. If the scan hit its cap, a note says
+  older exercises may be missing. Tapping a row opens its detail; `‹ Record`
+  returns. Selection is component state: switching tabs and back resets it.
 - **Pin** — an exercise is pinned exactly when a `goals` row exists for it.
-  `◇ Pin` writes one with a target a little above the current e1RM (about 5%,
-  rounded up to 2.5 kg / 5 lb); `◆ Pinned` deletes it. Needs an e1RM, so it is
+  `◇ Pin` writes one with a target about 5% above the current e1RM, rounded
+  up to 2.5 kg / 5 lb; `◆ Pinned` removes it. Needs an e1RM, so it is
   disabled until the exercise has a 1–8 rep working set. Goal writes go
-  straight to PostgREST (not the outbox), so they need a connection; a failure
-  is reported and the list re-reads the server's state.
+  straight to PostgREST (not the outbox), so they need a connection: offline,
+  Pin / Pinned / − / + are disabled with "Needs a connection to pin or change
+  goals." A failed write puts the goal back as it was and says so. Removing a
+  goal that has a target date (possibly set by the coach) asks for a second
+  tap and says what goes; every removal shows UNDO for 6 seconds, which
+  restores the exact goal, date included. The toggle's label is "Pinned goal:
+  name" with pressed state.
 - **Detail goal card** — pinned: the target with `−` / `+` (2.5 kg or 5 lb per
-  tap) and `◆ Pinned`; unpinned: "Pin as goal".
+  tap, announced to screen readers, % updates at once) and `◆ Pinned`;
+  unpinned: "Pin as goal". The recent sets list includes this phone's unsent
+  sets, marked "on phone, not sent yet"; the charts use only sent sets.
 - **Charts** — per-exercise e1RM (dashed goal line, goal %) and weekly working sets.
   Both show a loading state while fetching rather than their empty copy, and
   both refetch after a void or a discard so a correction is visible

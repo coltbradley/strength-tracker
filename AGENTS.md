@@ -91,6 +91,12 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   rather than an error, so a bare drop would have made that button silently do
   nothing. The danger was never "delete" as a verb, it was deleting a DATED
   day. `rx_delete` stays for the same reason the trigger exists.
+- `goals` is written by BOTH the MCP `set_goal` tool (with `target_date`) and
+  the PWA's Record pin (direct PostgREST, owner RLS, online only; an upsert on
+  `(user_id, exercise_id)` that omits `target_date`, so a coach's date
+  survives -/+). Progress is still only `v_goal_progress` over `v_live_sets`;
+  the PWA never computes it beyond a display-only optimistic percentage. A
+  goal blocks `delete_exercise` (FK, no cascade).
 - Planned tables (`programs`/`planned_workouts`/`prescriptions`) are written
   by BOTH the MCP server (service role, program parsing) and the PWA (RLS
   owner policies, plan editor). The PWA can now CREATE a day too, not just
