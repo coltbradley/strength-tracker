@@ -366,6 +366,8 @@ export function Session() {
   const [bwAddOpen, setBwAddOpen] = useState<string | null>(null);
   /** Which paired editor owns the ephemeral pad or plate sheet, if either. */
   const [roundInputKey, setRoundInputKey] = useState<string | null>(null);
+  /** The member a Swap was opened FOR; null means the open entry. */
+  const [swapKey, setSwapKey] = useState<string | null>(null);
 
   const [rest, setRest] = useState<ActiveRest | null>(null);
   // survives DONE so the next log can still record elapsed rest
@@ -2080,7 +2082,10 @@ export function Session() {
     // the create-exercise sheet behind the picker can never send a substitute
     // to the end of the list because somebody forgot to say so.
     if (kind === "search") setPicking("add");
-    if (kind === "swap") setPicking("swap");
+    if (kind === "swap") {
+      setPicking("swap");
+      setSwapKey(memberKey);
+    }
   };
 
   const openPad = (
@@ -2529,8 +2534,9 @@ export function Session() {
   /** An exercise chosen from a picker, or created because the library lacked
    *  it: it either joins the day or takes over the open entry's movement,
    *  depending on which picker was opened. */
+  const swapTarget = swapKey === null ? null : (entries.find((e) => e.key === swapKey) ?? null);
   const pickedExercise = (ex: ExerciseRow) => {
-    if (picking === "swap" && openEntry) swapExercise(openEntry, ex);
+    if (picking === "swap" && (swapTarget ?? openEntry)) swapExercise((swapTarget ?? openEntry)!, ex);
     else addExercise(ex);
   };
 
@@ -3295,15 +3301,21 @@ export function Session() {
   const keyTargetSet = restedSet ?? scopeNewestSet;
   const stagedRpe = nowEntry ? draftOf(nowEntry).rpe : null;
 
+  // The Swap key names the member it acts on: the round's NOW member in a
+  // superset ("Swap A2"), the focus entry otherwise.
+  const swapKeyEntry = focusSupersetPair ? nowEntry : focusEntry;
+  const swapKeyTag = focusSupersetPair && swapKeyEntry
+    ? ` ${supersetInfo.get(swapKeyEntry.key)?.tag ?? ""}`.trimEnd()
+    : "";
   const focusKeys: FocusKeys = {
     onRpe: () => setRpeSheetOpen(true),
     rpeValue: restedSet ? (restedSet.rpe ?? null) : stagedRpe,
     onNote: keyTargetSet ? () => setNoteFor(keyTargetSet.id) : null,
     fourth:
-      focusEntry && scopeNewestSet === null && !swapFrozen(focusEntry)
+      swapKeyEntry && scopeNewestSet === null && !swapFrozen(swapKeyEntry)
         ? {
-            label: focusEntry.substitutedFor ? "Swap again" : "Swap",
-            onPress: () => openSheet("swap"),
+            label: `${swapKeyEntry.substitutedFor ? "Swap again" : "Swap"}${swapKeyTag}`,
+            onPress: () => openSheet("swap", swapKeyEntry.key),
           }
         : keyTargetSet
           ? { label: "Fix last", onPress: () => startCorrection(keyTargetSet) }
@@ -3695,7 +3707,7 @@ export function Session() {
               className="swap-action"
               onClick={() => {
                 setMoreOpen(false);
-                openSheet("swap");
+                openSheet("swap", entry.key);
               }}
             >
               {entry.substitutedFor ? "SWAP AGAIN" : "SWAP EXERCISE"}
@@ -4072,12 +4084,12 @@ export function Session() {
 
       {/* The same picker, aimed at the open exercise instead of at the end of
           the list. Picking the planned movement back out of it is the undo. */}
-      {sheet === "swap" && openEntry && (
+      {sheet === "swap" && (swapTarget ?? openEntry) && (
         <ExercisePicker
           title="SWAP EXERCISE"
           exercises={allExercises}
           failed={exercisesFailed}
-          onPick={(ex) => swapExercise(openEntry, ex)}
+          onPick={(ex) => swapExercise((swapTarget ?? openEntry)!, ex)}
           onAddNew={(q) => {
             setSheet(null);
             setNewName(q);

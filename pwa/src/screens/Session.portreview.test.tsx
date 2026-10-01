@@ -272,3 +272,57 @@ describe("N2 a just-logged set is never 'Needs review' while the exact read is s
     }
   });
 });
+
+const cardLabels = () => [...document.querySelectorAll(".ss-card")].map((e) => e.getAttribute("aria-label") ?? "");
+const pickFly = async () => {
+  const options = await screen.findAllByText("Dumbbell Fly");
+  fireEvent.click(options[options.length - 1]);
+  await pause(100);
+};
+
+describe("N4 swap in a superset targets the member the key names", () => {
+  it("after jumping to A2 the key still says Swap A1 and swaps A1 (the NOW member)", async () => {
+    exList();
+    await seed(pair(2));
+    renderSession();
+    await screen.findByText("round 1 of 2");
+    await pause(80);
+    today();
+    fireEvent.click(await screen.findByRole("button", { name: /^A2 · Barbell Row/ }));
+    await pause(80);
+    fireEvent.click(screen.getByRole("button", { name: "Swap A1" }));
+    await pickFly();
+    const labels = cardLabels();
+    expect(labels.find((l) => l.startsWith("A1 "))).toMatch(/Dumbbell Fly/);
+    expect(labels.find((l) => l.startsWith("A2 "))).toMatch(/Barbell Row/);
+  });
+
+  it("with A1 skipped the key says Swap A2 and swaps A2", async () => {
+    exList();
+    await seed(pair(2));
+    await cacheSet(cacheKeys.sessionSkips(active.id), ["bench"]);
+    renderSession();
+    await screen.findByText("round 1 of 2");
+    await pause(80);
+    fireEvent.click(screen.getByRole("button", { name: "Swap A2" }));
+    await pickFly();
+    const labels = cardLabels();
+    expect(labels.find((l) => l.startsWith("A2 "))).toMatch(/Dumbbell Fly/);
+    expect(labels.find((l) => l.startsWith("A1 "))).toMatch(/Bench Press/);
+  });
+
+  it("the More sheet's A2 button swaps A2 even while A1 is open", async () => {
+    exList();
+    await seed(pair(2));
+    renderSession();
+    await screen.findByText("round 1 of 2");
+    await pause(80);
+    fireEvent.click(screen.getByRole("button", { name: /^more options for/ }));
+    const a2More = await screen.findByRole("group", { name: "A2 Barbell Row · more" });
+    fireEvent.click(within(a2More).getByRole("button", { name: "SWAP EXERCISE" }));
+    await pickFly();
+    const labels = cardLabels();
+    expect(labels.find((l) => l.startsWith("A2 "))).toMatch(/Dumbbell Fly/);
+    expect(labels.find((l) => l.startsWith("A1 "))).toMatch(/Bench Press/);
+  });
+});
