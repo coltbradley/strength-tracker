@@ -3330,6 +3330,7 @@ export function Session() {
         />
       )}
       {nowEntry &&
+        !entryDone(nowEntry) &&
         loadNextView?.style === "plates" &&
         loadNextView.plateSplit &&
         loadNextView.baseKnown && (
@@ -3353,6 +3354,8 @@ export function Session() {
   const nextSetTag = (() => {
     if (focusRoundHeading) return `NEXT SET · ${focusRoundHeading.subtitle.toUpperCase()}`;
     if (!nowEntry || !nowDraft) return "NEXT SET";
+    // a finished or skipped exercise has no next set: the tag must not claim one
+    if (entryDone(nowEntry)) return "RESTING";
     const position = nextPositionText(nowEntry, nowDraft);
     return position === null ? "NEXT SET" : `NEXT SET · ${position.toUpperCase()}`;
   })();
@@ -3948,6 +3951,7 @@ export function Session() {
               onOpenMore={() => setMoreOpen(true)}
               onSkip={(reason) => skipEntryWithReason(nowEntry ?? focusEntry, reason)}
               skipped={Boolean((nowEntry ?? focusEntry).key in skips)}
+              skipReason={skips[(nowEntry ?? focusEntry).key]?.reason ?? null}
               onUnskip={() => toggleSkip(nowEntry ?? focusEntry)}
             />
           ) : (

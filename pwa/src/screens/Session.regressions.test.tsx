@@ -399,3 +399,26 @@ describe("The rest-over cue is announced once (H2)", () => {
     expect(played).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Skipping during a rest", () => {
+  it("08-ux M9: a skipped exercise has no NEXT SET tag and no LOAD NEXT card", async () => {
+    equipment(["bench-press", "Bench Press", "barbell"], ["back-squat", "Back Squat", "barbell"]);
+    await seed([
+      rx("bench", "bench-press", "Bench Press", 60, 1),
+      { ...rx("squat", "back-squat", "Back Squat", 100, 3), position: 1 },
+    ]);
+    renderSession();
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await pause(80);
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await screen.findByRole("heading", { name: "Back Squat" });
+    expect(screen.getByText(/^NEXT SET/)).toBeTruthy();
+    expect(screen.getByText("LOAD NEXT")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    fireEvent.click(screen.getByRole("button", { name: "Out of time" }));
+    expect(await screen.findByText("Skipped · Out of time. Unskip to log it.")).toBeTruthy();
+    expect(screen.queryByText(/^NEXT SET/)).toBeNull();
+    expect(screen.queryByText("LOAD NEXT")).toBeNull();
+  });
+});

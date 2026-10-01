@@ -213,7 +213,9 @@ why.
   ✕ on a logged row (List) is a two-tap void.
 - **Skip / unskip** — the Skip key opens reason chips (Equipment taken,
   Already warm, Out of time, Didn't feel right) or free text; a skipped entry
-  shows "Skipped. Unskip to log it." Session-local; the record is the sets.
+  shows "Skipped · <reason>. Unskip to log it." even during a rest (and the rest
+  band then drops its NEXT SET tag and LOAD NEXT card). Session-local; the record
+  is the sets.
 - **Superset rounds** — a two-member superset is logged member by member. The
   middle band shows an A1 card and an A2 card (● NOW, ✓ done this round,
   ○ NEXT, – SKIPPED), a one-line hint, and the NOW member's load picture; the

@@ -79,6 +79,8 @@ export interface FocusDeckProps {
    *  with the chosen chip text (or null for none). */
   onSkip?(reason: string | null): void;
   skipped?: boolean;
+  /** why it was skipped, when the lifter said */
+  skipReason?: string | null;
   onUnskip?(): void;
 }
 
@@ -289,6 +291,7 @@ export function FocusDeck({
   onOpenMore,
   onSkip,
   skipped = false,
+  skipReason = null,
   onUnskip,
 }: FocusDeckProps) {
   const [skipPromptOpen, setSkipPromptOpen] = useState(false);
@@ -374,7 +377,11 @@ export function FocusDeck({
             )}
           </div>
         )}
-        {!resting && skipped && <p className="focus-skipped">Skipped. Unskip to log it.</p>}
+        {skipped && (
+          <p className="focus-skipped">
+            Skipped{skipReason ? ` · ${skipReason}` : ""}. Unskip to log it.
+          </p>
+        )}
         {onSkip && !skipped && skipPromptOpen && (
           <div className="skip-reason-prompt chip-row" role="group" aria-label="Skip reason">
             {SKIP_REASON_CHIPS.map((chip) => (
