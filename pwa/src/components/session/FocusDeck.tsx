@@ -381,6 +381,18 @@ export function FocusDeck({
             Finish session
           </button>
         )}
+        {skipped && onUnskip && !showEditor && (
+          // A skipped entry counts as done, so the editor (and the Unskip key
+          // inside its key row) is not rendered — without this the "Unskip to
+          // log it" line in the middle band would have nothing to press.
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block focus-unskip"
+            onClick={onUnskip}
+          >
+            Unskip
+          </button>
+        )}
         {showEditor && renderEditor(entry, keyRow)}
       </div>
     </section>

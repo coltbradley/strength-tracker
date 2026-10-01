@@ -341,6 +341,25 @@ describe("FocusDeck", () => {
     expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
   });
 
+  it("keeps Unskip reachable when a skipped entry is done and the editor is gone", () => {
+    const onUnskip = vi.fn();
+    render(
+      <FocusDeck
+        {...props({
+          entry: entries[0]!,
+          skipped: true,
+          onUnskip,
+          canAdvance: true,
+        })}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "DONE 1 OF 3" })).toBeNull();
+    expect(screen.getByText("Skipped. Unskip to log it.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Unskip" }));
+    expect(onUnskip).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the NEXT EXERCISE card instead of the editor when the entry is done", () => {
     const onChooseNext = vi.fn();
     render(
