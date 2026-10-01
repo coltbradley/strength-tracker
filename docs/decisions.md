@@ -3200,7 +3200,7 @@ on the screen and everything else behind `•••` ("a quiet next line and vie
 workout are the only chrome"). Version D puts a drawn load picture and four
 keys (`RPE`, `Note`, `Skip`, `Swap` or `Fix last`) on the default screen. Why:
 the user said "I like in C how we have RPE, NOTE, SKIP, and Plates as little
-buttons," asked for plates "in different sizes for different weights" and for
+buttons," asked for "different size for different weights" on the plates and for
 one-or-two dumbbell drawings, and asked for the diagram to stay during rest "for
 the active exercise." The review then removed the duplicate Plates key (tapping
 the diagram opens plates) and moved load and reps side by side so the dock is
@@ -3213,8 +3213,10 @@ load), never decoration.
 **Superset logs member by member.** The 2026-09-12 and 2026-09-23 decisions made
 **Log round** the primary action, one durable local batch of two inserts, with
 **Log A1 only** as recovery. Version D logs `Log A1`, then `Log A2`, each a
-single ordinary insert, with rest after A2. Why: in review "I'm not sure the
-superset works well" and the A1-then-A2 flow with a NOW diagram tested better.
+single ordinary insert, with rest after A2. Why: the user said of C, "I'm not sure the
+superset works well," and the A1-then-A2 flow with a NOW state is what the
+design review then judged clear ("the superset 'NOW' state is clear"); the
+user's reply to the result was "This is looking pretty good."
 The invariants hold (two ordinary `SetInsert` rows, no superset record, idempotent
 replay); what is given up is the all-or-nothing local commit of a pair. A
 half-logged round is now a normal state. `enqueueBatch` is not removed by this
