@@ -51,6 +51,16 @@ the generated seed are gitignored; `.env.example` documents shape only.
    in chat first. A hallucinated or prompt-injected parse cannot become the
    active program silently, and the PWA only surfaces confirmed programs.
 
+## Per-user presentation prefs: `exercise_prefs`
+
+Written by the PWA only, through the outbox, under owner select/insert/update
+RLS; the service role and MCP never read or write it. It has deliberately NO
+delete policy (a tombstone row clears a preference; see decisions.md
+2026-10-01). Insert and update also require the exercise to be visible to the
+caller, so a private custom exercise of another user fails exactly like a
+nonexistent id and the foreign key cannot be used as an existence oracle.
+`updated_at` must be finite and at most a day ahead of the server clock.
+
 ## Threats considered
 
 - **Stolen bearer token**: worst realistic case. Attacker reads ONE user's
@@ -124,7 +134,8 @@ functions or grants.
   because it is otherwise searched FIRST, which was the one route by which a
   caller's temp table could have shadowed `user_config` inside `app_tz`. The
   harness asserts every public function has a `search_path`, so a new function
-  without one fails CI.
+  without one fails CI. `exercise_prefs_lww` (20261001000000) follows the same
+  pin.
 
 **Open, and its real severity:**
 

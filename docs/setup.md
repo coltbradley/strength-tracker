@@ -402,8 +402,9 @@ insert into user_config (user_id, tz) values ('<their-uuid>', 'Europe/Berlin')
 ```
 
 This is deliberately SQL and not a settings toggle: it changes about once in a
-lifetime, and the PWA's own settings are device-local by design (a per-user
+lifetime, and the PWA's global settings are device-local by design (a per-user
 server setting there would be a third write-ownership class — see CLAUDE.md).
+The one synced exception is the per-exercise record (`exercise_prefs`).
 
 ### What is shared and what is not
 
@@ -415,9 +416,12 @@ server setting there would be a third write-ownership class — see CLAUDE.md).
 | `app_config.tz` (household default zone)           | yes, overridable per user |
 | MCP tokens                                         | no, one identity each     |
 | PWA device settings (plates, bars, rest, units)    | per device, not per user  |
+| Per-exercise prefs (base weight, plates/stack)     | no, follow the account    |
 
-That last row is the one to know: two people sharing one phone share its plate
-inventory and per-exercise preferences. Two phones, no overlap.
+The device-settings row is the one to know: two people sharing one phone share
+its plate and bar inventories and unit. Per-exercise preferences are the
+exception: they belong to the account (`exercise_prefs`), sync to every device
+it signs in on, and are dropped from a phone when a different account signs in.
 
 ## Connecting an endurance source (optional)
 

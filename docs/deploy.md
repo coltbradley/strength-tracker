@@ -29,6 +29,19 @@ Still open:
 - **Push on a real phone** has still never been verified end to end (see
   "What needs a phone").
 
+## 2026-10-01 per-exercise prefs sync (`feat/exercise-prefs-sync`)
+
+Not yet released. One migration, `20261001000000_exercise_prefs.sql`, no
+function change; the PWA depends on the new table. `deploy.yml` pushes the
+database before Pages, so the order is safe. A PWA served before the migration
+would see every pref upsert fail against a missing table, so never publish
+the PWA without the push. The migration was edited in place before it shipped,
+so it is one file, applied once.
+
+Post-deploy check: sign in on two devices, set a base weight on one and see it
+on the other; `select count(*) from exercise_prefs` is non-zero. Also confirm
+`supabase db push` listed exactly this migration.
+
 ## 2026-09-17 round — release checklist
 
 Deployed: its migrations (through `20260917030000`) and functions were live by

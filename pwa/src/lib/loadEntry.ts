@@ -66,7 +66,7 @@ export function defaultLoadEntry(
 }
 
 export interface LoadEntryInput {
-  /** the user's own per-exercise choice (device-local settings) */
+  /** the user's own per-exercise choice (per-exercise pref, synced to the account) */
   override?: LoadEntry;
   /** what the coach's prescription asserts, when it asserts anything */
   prescribed?: LoadEntry | null;

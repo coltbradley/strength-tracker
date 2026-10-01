@@ -62,6 +62,7 @@ import {
   toCsv,
 } from "../lib/export";
 import { outbox } from "../lib/sync";
+import { exercisePrefsSync } from "../lib/exercisePrefsSyncApp";
 import { supabase } from "../lib/supabase";
 import {
   pushState,
@@ -475,6 +476,10 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
               return;
             }
             resetAllSettings();
+            // Per-exercise overrides live on the account too: this wipes the
+            // copy on this device, and the next merge brings the synced ones
+            // back. Ask for that merge now rather than at the next foreground.
+            void exercisePrefsSync.reconcile();
             setArmed(null);
             toast("Settings back to defaults");
           }}
@@ -484,7 +489,9 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
             : "Reset settings to defaults"}
         </button>
         <div className="microcopy">
-          Preferences only. Logged sessions and sets are never touched.
+          Preferences only. Logged sessions and sets are never touched. This
+          resets this device; exercise overrides are saved to your account
+          and come back from it on the next sync.
         </div>
 
         {signOutWarning !== null && (
@@ -982,7 +989,9 @@ function ExerciseOverrides({
     <div className="sheet-row sheet-row-stack">
       <span>
         Exercise overrides{" "}
-        <span className="muted-mono">· set from the plate sheet</span>
+        <span className="muted-mono">
+          · set from the plate sheet · synced to your account
+        </span>
       </span>
       {prefs.map(({ exerciseId, pref }) => {
         const parts: string[] = [];

@@ -30,6 +30,9 @@ export interface DemoStore {
   checkins: Row[];
   /** injury episodes a pain check-in files against */
   symptom_episodes: Row[];
+  /** synced per-exercise presentation prefs (20261001000000); empty, so the
+   *  demo shows the equipment-guess defaults */
+  exercise_prefs: Row[];
 }
 
 export type DemoScenario =
@@ -832,6 +835,7 @@ function emptyStore(): DemoStore {
     bodyweight_log: [],
     checkins: [],
     symptom_episodes: [],
+    exercise_prefs: [],
   };
 }
 

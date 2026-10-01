@@ -62,8 +62,11 @@ to "derived metrics live in views": it stores the coach's own written
 conclusions, with a frozen `evidence` record that is never re-read as a
 current metric, only compared then-vs-now; RLS is owner select and delete
 only (no insert or update — a lifter cannot author or edit the coach's own
-opinion by hand), and every write comes from the MCP service role. Settings
-are device-local and have no table. User-flow detail lives in
+opinion by hand), and every write comes from the MCP service role. Global
+settings are device-local and have no table; the one exception is the
+per-exercise record (`exercise_prefs`: base weight, plates vs stack, rest,
+step, unit), which the PWA alone writes through the outbox under owner RLS,
+last-write-wins on a client stamp (decisions.md, 2026-10-01). User-flow detail lives in
 [flows.md](flows.md).
 
 ## The endurance half
@@ -279,9 +282,10 @@ the PWA logs training.
    of `planned_workouts`/`prescriptions` besides the MCP server. `plan_note`
    is the user's; `notes` stays the coach's words from the parse.
 
-Settings (a sheet, not a screen) is a typed device-local registry: units,
-plate and bar inventories, load steps, per-exercise overrides, rest, export.
-Nothing there is stored server-side.
+Settings (a sheet, not a screen) is a typed registry: units, plate and bar
+inventories, load steps, per-exercise overrides, rest, export. Only the
+per-exercise overrides are stored server-side (`exercise_prefs`); everything
+else there stays on the device.
 
 Offline is a hard requirement. Writes go to an IndexedDB outbox and flush on
 reconnect; client-generated UUIDs + `on conflict do nothing` make replay

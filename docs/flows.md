@@ -173,7 +173,7 @@ why.
   plausible plate machines (leg press, hack squat, smith, chest press, calf
   raise) and never for a cable; an unset sled base reads "Set sled weight".
   Dumbbells show the pair and the total. The plate sheet edits the base, the
-  type and the per-exercise choice, device-local.
+  type and the per-exercise choice, synced to your account.
 - **Log a set** — Log appends one set at the next `set_index`, stamps the rest
   it ended, starts the rest clock and advances. Working sets count against the
   plan, warmups do not. Ramp brackets are one entry walked in order; crossing a
@@ -279,13 +279,17 @@ why.
 
 ## Settings and data
 
-Gear icon, top right, from any screen. All of it is device-local: there is
-no settings table in Postgres (see decisions.md). Sections:
+Gear icon, top right, from any screen. Global settings are device-local;
+there is no `user_settings` table. The one exception is the per-exercise
+overrides (base weight, plates vs stack, one or two dumbbells, rest, step,
+unit), which sync to your account (decisions.md, 2026-10-01): set on one phone,
+true on the others, dropped from a phone when a different account signs in.
+Sections:
 
 - **UNITS / GYM / LOGGING / TIMING / DISPLAY** — a typed registry renders
   itself, so every setting carries its own validation, migration and
   control: unit; plate and bar inventories and the default bar; coarse and
-  fine load steps; per-exercise overrides (bar, rest, increment); fallback
+  fine load steps; per-exercise overrides (bar, rest, increment; synced); fallback
   load and reps; default rest; auto-start-rest; week start day. Rest alerts
   sit alongside them as a bespoke row, because the value is a browser
   notification permission rather than a stored preference — and the rest

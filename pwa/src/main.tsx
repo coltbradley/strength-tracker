@@ -5,12 +5,16 @@ import { App } from "./App";
 import { cacheGet, cacheKeys } from "./lib/db";
 import { installGlobalHandlers, initSentry } from "./lib/errors";
 import { outbox } from "./lib/sync";
+import { exercisePrefsSync } from "./lib/exercisePrefsSyncApp";
 import { createUpdateGate } from "./lib/swUpdate";
 import "./styles.css";
 
 installGlobalHandlers();
 void initSentry();
 outbox.start(); // flush on app start + 'online' events
+// per-exercise prefs: queue local changes, merge the server's on start,
+// sign-in and return to the foreground (lib/exercisePrefsSync.ts)
+exercisePrefsSync.start();
 
 // Clear the app icon badge whenever the app is actually looked at.
 //

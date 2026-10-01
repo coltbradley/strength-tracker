@@ -14,6 +14,12 @@
 //    -> mark 'dead': kept in IndexedDB with last_error AND the code and status
 //    that caused it, skipped by the flusher, listed in <OutboxSheet> where it
 //    can be retried or exported
+//  - 23503 (or an RLS 42501) on an exercise_prefs upsert -> the exercise is
+//    gone or not visible to this person, so the preference has nothing left to
+//    describe. It is DISCARDED (removed from the queue, `onDiscarded` told) rather
+//    than parked: a dead copy would be re-enqueued by every reconcile and pile
+//    up forever. The one deliberate exception to "never silently dropped",
+//    because a pref is presentation only and never a training fact.
 // The flusher keeps going past dead items.
 //
 // Dead is not the same as hopeless, and the difference is `deadKind` below:
@@ -52,9 +58,11 @@ export interface TransportError {
 
 /** The Supabase calls the outbox needs, abstracted for tests. */
 export interface OutboxTransport {
-  /** upsert on the table's pk ('set_id' for set_voids/set_notes, 'id'
-   *  elsewhere); null on success. set_notes MERGES on conflict (note edits
-   *  are last-write-wins); every other table ignores duplicates. */
+  /** upsert on the table's pk ('set_id' for set_voids/set_notes,
+   *  'user_id,exercise_id' for exercise_prefs, 'id' elsewhere); null on
+   *  success. set_notes and exercise_prefs MERGE on conflict (last-write-wins;
+   *  for exercise_prefs Postgres drops an older `updated_at`); every other
+   *  table ignores duplicates. */
   insert(
     table:
       | "sessions"
@@ -68,7 +76,8 @@ export interface OutboxTransport {
       | "pain_checks"
       | "report_prompts"
       | "feedback"
-      | "session_skips",
+      | "session_skips"
+      | "exercise_prefs",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(
@@ -211,6 +220,13 @@ interface Deps {
    */
   onSynced?: (op: OutboxOp) => void;
   /**
+   * Told about an op the outbox removed WITHOUT sending it, because the server
+   * refused it for a reason that can never change (see `isDiscardable`). The
+   * caller drops whatever local state keeps producing that write.
+   * Best-effort, like `onSynced`.
+   */
+  onDiscarded?: (op: OutboxOp) => void;
+  /**
    * Delays before retrying after a RETRYABLE failure while online, one per
    * consecutive failure, the last repeating. Without it a timeout on gym wifi
    * left the queue stuck until the next write, an `online` event or a return
@@ -220,9 +236,23 @@ interface Deps {
   retryDelaysMs?: readonly number[];
 }
 
-type ErrorClass = "retry" | "dead" | "auth" | "fk-prescription";
+type ErrorClass = "retry" | "dead" | "auth" | "fk-prescription" | "discard";
+
+/**
+ * A preference for an exercise that does not exist, or that this person cannot
+ * see (another account's private custom exercise, which the insert policy
+ * reports exactly like a missing one). 23503 is the FK; 42501 is the policy.
+ * Only the row-level-security wording counts for 42501: a bare "permission
+ * denied" is about the ROLE, which a re-sign-in can fix.
+ */
+export function isDiscardable(op: OutboxOp, err: TransportError): boolean {
+  if (op.kind !== "insert" || op.table !== "exercise_prefs") return false;
+  if (err.code === "23503") return true;
+  return err.code === "42501" && /row-level security/i.test(err.message);
+}
 
 function classify(op: OutboxOp, err: TransportError): ErrorClass {
+  if (isDiscardable(op, err)) return "discard";
   if (
     err.code === "23503" &&
     op.kind === "insert" &&
@@ -382,6 +412,7 @@ export function createOutbox({
   stampUserId,
   onIdentityChange,
   onSynced,
+  onDiscarded,
   retryDelaysMs = [5_000, 15_000, 60_000, 300_000],
 }: Deps): Outbox {
   let status: OutboxStatus = {
@@ -670,6 +701,17 @@ export function createOutbox({
           }
 
           const kind = classify(item.op, err);
+
+          if (kind === "discard") {
+            await db.delete("outbox", row.key);
+            setStatus({ ...counts(await readAll(db)), lastError: null });
+            try {
+              onDiscarded?.(item.op);
+            } catch {
+              // best-effort, as onSynced
+            }
+            break attempt;
+          }
 
           if (kind === "fk-prescription") {
             // prescription deleted server-side: keep the set, drop the link

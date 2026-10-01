@@ -1258,7 +1258,7 @@ export function Session() {
   // exercise the same way (and none of them can be handed another exercise's
   // convention).
 
-  // Every exercise's device-local preference, subscribed as a whole: a toggle
+  // Every exercise's preference (synced to the account), subscribed as a whole: a toggle
   // made on a superset's OTHER member (its dumbbell count, its sled weight)
   // must re-render this screen, which a per-exercise hook on the open entry
   // would never notice.
@@ -1629,7 +1629,7 @@ export function Session() {
     inputUnit,
   );
 
-  /** Flip the convention for an exercise, persisted device-locally beside its
+  /** Flip the convention for an exercise, saved with the exercise's prefs (synced to the account) beside its
    *  bar and increment. The number on screen deliberately does NOT move: it is
    *  what is written on the implement, and only the count of implements
    *  changed. */
@@ -1637,7 +1637,7 @@ export function Session() {
     setExerciseLoadEntry(entry.exercise_id, mode === "per_side" ? "total" : "per_side");
   };
 
-  /** Flip plates <-> stack for an exercise, persisted device-locally. Offered
+  /** Flip plates <-> stack for an exercise, saved with its prefs (synced to the account). Offered
    *  only where a plate-loaded alternative plausibly exists. */
   const toggleLoadStyleFor = (entry: ExerciseEntry, style: LoadStyle | null) => {
     setExerciseLoadStyle(entry.exercise_id, style === "plates" ? "stack" : "plates");
@@ -2628,7 +2628,7 @@ export function Session() {
       roundInputKey === null
         ? null
         : (entries.find((entry) => entry.key === roundInputKey) ?? null);
-    // Base/bar weight is a device-local per-exercise setting, not part of
+    // Base/bar weight is a per-exercise pref (synced to the account), not part of
     // any draft — it does not go through the round-vs-open-entry draft
     // split below, which exists only for entryKg/reps.
     if (pad.kind === "base") {

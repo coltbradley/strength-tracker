@@ -24,6 +24,7 @@ import {
   getExerciseRestSeconds,
   getExerciseStepKg,
   getLoadStepKg,
+  getExercisePrefsSyncState,
   getPlatesOnHand,
   getSetting,
   getUnit,
@@ -39,6 +40,7 @@ import {
   setLoadStepKg,
   setSetting,
   setUnit,
+  subscribeExercisePrefWrites,
   subscribeSettings,
 } from "./settings";
 import { kgToLb, lbToKg } from "./units";
@@ -342,6 +344,30 @@ describe("unit switch repairs bar selections", () => {
     expect(getExercisePref("squat").barKg).toBe(20);
     setUnit("lb");
     expect(kgToLb(getExercisePref("squat").barKg as number)).toBeCloseTo(45, 6);
+  });
+});
+
+describe("unit switch and synced per-exercise bars", () => {
+  it("leaves a base weight no bar list contains (a sled's 34 kg) alone", () => {
+    setExerciseBarKg("sled", 34);
+    const before = getExercisePrefsSyncState().stamps.sled;
+    setUnit("lb");
+    setUnit("kg");
+    expect(getExercisePref("sled").barKg).toBe(34);
+    expect(getExercisePrefsSyncState().stamps.sled).toBe(before);
+  });
+
+  it("stamps and announces a catalogue bar it does remap, so it syncs", () => {
+    const seen: Array<[string, unknown, string]> = [];
+    const off = subscribeExercisePrefWrites((id, pref, at) => seen.push([id, pref, at]));
+    setExerciseBarKg("squat", 20);
+    seen.length = 0;
+    setUnit("lb");
+    off();
+    expect(kgToLb(getExercisePref("squat").barKg as number)).toBeCloseTo(45, 6);
+    expect(seen).toHaveLength(1);
+    expect(seen[0][0]).toBe("squat");
+    expect(getExercisePrefsSyncState().stamps.squat).toBe(seen[0][2]);
   });
 });
 

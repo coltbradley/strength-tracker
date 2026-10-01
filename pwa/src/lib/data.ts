@@ -19,6 +19,7 @@ import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
 import type {
   AdherenceRow,
+  ExercisePrefRow,
   ExerciseRow,
   GoalProgressRow,
   LoadEntry,
@@ -1220,6 +1221,42 @@ export async function getExercises(): Promise<CacheRead<ExerciseRow[]>> {
     throwIf(error);
     return (data ?? []) as ExerciseRow[];
   });
+}
+
+// ---- exercise prefs (synced presentation) ----------------------------------
+
+/**
+ * The signed-in user's per-exercise presentation prefs, tombstones included,
+ * straight from the server. NOT through fetchWithCache, deliberately: the
+ * device copy is the settings envelope (lib/settings.ts), so a cached server
+ * read could only be an older answer than the one already on screen — and in
+ * the moment between a user change and the kv owner check, someone else's.
+ * Throws QueryError like every other read so the caller can tell offline
+ * (code null) from a refusal. See lib/exercisePrefsSync.ts.
+ */
+export async function getExercisePrefRows(): Promise<ExercisePrefRow[]> {
+  // PostgREST caps a response at the project's max_rows (1000 by default) and
+  // says nothing when it cuts: a bare `.limit(2000)` returned a silently
+  // truncated list, and the merge would then upload rows it merely had not
+  // been shown. Page by primary key until a short page, and refuse (throw)
+  // rather than merge a partial read if the ceiling is reached.
+  const PAGE = 1000;
+  const MAX_PAGES = 10;
+  const rows: ExercisePrefRow[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { data, error } = await supabase
+      .from("exercise_prefs")
+      .select(
+        "exercise_id,bar_kg,rest_seconds,load_step_kg,load_unit,load_entry,load_style,updated_at",
+      )
+      .order("exercise_id", { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1);
+    throwIf(error);
+    const got = (data ?? []) as ExercisePrefRow[];
+    rows.push(...got);
+    if (got.length < PAGE) return rows;
+  }
+  throw new Error("exercise_prefs: more rows than one sync will read");
 }
 
 // ---- exercise demo ---------------------------------------------------------

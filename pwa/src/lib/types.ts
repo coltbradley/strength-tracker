@@ -205,6 +205,29 @@ export interface SetNoteUpsert {
   note: string;
 }
 
+/**
+ * One person's presentation preferences for one exercise (`exercise_prefs`,
+ * 20261001000000). Every value null is a TOMBSTONE: the preference was
+ * cleared at `updated_at`. Never affects `load_kg`.
+ */
+export interface ExercisePrefRow {
+  exercise_id: string;
+  bar_kg: number | null;
+  rest_seconds: number | null;
+  load_step_kg: number | null;
+  load_unit: LoadUnit | null;
+  load_entry: LoadEntry | null;
+  load_style: "plates" | "stack" | null;
+  /** client-stamped ISO time; the last-write-wins clock */
+  updated_at: string;
+}
+
+/** The queued upsert. `user_id` is the owner the outbox item is stamped
+ *  with too; RLS refuses it unless it is the caller. */
+export interface ExercisePrefUpsert extends ExercisePrefRow {
+  user_id: string;
+}
+
 export interface SetInsert {
   id: string;
   session_id: string;

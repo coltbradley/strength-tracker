@@ -116,6 +116,10 @@ export function describeOp(
       return op.payload.scope === "warmups"
         ? "Warmups skipped"
         : "Exercise skipped";
+    case "exercise_prefs": {
+      const name = exerciseNames[op.payload.exercise_id];
+      return name === undefined ? "Exercise setting" : `Setting · ${name}`;
+    }
   }
 }
 

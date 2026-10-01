@@ -7,6 +7,7 @@ import type {
   BodyweightInsert,
   CheckinInsert,
   DailyReadinessUpsert,
+  ExercisePrefUpsert,
   FeedbackInsert,
   PainCheckInsert,
   SessionInsert,
@@ -102,7 +103,13 @@ export type OutboxOp =
   // A skipped exercise or skipped warmups, written once at Finish
   // (End.tsx). "on conflict do nothing" like every other append-only insert
   // here — an un-skip earlier in the session never reaches the network.
-  | { kind: "insert"; table: "session_skips"; payload: SessionSkipInsert };
+  | { kind: "insert"; table: "session_skips"; payload: SessionSkipInsert }
+  // A per-exercise presentation preference (base weight, plates vs stack,
+  // one vs two dumbbells...). The second MERGING insert after set_notes:
+  // replay upserts on (user_id, exercise_id), and Postgres keeps whichever
+  // write carries the later client-stamped `updated_at`, so an old replay
+  // is a no-op rather than a clobber. See lib/exercisePrefsSync.ts.
+  | { kind: "insert"; table: "exercise_prefs"; payload: ExercisePrefUpsert };
 
 export interface OutboxItem {
   op: OutboxOp;
@@ -427,6 +434,9 @@ export const cacheKeys = {
    *  no invalidation family: nothing a set or a session does can stale it,
    *  and a re-seed reaches the device only through the user-change clear. */
   exerciseDemo: (exerciseId: string) => `exerciseDemo:${exerciseId}`,
+  // `exercise_prefs` deliberately has NO key here: settings.ts's localStorage
+  // envelope already is the device copy, so a kv copy of the server rows
+  // would only ever be a staler second answer (see lib/exercisePrefsSync.ts).
 };
 
 /**

@@ -37,6 +37,11 @@ vi.mock("../lib/sync", () => ({
   },
 }));
 
+const reconcile = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock("../lib/exercisePrefsSyncApp", () => ({
+  exercisePrefsSync: { reconcile },
+}));
+
 vi.mock("../lib/supabase", () => ({
   supabase: { auth: { signOut: () => Promise.resolve({ error: null }) } },
   supabaseConfigured: true,
@@ -136,5 +141,16 @@ describe("SettingsSheet closed-app rest alerts", () => {
     fireEvent.click(button);
 
     expect(h.testRestAlert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SettingsSheet reset", () => {
+  it("asks for a prefs merge straight away and says exercise overrides are synced", () => {
+    reconcile.mockClear();
+    const { baseElement } = render(<SettingsSheet open onClose={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reset settings to defaults" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset every setting?" }));
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(baseElement.textContent).toContain("exercise overrides are saved to your account");
   });
 });

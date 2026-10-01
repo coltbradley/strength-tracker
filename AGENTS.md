@@ -255,8 +255,9 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   The service role bypasses RLS, so every MCP read of `exercises` must scope
   by owner in code — `requireExercise` is the gate. Another user's custom
   exercise reports as UNKNOWN, never as forbidden. Movement hints (unilateral,
-  bar type) are derived client-side from `equipment` and the name; overrides
-  live in device-local per-exercise settings.
+  bar type) are derived client-side from `equipment` and the name; a person's
+  overrides live in their per-exercise prefs (`exercise_prefs`, below), never
+  on `exercises`.
   The per-user-column rule has exactly one carve-out, `updated_at` /
   `updated_by` (20260905020000), and it rests on the distinction the rule is
   really about. Those two are a single GLOBAL fact about the row rather than a
@@ -411,26 +412,35 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   keep that test green. Surfaces that print a stored load use
   `shownLoadValue` / `formatAuthoredLoad` so what was typed reads back as
   typed. Root cause and incident timeline: `docs/decisions.md` 2026-10-01.
-- Settings are DEVICE-LOCAL, not per-user: two people sharing one phone share
-  its plate inventory and per-exercise prefs. They are in a typed registry
-  (`pwa/src/lib/settings.ts`)
-  behind a versioned envelope; migrations there are additive too. There is no
-  `user_settings` or `exercise_prefs` table and adding one needs a decision
-  entry: it would create a third write-ownership class for data no view and
-  no MCP tool reads. Accepted: settings do not sync across devices.
+- Settings are DEVICE-LOCAL, with one exception. They are in a typed registry
+  (`pwa/src/lib/settings.ts`) behind a versioned envelope; migrations there are
+  additive too. Global settings (plate and bar inventories, display unit, load
+  steps, rest defaults, display) never sync and there is no `user_settings`
+  table; adding one needs a decision entry. The exception is the per-exercise
+  `ExercisePref` (base weight, plates vs stack, one vs two dumbbells, rest,
+  step, unit): since 2026-10-01 (`docs/decisions.md`) it syncs PER USER through
+  `exercise_prefs` (20261001000000). Written by the PWA ONLY, through the
+  outbox (merging upsert on `(user_id, exercise_id)`, owner RLS, no delete
+  policy: clearing is a tombstone row of nulls), last-write-wins on a
+  client-stamped `updated_at` that a trigger enforces, so an older replay is a
+  no-op. Prefs carry an owner on the device and are dropped, never uploaded,
+  when a different account signs in (`pwa/src/lib/exercisePrefsSync.ts`). It is
+  presentation only: no view, derived metric or MCP tool reads it, and none
+  may.
 - Load presentation is a closed set of six modes
   (`pwa/src/lib/loadStyle.ts`: `LoadStyle = 'plates' | 'stack'`, crossed
   with the existing unilateral ×1/×2 and bodyweight cases already in
-  `loadEntry.ts`), device-local per exercise like every other
+  `loadEntry.ts`), chosen per exercise in the person's synced
   `ExercisePref`, and it changes ONLY how a load is entered and what the
   plate calculator shows — never `load_kg`, which stays the total system
   load regardless of mode. `ExercisePref.barKg` now means 'base weight'
   (a bar OR a machine's sled/pin start), and there is no `base_kg` column
-  and never will be: the base is presentation, resolved the same
-  three-step order `loadEntry` already uses (device override, then
-  prescription, then a guess from `equipment` and name), and a value that
-  only affects how a number is SHOWN has no business on a row that is
-  supposed to be the total someone actually moved.
+  on `exercises`, `sets` or `prescriptions` and never will be: the base is
+  presentation, resolved the same three-step order `loadEntry` already uses
+  (the person's own override, then prescription, then a guess from
+  `equipment` and name), and a value that only affects how a number is
+  SHOWN has no business on a row that is supposed to be the total someone
+  actually moved. `exercise_prefs.bar_kg` is that override, per person.
 - App updates must never lose device data: the IndexedDB database
   ("strength-log") holds unsynced sets in the outbox. Version bumps must be
   strictly additive (see the comment in `pwa/src/lib/db.ts`); never rename
