@@ -1684,7 +1684,7 @@ export function Session() {
     const tick = isTick(entry);
     const load = tick
       ? { load_kg: 0, load_entry: "total" as const, entered_load: null, entered_unit: null }
-      : buildSetLoad({ typedValue: typed.value, typedUnit: typed.unit, loadEntry: entryMode });
+      : buildSetLoad({ typedValue: typed.value, typedUnit: typed.unit, loadEntry: entryMode, maxTotalKg: MAX_LOAD_KG });
     const timed = entry.brackets[0]?.tracking === "time";
     return {
       id: uuid(),
@@ -2172,6 +2172,7 @@ export function Session() {
             typedValue: editing.enteredLoad,
             typedUnit: editing.enteredUnit,
             loadEntry,
+            maxTotalKg: MAX_LOAD_KG,
           })
         : {
             load_kg: old.load_kg,

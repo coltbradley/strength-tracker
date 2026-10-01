@@ -368,6 +368,27 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   plan is stored at half; it is also why the editor loads the exercise library
   on mount rather than when the picker opens, since a row editor that cannot
   tell dumbbells from a barbell is how that happened.
+- `load_kg`, `load_entry`, `entered_load` and `entered_unit` are derived in ONE
+  place: `buildSetLoad({ typedValue, typedUnit, loadEntry })` in
+  `pwa/src/lib/setLoad.ts` (byte-identical copy for the Edge Functions in
+  `supabase/functions/mcp-server/lib/setLoad.ts`). The typed number and its
+  unit are the source of truth; kg is computed from them with the database's
+  own exact decimal rounding. Never compute a total with `* 0.45359237`,
+  `Math.round`, `toDisplay` or `fromDisplay` and write it beside a separately
+  held typed number, never copy `entered_*` across a changed total, and never
+  add a second derivation: the database's authored-load trigger refuses any
+  row where the four fields disagree, and the refusal arrives after the
+  lifter has left the screen, as a dead write on a phone. Every set that
+  enters the outbox passes `isAcceptedAuthoredLoad` (the TS mirror of the
+  trigger) first, so a violating set raises an error to the lifter instead of
+  being queued. The guard is `scripts/load-integrity.test.mjs`, which runs the
+  full migration chain in PGlite and inserts thousands of property-generated
+  `buildSetLoad` outputs (zero rejections allowed) plus arbitrary
+  inconsistent rows (the mirror must agree with SQL on every one). If you
+  change the trigger, change `setLoad.ts`, copy it to the MCP directory, and
+  keep that test green. Surfaces that print a stored load use
+  `shownLoadValue` / `formatAuthoredLoad` so what was typed reads back as
+  typed. Root cause and incident timeline: `docs/decisions.md` 2026-10-01.
 - Settings are DEVICE-LOCAL, not per-user: two people sharing one phone share
   its plate inventory and per-exercise prefs. They are in a typed registry
   (`pwa/src/lib/settings.ts`)
@@ -784,7 +805,9 @@ node scripts/build-exercise-seed.mjs
 npm --prefix scripts ci
 node scripts/validate-db.mjs
 node scripts/check-selects.mjs
-node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs scripts/load-integrity.test.mjs
+# load integrity alone: buildSetLoad vs the real trigger (LOAD_PROPERTY_CASES=20000 for a longer run)
+node --test scripts/load-integrity.test.mjs
 node scripts/check-release-ledger.mjs
 
 # edge functions (Deno — install via denoland/setup-deno or the Deno CLI)
