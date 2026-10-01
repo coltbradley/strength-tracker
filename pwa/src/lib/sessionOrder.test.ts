@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { ExerciseEntry } from "./entries";
 import {
+  blockMoveIndex,
   moveSessionEntry,
+  orderedEntryBlocks,
   reconcileEntryOrder,
   sessionEntryMoveIndex,
 } from "./sessionOrder";
@@ -163,5 +165,66 @@ describe("session-local entry order", () => {
     expect(moveSessionEntry(original, "missing", 1)).toEqual(original);
     expect(moveSessionEntry(original, "b", -4).map((item) => item.key)).toEqual(["b", "a"]);
     expect(moveSessionEntry(original, "a", 100).map((item) => item.key)).toEqual(["b", "a"]);
+  });
+});
+
+describe("orderedEntryBlocks / blockMoveIndex — what the Today's workout sheet draws", () => {
+  const day = () => [
+    entry("squat"),
+    entry("a1", { superset: 1 }),
+    entry("a2", { superset: 1 }),
+    entry("curl"),
+    entry("w1", { section: "Cooldown" }),
+    entry("w2", { section: "Cooldown" }),
+  ];
+
+  it("returns each movable unit whole: a pair is one block, a named section is one block", () => {
+    expect(orderedEntryBlocks(day()).map((block) => keys(block))).toEqual([
+      ["squat"],
+      ["a1", "a2"],
+      ["curl"],
+      ["w1", "w2"],
+    ]);
+  });
+
+  it("follows a saved order", () => {
+    const blocks = orderedEntryBlocks(day(), ["curl", "squat"]);
+    expect(blocks.map((block) => keys(block))).toEqual([
+      ["curl"],
+      ["squat"],
+      ["a1", "a2"],
+      ["w1", "w2"],
+    ]);
+  });
+
+  it("converts a dragged block position into the index moveSessionEntry takes", () => {
+    const entries = day();
+    const blocks = orderedEntryBlocks(entries);
+    // drag the pair (block 1) to the end of the main work, after "curl" (block 2)
+    const index = blockMoveIndex(blocks, 1, 2);
+    expect(index).toBe(2);
+    expect(keys(moveSessionEntry(entries, "a1", index))).toEqual([
+      "squat",
+      "curl",
+      "a1",
+      "a2",
+      "w1",
+      "w2",
+    ]);
+    // dragging up: curl (block 2) above the pair
+    expect(keys(moveSessionEntry(entries, "curl", blockMoveIndex(blocks, 2, 1)))).toEqual([
+      "squat",
+      "curl",
+      "a1",
+      "a2",
+      "w1",
+      "w2",
+    ]);
+  });
+
+  it("clamps an out-of-range drag target instead of throwing", () => {
+    const blocks = orderedEntryBlocks(day());
+    expect(blockMoveIndex(blocks, 0, 99)).toBe(5);
+    expect(blockMoveIndex(blocks, 3, -4)).toBe(0);
   });
 });

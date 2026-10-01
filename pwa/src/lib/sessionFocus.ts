@@ -135,3 +135,119 @@ export function railState(
   )?.key;
   return entry.key === nextKey ? "next" : "upcoming";
 }
+
+// ---- superset rounds, member by member ------------------------------------
+//
+// A two-member superset is done in rounds (A1, A2, A1, A2), and the lifter
+// logs ONE member at a time: each is its own set, its own durable local
+// write. Everything below is arithmetic over how far each member has got; it
+// holds no state, so Session can ask the same question for the card, the
+// dock label, the rest decision and the recorded rest and never get two
+// answers.
+
+/** How far a member has got, for the display of a round. */
+export interface RoundMemberProgress {
+  /** working sets logged */
+  progress: number;
+  /** the plan's working sets; 0 means by feel (never "met") */
+  target: number;
+  /** skipped for today: a skipped member has nothing left to pair, so it
+   *  counts as finished — a skipped A1 must never stay NOW, because then A2
+   *  could never be logged at all. */
+  skipped: boolean;
+}
+
+export type RoundCardState = "now" | "done" | "next" | "skipped";
+
+export interface SupersetRoundView {
+  /** which member the dock edits and logs right now */
+  nowIndex: 0 | 1;
+  /** one member is finished (target met or skipped) while the other goes on:
+   *  every remaining set is its own "round" with a rest after it */
+  tail: boolean;
+  states: [RoundCardState, RoundCardState];
+  /** 1-based round number and the number of rounds, for "round 2 of 4" */
+  roundIndex: number;
+  roundTotal: number;
+}
+
+export function memberFinished(member: RoundMemberProgress): boolean {
+  return member.skipped || (member.target > 0 && member.progress >= member.target);
+}
+
+/**
+ * The state of a live round, or null when both members are finished.
+ *
+ * NOW is the member with fewer sets logged (A1 when level); a finished
+ * member is never NOW. `nowOverride` is the lifter tapping the other card to
+ * log out of order (the partner's warmup, an A2 first) and is honoured only
+ * while that member still has work to do.
+ */
+export function supersetRoundView(
+  a: RoundMemberProgress,
+  b: RoundMemberProgress,
+  nowOverride: 0 | 1 | null = null,
+): SupersetRoundView | null {
+  const members = [a, b] as const;
+  const finished = [memberFinished(a), memberFinished(b)] as const;
+  if (finished[0] && finished[1]) return null;
+  const tail = finished[0] !== finished[1];
+
+  let nowIndex: 0 | 1;
+  if (tail) nowIndex = finished[0] ? 1 : 0;
+  else if (nowOverride !== null && !finished[nowOverride]) nowIndex = nowOverride;
+  else nowIndex = a.progress <= b.progress ? 0 : 1;
+
+  const cardState = (i: 0 | 1): RoundCardState => {
+    if (i === nowIndex) return "now";
+    if (finished[i]) return members[i].skipped ? "skipped" : "done";
+    return members[i].progress > members[nowIndex].progress ? "done" : "next";
+  };
+
+  const now = members[nowIndex];
+  const roundIndex = tail ? now.progress + 1 : Math.min(a.progress, b.progress) + 1;
+  const roundTotal = tail
+    ? now.target
+    : a.target > 0 && b.target > 0
+      ? Math.min(a.target, b.target)
+      : Math.max(a.target, b.target);
+  return {
+    nowIndex,
+    tail,
+    states: [cardState(0), cardState(1)],
+    roundIndex,
+    roundTotal,
+  };
+}
+
+/** One side of a logging decision, counted for the KIND of set being logged
+ *  (working sets for a working set, warmups for a warmup). */
+export interface RoundCount {
+  /** sets of this kind already logged */
+  progress: number;
+  /** nothing of this kind left to do (met, skipped, or none planned) */
+  finished: boolean;
+}
+
+export interface RoundPlacement {
+  /** The partner is already AHEAD of me this round: the time since its set is
+   *  the gap between the two halves of one round, not a rest, so this set's
+   *  `rest_seconds_actual` is null (recording it would store A1's whole set as
+   *  A2's "rest", on an append-only table that can never be corrected). */
+  secondOfRound: boolean;
+  /** After this log the partner is still to go this round: no rest, straight
+   *  to the partner. Otherwise the round is complete and rest begins. */
+  roundOpenAfter: boolean;
+}
+
+export function roundPlacement(
+  mine: Pick<RoundCount, "progress">,
+  partner: RoundCount | null,
+): RoundPlacement {
+  if (partner === null || partner.finished)
+    return { secondOfRound: false, roundOpenAfter: false };
+  return {
+    secondOfRound: partner.progress > mine.progress,
+    roundOpenAfter: partner.progress <= mine.progress,
+  };
+}

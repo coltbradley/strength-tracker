@@ -105,6 +105,14 @@ export interface Outbox {
    */
   inspect(): Promise<OutboxEntry[]>;
   getStatus(): OutboxStatus;
+  /**
+   * Whether the queue has been READ at least once since start. `getStatus()`
+   * begins as an all-zero idle snapshot that is indistinguishable from a
+   * genuinely empty queue; a screen that claims "nothing is waiting" from it
+   * would claim it before it knows (a reload with sets queued, a count read
+   * that rejects). True once any count has actually been taken.
+   */
+  isStatusKnown(): boolean;
   subscribe(fn: () => void): () => void;
   /** Exact server ACKs with the owner captured immediately before transport. */
   subscribeSynced(fn: (
@@ -408,7 +416,11 @@ export function createOutbox({
     return whoAmI() === owner;
   }
 
+  // A snapshot is KNOWN only once a count has actually been taken from the
+  // store: any patch that carries `pending` came from `counts(...)`.
+  let statusKnown = false;
   function setStatus(patch: Partial<OutboxStatus>): void {
+    if (patch.pending !== undefined) statusKnown = true;
     status = { ...status, ...patch };
     for (const fn of listeners) fn();
   }
@@ -975,6 +987,7 @@ export function createOutbox({
     },
 
     getStatus: () => status,
+    isStatusKnown: () => statusKnown,
 
     subscribe(fn) {
       listeners.add(fn);

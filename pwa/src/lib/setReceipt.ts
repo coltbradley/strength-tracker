@@ -80,3 +80,22 @@ export function projectSetReceipt(input: SetReceiptInput): SetReceipt {
   if (setOps.length > 0) return { state: "local" };
   return review("No exact server or queued operation confirms this set.");
 }
+
+/**
+ * Whether the queued writes for this set are HELD: this device must not send
+ * them (another account's, or queued before identity resolved). A held write
+ * is on the phone and healthy, but it is not "sending" and says so.
+ */
+export function setQueueHeld(
+  entries: readonly OutboxEntry[],
+  setId: string,
+  correctionOf?: string,
+): boolean {
+  return entries.some(
+    (entry) =>
+      entry.state === "held" &&
+      (opMatchesSet(entry, setId) ||
+        opMatchesVoid(entry, correctionOf ?? setId) ||
+        entry.correction_link?.replacement_id === setId),
+  );
+}

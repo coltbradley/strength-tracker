@@ -8,3 +8,11 @@ export function useOutboxStatus(): OutboxStatus {
     () => outbox.getStatus(),
   );
 }
+
+/** Whether the queue has been read at least once (see Outbox.isStatusKnown). */
+export function useOutboxKnown(): boolean {
+  return useSyncExternalStore(
+    (fn) => outbox.subscribe(fn),
+    () => outbox.isStatusKnown(),
+  );
+}

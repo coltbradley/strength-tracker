@@ -127,15 +127,22 @@ export function dumbbellLook(implementKg: number): {
   return { cls, height: Math.round(24 + Math.min(28, lb / 3)) };
 }
 
-/** "50 + 50 = 100 lb total" for a pair; "50 lb · one dumbbell is the total". */
+/**
+ * "50 + 50 = 100 lb total" for a pair; "50 lb · one dumbbell is the total".
+ * `shown` is the number as the lifter reads or typed it, in the unit being
+ * displayed: when an authored lb value exists the picture says THAT (225.25
+ * stays 225.25) rather than re-deriving a converted-and-rounded one from kg.
+ */
 export function dumbbellText(
   implementKg: number,
   pair: boolean,
   unit: Unit,
   word = "dumbbell",
+  shown?: number,
 ): string {
-  const one = toDisplay(implementKg, unit);
+  const one = shown ?? toDisplay(implementKg, unit);
+  const both = shown !== undefined ? Math.round(shown * 2 * 100) / 100 : toDisplay(implementKg * 2, unit);
   return pair
-    ? `${one} + ${one} = ${toDisplay(implementKg * 2, unit)} ${unit} total`
+    ? `${one} + ${one} = ${both} ${unit} total`
     : `${one} ${unit} · one ${word} is the total`;
 }

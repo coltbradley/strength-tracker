@@ -529,6 +529,18 @@ describe("outbox", () => {
     expect(await box.inspect()).toEqual([]);
   });
 
+  it("is not 'known' until a count has actually been read (M4)", async () => {
+    const { transport } = makeTransport();
+    const box = createOutbox({ getDb, transport, isOnline: () => false });
+    // the all-zero idle snapshot looks exactly like an empty queue
+    expect(box.getStatus()).toMatchObject({ pending: 0, dead: 0, held: 0, state: "idle" });
+    expect(box.isStatusKnown()).toBe(false);
+
+    await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+    expect(box.isStatusKnown()).toBe(true);
+    expect(box.getStatus().pending).toBe(1);
+  });
+
   it("keeps an owner-bound ACK witness after both writes leave the queue", async () => {
     const { transport, calls } = makeTransport();
     let online = false;

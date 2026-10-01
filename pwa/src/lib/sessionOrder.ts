@@ -194,3 +194,35 @@ export function moveSessionEntry(
   if (!safeOrder(candidate)) return [...current];
   return candidate.flatMap((block) => block.entries);
 }
+
+/**
+ * The movable units of today, in the order currently shown: each is a whole
+ * navigation block (a ramp, a run of one named section, a superset), never a
+ * piece of one. This is what the Today's workout sheet draws one row for, so
+ * a drag or an arrow can only ever offer to move what `moveSessionEntry`
+ * will actually move.
+ */
+export function orderedEntryBlocks(
+  entries: readonly ExerciseEntry[],
+  currentKeys: readonly string[] = entries.map((entry) => entry.key),
+): ExerciseEntry[][] {
+  const current = reconcileEntryOrder(entries, currentKeys);
+  return blocksFor(current).map((block) => block.entries);
+}
+
+/**
+ * The insertion index (into the flat entry list WITHOUT the moved block) that
+ * puts the block at `fromBlock` where block number `toBlock` sits now, for a
+ * drag that reports block positions. Feed it to `moveSessionEntry`, which
+ * still has the last word: it snaps to a block boundary and refuses a layout
+ * that would join two separate sections or supersets.
+ */
+export function blockMoveIndex(
+  blocks: readonly (readonly ExerciseEntry[])[],
+  fromBlock: number,
+  toBlock: number,
+): number {
+  const rest = blocks.filter((_, index) => index !== fromBlock);
+  const clamped = Math.max(0, Math.min(rest.length, toBlock));
+  return rest.slice(0, clamped).reduce((sum, block) => sum + block.length, 0);
+}

@@ -134,6 +134,19 @@ describe("dumbbellLook", () => {
   });
 });
 
+describe("dumbbellText — authored numbers are quoted as authored (M13)", () => {
+  it("uses the shown lb number instead of a converted-and-rounded kg one", () => {
+    // 20.41 kg is a 45 lb dumbbell: the kg route gives 45, but 22.68 kg typed as
+    // 50 lb must read 50, not 50.0000001 rounded differently, and 44.1 never appears
+    expect(dumbbellText(lbToKg(45), true, "lb", "dumbbell", 45)).toBe("45 + 45 = 90 lb total");
+    expect(dumbbellText(20, true, "lb", "dumbbell", 44.1)).toBe("44.1 + 44.1 = 88.2 lb total");
+    expect(dumbbellText(20, true, "lb", "dumbbell", 45)).toBe("45 + 45 = 90 lb total");
+    expect(dumbbellText(lbToKg(22.5), false, "lb", "dumbbell", 22.5)).toBe(
+      "22.5 lb · one dumbbell is the total",
+    );
+  });
+});
+
 describe("dumbbellText", () => {
   it("adds up a pair", () => {
     expect(dumbbellText(lbToKg(50), true, "lb")).toBe("50 + 50 = 100 lb total");
