@@ -51,9 +51,11 @@ export interface TransportError {
 
 /** The Supabase calls the outbox needs, abstracted for tests. */
 export interface OutboxTransport {
-  /** upsert on the table's pk ('set_id' for set_voids/set_notes, 'id'
-   *  elsewhere); null on success. set_notes MERGES on conflict (note edits
-   *  are last-write-wins); every other table ignores duplicates. */
+  /** upsert on the table's pk ('set_id' for set_voids/set_notes,
+   *  'user_id,exercise_id' for exercise_prefs, 'id' elsewhere); null on
+   *  success. set_notes and exercise_prefs MERGE on conflict (last-write-wins;
+   *  for exercise_prefs Postgres drops an older `updated_at`); every other
+   *  table ignores duplicates. */
   insert(
     table:
       | "sessions"
@@ -67,7 +69,8 @@ export interface OutboxTransport {
       | "pain_checks"
       | "report_prompts"
       | "feedback"
-      | "session_skips",
+      | "session_skips"
+      | "exercise_prefs",
     payload: unknown,
   ): Promise<TransportError | null>;
   update(

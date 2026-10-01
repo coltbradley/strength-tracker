@@ -3868,5 +3868,144 @@ await check("explicit authored loads validate while legacy kg rows remain valid"
     [null, null], "older offline payload remains legacy unknown");
 });
 
+// --- exercise_prefs (20261001000000) -----------------------------------------
+console.log("\nexercise prefs (synced presentation, last-write-wins):");
+
+{
+  const PA = "00000000-0000-4000-8000-0000000000a1";
+  const PB = "00000000-0000-4000-8000-0000000000b2";
+  await db.exec(
+    `insert into auth.users (id, email) values ('${PA}', 'pa@example.test'), ('${PB}', 'pb@example.test')`,
+  );
+  // The same statement PostgREST issues for the outbox's merging upsert
+  // (on_conflict=user_id,exercise_id, resolution=merge-duplicates).
+  const upsert = (uid, cols) => {
+    const names = Object.keys(cols);
+    const vals = names.map((n) => (cols[n] === null ? "null" : `'${cols[n]}'`));
+    return asUser(
+      uid,
+      `insert into exercise_prefs (exercise_id, ${names.join(", ")})
+         values ('Barbell_Squat', ${vals.join(", ")})
+       on conflict (user_id, exercise_id) do update set
+         ${names.map((n) => `${n} = excluded.${n}`).join(", ")}`,
+    );
+  };
+  const row = async (uid) =>
+    (
+      await db.query(
+        `select bar_kg::float as bar, load_style, load_entry
+           from exercise_prefs where user_id = $1 and exercise_id = 'Barbell_Squat'`,
+        [uid],
+      )
+    ).rows[0];
+
+  await check("an owner upserts their own pref; user_id comes from auth.uid()", async () => {
+    await upsert(PA, {
+      bar_kg: 25,
+      load_style: "stack",
+      load_entry: null,
+      updated_at: "2026-10-01T10:00:00.000Z",
+    });
+    const r = await row(PA);
+    assertEq([r.bar, r.load_style], [25, "stack"], "stored for the caller");
+  });
+
+  await check("a pref is private to its owner, read and write", async () => {
+    const theirs = await asUser(PB, `select count(*)::int as n from exercise_prefs`);
+    assertEq(theirs.rows[0].n, 0, "another user sees nothing");
+    let rejected = false;
+    try {
+      await asUser(
+        PB,
+        `insert into exercise_prefs (user_id, exercise_id, bar_kg, updated_at)
+           values ('${PA}', 'Barbell_Squat', 0, now())`,
+      );
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error("wrote a pref onto another user");
+    const upd = await asUser(PB, `update exercise_prefs set bar_kg = 0`);
+    assertEq(upd.affectedRows ?? 0, 0, "and cannot update theirs");
+  });
+
+  await check("an OLDER replayed write cannot clobber a newer one", async () => {
+    await upsert(PA, { bar_kg: 15, load_style: "plates", load_entry: null, updated_at: "2026-10-01T09:00:00.000Z" });
+    const r = await row(PA);
+    assertEq([r.bar, r.load_style], [25, "stack"], "the newer value stands");
+  });
+
+  await check("a newer write wins, and replaying it is idempotent", async () => {
+    const w = { bar_kg: 20.411656, load_style: "plates", load_entry: "per_side", updated_at: "2026-10-01T11:00:00.000Z" };
+    await upsert(PA, w);
+    await upsert(PA, w);
+    const r = await row(PA);
+    assertEq([r.bar, r.load_style, r.load_entry], [20.411656, "plates", "per_side"], "newest value, float exact");
+    const n = await db.query(`select count(*)::int as n from exercise_prefs where user_id = '${PA}'`);
+    assertEq(n.rows[0].n, 1, "one row per person per exercise");
+  });
+
+  await check("clearing is a tombstone row (all values null), which still orders", async () => {
+    await upsert(PA, { bar_kg: null, load_style: null, load_entry: null, updated_at: "2026-10-01T12:00:00.000Z" });
+    let r = await row(PA);
+    assertEq([r.bar, r.load_style, r.load_entry], [null, null, null], "cleared");
+    await upsert(PA, { bar_kg: 25, load_style: "stack", load_entry: null, updated_at: "2026-10-01T11:30:00.000Z" });
+    r = await row(PA);
+    assertEq(r.bar, null, "a stale device cannot resurrect a cleared pref");
+  });
+
+  await check("no delete policy: an owner delete affects 0 rows", async () => {
+    const del = await asUser(PA, `delete from exercise_prefs`);
+    assertEq(del.affectedRows ?? 0, 0, "no delete policy");
+  });
+
+  await check("values are bounded exactly like settings.ts parses them", async () => {
+    const bad = [
+      ["bar_kg", "501"],
+      ["bar_kg", "-1"],
+      ["bar_kg", "NaN"],
+      ["rest_seconds", "3601"],
+      ["load_step_kg", "0"],
+      ["load_step_kg", "101"],
+      ["load_unit", "st"],
+      ["load_entry", "per_hand"],
+      ["load_style", "cable"],
+    ];
+    for (const [col, v] of bad) {
+      let rejected = false;
+      try {
+        await asUser(
+          PB,
+          `insert into exercise_prefs (exercise_id, ${col}, updated_at) values ('Barbell_Squat', '${v}', now())`,
+        );
+      } catch {
+        rejected = true;
+      }
+      if (!rejected) throw new Error(`${col} = ${v} was accepted`);
+    }
+    await asUser(
+      PB,
+      `insert into exercise_prefs (exercise_id, bar_kg, rest_seconds, load_step_kg, load_unit, load_entry, load_style, updated_at)
+         values ('Barbell_Squat', 500, 3600, 100, 'lb', 'total', 'plates', now())`,
+    );
+  });
+
+  await check("exercises gained no per-viewer column", async () => {
+    const r = await db.query(
+      `select column_name from information_schema.columns
+        where table_name = 'exercises'
+          and column_name in ('bar_kg','base_kg','load_style','load_entry','rest_seconds','load_step_kg','load_unit')`,
+    );
+    assertEq(r.rows.length, 0, "no pref column on the shared library");
+  });
+
+  await check("deleting a user takes their prefs, not the exercise", async () => {
+    await db.exec(`delete from auth.users where id = '${PB}'`);
+    const n = await db.query(`select count(*)::int as n from exercise_prefs where user_id = '${PB}'`);
+    assertEq(n.rows[0].n, 0, "their prefs went with them");
+    const ex = await db.query(`select count(*)::int as n from exercises where id = 'Barbell_Squat'`);
+    assertEq(ex.rows[0].n, 1, "the shared exercise survives");
+  });
+}
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

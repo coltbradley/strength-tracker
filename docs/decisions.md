@@ -3176,3 +3176,63 @@ on every visibility change and every minute. A session left open for days
 delays the update that long unless the app is closed, which activates the
 waiting worker on the next launch; the overnight sweep closes stale sessions.
 
+
+## 2026-10-01 Per-exercise prefs sync across devices
+
+Reverses, for one record only, "Settings became a typed registry, and got no
+database table" (2026-08-27) and the AGENTS.md rule that there is no
+`exercise_prefs` table. The lifter asked for it explicitly after being shown
+that rule: a base weight set for a sled or a machine, the plates-vs-stack
+choice and one-vs-two dumbbells should be set once and follow them to every
+device they sign in on, instead of being re-chosen per phone and lost with
+cleared browser storage.
+
+What syncs: the whole per-exercise `ExercisePref` (`barKg` as base weight,
+`loadStyle`, `loadEntry`, `restSeconds`, `loadStepKg`, `loadUnit`), in
+`exercise_prefs` keyed `(user_id, exercise_id)` (20261001000000), with CHECKs
+that mirror the parser bounds in `settings.ts`. What stays device-local: every
+global setting (plate and bar inventories, display unit, load steps, rest
+defaults, display). Those describe the phone and the gym it walks into, which
+is the original reason for keeping settings local and still holds for them.
+
+Write ownership: the PWA only, through the outbox, under owner select, insert
+and update RLS. This is not a new ownership class. It is the existing
+"PWA writes, owner RLS" class of `set_notes` and `exercise_notes`. The MCP
+server neither reads nor writes the table, no view reads it, and no MCP tool
+was added: it is presentation only and never changes `load_kg`, which stays
+the total system load. `exercises` gains no column. Its per-viewer rule
+stands, and so does "no `base_kg` on exercises or sets".
+
+Conflict policy: last-write-wins on a client-stamped `updated_at`. Each local
+change is stamped on the device (monotonic per exercise) and queued as a
+merging upsert. A `before update` trigger drops a write older than the stored
+row, so a replay, or a phone that was offline for a week, is a no-op rather
+than a clobber. Enforced in Postgres because PostgREST's upsert cannot express
+a conditional `do update`, and the PWA is not the boundary. On start, on
+sign-in and on return to the foreground, the device fetches its rows fresh,
+not from the kv cache. The settings envelope already holds the device copy,
+and a cached server read could only be older, or another account's in the
+moment before the cache owner check runs. The device merges them per exercise
+by `updated_at` and uploads what the server is behind on. A client clock that
+runs fast wins conflicts until real time catches up. We accept that for a
+display preference.
+
+No delete policy. A preference would normally qualify for one, like
+`coach_memory` or `bodyweight_log`, but under last-write-wins a hard delete
+leaves nothing to order against: another device still holding the old value
+sees no server row and uploads it back. Clearing writes a tombstone (every
+value null, fresh `updated_at`) instead. The rows go with the account and
+with a deleted custom exercise (both foreign keys cascade). The cascade from
+`exercises` also means a preference can never block `delete_exercise`.
+
+Identity: the device records which account its prefs belong to. Prefs from
+before sync are adopted by the first account that signs in, which in practice
+is the person already using them. When a different account signs in, the
+device drops the previous owner's prefs before anything is fetched or sent.
+Nothing is queued while identity is unknown or while the prefs belong to
+someone else. Like every other item, a queued pref write carries its owner,
+and the flusher holds it for that person. Accepted cost: two people sharing
+one phone no longer share per-exercise prefs, and a change made in the boot
+window before a different account's identity resolves is dropped with the
+rest of the previous owner's prefs. "Reset all settings" resets this device
+only, and the synced prefs return on the next merge.

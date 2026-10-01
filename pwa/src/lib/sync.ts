@@ -28,14 +28,21 @@ function toTransportError(
 
 const transport: OutboxTransport = {
   async insert(table, payload) {
-    const keyed = table === "set_voids" || table === "set_notes";
+    const onConflict =
+      table === "set_voids" || table === "set_notes"
+        ? "set_id"
+        : table === "exercise_prefs"
+          ? "user_id,exercise_id"
+          : "id";
     // set_notes MERGES on replay rather than ignoring the duplicate: a set
     // note is a last-write-wins edit, not an append-only training record.
-    const merges = table === "set_notes";
+    // exercise_prefs merges for the same reason; the `exercise_prefs_lww`
+    // trigger drops a replay older than what the server already holds.
+    const merges = table === "set_notes" || table === "exercise_prefs";
     const { error, status } = await supabase
       .from(table)
       .upsert(payload as Record<string, unknown>, {
-        onConflict: keyed ? "set_id" : "id",
+        onConflict,
         ignoreDuplicates: !merges,
       });
     return toTransportError(error, status ?? null);

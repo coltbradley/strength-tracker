@@ -13,9 +13,13 @@
 // keys; those keys are deliberately NOT deleted, so a rollback to the previous
 // release still finds them.
 //
-// SCOPE: device-local only. Preferences never sync — there is no user_settings
-// table and no new write-ownership class (owner decision, 2026-08-27). See
-// .audit/customization.md §3 for the Postgres design that was considered.
+// SCOPE: device-local, with ONE exception. Global preferences (plates, bars,
+// unit, steps, rest defaults, display) never sync — there is no user_settings
+// table (owner decision, 2026-08-27). The per-exercise record `exercisePrefs`
+// DOES sync, per user, through the `exercise_prefs` table (owner decision,
+// 2026-10-01, docs/decisions.md): this module stays the store every reader
+// uses, stamps each per-exercise write with a time, and tells a subscriber;
+// lib/exercisePrefsSync.ts owns the network half (outbox write, fetch, merge).
 //
 // UNIT DECISION (unchanged, and load-bearing): everything is stored in kg —
 // the codebase's canonical unit — but the app maintains TWO inventories, one
@@ -82,6 +86,28 @@ export interface ExercisePref {
 }
 
 export type ExercisePrefs = Record<string, ExercisePref>;
+
+/**
+ * Bookkeeping for syncing `exercisePrefs` (never rendered).
+ *
+ * `owner` is the account these prefs belong to: null until the first identity
+ * claims them (the device-local prefs that predate sync are adopted by the
+ * first account seen, which is the person who was already using them). When a
+ * DIFFERENT account signs in, the prefs are cleared before anything is sent,
+ * so one person's preferences are never uploaded as another's — the same rule
+ * as the device cache's owner marker (db.ts `claimCacheFor`).
+ *
+ * `stamps` is the last-write-wins clock: exercise id -> ISO time of the last
+ * change this device knows about, set on a local write and on a merged server
+ * row alike. A stamp with NO pref is a tombstone (the pref was cleared), which
+ * is what stops a stale server row resurrecting it. Kept beside the prefs
+ * rather than inside each ExercisePref so a tombstone never shows up as an
+ * empty override in the settings list.
+ */
+export interface ExercisePrefsSyncState {
+  owner: string | null;
+  stamps: Record<string, string>;
+}
 
 /**
  * Where the floating bug button sits. `side` because it snaps to an edge
@@ -229,6 +255,27 @@ function parseExercisePrefs(raw: unknown): ExercisePrefs | null {
   return out;
 }
 
+function parseExercisePrefsSync(raw: unknown): ExercisePrefsSyncState | null {
+  if (!isRecord(raw)) return null;
+  const owner =
+    typeof raw.owner === "string" && raw.owner.length > 0 && raw.owner.length <= 128
+      ? raw.owner
+      : null;
+  const stamps: Record<string, string> = {};
+  if (isRecord(raw.stamps)) {
+    let n = 0;
+    for (const [id, v] of Object.entries(raw.stamps)) {
+      // prefs and tombstones together, so twice the prefs cap
+      if (n >= MAX_EXERCISE_PREFS * 2) break;
+      if (id.length === 0 || id.length > 128) continue;
+      if (typeof v !== "string" || !Number.isFinite(Date.parse(v))) continue;
+      stamps[id] = v;
+      n += 1;
+    }
+  }
+  return { owner, stamps };
+}
+
 // ---- the registry ----------------------------------------------------------
 
 // Defaults live outside the registry object so `parse` can reuse them without
@@ -357,6 +404,16 @@ const SETTINGS = {
     control: { kind: "hidden" },
     defaults: () => ({}),
     parse: parseExercisePrefs,
+  }),
+
+  // Additive key with a default, so no envelope bump (see firstRunDismissed):
+  // an install that predates sync reads { owner: null, stamps: {} }.
+  exercisePrefsSync: def<ExercisePrefsSyncState>({
+    group: "gym",
+    label: "Exercise override sync",
+    control: { kind: "hidden" },
+    defaults: () => ({ owner: null, stamps: {} }),
+    parse: parseExercisePrefsSync,
   }),
 
   // Per display unit, for the reason the whole file is per display unit: a
@@ -952,6 +1009,74 @@ export function listExercisePrefs(): {
  * that field; an emptied record drops out of storage entirely, which is what
  * keeps this map from accumulating no-op entries.
  */
+/**
+ * A local per-exercise change, as the sync layer hears about it: the record
+ * after the change (null = cleared) and the time it was stamped with.
+ */
+export type ExercisePrefWriteListener = (
+  exerciseId: string,
+  pref: ExercisePref | null,
+  updatedAt: string,
+) => void;
+
+const prefWriteListeners = new Set<ExercisePrefWriteListener>();
+
+/** Told about every LOCAL per-exercise change (set or clear). Not told about
+ *  merges from the server, a unit-switch bar repair or a prune — those are
+ *  not choices the person made on this device. */
+export function subscribeExercisePrefWrites(
+  fn: ExercisePrefWriteListener,
+): () => void {
+  prefWriteListeners.add(fn);
+  return () => prefWriteListeners.delete(fn);
+}
+
+export function getExercisePrefsSyncState(): ExercisePrefsSyncState {
+  return getSetting("exercisePrefsSync");
+}
+
+/**
+ * A stamp strictly after this device's previous one for the exercise, so a
+ * second change always beats the first here even if the clock stepped back.
+ */
+function nextStamp(previous: string | undefined): string {
+  const prev = previous === undefined ? NaN : Date.parse(previous);
+  const now = Date.now();
+  return new Date(Number.isFinite(prev) && prev >= now ? prev + 1 : now).toISOString();
+}
+
+function samePref(a: ExercisePref | undefined, b: ExercisePref): boolean {
+  if (a === undefined) return Object.keys(b).length === 0;
+  const ka = Object.keys(a) as (keyof ExercisePref)[];
+  const kb = Object.keys(b) as (keyof ExercisePref)[];
+  return ka.length === kb.length && ka.every((k) => a[k] === b[k]);
+}
+
+/** Write one exercise's record (null = clear), stamp it, tell subscribers. */
+function commitExercisePref(exerciseId: string, pref: ExercisePref | null): void {
+  const next: ExercisePrefs = { ...getSetting("exercisePrefs") };
+  if (pref === null) delete next[exerciseId];
+  else next[exerciseId] = pref;
+  if (!setSetting("exercisePrefs", next)) return;
+  const sync = getSetting("exercisePrefsSync");
+  const stamp = nextStamp(sync.stamps[exerciseId]);
+  setSetting("exercisePrefsSync", {
+    ...sync,
+    stamps: { ...sync.stamps, [exerciseId]: stamp },
+  });
+  // The stored value, after parse, is what syncs: never a field the
+  // validator dropped.
+  const stored = getSetting("exercisePrefs")[exerciseId] ?? null;
+  for (const fn of prefWriteListeners) {
+    try {
+      fn(exerciseId, stored, stamp);
+    } catch (e) {
+      // A sync bug must never undo or block the local choice.
+      reportError(e, "queue exercise setting");
+    }
+  }
+}
+
 export function setExercisePref(
   exerciseId: string,
   patch: Partial<ExercisePref>,
@@ -966,22 +1091,42 @@ export function setExercisePref(
     // parameter is what keeps this honest at every call site.
     else (merged as Record<string, unknown>)[key] = v;
   }
-  const next: ExercisePrefs = { ...all };
-  if (Object.keys(merged).length === 0) delete next[exerciseId];
-  else next[exerciseId] = merged;
-  setSetting("exercisePrefs", next);
+  // Re-choosing what is already chosen is not a change: no stamp, and no
+  // queued write for every tap on an already-selected chip.
+  if (samePref(all[exerciseId], merged)) return;
+  commitExercisePref(
+    exerciseId,
+    Object.keys(merged).length === 0 ? null : merged,
+  );
 }
 
 export function clearExercisePref(exerciseId: string): void {
-  const next = { ...getSetting("exercisePrefs") };
-  delete next[exerciseId];
-  setSetting("exercisePrefs", next);
+  if (getSetting("exercisePrefs")[exerciseId] === undefined) return;
+  commitExercisePref(exerciseId, null);
+}
+
+/**
+ * Replace the whole per-exercise state at once: the sync layer's merge result
+ * or an ownership change. Deliberately NOT a local write — no stamps are
+ * invented and no subscriber is told, so a merge can never echo back to the
+ * server as a fresh choice. A merged `barKg` is taken as stored and NOT
+ * snapped to this device's bar inventory: it is a base weight, and a sled's
+ * 34 kg is a legitimate value no bar list contains.
+ */
+export function replaceExercisePrefsState(
+  prefs: ExercisePrefs,
+  sync: ExercisePrefsSyncState,
+): void {
+  setSetting("exercisePrefs", prefs);
+  setSetting("exercisePrefsSync", sync);
 }
 
 /**
  * Drop overrides for exercises that no longer exist. The map used to grow
  * forever; call this once the exercise library is loaded. Returns how many
- * entries went.
+ * entries went. Local only: the server row went with the exercise (its
+ * foreign key cascades), and the stamp goes too so a row that does come back
+ * is simply taken.
  */
 export function pruneExercisePrefs(knownIds: readonly string[]): number {
   const known = new Set(knownIds);
@@ -992,7 +1137,15 @@ export function pruneExercisePrefs(knownIds: readonly string[]): number {
     if (known.has(id)) next[id] = pref;
     else dropped += 1;
   }
-  if (dropped > 0) setSetting("exercisePrefs", next);
+  if (dropped > 0) {
+    setSetting("exercisePrefs", next);
+    const sync = getSetting("exercisePrefsSync");
+    const stamps: Record<string, string> = {};
+    for (const [id, s] of Object.entries(sync.stamps)) {
+      if (known.has(id)) stamps[id] = s;
+    }
+    setSetting("exercisePrefsSync", { ...sync, stamps });
+  }
   return dropped;
 }
 

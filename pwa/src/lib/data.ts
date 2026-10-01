@@ -19,6 +19,7 @@ import { countRefreshed, refreshedLoads } from "./templateLoads";
 import { kgToEnteredLoad } from "./units";
 import type {
   AdherenceRow,
+  ExercisePrefRow,
   ExerciseRow,
   GoalProgressRow,
   LoadEntry,
@@ -1168,6 +1169,28 @@ export async function getExercises(): Promise<CacheRead<ExerciseRow[]>> {
     throwIf(error);
     return (data ?? []) as ExerciseRow[];
   });
+}
+
+// ---- exercise prefs (synced presentation) ----------------------------------
+
+/**
+ * The signed-in user's per-exercise presentation prefs, tombstones included,
+ * straight from the server. NOT through fetchWithCache, deliberately: the
+ * device copy is the settings envelope (lib/settings.ts), so a cached server
+ * read could only be an older answer than the one already on screen — and in
+ * the moment between a user change and the kv owner check, someone else's.
+ * Throws QueryError like every other read so the caller can tell offline
+ * (code null) from a refusal. See lib/exercisePrefsSync.ts.
+ */
+export async function getExercisePrefRows(): Promise<ExercisePrefRow[]> {
+  const { data, error } = await supabase
+    .from("exercise_prefs")
+    .select(
+      "exercise_id,bar_kg,rest_seconds,load_step_kg,load_unit,load_entry,load_style,updated_at",
+    )
+    .limit(2000);
+  throwIf(error);
+  return (data ?? []) as ExercisePrefRow[];
 }
 
 // ---- exercise demo ---------------------------------------------------------
