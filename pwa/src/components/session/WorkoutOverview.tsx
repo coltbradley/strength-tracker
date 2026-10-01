@@ -1,7 +1,5 @@
-import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import { targetSets, type ExerciseEntry, type SupersetTag } from "../../lib/entries";
-import { entryUnits } from "../../lib/entryOrder";
-import { ReorderList, type ReorderItem } from "./ReorderList";
 import { StateGlyph, type ProgressState } from "./StateGlyph";
 
 export interface WorkoutOverviewProps {
@@ -10,7 +8,6 @@ export interface WorkoutOverviewProps {
   expandedEntryKey: string | null;
   onSelectEntry(key: string): void;
   onToggleEntry(key: string): void;
-  onEnterFocus(): void;
   focusModeAvailable?: boolean;
   renderEditor(entry: ExerciseEntry): ReactNode;
   entryProgress?(entry: ExerciseEntry): number;
@@ -26,11 +23,6 @@ export interface WorkoutOverviewProps {
    *  contexts) can omit it; no glyph renders and the row is exactly as it
    *  was before this task. */
   entryState?(entry: ExerciseEntry): ProgressState;
-  /** Move one UNIT (a lone exercise or a whole superset) from one place in
-   *  today's order to another. Indices are into `entryUnits(entries)`.
-   *  Session-local presentation order only — never the plan. Omit to hide the
-   *  Reorder control. */
-  onMoveUnit?(fromUnit: number, toUnit: number): void;
 }
 
 /**
@@ -43,7 +35,6 @@ export function WorkoutOverview({
   expandedEntryKey,
   onSelectEntry,
   onToggleEntry,
-  onEnterFocus,
   focusModeAvailable = true,
   renderEditor,
   entryProgress = () => 0,
@@ -54,9 +45,7 @@ export function WorkoutOverview({
   renderRowAction,
   onOpenDemo,
   entryState,
-  onMoveUnit,
 }: WorkoutOverviewProps) {
-  const [reordering, setReordering] = useState(false);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
@@ -73,52 +62,7 @@ export function WorkoutOverview({
 
   return (
     <div className="wk-overview">
-      {focusModeAvailable && (
-        <button
-          type="button"
-          className="btn btn-outline-ink btn-block wk-focus-mode"
-          onClick={onEnterFocus}
-        >
-          Go to current exercise
-        </button>
-      )}
-
-      {onMoveUnit && entries.length > 1 && (
-        <button
-          type="button"
-          className="btn btn-outline-ink btn-block wk-reorder-toggle"
-          aria-pressed={reordering}
-          onClick={() => setReordering((on) => !on)}
-        >
-          {reordering ? "Done reordering" : "Reorder today’s workout"}
-        </button>
-      )}
-
-      {reordering && onMoveUnit ? (
-        <>
-          <p className="microcopy">
-            Drag ⠿ or use the arrow keys to change today’s order. The plan stays
-            the same.
-          </p>
-          <ReorderList
-            items={reorderItems(
-              entries,
-              supersetInfo,
-              hasSections,
-              formatScheme,
-              entryProgress,
-              entryState,
-            )}
-            selectedKey={selectedEntryKey}
-            onMove={onMoveUnit}
-            onSelect={(key) => {
-              onSelectEntry(key);
-              setReordering(false);
-            }}
-          />
-        </>
-      ) : (
-      entries.map((entry, entryIndex) => {
+      {entries.map((entry, entryIndex) => {
         const sectionOf = (candidate: ExerciseEntry | undefined) =>
           candidate?.brackets[0]?.section ?? null;
         const section = sectionOf(entry);
@@ -239,63 +183,7 @@ export function WorkoutOverview({
             </div>
           </Fragment>
         );
-      })
-      )}
+      })}
     </div>
   );
-}
-
-/** One reorder row per unit, headed by the same run-level section label the
- *  overview prints (a section may honestly appear twice after a move). */
-function reorderItems(
-  entries: readonly ExerciseEntry[],
-  supersetInfo: ReadonlyMap<string, SupersetTag>,
-  hasSections: boolean,
-  formatScheme: (entry: ExerciseEntry) => string,
-  entryProgress: (entry: ExerciseEntry) => number,
-  entryState?: (entry: ExerciseEntry) => ProgressState,
-): ReorderItem[] {
-  const sectionOf = (e: ExerciseEntry | undefined) =>
-    e?.brackets[0]?.section ?? null;
-  let previous: string | null | undefined;
-  return entryUnits(entries).map((unit) => {
-    const first = unit[0];
-    const section = sectionOf(first);
-    const heading =
-      previous !== section
-        ? (section ?? (hasSections ? "Main work" : undefined))
-        : undefined;
-    previous = section;
-    const done = unit.reduce((n, e) => n + entryProgress(e), 0);
-    const total = unit.reduce(
-      (n, e) => n + (e.brackets.length > 0 ? targetSets(e) : 0),
-      0,
-    );
-    const states = entryState ? unit.map(entryState) : [];
-    const state =
-      states.find((s) => s === "current") ??
-      (states.length > 0 && states.every((s) => s === "done")
-        ? "done"
-        : states.length > 0 && states.every((s) => s === "skipped")
-          ? "skipped"
-          : states.find((s) => s === "next")) ??
-      states[0];
-    return {
-      key: first.key,
-      title: unit
-        .map((e) => {
-          const tag = supersetInfo.get(e.key)?.tag;
-          return tag ? `${tag} ${e.name}` : e.name;
-        })
-        .join(" · "),
-      subtitle: unit
-        .map((e) =>
-          e.brackets.length > 0 ? formatScheme(e).toUpperCase() : "BY FEEL",
-        )
-        .join(" · "),
-      meta: total > 0 ? `${done}/${total}` : `${done}`,
-      state,
-      heading,
-    };
-  });
 }

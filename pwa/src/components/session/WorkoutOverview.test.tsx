@@ -87,7 +87,6 @@ function props(
     expandedEntryKey: null,
     onSelectEntry: () => undefined,
     onToggleEntry: () => undefined,
-    onEnterFocus: () => undefined,
     renderEditor: () => <button type="button">Log set</button>,
     ...overrides,
   };
@@ -113,20 +112,14 @@ describe("WorkoutOverview", () => {
     expect(onLog).not.toHaveBeenCalled();
   });
 
-  it("announces the selected exercise and exposes a return to current work", () => {
+  it("announces the selected exercise", () => {
     render(<WorkoutOverview {...props({ selectedEntryKey: "bench" })} />);
 
-    expect(screen.getByRole("button", { name: "Go to current exercise" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Bench Press, selected" }),
     ).toBeTruthy();
-  });
-
-  it("labels the return action for the current focused exercise", () => {
-    render(<WorkoutOverview {...props({ selectedEntryKey: "bench" })} />);
-    expect(
-      screen.getByRole("button", { name: "Go to current exercise" }),
-    ).toBeTruthy();
+    // the Focus | List switch in the topbar is the way back to Focus
+    expect(screen.queryByRole("button", { name: "Go to current exercise" })).toBeNull();
   });
 
   it("toggles expansion on the row name when focus mode is unavailable, like main", () => {

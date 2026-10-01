@@ -112,7 +112,7 @@ async function logFirstAndFindNext() {
 }
 
 describe("Session today's order (session-local reorder)", () => {
-  it("reorders in the overview, persists device-locally, and never touches the plan or the outbox", async () => {
+  it("reorders in the Today's workout sheet, persists device-locally, and never touches the plan or the outbox", async () => {
     // a 3-member superset is an overview-only circuit, so the overview shows
     const ss = (id: string, ex: string, name: string, pos: number) => ({
       ...rx(id, ex, name, pos),
@@ -130,12 +130,11 @@ describe("Session today's order (session-local reorder)", () => {
         <Session />
       </MemoryRouter>,
     );
-    // the screen may remount once sets load; click until the list is up
+    // the screen may remount once sets load; open the sheet until it is up
     await waitFor(() => {
-      const toggle = screen.queryByRole("button", {
-        name: "Reorder today’s workout",
-      });
-      if (toggle) fireEvent.click(toggle);
+      if (!screen.queryByRole("dialog", { name: "Today's workout" })) {
+        fireEvent.click(screen.getByRole("button", { name: /^Today's workout/ }));
+      }
       expect(screen.getByRole("list", { name: "Today's order" })).toBeTruthy();
     });
     const handle = () =>

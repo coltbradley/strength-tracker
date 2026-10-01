@@ -3654,6 +3654,10 @@ export function Session() {
           isLocked={(entry) =>
             editingEntryKey !== null && entry.key !== editingEntryKey
           }
+          onMoveUnit={moveUnit}
+          hasSections={hasSections}
+          supersetInfo={supersetInfo}
+          selectedKey={focusEntry?.key ?? null}
           onFinish={finishWorkout}
           onClose={() => setWorkoutSheetOpen(false)}
         />
@@ -3758,12 +3762,10 @@ export function Session() {
                 expandedEntryKey={openKey}
                 onSelectEntry={setSelectedEntryKey}
                 onToggleEntry={toggleOpen}
-                onEnterFocus={enterFocus}
                 focusModeAvailable={focusEligible}
                 entryProgress={entryProgress}
                 isSkipped={(entry) => Boolean(skips[entry.key])}
                 entryState={entryState}
-                onMoveUnit={moveUnit}
                 hasSections={hasSections}
                 supersetInfo={supersetInfo}
                 formatScheme={scheme}

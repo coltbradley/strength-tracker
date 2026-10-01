@@ -57,6 +57,18 @@ describe("TodayWorkoutSheet", () => {
     expect(p.onClose).toHaveBeenCalled();
   });
 
+  it("turns the rows into a drag-to-reorder list when a move handler is given", () => {
+    const onMoveUnit = vi.fn();
+    const p = setup({ onMoveUnit });
+    expect(screen.getByText(/Drag ⠿ to change today’s order/)).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("button", { name: /^Reorder Back Squat/ }), {
+      key: "ArrowUp",
+    });
+    expect(onMoveUnit).toHaveBeenCalledWith(1, 0);
+    fireEvent.click(screen.getByRole("button", { name: "Bench Press — done" }));
+    expect(p.onSelect).toHaveBeenCalled();
+  });
+
   it("finishes the session", () => {
     const p = setup();
     fireEvent.click(screen.getByRole("button", { name: "Finish session" }));

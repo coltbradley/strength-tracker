@@ -295,7 +295,7 @@ describe("Session focus presentation", () => {
       await listButton(),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     fireEvent.click(screen.getByRole("button", { name: "List" }));
 
     expect(
@@ -357,13 +357,13 @@ describe("Session focus presentation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     expect(
       await screen.findByRole("heading", { name: "Back Squat" }),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     expect(
       await screen.findByRole("heading", { name: "Bench Press" }),
     ).toBeTruthy();
@@ -551,7 +551,7 @@ describe("Session focus presentation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(unitButton("Show weights in kilograms").getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
@@ -887,7 +887,7 @@ describe("Session focus presentation", () => {
       await screen.findByRole("heading", { name: "Superset A" }),
     ).toBeTruthy();
     expect(screen.getByText("round 1 of 2")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Next exercise/ })).toBeNull();
   });
 
   it("shows the last-time line of the NOW member and follows it to A2", async () => {
@@ -1001,7 +1001,7 @@ describe("Session focus presentation", () => {
     // round 2 starts back at A1
     expect(await screen.findByText("round 2 of 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Log A1" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Next exercise/ })).toBeNull();
   });
 
   it("keeps both staged superset loads stable on the first unit switch", async () => {
@@ -1260,7 +1260,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     expect(await screen.findByText("round 1 of 3")).toBeTruthy();
 
     act(() => setSetting("autoStartRest", false));
@@ -1296,7 +1296,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "List" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
     expect(roundCard("A1", "Bench Press").textContent).toContain("22.5");
     expect(roundCard("A2", "Barbell Row").textContent).toContain("20");
@@ -1475,7 +1475,7 @@ describe("Session focus presentation", () => {
       await listButton(),
     );
     fireEvent.click(screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
     expect(await screen.findByText("round 1 of 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Log A1" })).toBeTruthy();
@@ -1497,7 +1497,7 @@ describe("Session focus presentation", () => {
     });
     expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "List" }));
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     act(() => vi.advanceTimersByTime(30_000));
 
     expect(screen.getByText("0:30")).toBeTruthy();
@@ -1544,7 +1544,7 @@ describe("Session focus presentation", () => {
       within(a2More).getByRole("button", { name: "Plate calculator" }),
     );
     expect(await screen.findByText("BARBELL ROW · PLATES")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Type a target" }));
+    fireEvent.click(screen.getByRole("button", { name: "type a target load" }));
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "BACK TO PLATES" }));
@@ -1588,17 +1588,20 @@ describe("Session focus presentation", () => {
       await listButton(),
     );
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     expect(
-      await screen.findByRole("button", { name: "Next exercise" }),
+      await screen.findByRole("button", { name: /^Next exercise/ }),
     ).toBeTruthy();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "RPE" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Correct logged set 1" }));
+    // A finished entry offers no editor in Focus; its correction starts from
+    // the list, and coming back to Focus must keep it pinned there.
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    // Bench is the open entry, so its logged set is already offered.
+    fireEvent.click(await screen.findByRole("button", { name: "Correct logged set 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
-    expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Next exercise/ })).toBeNull();
   });
 
   it("keeps a correction on its source entry through select + Focus mode, not the newly selected one", async () => {
@@ -1652,7 +1655,7 @@ describe("Session focus presentation", () => {
     // Focus mode. The correction in progress must win: Bench stays open with
     // its staged edit, not Squat with a fresh prefill.
     fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
     expect(
       await screen.findByRole("heading", { name: "Bench Press" }),
@@ -1693,9 +1696,10 @@ describe("Session focus presentation", () => {
     // a still-locked button.
     await new Promise((resolve) => window.setTimeout(resolve, 450));
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "more options for Back Squat" }),
-    );
+    // Everything is logged, so Focus shows the finished workout. Correct
+    // Squat's set from the list, then come back to Focus.
+    fireEvent.click(await listButton());
+    // Squat is the open entry, so its logged set is already offered.
     fireEvent.click(
       await screen.findByRole("button", { name: "Correct logged set 1" }),
     );
@@ -1704,7 +1708,7 @@ describe("Session focus presentation", () => {
       padValue("reps"),
     ).toBe("9");
 
-    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
     // The correction on Back Squat must still be the one on screen, staged.
     expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();

@@ -3967,11 +3967,11 @@
   }
 
   .ss-card.is-now {
-    border-color: var(--current-set);
+    border-color: var(--focus-set-current);
   }
 
   .ss-card-tag {
-    color: var(--current-set);
+    color: var(--focus-set-current);
     font-family: var(--font-mono);
     font-weight: 700;
   }
@@ -4001,7 +4001,7 @@
   }
 
   .ss-card.is-now .ss-card-state {
-    color: var(--current-set);
+    color: var(--focus-set-current);
   }
 
   .ss-round-hint {
