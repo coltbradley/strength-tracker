@@ -1516,7 +1516,7 @@ describe("outbox visibility", () => {
   const setC = makeSet("cccccccc-3333-4333-8333-333333333333", 2);
   const setD = makeSet("dddddddd-4444-4444-8444-444444444444", 3);
 
-  it("repairs seven exported sets atomically while preserving keys and training data", async () => {
+  it("repairs seven exported sets atomically with the typed pounds, preserving keys and training data", async () => {
     let who = ALICE;
     const calls: Call[] = [];
     const box = createOutbox({ admit: () => undefined, getDb, currentUserId: () => who, isOnline: () => false,
@@ -1542,8 +1542,10 @@ describe("outbox visibility", () => {
     expect(repaired.map((e) => e.key)).toEqual(exported.map((e) => e.key));
     expect(repaired.map((e) => e.user_id)).toEqual(Array(7).fill(ALICE));
     expect(repaired.map((e) => e.state)).toEqual(Array(7).fill("waiting"));
-    expect(repaired.map((e) => e.op)).toEqual(originals.map((payload) => ({ kind: "insert", table: "sets",
-      payload: { ...payload, entered_load: null, entered_unit: null } })));
+    // the lifter typed pounds: 145, 75, 100, 115 (then the same again) -- the
+    // typed pair is solved from the kept total, nothing else changes
+    expect(repaired.map((e) => e.op)).toEqual(originals.map((payload, i) => ({ kind: "insert", table: "sets",
+      payload: { ...payload, entered_load: [145, 75, 100, 115, 145, 75, 100][i], entered_unit: "lb" } })));
     expect(exported.map((e) => (e.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>).payload.entered_load))
       .toEqual(originals.map((set) => set.entered_load));
     expect(calls).toHaveLength(0);
@@ -1653,7 +1655,7 @@ describe("outbox visibility", () => {
     expect((await box.inspect()).map((row) => row.table)).toEqual(["sets", "set_voids"]);
   });
 
-  it("repairs only the exact authored-load failure without changing the logged set", async () => {
+  it("repairs only the exact authored-load failure; with no solvable typed weight the provenance becomes unknown", async () => {
     let online = false;
     const { calls, transport } = makeTransport([{
       code: "23514",
@@ -1662,7 +1664,7 @@ describe("outbox visibility", () => {
     }]);
     const original: SetInsert = {
       ...setA,
-      load_kg: 100,
+      load_kg: 60.01, // no typed weight on any grid gives exactly this total
       load_entry: "total",
       entered_load: 220.5,
       entered_unit: "lb",
@@ -1723,6 +1725,7 @@ describe("outbox visibility", () => {
     const landedSets = new Set<string>();
     const original: SetInsert = {
       ...setA,
+      load_kg: 60.01, // unrecoverable: the repair writes null/null
       load_entry: "total",
       entered_load: 220.5,
       entered_unit: "lb",

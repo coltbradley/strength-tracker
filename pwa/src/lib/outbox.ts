@@ -27,7 +27,7 @@
 //
 // The outbox knows nothing about screens; screens know nothing about sync.
 
-import { assertAcceptedAuthoredLoad, LOAD_MISMATCH_MESSAGE } from "./setLoad";
+import { assertAcceptedAuthoredLoad, LOAD_MISMATCH_MESSAGE, repairAuthoredLoad } from "./setLoad";
 import { cacheKeys, type Database, type OutboxItem, type OutboxOp } from "./db";
 import type { SetInsert } from "./types";
 
@@ -360,7 +360,12 @@ function isLoadRepairCandidate(
     item.op.table === "sets" &&
     typeof item.user_id === "string" &&
     item.user_id === owner &&
-    item.last_code === "23514" &&
+    // Old builds recorded the code beside the message, but an item that died
+    // before that, or an export read back without it, may carry the exact
+    // trigger sentence and a 400 (or nothing) instead. The sentence is
+    // unique to this trigger, so it is the evidence; a DIFFERENT code is not.
+    (item.last_code === "23514" ||
+      (item.last_code == null && (item.last_status == null || item.last_status === 400))) &&
     item.last_error === LOAD_CONSISTENCY_ERROR &&
     item.op.payload.entered_load != null &&
     item.op.payload.entered_unit != null
@@ -843,15 +848,16 @@ export function createOutbox({
     }
   }
 
-  /** The payload `repairDeadLoadSet(s)` would write (authored pair unknown),
-   *  run through the admission gate as a sets insert. */
+  /** The payload `repairDeadLoadSet(s)` writes: the typed weight solved from
+   *  the kept total, or an unknown authored pair when none reproduces it. */
+  function repairedPayload(payload: SetInsert): SetInsert {
+    return repairAuthoredLoad(payload).row;
+  }
+
+  /** That payload, run through the admission gate as a sets insert. */
   function repairedPayloadAccepted(payload: SetInsert): boolean {
     try {
-      admit({
-        kind: "insert",
-        table: "sets",
-        payload: { ...payload, entered_load: null, entered_unit: null },
-      });
+      admit({ kind: "insert", table: "sets", payload: repairedPayload(payload) });
       return true;
     } catch {
       return false;
@@ -1022,14 +1028,15 @@ export function createOutbox({
         await tx.done;
         return false;
       }
-      // The exported payload retains the original authored value. Null here
-      // means unknown, never a fabricated claim that the lifter typed kg.
+      // The exported payload retains the original authored value. The typed
+      // pair is only ever SOLVED from the kept total (setLoad.ts); null means
+      // unknown, never a fabricated claim that the lifter typed kg.
       await tx.store.put(
         {
           ...item,
           op: {
             ...item.op,
-            payload: { ...item.op.payload, entered_load: null, entered_unit: null },
+            payload: repairedPayload(item.op.payload),
           },
           status: "pending",
           last_error: null,
@@ -1082,7 +1089,7 @@ export function createOutbox({
         }
         await tx.store.put({
           ...item,
-          op: { ...item.op, payload: { ...item.op.payload, entered_load: null, entered_unit: null } },
+          op: { ...item.op, payload: repairedPayload(item.op.payload) },
           status: "pending",
           last_error: null,
           last_code: null,
