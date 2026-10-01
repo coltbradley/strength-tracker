@@ -3205,5 +3205,15 @@ token set is now part of the system.
   `<meta name="theme-color">` from the resolved `--paper`. The script and
   `settings.ts` are coupled by key and shape and carry comments saying so.
   Failure of any piece leaves light.
+- **Review follow-ups.** `startTheme()` falls back to `addListener` where
+  `MediaQueryList` is not an EventTarget (Safari < 14) instead of throwing
+  before first render. The inline script applies the same envelope check as
+  `settings.ts` `load()` (numeric `v`), and a test runs the real script against
+  what `settings.ts` writes. The UA placeholder colour (3.2:1 on the dark input
+  surface) is the `--placeholder` token; its light value is Chromium's default
+  `#757575`, which is 4.4:1 on the input surface, a known light-mode shortfall
+  left untouched so light stays pixel-identical. Until `theme.ts` runs, the
+  `theme-color` meta is the light literal, so a dark launch can show a light
+  status bar for the first moments; the page itself never flashes.
 - **Manifest stays light.** `background_color` / `theme_color` cannot switch at
   runtime; the installed splash screen is light in either theme. Accepted.
