@@ -32,7 +32,7 @@ let nth = 0;
 function overdue(targetSeconds = 60): ActiveRest {
   nth += 1;
   return {
-    startedAt: Date.now() - (targetSeconds + 2) * 1000 - nth,
+    startedAt: Date.now() - (targetSeconds + 2) * 1000 - nth * 37,
     targetSeconds,
     forLabel: "Barbell Row set 2",
   };

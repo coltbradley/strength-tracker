@@ -167,17 +167,6 @@ async function logMember(tag: string, expectedWrites: number) {
   await pause();
 }
 
-/** One member's card, whether it is a group (NOW, done, skipped) or a button. */
-const card = (tag: string) => {
-  const el = [...document.querySelectorAll(".ss-card")].find((node) =>
-    node.getAttribute("aria-label")?.startsWith(`${tag} `),
-  );
-  if (!el) throw new Error(`no ${tag} card`);
-  return el as HTMLElement;
-};
-const chooser = (tag: string) => screen.getByRole("button", { name: new RegExp(`^${tag} .*Log ${tag} next`) });
-
-
 const exList = () => equipment(
   ["bench-press","Bench Press","barbell"],["barbell-row","Barbell Row","barbell"],
   ["back-squat","Back Squat","barbell"],["fly","Dumbbell Fly","dumbbell"]);
