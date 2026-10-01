@@ -98,6 +98,27 @@ describe("TrainHome", () => {
     expect(onStart).not.toHaveBeenCalled();
   });
 
+  it("can close and reopen the preview without creating a session, then starts once", () => {
+    const { onStart } = renderHome();
+
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
+    expect(screen.queryByRole("dialog", { name: "Upper strength preview" })).toBeNull();
+    expect(onStart).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start workout" }));
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onStart).toHaveBeenCalledWith(workout);
+  });
+
+  it("shows no first-up cue until real prescription rows are loaded", () => {
+    renderHome({ prescriptions: null, prescriptionLoadState: "loading" });
+
+    expect(screen.queryByText("First up")).toBeNull();
+    expect(screen.getByText("Workout details are loading.")).toBeTruthy();
+  });
+
   it("shows a planned workout's shape and starts it only from the preview", () => {
     const { onStart } = renderHome();
 

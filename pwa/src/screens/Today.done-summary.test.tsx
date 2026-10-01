@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("react-router-dom", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateMock,
   Link: ({
     to,
     children,
@@ -33,12 +33,14 @@ const {
   getResolvedPrescriptions,
   getUnratedSession,
   syncOpenSessions,
+  navigateMock,
 } = vi.hoisted(() => ({
   getPlannedWorkouts: vi.fn(),
   getDoneWorkoutIds: vi.fn(),
   getResolvedPrescriptions: vi.fn(),
   getUnratedSession: vi.fn(),
   syncOpenSessions: vi.fn(),
+  navigateMock: vi.fn(),
 }));
 
 vi.mock("../lib/data", () => ({
@@ -89,6 +91,8 @@ vi.mock("../lib/errors", () => ({
 import { Today } from "./Today";
 import { cacheSet, resetDbForTests } from "../lib/db";
 import { doneSummaryKey } from "./End";
+import { addDays, startOfWeek } from "../lib/calendar";
+import { parseLocalDate, todayLocalIso } from "../lib/format";
 
 const PROGRAM = {
   id: "prog-1",
@@ -164,5 +168,64 @@ describe("Today: a DONE day's own summary", () => {
 
     expect(await screen.findByText(/4 sets/)).toBeTruthy();
     expect(screen.getByText(/47 MIN/)).toBeTruthy();
+  });
+});
+
+describe("Today Train week navigation", () => {
+  it("opens a selected real week day in Program without starting that day", async () => {
+    const today = todayLocalIso();
+    const tomorrow = addDays(today, 1);
+    const todayButtonName = new RegExp(
+      `${parseLocalDate(today).toLocaleDateString("en-GB", { weekday: "long" })} ${parseLocalDate(today).getDate()}, done`,
+      "i",
+    );
+    const todayWorkout = { ...WORKOUT, id: "today-workout", scheduled_date: today };
+    const nextWorkout = {
+      ...WORKOUT,
+      id: "next-workout",
+      label: "Next day",
+      scheduled_date: tomorrow,
+    };
+    const laterWorkout = {
+      ...WORKOUT,
+      id: "later-workout",
+      label: "Later week",
+      scheduled_date: addDays(today, 8),
+    };
+    getPlannedWorkouts.mockResolvedValue({
+      data: { programs: [PROGRAM], workouts: [todayWorkout, nextWorkout, laterWorkout] },
+      fromCache: false,
+      stale: null,
+    });
+    getDoneWorkoutIds.mockResolvedValue({ data: [todayWorkout.id], fromCache: false, stale: null });
+
+    const view = render(<Today userId="u1" presentation="train" />);
+
+    const week = await screen.findByRole("group", { name: /week beginning/i });
+    const tomorrowButton = screen.getByRole("button", {
+      name: new RegExp(`${parseLocalDate(tomorrow).toLocaleDateString("en-GB", { weekday: "long" })} ${parseLocalDate(tomorrow).getDate()}, to come`, "i"),
+    });
+    expect(week.contains(tomorrowButton)).toBe(true);
+    fireEvent.click(tomorrowButton);
+
+    expect(navigateMock).toHaveBeenCalledWith("/program");
+    expect(tomorrowButton.getAttribute("aria-current")).toBeNull();
+    expect(screen.getByRole("button", { name: todayButtonName }).getAttribute("aria-current")).toBe("date");
+    expect(navigateMock).not.toHaveBeenCalledWith("/session");
+
+    // Returning from Program after choosing an earlier week keeps Program's
+    // selection there, while Train remains anchored to the live current week.
+    view.rerender(<Today userId="u1" presentation="program" />);
+    const earlierDate = addDays(today, -7);
+    const earlierButton = view.container.querySelector<HTMLButtonElement>(
+      `.week-cell[aria-label="${parseLocalDate(earlierDate).toLocaleDateString("en-GB", { weekday: "long" })} ${parseLocalDate(earlierDate).getDate()}, rest day"]`,
+    );
+    expect(earlierButton).not.toBeNull();
+    fireEvent.click(earlierButton!);
+    expect(earlierButton?.getAttribute("aria-current")).toBe("date");
+
+    view.rerender(<Today userId="u1" presentation="train" />);
+    expect(screen.getByRole("group", { name: new RegExp(`week beginning ${parseLocalDate(startOfWeek(today, 1)).getDate()}`, "i") })).toBeTruthy();
+    expect(screen.getByRole("button", { name: todayButtonName }).getAttribute("aria-current")).toBe("date");
   });
 });

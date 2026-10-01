@@ -53,6 +53,7 @@ export function TrainHome({
   prescriptionLoadState,
   active,
   recovery,
+  weekContext,
   startEnabled,
   completedToday,
   unit = "lb",
@@ -77,6 +78,8 @@ export function TrainHome({
   active: ActiveSession | null;
   /** Recovery is owned by Today because it reconciles and repairs sessions. */
   recovery: ReactNode;
+  /** Week cells and statuses are supplied by Today, which owns the calendar. */
+  weekContext?: ReactNode;
   startEnabled: boolean;
   completedToday?: boolean;
   unit?: Unit;
@@ -98,6 +101,7 @@ export function TrainHome({
           </button>
         )}
       </div>
+      {weekContext}
       {stale && (
         <p className="train-cache-note">
           {stale === "offline"

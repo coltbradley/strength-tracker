@@ -729,6 +729,7 @@ export function Today({
     (w) => states.get(w.id) === "SKIPPED",
   ).length;
 
+
   // calendar derivations
   const byDate = useMemo(() => {
     const m = new Map<string, PlannedWorkoutRow>();
@@ -1122,13 +1123,18 @@ export function Today({
 
   /** One day of the strip. `live` is false for the weeks either side of the
    *  selected one: they are drawn but unreachable until swiped to. */
-  const weekCell = (iso: string, live: boolean) => {
+  const weekCell = (
+    iso: string,
+    live: boolean,
+    openProgram = false,
+    selectedDateOverride = selectedDate,
+  ) => {
     const w = byDate.get(iso) ?? null;
     const cellState: WorkoutState | "REST" = w
       ? (states.get(w.id) ?? "UPCOMING")
       : "REST";
     const isToday = iso === today;
-    const isSelected = live && iso === selectedDate;
+    const isSelected = live && iso === selectedDateOverride;
     return (
       <button
         key={iso}
@@ -1150,6 +1156,7 @@ export function Today({
         onClick={() => {
           setSelectedDate(iso);
           if (w) loadRx(w.id);
+          if (openProgram) navigate("/program");
         }}
       >
         <span className="week-cell-letter">{formatWeekdayLetter(iso)}</span>
@@ -1174,6 +1181,40 @@ export function Today({
       </button>
     );
   };
+
+  // Train uses the same dated week and status map as Program. Keeping these
+  // cells here preserves their existing selection, swipe and state callbacks.
+  const trainWeekDates = weekPages(today, weekStart)[1];
+  const trainWeekContext = list !== null && (workouts.length === 0 || anyDates) ? (
+    <section className="train-week-context" aria-label="Training week">
+      <p className="train-week-hint">Choose a day to view its plan in Program.</p>
+      <div className="section-head">
+        <span className="field-label">THIS WEEK</span>
+      </div>
+      <div
+        className="week-strip"
+        role="group"
+        aria-label={`week beginning ${parseLocalDate(trainWeekDates[0]).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}`}
+      >
+        {trainWeekDates.map((iso) => weekCell(iso, true, true, today))}
+      </div>
+      {selectedDate !== today && (
+        <div className="week-jump">
+          <button
+            type="button"
+            className="btn btn-secondary week-today"
+            onClick={() => {
+              setSelectedDate(today);
+              const w = byDate.get(today);
+              if (w) loadRx(w.id);
+            }}
+          >
+            {selectedDate > today ? "← Today" : "Today →"}
+          </button>
+        </div>
+      )}
+    </section>
+  ) : null;
 
   /** Exactly one start affordance may be live at a time. An active session
    *  owns the screen (the RESUME banner is the primary); an unrecovered
@@ -1286,6 +1327,7 @@ export function Today({
           prescriptionLoadState={trainPrescriptionLoadState}
           active={active}
           recovery={recovery}
+          weekContext={trainWeekContext}
           startEnabled={canStart}
           completedToday={promoteNextWorkout}
           unit={unit}
