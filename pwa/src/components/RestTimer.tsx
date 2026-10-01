@@ -169,7 +169,7 @@ export function RestTimer({
               {formatClock(elapsed)} since the last set · target{" "}
               {formatClock(rest.targetSeconds)}
             </div>
-            {nextSetLabel && <div className="rest-panel-next">{nextSetLabel}</div>}
+            {nextSetLabel && <div className="rest-panel-next" title={nextSetLabel} aria-label={nextSetLabel}>{nextSetLabel}</div>}
           </>
         ) : (
           <>
@@ -208,7 +208,7 @@ export function RestTimer({
                 style={{ transform: `scaleX(${pct / 100})` }}
               />
             </span>
-            {nextSetLabel && <div className="rest-panel-next">{nextSetLabel}</div>}
+            {nextSetLabel && <div className="rest-panel-next" title={nextSetLabel} aria-label={nextSetLabel}>{nextSetLabel}</div>}
           </>
         )}
       </div>

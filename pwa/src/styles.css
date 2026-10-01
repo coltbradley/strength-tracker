@@ -1745,24 +1745,29 @@
   .session-unit-switch {
     display: inline-flex;
     flex: none;
-    align-items: center;
+    align-items: stretch;
+    overflow: hidden;
+    border: var(--bw-thick) solid var(--rule-strong-color);
+    border-radius: 12px;
     font-family: var(--font-mono);
-    font-size: var(--fs-micro);
+    font-size: var(--fs-sm);
     letter-spacing: var(--track-1);
     text-transform: lowercase;
   }
 
   .session-unit-choice {
-    min-width: var(--tap-min);
+    width: 52px;
+    min-width: 52px;
     min-height: var(--tap-min);
-    padding: 0 var(--s-2);
-    color: var(--text-dim);
-    font-weight: 400;
+    padding: 0;
+    color: var(--text);
+    font-weight: 700;
+    text-align: center;
   }
 
   .session-unit-choice-active {
-    color: var(--text);
-    font-weight: 800;
+    background: var(--text);
+    color: var(--bg);
   }
 
   .focus-deck-position-row {
@@ -2922,9 +2927,9 @@
     width: 100%;
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: var(--s-1) var(--s-5);
+    gap: var(--s-1) var(--s-6);
     align-items: baseline;
-    padding: var(--s-6) 0;
+    padding: var(--s-6) var(--s-5) var(--s-6) var(--s-3);
     min-height: var(--tap);
     text-align: left;
   }
@@ -3514,9 +3519,9 @@
     display: grid;
     grid-template-columns: 1fr auto;
     grid-template-rows: auto auto;
-    gap: var(--s-1) var(--s-5);
+    gap: var(--s-1) var(--s-6);
     align-items: baseline;
-    padding: var(--s-6) 0;
+    padding: var(--s-6) var(--s-5) var(--s-6) var(--s-3);
     min-height: var(--tap);
     text-align: left;
   }
@@ -3599,8 +3604,10 @@
     box-shadow: inset 0 var(--bw-thick) 0 var(--accent-dim);
   }
 
-  .reorder-item-selected .reorder-body {
-    box-shadow: inset 0 0 0 2px var(--accent-dim);
+  /* The current row is a tinted band, not an outlined box. */
+  .reorder-item-selected .reorder-row {
+    background: var(--surface-current);
+    border-radius: var(--r-card);
   }
 
   .reorder-heading {
@@ -3633,9 +3640,9 @@
     display: grid;
     grid-template-columns: auto 1fr auto;
     grid-template-rows: auto auto;
-    gap: var(--s-1) var(--s-5);
+    gap: var(--s-1) var(--s-6);
     align-items: baseline;
-    padding: var(--s-6) 0;
+    padding: var(--s-6) var(--s-5) var(--s-6) var(--s-3);
     min-height: var(--tap);
     text-align: left;
   }
@@ -3805,7 +3812,9 @@
   }
 
   .tw-row[data-state="current"] {
-    border-color: var(--focus-set-current);
+    border-color: transparent;
+    background: var(--surface-current);
+    border-radius: var(--r-card);
   }
 
   .tw-main {
@@ -4274,15 +4283,19 @@
    * bottom edge and bleeds past the page gutter like a sheet. Nothing here
    * is smaller than --fs-meta (11px). Colour only through role tokens. */
 
-  /* No min-height: 0 — on a short screen the middle keeps its full height
-   * and the page scrolls (the dock stays stuck to the bottom) instead of the
-   * content overflowing onto the status band and the dock. */
   .focus-middle {
     flex: 1;
     min-width: 0;
+    /* If the content cannot fit above the dock even when compacted, the
+     * middle scrolls itself; it never slides under the dock. */
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
-    justify-content: center;
+    /* `safe`: when the content overflows, start at the top so it can be
+     * scrolled to, instead of being centred past the top edge. */
+    justify-content: safe center;
     gap: var(--s-5);
     padding: var(--s-4) 0;
   }
@@ -4900,6 +4913,32 @@
     color: var(--text-dim);
     font-size: var(--fs-label);
     text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Short screens: the clock and gaps shrink so clock, last-set card and
+   * load-next card fit above the dock; whatever still cannot fit scrolls in
+   * the middle band instead of sitting under the dock. */
+  @media (max-height: 740px) {
+    .rest-panel-clock {
+      font-size: clamp(44px, 14vw, 52px);
+    }
+
+    .rest-panel {
+      gap: var(--s-2);
+    }
+
+    .focus-middle {
+      gap: var(--s-3);
+      padding: var(--s-2) 0;
+    }
+
+    .focus-saved-card,
+    .focus-load-next {
+      padding: var(--s-3) var(--s-5);
+    }
   }
 
   /* "NEXT SET · SET 4 OF 6" and End rest now, above the dock's numbers. */
