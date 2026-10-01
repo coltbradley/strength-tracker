@@ -94,6 +94,83 @@ function props(
 }
 
 describe("WorkoutOverview", () => {
+  it("renders a current List entry with logged rows, correction access, and the staged next set", () => {
+    const onCorrect = vi.fn();
+    render(
+      <WorkoutOverview
+        {...props({
+          variant: "list",
+          entries: correctionEntries,
+          selectedEntryKey: "bench",
+          entryState: (entry) => entry.key === "bench" ? "current" : "upcoming",
+          entryProgress: (entry) => entry.key === "bench" ? 1 : 0,
+          renderLoggedRows: (entry) => entry.key === "bench" ? (
+            <div>
+              <span>Logged 45 kg × 8</span>
+              <button type="button" onClick={onCorrect}>Correct logged set 1</button>
+            </div>
+          ) : null,
+          renderEditor: (entry) => entry.key === "bench" ? <output>Next set: 50 kg × 8</output> : null,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Logged 45 kg × 8")).toBeTruthy();
+    expect(screen.getByText("Next set: 50 kg × 8")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Correct logged set 1" }));
+    expect(onCorrect).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows completed entries as summaries without reopening their editors", () => {
+    const onToggleEntry = vi.fn();
+    render(
+      <WorkoutOverview
+        {...props({
+          variant: "list",
+          onToggleEntry,
+          entryState: () => "done",
+          entryProgress: () => 3,
+          renderLoggedRows: () => <span>expanded logged history</span>,
+          renderEditor: () => <span>staged editor</span>,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("3 done")).toBeTruthy();
+    expect(screen.queryByText("expanded logged history")).toBeNull();
+    expect(screen.queryByText("staged editor")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show details for Bench Press" }));
+    expect(onToggleEntry).toHaveBeenCalledWith("bench");
+  });
+
+  it("keeps every member of a longer superset circuit available in List", () => {
+    const circuit: ExerciseEntry[] = ["Press", "Row", "Fly"].map((name, index) => ({
+      key: `circuit-${index}`,
+      exercise_id: `exercise-${index}`,
+      name,
+      brackets: [],
+    }));
+    render(
+      <WorkoutOverview
+        {...props({
+          variant: "list",
+          entries: circuit,
+          focusModeAvailable: false,
+          supersetInfo: new Map(circuit.map((entry, index) => [entry.key, {
+            tag: `A${index + 1}`,
+            first: index === 0,
+            last: index === circuit.length - 1,
+          }])),
+        })}
+      />,
+    );
+
+    for (const name of ["Press", "Row", "Fly"]) {
+      expect(screen.getByRole("button", { name: new RegExp(`^${name}$`) })).toBeTruthy();
+    }
+    expect(screen.getAllByText(/^A[1-3]$/)).toHaveLength(3);
+  });
+
   it("marks an overview entry selected without writing a set", () => {
     const onSelectEntry = vi.fn();
     const onLog = vi.fn();

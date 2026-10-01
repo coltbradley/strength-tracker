@@ -6,7 +6,9 @@ import {
   type ExerciseEntry,
 } from "../../lib/entries";
 import { twoMemberSuperset } from "../../lib/sessionFocus";
+import type { SessionPresentation } from "../../lib/sessionFocus";
 import { StateGlyph, type ProgressState } from "./StateGlyph";
+import { FocusListSwitch } from "./FocusListSwitch";
 
 export interface FocusDeckProps {
   entries: readonly ExerciseEntry[];
@@ -20,6 +22,7 @@ export interface FocusDeckProps {
    *  below and, from the identical source, WorkoutOverview's rows. */
   entryState(entry: ExerciseEntry): ProgressState;
   onViewFullWorkout(): void;
+  onChangePresentation?(next: SessionPresentation): void;
   /** Scene-level state (REST/READY) occupies the top slot when active. */
   topSlot?: ReactNode;
   workoutComplete?: boolean;
@@ -186,6 +189,7 @@ export function FocusDeck({
   unitSwitch,
   entryState,
   onViewFullWorkout,
+  onChangePresentation,
   topSlot,
   workoutComplete = false,
   extraSetArmed = false,
@@ -237,6 +241,10 @@ export function FocusDeck({
           <span className="focus-hamburger" aria-hidden="true">☰</span>
           Workout
         </button>
+        <FocusListSwitch
+          value="focus"
+          onChange={onChangePresentation ?? (() => onViewFullWorkout())}
+        />
         {/* A real <ul>, not a <div role="list">: the dots inside stay real
          * <button>s (role="listitem" on the button itself would REPLACE its
          * native button role, not add to it, so a screen reader would

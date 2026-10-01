@@ -107,21 +107,19 @@ beforeEach(async () => {
 });
 
 describe("Session corrections", () => {
-  it("keeps a staged correction on its source entry when another Detail is requested", async () => {
+  it("keeps a staged correction on its source entry when another entry is selected", async () => {
     render(
       <MemoryRouter>
         <Session />
       </MemoryRouter>,
     );
 
-    // This scenario is eligible for focus, which is now the default on
-    // start — go to the workout overview first, since "expand details" is
-    // the accordion's own control.
+    // This scenario is eligible for Focus; List is the session's workout map.
     fireEvent.click(
       await screen.findByRole("button", { name: /— current — view full workout$/ }),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "expand details" }),
+      await screen.findByRole("button", { name: "Show details for Bench Press" }),
     );
     fireEvent.click(
       await screen.findByRole("button", { name: "Correct logged set 1" }),
@@ -133,7 +131,7 @@ describe("Session corrections", () => {
         .textContent,
     ).toBe("9");
 
-    fireEvent.click(screen.getByRole("button", { name: "expand details" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back Squat, selected — current" }));
 
     expect(screen.getByText("TARGET 1×8 @ 20 KG · REST 1:00")).toBeTruthy();
     expect(

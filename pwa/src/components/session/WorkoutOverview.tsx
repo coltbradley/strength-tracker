@@ -1,8 +1,14 @@
 import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import { targetSets, type ExerciseEntry, type SupersetTag } from "../../lib/entries";
 import { StateGlyph, type ProgressState } from "./StateGlyph";
+import { FocusListSwitch } from "./FocusListSwitch";
+import type { SessionPresentation } from "../../lib/sessionFocus";
 
 export interface WorkoutOverviewProps {
+  variant?: "accordion" | "list";
+  renderLoggedRows?: (entry: ExerciseEntry) => ReactNode;
+  onChangePresentation?(next: SessionPresentation): void;
+  editingEntryKey?: string | null;
   entries: readonly ExerciseEntry[];
   selectedEntryKey: string | null;
   expandedEntryKey: string | null;
@@ -10,7 +16,7 @@ export interface WorkoutOverviewProps {
   onToggleEntry(key: string): void;
   onEnterFocus(): void;
   focusModeAvailable?: boolean;
-  renderEditor(entry: ExerciseEntry): ReactNode;
+  renderEditor(entry: ExerciseEntry, mode?: "focus" | "details" | "correction"): ReactNode;
   entryProgress?(entry: ExerciseEntry): number;
   isSkipped?(entry: ExerciseEntry): boolean;
   hasSections?: boolean;
@@ -31,6 +37,10 @@ export interface WorkoutOverviewProps {
  * destination; expanding its details is deliberately a separate action.
  */
 export function WorkoutOverview({
+  variant = "accordion",
+  renderLoggedRows,
+  onChangePresentation,
+  editingEntryKey = null,
   entries,
   selectedEntryKey,
   expandedEntryKey,
@@ -48,7 +58,7 @@ export function WorkoutOverview({
   onOpenDemo,
   entryState,
 }: WorkoutOverviewProps) {
-  const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
 
   useEffect(() => {
     if (expandedEntryKey === null) return;
@@ -61,6 +71,125 @@ export function WorkoutOverview({
       block: "start",
     });
   }, [expandedEntryKey]);
+
+  if (variant === "list") {
+    return (
+      <div className="wk-overview wk-overview-list">
+        <header className="wk-list-header">
+          <FocusListSwitch
+            value="overview"
+            onChange={onChangePresentation ?? ((next) => {
+              if (next === "focus") onEnterFocus();
+            })}
+          />
+        </header>
+        {entries.map((entry, entryIndex) => {
+          const sectionOf = (candidate: ExerciseEntry | undefined) =>
+            candidate?.brackets[0]?.section ?? null;
+          const section = sectionOf(entry);
+          const previousSection = sectionOf(entries[entryIndex - 1]);
+          const showSection = section !== null && section !== previousSection;
+          const showMain =
+            section === null &&
+            hasSections &&
+            (entryIndex === 0 || previousSection !== null);
+          const state = entryState?.(entry);
+          const current = state === "current";
+          const completed = state === "done" || isSkipped(entry);
+          const expanded = !current && entry.key === expandedEntryKey;
+          const done = entryProgress(entry);
+          const total = entry.brackets.length > 0 ? targetSets(entry) : null;
+          const superset = supersetInfo.get(entry.key);
+          const showCurrentEditor = current && editingEntryKey === null;
+          const showCorrection = editingEntryKey === entry.key;
+          const body = (
+            <>
+              {current && !showCorrection && renderLoggedRows?.(entry)}
+              {showCurrentEditor && renderEditor(entry, "focus")}
+              {showCorrection && renderEditor(entry, "correction")}
+              {!current && expanded && !showCorrection && renderEditor(entry, "details")}
+            </>
+          );
+
+          return (
+            <Fragment key={entry.key}>
+              {showSection && (
+                <div className="section-head wk-section-head">
+                  <span className="field-label">{section.toUpperCase()}</span>
+                </div>
+              )}
+              {showMain && (
+                <div className="section-head wk-section-head wk-main-head">
+                  <span className="field-label">MAIN WORK</span>
+                </div>
+              )}
+              <article
+                ref={(element) => {
+                  if (element) itemRefs.current.set(entry.key, element);
+                  else itemRefs.current.delete(entry.key);
+                }}
+                className={`wk-list-item ${current ? "wk-list-item-current" : ""} ${completed ? "wk-list-item-completed" : ""}`}
+              >
+                <div className="wk-list-row">
+                  {superset && (
+                    <span
+                      className={`wk-superset-rail ${superset.first ? "wk-superset-rail-start" : ""} ${superset.last ? "wk-superset-rail-end" : ""}`}
+                      aria-label={`Superset ${superset.tag}`}
+                    >
+                      <span className="wk-superset-tag">{superset.tag}</span>
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="wk-list-main"
+                    aria-label={`${entry.name}${entry.key === selectedEntryKey ? ", selected" : ""}${state ? ` — ${state}` : ""}`}
+                    aria-pressed={entry.key === selectedEntryKey}
+                    onClick={() => onSelectEntry(entry.key)}
+                  >
+                    {entryState && (
+                      <StateGlyph
+                        state={state ?? "upcoming"}
+                        label={`${entry.name} — ${state}`}
+                      />
+                    )}
+                    <span className="wk-list-name">{entry.name}</span>
+                    <span className="wk-list-summary">
+                      {completed
+                        ? isSkipped(entry)
+                          ? "SKIPPED"
+                          : `${done} done`
+                        : entry.substitutedFor
+                          ? `INSTEAD OF ${entry.substitutedFor.name.toUpperCase()}`
+                          : formatScheme(entry).toUpperCase() || "BY FEEL"}
+                    </span>
+                    {!completed && total !== null && (
+                      <span className="wk-list-count">{done}/{total}</span>
+                    )}
+                    {current && <span className="wk-list-next">NEXT</span>}
+                  </button>
+                  {!current && (
+                    <button
+                      type="button"
+                      className="wk-list-details"
+                      aria-expanded={expanded}
+                      aria-label={`${expanded ? "Hide" : "Show"} details for ${entry.name}`}
+                      onClick={() => onToggleEntry(entry.key)}
+                    >
+                      {expanded ? "▾" : "▸"}
+                    </button>
+                  )}
+                  {renderRowAction?.(entry)}
+                </div>
+                {(current || expanded) && (
+                  <div className="wk-list-body">{body}</div>
+                )}
+              </article>
+            </Fragment>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <div className="wk-overview">

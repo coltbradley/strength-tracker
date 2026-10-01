@@ -1019,6 +1019,11 @@ export function Session() {
     setPresentation(next.presentation);
   };
 
+  const changePresentation = (next: SessionPresentation) => {
+    if (next === "focus") enterFocus();
+    else showOverview();
+  };
+
   // ---- prefill on entry open / bracket advance -----------------------------
 
   // Which run the set being staged belongs to. The toggle is the lifter's
@@ -3202,6 +3207,34 @@ export function Session() {
     return null;
   };
 
+  const renderLoggedRows = (entry: ExerciseEntry) => {
+    const logged = setsForEntry(entry)
+      .slice()
+      .sort(
+        (a, b) =>
+          b.set_index - a.set_index ||
+          b.performed_at.localeCompare(a.performed_at),
+      );
+    if (logged.length === 0) return null;
+    return (
+      <div className="logged-sets wk-list-logged-sets" aria-label={`logged sets for ${entry.name}`}>
+        {logged.map((set) => (
+          <div key={set.id} className="logged-set-wrap">
+            <SetRow
+              set={set}
+              unit={unit}
+              onVoid={() => voidSet(set)}
+              voidArmed={voidArm === set.id}
+              onArmVoid={() => setVoidArm(set.id)}
+              onEdit={isTick(entry) ? undefined : () => startCorrection(set)}
+              editing={editing?.set.id === set.id}
+            />
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   /** "1×8-15 @ 90 KG · 3×3-5" — an entry's full prescribed scheme */
   const scheme = (entry: ExerciseEntry): string =>
     entry.brackets.map((b) => formatRxTarget(b, unit)).join(" · ");
@@ -3586,6 +3619,7 @@ export function Session() {
               entryDone={entryDone}
               entryState={entryState}
               onViewFullWorkout={showOverview}
+              onChangePresentation={changePresentation}
               onChooseNext={(entry) => {
                 setFocusKey(entry.key);
                 setOpenKey(entry.key);
@@ -3634,6 +3668,10 @@ export function Session() {
                 </p>
               )}
               <WorkoutOverview
+                variant="list"
+                onChangePresentation={changePresentation}
+                editingEntryKey={editingEntryKey}
+                renderLoggedRows={renderLoggedRows}
                 entries={entries}
                 selectedEntryKey={selectedEntryKey}
                 expandedEntryKey={openKey}
@@ -3686,7 +3724,11 @@ export function Session() {
                     </button>
                   );
                 }}
-                renderEditor={renderEditor}
+                renderEditor={(entry, mode) =>
+                  mode === "focus"
+                    ? renderEditor(entry, false, "hero")
+                    : renderEditor(entry)
+                }
               />
 
               {entries.length === 0 && (

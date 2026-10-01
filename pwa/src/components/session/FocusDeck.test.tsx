@@ -3,6 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { FocusDeck, type FocusDeckProps } from "./FocusDeck";
+import { FocusListSwitch } from "./FocusListSwitch";
+import type { SessionPresentation } from "../../lib/sessionFocus";
 import type { ExerciseEntry } from "../../lib/entries";
 import type { ResolvedPrescriptionRow } from "../../lib/types";
 
@@ -57,6 +59,27 @@ function props(overrides: Partial<FocusDeckProps> = {}): FocusDeckProps {
 }
 
 describe("FocusDeck", () => {
+  it.each([
+    ["focus", "List", "overview"],
+    ["overview", "Focus", "focus"],
+  ] as const)("shows %s presentation and changes to %s", (value, nextLabel, next) => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <FocusListSwitch value={value as SessionPresentation} onChange={onChange} />,
+    );
+
+    const active = value === "focus" ? "Focus" : "List";
+    expect(screen.getByRole("button", { name: active }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: nextLabel }).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: nextLabel }));
+    expect(onChange).toHaveBeenCalledWith(next);
+
+    rerender(
+      <FocusListSwitch value={next as SessionPresentation} onChange={onChange} />,
+    );
+    expect(screen.getByRole("button", { name: nextLabel }).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("shows only the exercise name and its set position by default", () => {
     render(<FocusDeck {...props()} />);
 
