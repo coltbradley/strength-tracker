@@ -2436,6 +2436,28 @@ export function Session() {
       ...skips,
       [entry.key]: skipRecordFor(entry, "exercise", reason),
     });
+    startRestAfterSkippedPartner(entry);
+  };
+  /** A1 was logged mid-round and then A2 was skipped: the round closes here,
+   *  so the clock and strip start from A1's set rather than staying on the
+   *  PREVIOUS round's end (which would inflate the next set's recorded rest). */
+  const startRestAfterSkippedPartner = (skippedEntry: ExerciseEntry) => {
+    const pair = twoMemberSuperset(orderedEntries, skippedEntry.key);
+    if (!pair) return;
+    const partner = pair[0].key === skippedEntry.key ? pair[1] : pair[0];
+    if (partner.key in skips || entryProgress(partner) <= entryProgress(skippedEntry)) return;
+    const last = newestOf(setsForEntry(partner));
+    const startedAt = last ? Date.parse(last.performed_at) : NaN;
+    if (!last || Number.isNaN(startedAt)) return;
+    restRef.current = { startedAt };
+    const bracket = bracketFor(partner, Math.max(0, entryProgress(partner) - 1), "working");
+    const targetSeconds = getExerciseRestSeconds(partner.exercise_id, bracket?.rest_seconds ?? null);
+    const forLabel = `${partner.name} ${setPositionLabel(last, setsForEntry(partner)).text}`;
+    if (autoStartRest) {
+      setRest({ startedAt, targetSeconds, forLabel });
+      armRestAlert(startedAt + targetSeconds * 1000, forLabel);
+    }
+    mirrorRest(autoStartRest ? targetSeconds : null, autoStartRest ? forLabel : null);
   };
 
   /** Extras with no logged sets can be removed outright (session-local). */

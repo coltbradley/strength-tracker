@@ -434,3 +434,20 @@ describe("N6 bodyweight + Add load stays reachable during a rest", () => {
     expect(queuedSets()[1]!.load_kg).toBeGreaterThan(0);
   });
 });
+
+describe("N9 skipping the partner mid-round closes the round", () => {
+  it("A1 logged, A2 skipped: a rest starts from A1's set and A1's next set records it", async () => {
+    exList();
+    await seed(pair(2));
+    renderSession();
+    await screen.findByText("round 1 of 2");
+    await pause(80);
+    await logMember("A1", 1);
+    expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    fireEvent.click(screen.getByRole("button", { name: "No reason" }));
+    expect(await screen.findByRole("timer", { name: /^rest timer/ })).toBeTruthy();
+    await logMember("A1", 2);
+    expect(queuedSets()[1]!.rest_seconds_actual).not.toBeNull();
+  });
+});
