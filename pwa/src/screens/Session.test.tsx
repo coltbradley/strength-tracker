@@ -199,7 +199,12 @@ describe("Session log lock", () => {
 
   it("applies a correction started right after a log, before the 200 ms lock clears", async () => {
     resetDbForTests();
-    const squat1 = prescription("squat", "back-squat", "Back Squat", 100);
+    // Two sets, so the workout is not complete after the first log and the
+    // dock (with its Fix last key) is still on screen.
+    const squat1 = {
+      ...prescription("squat", "back-squat", "Back Squat", 100),
+      sets: 2,
+    };
     await cacheSet(cacheKeys.activeSession, active);
     await cacheSet(cacheKeys.sessionRx(active.id), [squat1]);
     await cacheSet(cacheKeys.sessionSets(active.id), []);
@@ -223,12 +228,9 @@ describe("Session log lock", () => {
 
     // No wait here — the 200 ms log lock from the tap above is still
     // engaged. A correction must go through anyway (Decision 6).
-    fireEvent.click(
-      screen.getByRole("button", { name: "more options for Back Squat" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Correct logged set 1" }),
-    );
+    // The dock's fourth key flips from Swap to Fix last the moment a set is
+    // saved, and starts the correction without opening any sheet.
+    fireEvent.click(await screen.findByRole("button", { name: "Fix last" }));
     // No jest-dom in this project (see CheckInSheet.render.test.tsx) -- read
     // the DOM state toBeDisabled() would, without adding a dependency.
     const saveButton = screen.getByRole("button", {
@@ -280,19 +282,19 @@ describe("Session log lock", () => {
       screen.getByRole("button", { name: "increase load by 2.5 kg" }),
     );
     expect(
-      screen.getByRole("button", { name: "load value — tap to type" })
+      screen.getByRole("button", { name: "load 102.5 kg, tap to type" })
         .textContent,
-    ).toBe("102.5");
+    ).toContain("102.5");
 
     fireEvent.click(
-      screen.getByRole("button", { name: "reps value — tap to type" }),
+      screen.getByRole("button", { name: /^reps \d+ reps, tap to type$/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
+      screen.getByRole("button", { name: "reps 9 reps, tap to type" })
         .textContent,
-    ).toBe("9");
+    ).toContain("9");
 
     // Neither edit was a LOG tap, so the lock never engaged twice.
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
@@ -318,9 +320,8 @@ describe("Session log lock", () => {
     });
     fireEvent.click(log);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "more options for Back Squat" }),
-    );
+    // RPE is the dock's door to the more sheet.
+    fireEvent.click(screen.getByRole("button", { name: "RPE" }));
 
     fireEvent.click(screen.getByRole("button", { name: /how to/i }));
 
@@ -337,7 +338,7 @@ describe("Session log lock", () => {
 });
 
 describe("Session hero capture", () => {
-  it("shows the warmup/working toggle on the hero for an entry with a warmup bracket, and Already warm stages working without logging", async () => {
+  it("keeps the warmup/working choice in the RPE sheet, off the focus dock", async () => {
     resetDbForTests();
     const warmup: ResolvedPrescriptionRow = {
       ...prescription("squat-warmup", "back-squat", "Back Squat", 40),
@@ -369,17 +370,22 @@ describe("Session hero capture", () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
-    expect(screen.getByRole("button", { name: "warmup" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "working" })).toBeTruthy();
+    // Nothing about set type, "Already warm" or nearby loads on the dock.
+    expect(screen.queryByRole("button", { name: "warmup" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Already warm" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Already warm" }));
+    fireEvent.click(screen.getByRole("button", { name: "RPE" }));
+    const warmupToggle = screen.getByRole("button", { name: "warmup" });
+    expect(warmupToggle.className).toMatch(/seg-on/);
+    fireEvent.click(screen.getByRole("button", { name: "working" }));
+    // Staging working is not logging anything.
     expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "working" }).className).toMatch(
       /seg-on/,
     );
   });
 
-  it("shows the last logged set as a tappable line that opens its correction", async () => {
+  it("offers Fix last on the dock for an already logged set and opens its correction", async () => {
     resetDbForTests();
     const loggedSquat: SetInsert = {
       id: "squat-set-1",
@@ -410,15 +416,15 @@ describe("Session hero capture", () => {
       </MemoryRouter>,
     );
 
-    const lastSet = await screen.findByRole("button", {
-      name: "Last: 145 kg × 5 working",
-    });
-    fireEvent.click(lastSet);
+    const fixLast = await screen.findByRole("button", { name: "Fix last" });
+    // the old "Last: …" line is gone from focus
+    expect(screen.queryByText(/^Last: /)).toBeNull();
+    fireEvent.click(fixLast);
 
     expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
   });
 
-  it("offers Swap exercise as a visible hero action", async () => {
+  it("offers Swap as the dock's fourth key before any set is logged", async () => {
     // The default fixture's bench prescription is already met by `benchSet`
     // (see beforeEach), which sends focus straight past it to Back Squat —
     // a lone, unstarted bench entry is what actually opens Bench Press.
@@ -435,7 +441,7 @@ describe("Session hero capture", () => {
     );
 
     await screen.findByRole("heading", { name: "Bench Press" });
-    fireEvent.click(screen.getByRole("button", { name: "Swap exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Swap" }));
 
     // The swap sheet is the same ExercisePicker every other picker in this
     // screen uses (title "SWAP EXERCISE"); its search field is what confirms
@@ -476,6 +482,12 @@ describe("Session hero capture", () => {
   });
 
   it("reads a legacy string-array skip cache as SkipRecords with no reason", async () => {
+    // Same fixture note as "offers Swap" above: a lone, unstarted bench.
+    resetDbForTests();
+    await cacheSet(cacheKeys.activeSession, active);
+    await cacheSet(cacheKeys.sessionRx(active.id), [bench]);
+    await cacheSet(cacheKeys.sessionSets(active.id), []);
+    vi.mocked(getServerSessionSets).mockResolvedValue([]);
     await cacheSet(cacheKeys.sessionSkips(active.id), ["bench"]);
 
     render(
@@ -484,9 +496,9 @@ describe("Session hero capture", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(
-      await listButton(),
-    );
-    expect(screen.getByRole("button", { name: "UNSKIP" })).toBeTruthy();
+    // With nothing left to log the session opens on the workout overview,
+    // where the legacy key is read as a skip and offers UNSKIP.
+    expect(await screen.findByRole("button", { name: "UNSKIP" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Bench Press — skipped" })).toBeTruthy();
   });
 });

@@ -12,7 +12,7 @@
 // exactly the sort of thing that goes off in a quiet gym.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { RestTimer, type ActiveRest } from "./RestTimer";
+import { RestDockTag, RestTimer, type ActiveRest } from "./RestTimer";
 
 const noop = () => {};
 
@@ -314,5 +314,112 @@ describe("RestTimer", () => {
     fireEvent.click(screen.getByRole("button", { name: "rpe 8" }));
     expect(onNoteLastSet).toHaveBeenCalledTimes(1);
     expect(onRateLastSet).toHaveBeenCalledWith(8);
+  });
+});
+
+describe("RestTimer panel variant", () => {
+  const running = (): ActiveRest => ({
+    startedAt: Date.now(),
+    targetSeconds: 90,
+    forLabel: "Squat set 2",
+  });
+
+  it("shows the big clock with −30/+30 while resting, and no strip chrome", () => {
+    const onAdjust = vi.fn();
+    const onEdit = vi.fn();
+    const { container } = render(
+      <RestTimer
+        variant="panel"
+        rest={running()}
+        onAdjust={onAdjust}
+        onEdit={onEdit}
+        onDone={noop}
+      />,
+    );
+
+    expect(container.querySelector(".rest-panel")).not.toBeNull();
+    expect(container.querySelector(".rest-timer")).toBeNull();
+    expect(screen.getByText("◷ RESTING")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "take 30 seconds off the rest target" }));
+    fireEvent.click(screen.getByRole("button", { name: "add 30 seconds to the rest target" }));
+    expect(onAdjust.mock.calls).toEqual([[-30], [30]]);
+    const clock = screen.getByRole("button", { name: /^rest remaining 1 min (29|30) sec — tap to change$/ });
+    expect(clock.textContent).toMatch(/^1:(29|30)$/);
+    fireEvent.click(clock);
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    // rating and notes belong to the dock keys, hide is not offered
+    expect(screen.queryByRole("button", { name: /hide the rest timer/ })).toBeNull();
+    expect(screen.queryByText("Note last set")).toBeNull();
+  });
+
+  it("turns into a REST OVER card with elapsed and target once the target passes", () => {
+    const { container } = render(
+      <RestTimer variant="panel" rest={overdue(60)} onAdjust={noop} onEdit={noop} onDone={noop} />,
+    );
+
+    expect(container.querySelector(".rest-panel-ready")).not.toBeNull();
+    expect(screen.getByRole("timer", { name: "rest timer complete" })).toBeTruthy();
+    expect(screen.getByText("■ REST OVER")).toBeTruthy();
+    expect(screen.getByText("Ready when you are.")).toBeTruthy();
+    expect(screen.getByText(/since the last set · target 1:00/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /30 seconds/ })).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Rest over");
+  });
+
+  it("announces an overdue panel rest once, like the strip", () => {
+    const rest = overdue();
+    const { rerender } = render(
+      <RestTimer variant="panel" rest={rest} onAdjust={noop} onEdit={noop} onDone={noop} />,
+    );
+    rerender(
+      <RestTimer variant="panel" rest={{ ...rest }} onAdjust={noop} onEdit={noop} onDone={noop} />,
+    );
+    expect(notified).toEqual(["Rest over"]);
+  });
+
+  it("renders nothing without a rest", () => {
+    const { container } = render(
+      <RestTimer variant="panel" rest={null} onAdjust={noop} onEdit={noop} onDone={noop} />,
+    );
+    expect(container.querySelector(".rest-panel")).toBeNull();
+  });
+});
+
+describe("RestDockTag", () => {
+  it("shows the label and End rest now while the rest runs, reporting elapsed seconds", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T12:00:00Z"));
+    const onEndNow = vi.fn();
+    const rest: ActiveRest = {
+      startedAt: Date.now() - 41_200,
+      targetSeconds: 120,
+      forLabel: "Squat set 2",
+    };
+    render(<RestDockTag rest={rest} label="NEXT SET · SET 3 OF 4" onEndNow={onEndNow} />);
+
+    expect(screen.getByText("NEXT SET · SET 3 OF 4")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "End rest now ›" }));
+    expect(onEndNow).toHaveBeenCalledTimes(1);
+    expect(onEndNow).toHaveBeenCalledWith(42);
+  });
+
+  it("keeps the label but hides End rest now once the rest is over", () => {
+    render(<RestDockTag rest={overdue(60)} label="NEXT SET · SET 3 OF 4" onEndNow={vi.fn()} />);
+
+    expect(screen.getByText("NEXT SET · SET 3 OF 4")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /End rest now/ })).toBeNull();
+  });
+
+  it("hides End rest now when the clock ticks past the target", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T12:00:00Z"));
+    const rest: ActiveRest = { startedAt: Date.now(), targetSeconds: 2, forLabel: "x" };
+    render(<RestDockTag rest={rest} label="NEXT SET" onEndNow={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "End rest now ›" })).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(screen.queryByRole("button", { name: "End rest now ›" })).toBeNull();
   });
 });

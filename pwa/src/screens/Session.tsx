@@ -3731,7 +3731,9 @@ export function Session() {
                     : lastTime(focusEntry.exercise_id, true, focusRepsOnly)
               }
               restSlot={rest && !sheetOpen && !editing ? focusRestSlot : null}
-              dockTag={rest && !editing ? focusDockTag : null}
+              // Once everything is logged there is no "next set" to tag, and the
+              // dock holds Finish session instead.
+              dockTag={rest && !editing && !workoutDone ? focusDockTag : null}
               keys={focusKeys}
               onSkip={
                 focusEntry

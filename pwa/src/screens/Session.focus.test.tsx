@@ -91,6 +91,20 @@ function prescription(
   };
 }
 
+/** The number-pad buttons: a dock card ("load 30 kg, tap to type") in focus,
+ *  or the overview/correction stepper ("load value — tap to type"). */
+function padName(kind: "reps" | "load" | "duration"): RegExp {
+  return new RegExp(`^${kind}( value — tap to type| .+, tap to type)$`);
+}
+
+/** Just the number on that button, whichever editor it is in. */
+function padValue(kind: "reps" | "load" | "duration"): string | null {
+  const button = screen.getByRole("button", { name: padName(kind) });
+  return (
+    button.querySelector(".dock-num-value")?.textContent ?? button.textContent
+  );
+}
+
 async function seed(
   tracking: ResolvedPrescriptionRow["tracking"] = "reps",
   rows: ResolvedPrescriptionRow[] = [
@@ -285,8 +299,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "List" }));
 
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      padValue("reps"),
     ).toBe("9");
   });
 
@@ -298,7 +311,7 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "reps value — tap to type" }),
+      await screen.findByRole("button", { name: padName("reps") }),
     );
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
@@ -318,8 +331,7 @@ describe("Session focus presentation", () => {
 
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      padValue("reps"),
     ).toBe("9");
   });
 
@@ -336,7 +348,7 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "reps value — tap to type" }),
+      await screen.findByRole("button", { name: padName("reps") }),
     );
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
@@ -357,12 +369,10 @@ describe("Session focus presentation", () => {
     ).toBeTruthy();
 
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      padValue("reps"),
     ).toBe("9");
     expect(
-      screen.getByRole("button", { name: "load value — tap to type" })
-        .textContent,
+      padValue("load"),
     ).toBe("22.5");
   });
 
@@ -376,7 +386,7 @@ describe("Session focus presentation", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "duration value — tap to type" }).textContent).toBe("60");
+    expect(padValue("duration")).toBe("60");
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 0, duration_seconds: 60 },
@@ -433,10 +443,10 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    await screen.findByRole("button", { name: "Finish workout" });
+    await screen.findByRole("button", { name: "Finish session" });
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add extra set" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Extra set" }));
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
     await new Promise((resolve) => window.setTimeout(resolve, 250));
     fireEvent.click(screen.getByRole("button", { name: "Log extra set" }));
@@ -460,7 +470,7 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     await vi.waitFor(() =>
-      expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25"),
+      expect(padValue("load")).toBe("225.25"),
     );
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
@@ -477,7 +487,7 @@ describe("Session focus presentation", () => {
     await seed("reps", [bench]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("220.5"));
+    await vi.waitFor(() => expect(padValue("load")).toBe("220.5"));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
@@ -494,7 +504,7 @@ describe("Session focus presentation", () => {
     await seed("reps", [pair]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("110.2"));
+    await vi.waitFor(() => expect(padValue("load")).toBe("110.2"));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
@@ -510,7 +520,7 @@ describe("Session focus presentation", () => {
     await seed("reps", [bench]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(await screen.findByRole("button", { name: padName("load") }));
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
@@ -528,7 +538,7 @@ describe("Session focus presentation", () => {
     await seed();
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(await screen.findByRole("button", { name: padName("load") }));
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
@@ -537,7 +547,7 @@ describe("Session focus presentation", () => {
 
     fireEvent.click(unitButton("Show weights in kilograms"));
     expect(unitButton("Show weights in kilograms").getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("102.06");
+    expect(padValue("load")).toBe("102.06");
 
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(unitButton("Show weights in kilograms").getAttribute("aria-pressed")).toBe("true");
@@ -556,7 +566,7 @@ describe("Session focus presentation", () => {
     await seed();
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(await screen.findByRole("button", { name: padName("load") }));
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
@@ -567,7 +577,7 @@ describe("Session focus presentation", () => {
 
     fireEvent.click(unitButton("Show weights in kilograms"));
     fireEvent.click(unitButton("Show weights in pounds"));
-    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25");
+    expect(padValue("load")).toBe("225.25");
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
@@ -587,13 +597,13 @@ describe("Session focus presentation", () => {
     vi.mocked(getServerSessionSets).mockResolvedValue([old]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(await screen.findByRole("button", { name: padName("load") }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "0" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
-    fireEvent.click(screen.getByRole("button", { name: "Last: 30 kg × 8 working" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Fix last" }));
     fireEvent.click(unitButton("Show weights in pounds"));
-    fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: padName("load") }));
     fireEvent.click(screen.getByRole("button", { name: "6" }));
     fireEvent.click(screen.getByRole("button", { name: "6" }));
     fireEvent.click(screen.getByRole("button", { name: "." }));
@@ -601,7 +611,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
 
-    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("110.23");
+    expect(padValue("load")).toBe("110.23");
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
@@ -621,9 +631,9 @@ describe("Session focus presentation", () => {
     vi.mocked(getServerSessionSets).mockResolvedValue([old]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Fix last" }));
     fireEvent.click(unitButton("Show weights in pounds"));
-    fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: padName("load") }));
     fireEvent.click(screen.getByRole("button", { name: "7" }));
     fireEvent.click(screen.getByRole("button", { name: "0" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
@@ -650,7 +660,7 @@ describe("Session focus presentation", () => {
     vi.mocked(getServerSessionSets).mockResolvedValue([old]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Fix last" }));
     fireEvent.click(unitButton("Show weights in pounds"));
     fireEvent.click(screen.getByRole("button", { name: "increase load by 5 lb" }));
     fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
@@ -670,8 +680,9 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    await screen.findByRole("button", { name: "Note last set" });
-    fireEvent.click(screen.getByRole("button", { name: "Note last set" }));
+    // While resting, the dock's Note key opens the note on the set just saved.
+    await screen.findByText("LAST SET · ALREADY SAVED");
+    fireEvent.click(screen.getByRole("button", { name: "Note" }));
     const note = await screen.findByPlaceholderText("Note on this set…");
     fireEvent.change(note, { target: { value: "Grip felt uneven" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -723,8 +734,7 @@ describe("Session focus presentation", () => {
       expect(screen.getByRole("button", { name: "LOG SET" })).toBeTruthy();
       expect(screen.queryByText("LOGGED")).toBeNull();
       expect(
-        screen.getByRole("button", { name: "reps value — tap to type" })
-          .textContent,
+        padValue("reps"),
       ).toBe("8");
     } finally {
       consoleError.mockRestore();
@@ -744,9 +754,8 @@ describe("Session focus presentation", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
 
-    expect(
-      await screen.findByText("Last: 20 kg × 8 working"),
-    ).toBeTruthy();
+    expect(await screen.findByText("LAST SET · ALREADY SAVED")).toBeTruthy();
+    expect(screen.getByText("Bench Press · set 1 · 20 kg × 8")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
     expect(await (await getDb()).getAll("outbox")).toHaveLength(1);
@@ -1636,8 +1645,7 @@ describe("Session focus presentation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      padValue("reps"),
     ).toBe("9");
 
     // Select Squat (a future focus destination, not a navigation) and enter
@@ -1650,8 +1658,7 @@ describe("Session focus presentation", () => {
       await screen.findByRole("heading", { name: "Bench Press" }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      padValue("reps"),
     ).toBe("9");
     expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
 
@@ -1694,8 +1701,7 @@ describe("Session focus presentation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      padValue("reps"),
     ).toBe("9");
 
     fireEvent.click(screen.getByRole("button", { name: "List" }));
@@ -1703,8 +1709,7 @@ describe("Session focus presentation", () => {
     // The correction on Back Squat must still be the one on screen, staged.
     expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      padValue("reps"),
     ).toBe("9");
 
     fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
