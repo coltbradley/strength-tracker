@@ -17,6 +17,13 @@ import { reportError } from "./errors";
 import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
+import {
+  buildRecordIndex,
+  type RecordE1rmRow,
+  type RecordIndex,
+  type RecordIndexEntry,
+  type RecordSetRow,
+} from "./record";
 import type {
   AdherenceRow,
   ExercisePrefRow,
@@ -1944,6 +1951,178 @@ export async function getGoalProgress(
     const rows = (data ?? []) as GoalProgressRow[];
     return rows[0] ?? null;
   });
+}
+
+// ---- Record list: per-exercise recency, goals (pin) -------------------------
+
+/**
+ * Pages newest-first through a view on `performed_at`.
+ *
+ * The cursor is INCLUSIVE (`lte`) and rows already seen are dropped by `key`,
+ * so rows that share the boundary millisecond are never skipped (corrections
+ * reuse the original `performed_at`, so equal timestamps are not exotic). The
+ * one case an inclusive cursor cannot cross is a whole page of rows with one
+ * timestamp; that stops the scan and reports it as truncated instead of
+ * looping. `truncated` is also true when ACTUALS_MAX_PAGES ran out with more
+ * rows behind it, so the screen can say the oldest exercises may be missing.
+ */
+export async function scanNewestFirst<T extends { performed_at: string }>(
+  fetchPage: (cursor: string | null, strict: boolean) => Promise<T[]>,
+  key: (row: T) => string,
+  pageSize: number = ACTUALS_PAGE,
+  maxPages: number = ACTUALS_MAX_PAGES,
+): Promise<{ rows: T[]; truncated: boolean }> {
+  const out: T[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  let strict = false;
+  let lossy = false;
+  for (let page = 0; page < maxPages; page++) {
+    const rows = await fetchPage(cursor, strict);
+    strict = false;
+    for (const r of rows) {
+      const k = key(r);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(r);
+    }
+    if (rows.length < pageSize) return { rows: out, truncated: lossy };
+    const next = rows[rows.length - 1].performed_at;
+    if (next === cursor) {
+      // a whole page at one instant: step past it, and admit rows tied
+      // beyond the page may have been skipped
+      strict = true;
+      lossy = true;
+    }
+    cursor = next;
+  }
+  return { rows: out, truncated: true };
+}
+
+/** Per-exercise recency, session counts and newest e1RM, from v_live_sets and
+ *  v_session_best_e1rm. Ordering is lib/record.ts; unsent sets and pending
+ *  voids are layered on by the caller (`applyPendingToIndex`). `truncated`:
+ *  the scan hit its page cap, so the oldest exercises may be missing. */
+export async function getRecordIndex(): Promise<CacheRead<RecordIndex>> {
+  const read = await fetchWithCache<RecordIndex | RecordIndexEntry[]>(
+    cacheKeys.recordIndex,
+    async () => {
+      const [sets, e1rms] = await Promise.all([
+        scanNewestFirst<RecordSetRow>(
+          async (cursor, strict) => {
+            let q = supabase
+              .from("v_live_sets")
+              .select("id,exercise_id,session_id,performed_at")
+              .order("performed_at", { ascending: false })
+              .limit(ACTUALS_PAGE);
+            if (cursor !== null)
+              q = strict
+                ? q.lt("performed_at", cursor)
+                : q.lte("performed_at", cursor);
+            const { data, error } = await q;
+            throwIf(error);
+            return (data ?? []) as RecordSetRow[];
+          },
+          (r) => r.id ?? `${r.session_id}|${r.exercise_id}|${r.performed_at}`,
+        ),
+        scanNewestFirst<RecordE1rmRow>(
+          async (cursor, strict) => {
+            let q = supabase
+              .from("v_session_best_e1rm")
+              .select("exercise_id,session_id,performed_at,best_e1rm_kg")
+              .order("performed_at", { ascending: false })
+              .limit(ACTUALS_PAGE);
+            if (cursor !== null)
+              q = strict
+                ? q.lt("performed_at", cursor)
+                : q.lte("performed_at", cursor);
+            const { data, error } = await q;
+            throwIf(error);
+            return (data ?? []) as RecordE1rmRow[];
+          },
+          (r) => `${r.session_id}|${r.exercise_id}`,
+        ),
+      ]);
+      return {
+        entries: buildRecordIndex(sets.rows, e1rms.rows),
+        truncated: sets.truncated || e1rms.truncated,
+      };
+    },
+  );
+  // a value cached by an earlier build was a bare array
+  const data: RecordIndex = Array.isArray(read.data)
+    ? { entries: read.data, truncated: false }
+    : read.data;
+  return { ...read, data };
+}
+
+/** Every goal with its progress. An exercise is PINNED iff it is in here. */
+export async function getGoals(): Promise<CacheRead<GoalProgressRow[]>> {
+  return fetchWithCache(cacheKeys.goals, async () => {
+    const { data, error } = await supabase.from("v_goal_progress").select("*");
+    throwIf(error);
+    return (data ?? []) as GoalProgressRow[];
+  });
+}
+
+/**
+ * Pin an exercise, or change its target: one `goals` row per (user, exercise),
+ * upserted on that key. A direct write rather than the outbox, like
+ * deleteObservation: the outbox is for the append-only training record and its
+ * upsert conflicts on `id`, and a goal is a single editable row. Online only;
+ * the caller reports a failure and the screen keeps what it had. user_id is
+ * the column default (auth.uid()).
+ */
+export async function setGoal(
+  exerciseId: string,
+  targetE1rmKg: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from("goals")
+    .upsert(
+      { exercise_id: exerciseId, target_e1rm_kg: targetE1rmKg },
+      { onConflict: "user_id,exercise_id" },
+    );
+  throwIf(error);
+  await cacheDelete(cacheKeys.goals);
+  await cacheDelete(cacheKeys.goal(exerciseId));
+}
+
+/**
+ * Put back a goal row exactly as it was (Undo of an unpin): id, target AND
+ * target_date, so a coach-written goal comes back whole. Same upsert key as
+ * setGoal.
+ */
+export async function restoreGoal(prev: {
+  goal_id: string;
+  exercise_id: string;
+  target_e1rm_kg: number;
+  target_date: string | null;
+}): Promise<void> {
+  const { error } = await supabase.from("goals").upsert(
+    {
+      ...(prev.goal_id && prev.goal_id !== "pending" ? { id: prev.goal_id } : {}),
+      exercise_id: prev.exercise_id,
+      target_e1rm_kg: prev.target_e1rm_kg,
+      target_date: prev.target_date,
+    },
+    { onConflict: "user_id,exercise_id" },
+  );
+  throwIf(error);
+  await cacheDelete(cacheKeys.goals);
+  await cacheDelete(cacheKeys.goal(prev.exercise_id));
+}
+
+/** Unpin: delete the goal row (RLS goals_delete: owner only). The sets are
+ *  untouched; only the target goes. */
+export async function removeGoal(exerciseId: string): Promise<void> {
+  const { error } = await supabase
+    .from("goals")
+    .delete()
+    .eq("exercise_id", exerciseId);
+  throwIf(error);
+  await cacheDelete(cacheKeys.goals);
+  await cacheDelete(cacheKeys.goal(exerciseId));
 }
 
 // ---- adherence (prescribed vs achieved) ------------------------------------

@@ -50,7 +50,8 @@ so by RLS — corrections are append-only void rows, sessions soft-delete via
 discards excluded). `sets.prescription_id` joins actual to planned, which is
 the analytical core: prescribed vs achieved, measured not self-reported.
 `training_maxes` and `goals` make %TM prescriptions resolvable and progress
-measurable. `load_kg` is always the TOTAL system load on both sides of that
+measurable. `goals` is written by Claude via MCP `set_goal` AND by the PWA's
+Record pin (direct PostgREST under owner RLS, online only, not the outbox). `load_kg` is always the TOTAL system load on both sides of that
 join (a pair of 30 kg dumbbells is 60); `load_entry` on `sets` and
 `prescriptions` records whether the number was entered per side or as a
 total, with NULL meaning "not asserted" rather than "total". `session_skips`

@@ -55,6 +55,8 @@ const ALL_KEYS: string[] = [
   cacheKeys.e1rm(EX),
   cacheKeys.volume(EX),
   cacheKeys.goal(EX),
+  cacheKeys.goals,
+  cacheKeys.recordIndex,
   cacheKeys.recentSets(EX),
   cacheKeys.sessionMeta(EX),
   cacheKeys.setNotes(EX),

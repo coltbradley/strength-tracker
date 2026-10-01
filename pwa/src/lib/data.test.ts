@@ -13,6 +13,7 @@ import {
   orderLoggedExercises,
   resolveSessionSetCount,
   scanLastActuals,
+  scanNewestFirst,
   scanLoggedExercises,
   summariseAdherence,
   type ActualsRow,
@@ -681,5 +682,32 @@ describe("applyObservationDelete", () => {
 
   it("leaves nothing to patch when there was no cache", () => {
     expect(applyObservationDelete(undefined, "a")).toBeUndefined();
+  });
+});
+
+describe("scanNewestFirst (R7)", () => {
+  type R = { id: string; performed_at: string };
+  const mk = (id: string, t: string): R => ({ id, performed_at: t });
+  /** inclusive cursor, id-desc inside a timestamp, like the real query */
+  const pageOf = (all: R[], size: number) => async (cursor: string | null, strict: boolean) =>
+    (cursor === null
+      ? all
+      : all.filter((r) => (strict ? r.performed_at < cursor : r.performed_at <= cursor))
+    ).slice(0, size);
+
+  it("does not lose rows that share the boundary millisecond", async () => {
+    // page size 3: the page ends on a timestamp shared with the next page, and the
+    // second of them is the ONLY row of its exercise
+    const all = [mk("a", "T3"), mk("b", "T2"), mk("c", "T2"), mk("d", "T1")];
+    const { rows, truncated } = await scanNewestFirst(pageOf(all, 3), (r) => r.id, 3, 10);
+    expect(rows.map((r) => r.id).sort()).toEqual(["a", "b", "c", "d"]);
+    expect(truncated).toBe(false);
+  });
+
+  it("reports truncation when the page cap runs out, and when a whole page ties", async () => {
+    const many = Array.from({ length: 10 }, (_, i) => mk(`r${i}`, `T${String(99 - i).padStart(2, "0")}`));
+    expect((await scanNewestFirst(pageOf(many, 2), (r) => r.id, 2, 3)).truncated).toBe(true);
+    const tie = [mk("x", "T1"), mk("y", "T1"), mk("z", "T1")];
+    expect((await scanNewestFirst(pageOf(tie, 2), (r) => r.id, 2, 10)).truncated).toBe(true);
   });
 });

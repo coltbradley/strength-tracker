@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// History has no other test file; this one only exercises the new
+// This file only exercises the new
 // BodyweightRow line, so the fixture is deliberately empty (no logged
 // exercises, no sessions) — `bare` becomes true, and CheckinWeek /
 // SessionHistory / the charts never mount, so nothing about them needs
@@ -50,12 +50,12 @@ vi.mock("../lib/data", async () => {
     makeFetchWithCache: actual.makeFetchWithCache,
     throwIf: actual.throwIf,
     getExercises: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
-    getLoggedExerciseIds: vi
-      .fn()
-      .mockResolvedValue({ data: [], fromCache: false }),
+    getRecordIndex: vi.fn().mockResolvedValue({ data: { entries: [], truncated: false }, fromCache: false, stale: null }),
+    getGoals: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
+    setGoal: vi.fn(),
+    removeGoal: vi.fn(),
     getAdherence: vi.fn(),
     getE1rmSeries: vi.fn(),
-    getGoalProgress: vi.fn(),
     getRecentSets: vi.fn(),
     getServerSessionSets: vi.fn(),
     getSessionMeta: vi.fn(),
@@ -133,7 +133,7 @@ describe("History: bodyweight", () => {
     render(<History userId="11111111-1111-4111-8111-111111111111" />);
 
     await screen.findByText(
-      "Nothing logged yet — finish a session and it shows up here.",
+      "Your record starts with your first finished session.",
     );
     expect(await screen.findByText(/77.1/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Update" })).toBeTruthy();
@@ -156,7 +156,7 @@ describe("History: bodyweight", () => {
     render(<History userId="11111111-1111-4111-8111-111111111111" />);
 
     await screen.findByText(
-      "Nothing logged yet — finish a session and it shows up here.",
+      "Your record starts with your first finished session.",
     );
     expect(await screen.findByText(/77.1/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Weigh in" })).toBeTruthy();

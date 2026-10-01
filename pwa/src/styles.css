@@ -4608,6 +4608,268 @@
     color: var(--info);
   }
 
+  /* ---- Record: list (search, PINNED GOALS, RECENT) and detail goal card ----
+   * The progress bar is the emphasis of a pinned card; ◆ Pinned / ◇ Pin is a
+   * quiet text toggle (no fill, no border), 44px to tap, 11px floor. */
+
+  .rec-search {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .rec-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+  }
+
+  .rec-empty {
+    padding: var(--s-8);
+    border: var(--bw) dashed var(--rule-strong-color);
+    border-radius: var(--radius-card);
+    line-height: 1.5;
+  }
+
+  /* same card language as the restyled history screen: raised paper, hairline,
+     card radius (the codex visual system), not record-d's 2px index card */
+  .rec-card,
+  .rec-row,
+  .rec-goalcard {
+    background: var(--paper-raised);
+    border: var(--rule-hair);
+    border-radius: var(--radius-card);
+  }
+
+  .rec-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    padding: var(--s-6) var(--s-7);
+  }
+
+  .rec-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--s-4);
+  }
+
+  .rec-open {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+    min-height: var(--tap-min);
+    text-align: left;
+    justify-content: center;
+    color: var(--text);
+  }
+
+  .rec-card-head .rec-open {
+    flex: 1;
+  }
+
+  .rec-name {
+    font-size: var(--fs-body);
+    overflow-wrap: break-word;
+  }
+
+  .rec-meta {
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    color: var(--text-dim);
+  }
+
+  .rec-pin {
+    flex: none;
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    padding: 0 var(--s-5);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    letter-spacing: var(--track-1);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .rec-pin-on {
+    color: var(--accent-dim);
+  }
+
+  .rec-pin:disabled {
+    opacity: 0.4;
+  }
+
+  .rec-progress {
+    width: 100%;
+    gap: var(--s-3);
+  }
+
+  .rec-progress-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s-4);
+    width: 100%;
+  }
+
+  .rec-progress-row > * {
+    min-width: 0;
+  }
+
+  .rec-e1 {
+    font-size: var(--fs-title);
+    font-weight: 800;
+    letter-spacing: var(--track-tight);
+  }
+
+  .rec-bar {
+    display: block;
+    width: 100%;
+    height: var(--s-4);
+    background: var(--rule-hair-color);
+    border-radius: var(--radius);
+  }
+
+  .rec-bar-fill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--radius);
+  }
+
+  .rec-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: var(--s-4);
+    min-height: 60px;
+    padding: 0 var(--s-2) 0 var(--s-7);
+  }
+
+  .rec-row-e1 {
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .rec-library {
+    min-height: var(--tap);
+    border: var(--bw) dashed var(--rule-strong-color);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+    text-align: center;
+  }
+
+  .rec-back {
+    align-self: flex-start;
+    min-height: var(--tap-min);
+    padding: 0 var(--s-7);
+    border: var(--bw-hair) solid var(--rule-color);
+    border-radius: var(--radius-pill);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+  }
+
+  .rec-goalcard {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    padding: var(--s-6) var(--s-7);
+  }
+
+  .rec-goalcard > div:first-child {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+  }
+
+  .rec-goal-val {
+    font-size: var(--fs-lg);
+  }
+
+  .rec-goal-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+
+  .rec-step {
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    border: var(--bw-hair) solid var(--rule-color);
+    border-radius: var(--radius);
+    font-size: var(--fs-lg);
+    text-align: center;
+  }
+
+  .rec-pin-goal {
+    min-height: var(--tap-min);
+  }
+
+  /* Record text floor: 11px. The shared micro/label sizes are smaller; inside
+     this screen they are raised rather than changed app-wide. */
+  .rec-screen .field-label,
+  .rec-screen .section-meta,
+  .rec-screen .goal-pct,
+  .rec-screen .history-date,
+  .rec-screen .drawer-action,
+  .rec-screen .detail-note-label,
+  .rec-screen .cache-note {
+    font-size: max(var(--fs-meta), 11px);
+  }
+
+  .rec-screen .drawer-action {
+    min-height: var(--tap-min);
+  }
+
+  .rec-onphone {
+    font-family: var(--font-mono);
+    font-size: max(var(--fs-meta), 11px);
+    color: var(--info);
+  }
+
+  .rec-screen .rec-armed-note,
+  .rec-screen .rec-conn-note {
+    color: var(--warn);
+  }
+
+  .rec-undo {
+    position: sticky;
+    bottom: var(--s-6);
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    padding: 0 var(--s-5) 0 var(--s-7);
+    min-height: var(--tap-min);
+    background: var(--bg-raised);
+    border: var(--bw) solid var(--rule-strong-color);
+    border-radius: var(--radius);
+    font-size: var(--fs-sm);
+  }
+
+  .rec-undo-btn {
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    padding: 0 var(--s-5);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    color: var(--accent-dim);
+  }
+
   .history-session {
     padding: var(--s-6) 0;
     border-bottom: var(--rule-hair);

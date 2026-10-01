@@ -106,6 +106,8 @@ write them either. Percentage-based prescriptions are unresolvable without a
 TM row, and the spec itself says that's a hard requirement. Added two small
 write tools. Both are low blast radius (no history, no training record).
 Tool count is now eight.
+(The PWA also pins goals since 2026-10-01: see "Record: pinned means having a
+goal".)
 
 ## 2026-08-25 exercises keep the upstream slug as primary key
 
@@ -3480,3 +3482,97 @@ oracle). A pref the server refuses for good (exercise gone or not visible,
 parked as a dead item, which every reconcile would otherwise re-queue. The
 unit switch no longer remaps a base weight that is not in any bar list (a
 sled's 34 kg), and a remap it does make is stamped and synced like any edit.
+
+## 2026-10-01 Record: pinned means having a goal; recent-first ordering
+
+The Record tab asked you to search the library for the lifts you actually
+train. It now lists them recent-first and lets you pin the ones you chase.
+
+**No schema change.** A pin is a `goals` row (an exercise with a target e1RM),
+so "pinned" is simply "has a goal"; there is no `pinned` flag to drift out of
+step with the target. `goals` already has owner CRUD RLS and `unique (user_id,
+exercise_id)`, so pin is an upsert on that key and unpin is a delete (the sets
+are untouched). The PWA previously only read goals (they were set from Claude
+via MCP `set_goal`, which writes the same row and its `target_date`); the PWA
+now writes them too, direct to PostgREST rather than the outbox, because the
+outbox is the append-only training record and its insert upserts on `id`.
+
+**Pinning is honest about needing a connection.** Pin, unpin and -/+ are
+disabled with "Needs a connection to pin or change goals." while
+`navigator.onLine` is false (a true reading is not proof, so writes still
+fail safely). Each write snapshots the goals it started from; on failure that
+snapshot is put back and the writes queued behind it, which were built on the
+failed state, are skipped, with an error toast saying the goal is unchanged.
+Rollback never depends on a re-read (which can fail with an empty cache). The
+view is re-read only after a success, and a read that started before a local
+change is ignored so it cannot undo it. A -/+ tap shows the percentage
+recomputed against the new target at once (the view's own ratio from the
+view's own recent best, display only, never stored) until the view answers.
+
+**Unpin is undoable and cautious.** `goals` has no `set_by` column, and
+`set_goal` writes `target_date` for the coach's plan, so a goal with a
+`target_date` is treated as possibly the coach's: unpinning it takes a second
+tap and says what would be removed. Every unpin shows an Undo bar for 6
+seconds (an in-screen bar, since toasts here deliberately have no buttons)
+that restores the exact row, id and `target_date` included. Because `goals`
+carries no other coach-written field, the row is whole after Undo.
+
+**Pins and `delete_exercise`.** `goals.exercise_id` references `exercises` with
+no cascade, so any goal blocks deleting that exercise (MCP `delete_exercise`
+maps the FK error, code 23503, to a message; the PWA has no exercise delete).
+A pin adds no new block: a pin needs an e1RM, so the exercise already has
+logged sets, which block deletion anyway. A coach goal on a never-used custom
+exercise does block it, as before. The message now says a goal, including one
+pinned in Record, must be removed first.
+
+**Default target is about +5%, not the design's x1.1.** The first target is
+the current e1RM plus about 5%, rounded up to 2.5 kg / 5 lb and always at
+least one step above. A x1.1 target is a large jump for a heavy lift (140 kg
+becomes 154 kg), and the e1RM estimate moves a few percent between ordinary
+sessions, so x1.1 would read as "far off" the moment it is pinned. +5% starts
+the bar visibly short of full and one -/+ tap moves it. The Version D design
+and the earlier decision said x1.1; this supersedes it.
+
+**What the list knows about unsent work.** The index (`getRecordIndex`) comes
+from `v_live_sets` and `v_session_best_e1rm` and knows only what has landed.
+The screen lays this phone's outbox over it (`applyPendingToIndex`): a set
+voided or a session discarded here leaves the list at once; an unsent set
+moves its exercise up and the row says "on phone, not sent yet"; an exercise
+first done offline appears (with no e1RM, so it cannot be pinned yet). No
+e1RM is ever computed from an unsent set; derived numbers stay view-only. A
+discarded session's e1RM falls back to the next older one from the view; a
+pending void of one set leaves the e1RM as the view had it (accepted gap, and
+a void only matches the newest 25 set ids per exercise). The per-exercise
+detail lists unsent sets of that exercise under their session, marked the same
+way, while its charts remain view-only. The session log and week summary
+still do not include unsent sets (accepted gap, same as before this branch).
+Cached lists show the offline / "couldn't refresh" note, and a failed read
+with nothing cached says "Couldn't load your record" with Try again rather
+than "Nothing matches".
+
+**Scan cost and cap.** The index still pages `v_live_sets` newest-first
+(1000 per page, 20 pages) on every open after any set is logged, because
+recordIndex is in the set-derived invalidation family. The cursor is now
+inclusive with de-duplication, so rows sharing a boundary millisecond are not
+lost, and when the cap is reached the screen says older exercises may be
+missing (the library still finds them). The proper fix for long histories is
+a per-exercise recency SQL view (new migration plus a validate-db assertion);
+not done here because it touches the schema, and the cost is only felt past
+several thousand sets.
+
+Record row meta reads in words ("5 sessions in 90 days"), search matches every
+word in any order ignoring case, accents and punctuation, and text in this
+screen is at least 11px with 44px taps.
+
+**Order.** Most recently performed calendar day first; "most done" breaks ties,
+defined as distinct sessions in the last 90 days (sessions, not sets, so a long
+back-off ladder does not outrank a lift trained more often); then name. Because
+the primary key is the day, everything from today's session ties and the lift
+trained most often rises. Dates and counts come from `v_live_sets`, the e1RM
+from `v_session_best_e1rm`, via `lib/record.ts` (ordering only, no metrics).
+A pinned exercise appears only under PINNED GOALS. An exercise with no
+1–8 rep working set has no e1RM and cannot be pinned yet.
+
+New offline cache keys `goals` and `recordIndex` join the set-derived
+invalidation family.
+
