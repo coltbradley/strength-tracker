@@ -3670,3 +3670,29 @@ token set is now part of the system.
   status bar for the first moments; the page itself never flashes.
 - **Manifest stays light.** `background_color` / `theme_color` cannot switch at
   runtime; the installed splash screen is light in either theme. Accepted.
+
+
+## 2026-10-01 Inventory in-flight work before starting
+
+The Version D redesign was implemented twice on the same day: by Codex on
+`codex/version-d-light-plan` (49 commits, including atomic corrections and
+per-set receipts) and by Claude on `feat/live-workout-d` (29 commits), because
+the second effort looked only at `main`. An audit then found 16 remote branches
+that were merged or abandoned, two open PRs already superseded on `main`, and a
+`pwa/node_modules` symlink committed by accident that later let `npm ci` empty
+another checkout.
+
+Starting work now begins with an inventory (AGENTS.md "Before you start"):
+deepen a shallow clone, run `node scripts/work-inventory.mjs` with the feature's
+words and expected files, search plans and specs on every branch, and stop to
+coordinate if anything active matches. The script only reads. It classifies
+branches as active, stale (no commit for 14 days), merged or deploy, and flags
+topic and file overlap. Finishing now includes deleting merged branches and
+worktrees, tagging `archive/<branch>` before deleting abandoned work, and
+closing superseded PRs. The ignore pattern changed from `node_modules/` to
+`node_modules`, because the trailing slash matches only directories.
+
+Considered and rejected: a CI job that fails when stale branches exist. Branch
+hygiene is a judgment about whether work is abandoned, and a red build on
+`main` for someone else's branch would be noise. The inventory informs; a person
+decides.

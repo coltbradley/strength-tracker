@@ -15,6 +15,49 @@ A coached lifter logs sets on their phone (PWA). Claude reads the log via MCP to
 analyze progress and writes programming parsed from coach screenshots. The coach
 programs. Claude parses, analyzes, and proposes. The app captures.
 
+## Before you start: inventory work already in flight
+
+Do this at the start of every new piece of work, before planning or writing
+code. On 2026-10-01 the same redesign ("Version D") was implemented twice in
+one day, on `codex/version-d-light-plan` and on `feat/live-workout-d`, because
+the second effort never looked at the remote branches. The duplicate cost a
+day, and the second copy nearly shipped without the first one's correctness
+fixes. The same look found 16 stale branches and two superseded open PRs.
+
+1. **Get real history.** A shallow clone makes every branch look hundreds of
+   commits "ahead". Run `git fetch --depth=1000 origin` (or `--unshallow`)
+   before trusting any count.
+2. **Run the inventory.**
+   `node scripts/work-inventory.mjs --topic "<words for the feature>" --paths <files you expect to touch>`
+   It lists every local worktree (with uncommitted changes), every remote
+   branch (active / stale / merged / deploy, ahead/behind, age, author, open
+   PR), and flags branches whose name or commits match the topic or that
+   change the same files. It only reads; it never deletes or pushes.
+3. **Search plans and specs on every branch, not just yours.** Plans live in
+   `docs/superpowers/plans` and `docs/superpowers/specs`:
+   `git grep -il "<topic>" $(git for-each-ref --format='%(refname)' refs/remotes/origin) -- docs`
+4. **If anything active matches, stop and tell the user before starting.**
+   Build on that branch or coordinate with whoever owns it. Never start a
+   parallel copy of in-flight work; if two copies already exist, compare them
+   (correctness first) and pick one base.
+5. **Name and record your branch so the next inventory finds it.** Use
+   `feat/<topic>` (or `fix/`, `docs/`, `chore/`), and put the branch name in
+   the header of the plan or spec you write.
+
+Keeping the landscape clean is part of finishing:
+
+- When a branch merges, delete it (and its worktree). Sub-branches made for
+  parallel agents are deleted as soon as they are merged into their
+  integration branch.
+- A branch with unique commits that is being abandoned is tagged
+  `archive/<branch>` first, then deleted, and any open PR from it is closed
+  with a comment saying what superseded it.
+- Never commit `node_modules` or any symlink to a worktree-local absolute
+  path. `.gitignore` says `node_modules` with no trailing slash on purpose:
+  `node_modules/` matches only directories, and a symlinked one was committed
+  that way, after which `npm ci` followed it and emptied another checkout.
+  The inventory warns about tracked absolute symlinks on HEAD.
+
 ## Layout
 
 - `supabase/migrations/`: schema, RLS, views. Numbered SQL, never edit an
@@ -813,9 +856,12 @@ supabase start && supabase db reset
 node scripts/build-exercise-seed.mjs
 npm --prefix scripts install && node scripts/validate-db.mjs
 
+# what is already in flight (run before starting any new work)
+node scripts/work-inventory.mjs --topic "<feature>" --paths <files>
+
 # every column any code SELECTs must exist against that same schema
 node scripts/check-selects.mjs
-node --test scripts/release-ledger.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs scripts/work-inventory.test.mjs
 node scripts/check-release-ledger.mjs
 
 # mcp server: serve locally
@@ -843,7 +889,7 @@ node scripts/build-exercise-seed.mjs
 npm --prefix scripts ci
 node scripts/validate-db.mjs
 node scripts/check-selects.mjs
-node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs scripts/load-integrity.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs scripts/work-inventory.test.mjs scripts/load-integrity.test.mjs
 # load integrity alone: buildSetLoad vs the real trigger (LOAD_PROPERTY_CASES=20000 for a longer run)
 node --test scripts/load-integrity.test.mjs
 node scripts/check-release-ledger.mjs
