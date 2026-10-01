@@ -1482,15 +1482,19 @@ export function Session() {
           : null;
       const roundHeld =
         roundPartner !== null
-          ? !doneAfter(roundPartner) &&
-            progressSets(
-              roundPartner,
-              setsForEntryOf(roundPartner, next, rx, knownRxIds),
-            ) <
+          ? (!doneAfter(roundPartner) &&
               progressSets(
-                entryToLog,
-                setsForEntryOf(entryToLog, next, rx, knownRxIds),
-              )
+                roundPartner,
+                setsForEntryOf(roundPartner, next, rx, knownRxIds),
+              ) <
+                progressSets(
+                  entryToLog,
+                  setsForEntryOf(entryToLog, next, rx, knownRxIds),
+                )) ||
+            // the round that finishes the superset hands straight on: no
+            // rest after the pair's last set (the same as the old "Log
+            // round", which rested only after non-final rounds)
+            (doneAfter(roundPartner) && doneAfter(entryToLog))
           : roundOpen !== null;
       const showStrip = autoStartRest && !roundHeld;
       if (showStrip)
