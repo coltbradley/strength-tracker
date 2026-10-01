@@ -8,6 +8,8 @@ import {
   type TransportError,
 } from "./outbox";
 import {
+  cacheClearAll,
+  cacheKeys,
   getDb,
   resetDbForTests,
   type Database,
@@ -141,6 +143,122 @@ describe("outbox", () => {
             .payload.id,
       ),
     ).toEqual([setA.id, setB.id]);
+  });
+
+  it("commits a correction replacement, void, and durable link together", async () => {
+    const { transport } = makeTransport();
+    const box = createOutbox({ getDb, transport, isOnline: () => false, currentUserId: () => "alice", stampUserId: () => "alice" });
+    const replacement = { ...setA, id: "44444444-4444-4444-8444-444444444444" };
+
+    await box.enqueueCorrection(session.id, replacement, setA.id);
+
+    const db = await getDb();
+    const rows = await db.getAll("outbox");
+    expect(rows.map((row) => [row.op.kind, row.op.table])).toEqual([
+      ["insert", "sets"],
+      ["insert", "set_voids"],
+    ]);
+    expect(rows.map((row) => row.user_id)).toEqual(["alice", "alice"]);
+    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toEqual({
+      [replacement.id]: setA.id,
+    });
+  });
+
+  it("rolls back replacement and void when the durable link cannot commit", async () => {
+    const { transport } = makeTransport();
+    const db = await getDb();
+    const diskFull = new Error("disk full");
+    const failingDb = {
+      transaction: (...args: Parameters<Database["transaction"]>) => {
+        const tx = db.transaction(...args);
+        return {
+          done: tx.done,
+          abort: () => tx.abort(),
+          objectStore(name: "outbox" | "kv") {
+            const store = tx.objectStore(name);
+            if (name !== "kv") return store;
+            return new Proxy(store, {
+              get(target, property) {
+                if (property === "put") {
+                  return (...putArgs: unknown[]) => {
+                    const putMethod = Reflect.get(target, "put") as (...args: unknown[]) => unknown;
+                    const rawPut = putMethod.bind(target);
+                    void Promise.resolve(rawPut(...putArgs)).catch(() => undefined);
+                    return Promise.reject(diskFull);
+                  };
+                }
+                const value = Reflect.get(target, property, target);
+                return typeof value === "function" ? value.bind(target) : value;
+              },
+            });
+          },
+        };
+      },
+    } as unknown as Database;
+    const box = createOutbox({ getDb: () => Promise.resolve(failingDb), transport, isOnline: () => false });
+    const replacement = { ...setA, id: "44444444-4444-4444-8444-444444444444" };
+
+    await expect(box.enqueueCorrection(session.id, replacement, setA.id)).rejects.toThrow("disk full");
+
+    expect(await db.getAll("outbox")).toEqual([]);
+    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toBeUndefined();
+  });
+
+  it("retains an owner-bound correction join on the pending void after cache clear", async () => {
+    const { transport } = makeTransport();
+    const box = createOutbox({ getDb, transport, isOnline: () => false, currentUserId: () => "alice", stampUserId: () => "alice" });
+    const replacement = { ...setA, id: "55555555-5555-4555-8555-555555555555" };
+    await box.enqueueCorrection(session.id, replacement, setA.id);
+    const db = await getDb();
+    await db.delete("outbox", 1); // replacement insert was accepted by the server
+
+    await cacheClearAll();
+
+    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toBeUndefined();
+    expect(await box.inspect()).toMatchObject([{
+      table: "set_voids",
+      user_id: "alice",
+      correction_link: {
+        session_id: session.id,
+        replacement_id: replacement.id,
+        original_id: setA.id,
+      },
+      state: "waiting",
+    }]);
+  });
+
+  it("keeps an owner-bound ACK witness after both writes leave the queue", async () => {
+    const { transport, calls } = makeTransport();
+    let online = false;
+    let owner: string | null = "alice";
+    const box = createOutbox({ getDb, transport, isOnline: () => online,
+      currentUserId: () => owner, stampUserId: () => owner });
+    const replacement = { ...setA, id: "66666666-6666-4666-8666-666666666666" };
+    await box.enqueueCorrection(session.id, replacement, setA.id);
+    online = true;
+    await box.flush();
+
+    expect(await box.inspect()).toEqual([]);
+    expect(box.getStatus()).toMatchObject({ pending: 0, dead: 0, held: 0 });
+    expect(await box.pendingVoidIds()).toEqual(new Set());
+    expect(await box.correctionLinks(session.id)).toEqual({ [replacement.id]: setA.id });
+    await cacheClearAll();
+    expect(await box.correctionLinks(session.id)).toEqual({ [replacement.id]: setA.id });
+    await box.flush();
+    expect(calls).toHaveLength(2);
+
+    owner = "bob";
+    expect(await box.correctionLinks(session.id)).toEqual({});
+    owner = null;
+    expect(await box.correctionLinks(session.id)).toEqual({});
+    const witnesses = (await (await getDb()).getAll("outbox"))
+      .filter((item) => item.status === "receipt");
+    expect(witnesses).toHaveLength(1);
+    expect(witnesses[0]?.user_id).toBe("alice");
+    expect(witnesses[0]?.correction_link).toMatchObject({
+      replacement_id: replacement.id,
+      original_id: setA.id,
+    });
   });
 
   it("resolves a single enqueue after commit when the count refresh fails", async () => {

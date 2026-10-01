@@ -402,6 +402,9 @@ export function Session() {
     enteredUnit: Unit;
     loadEdited: boolean;
   } | null>(null);
+  // A durable write can take longer than a double tap. Lock by original row
+  // so correction, quick RPE, and void cannot commit competing operations.
+  const pendingSetMutationIdsRef = useRef(new Set<string>());
 
   // per-set notes (set_id -> note); "" = cleared
   const [setNotes, setSetNotes] = useState<Record<string, string>>({});
@@ -1812,7 +1815,7 @@ export function Session() {
   /** Void the old row and append its replacement at the same set_index.
    *  Nothing about WHEN the set happened changes: performed_at, the rest
    *  before it and the rest clock after it all stand. */
-  const saveCorrection = () => {
+  const saveCorrection = async () => {
     // Corrections are never gated by the log lock (Decision 6): the lock
     // exists only to stop a double LOG tap inserting the same set twice, and
     // a correction is a deliberate edit to a set that already exists. It
@@ -1842,61 +1845,55 @@ export function Session() {
       cancelCorrection();
       return;
     }
+    if (pendingSetMutationIdsRef.current.has(old.id)) return;
     const next = correctedSet(old, correction);
-
-    const nextVoids = new Set(voids);
-    nextVoids.add(old.id);
-    setVoids(nextVoids);
-    cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
-      (e: unknown) => reportError(e, "cache voids"),
-    );
-    const nextSets = applySets((prev) =>
-      prev.map((x) => (x.id === old.id ? next : x)),
-    );
-    cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
-      reportError(e, "cache session sets"),
-    );
-    // Insert BEFORE void. If the queue dies between the two, the log holds a
-    // duplicate set rather than a missing one — and a duplicate is visible,
-    // so it gets fixed.
-    outbox
-      .enqueue({ kind: "insert", table: "sets", payload: next })
-      .then(() =>
-        outbox.enqueue({
-          kind: "insert",
-          table: "set_voids",
-          payload: { set_id: old.id },
-        }),
-      )
-      .catch((e: unknown) => reportError(e, "correct set"));
-    // the note is about the set, and the set now has a new id
-    const note = setNotes[old.id];
-    if (note) {
-      const nextNotes = { ...setNotes, [next.id]: note };
-      setSetNotes(nextNotes);
-      cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
-        (e: unknown) => reportError(e, "cache set notes"),
+    pendingSetMutationIdsRef.current.add(old.id);
+    try {
+      await outbox.enqueueCorrection(sessionId, next, old.id);
+      const nextVoids = new Set(voids);
+      nextVoids.add(old.id);
+      setVoids(nextVoids);
+      cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
+        (e: unknown) => reportError(e, "cache voids"),
       );
-      outbox
-        .enqueue({
-          kind: "insert",
-          table: "set_notes",
-          payload: { set_id: next.id, note },
-        })
-        .catch((e: unknown) => reportError(e, "carry set note"));
-    }
+      const nextSets = applySets((prev) =>
+        prev.map((x) => (x.id === old.id ? next : x)),
+      );
+      cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
+        reportError(e, "cache session sets"),
+      );
+      // The note follows only after the replacement+void+link commit.
+      const note = setNotes[old.id];
+      if (note) {
+        try {
+          await outbox.enqueue({ kind: "insert", table: "set_notes", payload: { set_id: next.id, note } });
+          const nextNotes = { ...setNotes, [next.id]: note };
+          delete nextNotes[old.id];
+          setSetNotes(nextNotes);
+          cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
+            (e: unknown) => reportError(e, "cache set notes"),
+          );
+        } catch (e) {
+          reportError(e, "carry set note");
+        }
+      }
 
-    setEntryKg(editing.staged.entryKg);
-    setReps(editing.staged.reps);
-    setSetType(editing.staged.setType);
-    setRpe(editing.staged.rpe);
-    setDurationSeconds(editing.staged.durationSeconds);
-    stagedDraftsRef.current[editing.stagedKey] = {
-      ...editing.staged,
-      setType: editing.staged.setType as BracketKind,
-    };
-    setEditing(null);
-    toast(`Set ${old.set_index + 1} corrected`);
+      setEntryKg(editing.staged.entryKg);
+      setReps(editing.staged.reps);
+      setSetType(editing.staged.setType);
+      setRpe(editing.staged.rpe);
+      setDurationSeconds(editing.staged.durationSeconds);
+      stagedDraftsRef.current[editing.stagedKey] = {
+        ...editing.staged,
+        setType: editing.staged.setType as BracketKind,
+      };
+      setEditing(null);
+      toast(`Set ${old.set_index + 1} corrected`);
+    } catch (e) {
+      reportError(e, "correct set");
+    } finally {
+      pendingSetMutationIdsRef.current.delete(old.id);
+    }
   };
 
   /** Rate the set the rest strip is currently resting after, without
@@ -1905,7 +1902,7 @@ export function Session() {
    *  Still a correction underneath (void + new row at the same set_index),
    *  because `sets` is append-only and this IS a correction: only `rpe`
    *  changes. */
-  const rateLastSet = (nextRpe: number | null) => {
+  const rateLastSet = async (nextRpe: number | null) => {
     const old = lastLoggedSet;
     if (!old || !sessionId) return;
     const correction = {
@@ -1916,54 +1913,57 @@ export function Session() {
       rpe: nextRpe,
     };
     if (isNoopCorrection(old, correction)) return;
+    if (pendingSetMutationIdsRef.current.has(old.id)) return;
     const next = correctedSet(old, correction);
-
-    const nextVoids = new Set(voids);
-    nextVoids.add(old.id);
-    setVoids(nextVoids);
-    cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
-      (e: unknown) => reportError(e, "cache voids"),
-    );
-    const nextSets = applySets((prev) =>
-      prev.map((x) => (x.id === old.id ? next : x)),
-    );
-    cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
-      reportError(e, "cache session sets"),
-    );
-    outbox
-      .enqueue({ kind: "insert", table: "sets", payload: next })
-      .then(() =>
-        outbox.enqueue({
-          kind: "insert",
-          table: "set_voids",
-          payload: { set_id: old.id },
-        }),
-      )
-      .catch((e: unknown) => reportError(e, "rate set"));
-    // the note is about the set, and the set now has a new id -- same carry
-    // saveCorrection already does, for the same reason.
-    const note = setNotes[old.id];
-    if (note) {
-      const nextNotes = { ...setNotes, [next.id]: note };
-      setSetNotes(nextNotes);
-      cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
-        (e: unknown) => reportError(e, "cache set notes"),
+    pendingSetMutationIdsRef.current.add(old.id);
+    try {
+      await outbox.enqueueCorrection(sessionId, next, old.id);
+      const nextVoids = new Set(voids);
+      nextVoids.add(old.id);
+      setVoids(nextVoids);
+      cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
+        (e: unknown) => reportError(e, "cache voids"),
       );
-      outbox
-        .enqueue({
-          kind: "insert",
-          table: "set_notes",
-          payload: { set_id: next.id, note },
-        })
-        .catch((e: unknown) => reportError(e, "carry set note"));
+      const nextSets = applySets((prev) => prev.map((x) => x.id === old.id ? next : x));
+      cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
+        reportError(e, "cache session sets"),
+      );
+      const note = setNotes[old.id];
+      if (note) {
+        try {
+          await outbox.enqueue({ kind: "insert", table: "set_notes", payload: { set_id: next.id, note } });
+          const nextNotes = { ...setNotes, [next.id]: note };
+          delete nextNotes[old.id];
+          setSetNotes(nextNotes);
+          cacheSet(cacheKeys.sessionSetNotes(sessionId), nextNotes).catch(
+            (e: unknown) => reportError(e, "cache set notes"),
+          );
+        } catch (e) {
+          reportError(e, "carry set note");
+        }
+      }
+      setLastLoggedSet(next);
+    } catch (e) {
+      reportError(e, "rate set");
+    } finally {
+      pendingSetMutationIdsRef.current.delete(old.id);
     }
-    setLastLoggedSet(next);
   };
 
   /** Void a logged set: hide it from every view via an append-only
    *  set_voids insert. The row itself is never edited or deleted. */
-  const voidSet = (s: SetInsert) => {
+  const voidSet = async (s: SetInsert) => {
     if (!sessionId) return;
+    if (pendingSetMutationIdsRef.current.has(s.id)) return;
+    pendingSetMutationIdsRef.current.add(s.id);
+    try {
+      await outbox.enqueue({ kind: "insert", table: "set_voids", payload: { set_id: s.id } });
+    } catch (e) {
+      reportError(e, "remove set");
+      pendingSetMutationIdsRef.current.delete(s.id);
+      return;
+    }
+    pendingSetMutationIdsRef.current.delete(s.id);
     setVoidArm(null);
     if (editing?.set.id === s.id) cancelCorrection();
     // voiding the set that started the current rest cancels the clock —
@@ -1992,13 +1992,6 @@ export function Session() {
     cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
       reportError(e, "cache session sets"),
     );
-    outbox
-      .enqueue({
-        kind: "insert",
-        table: "set_voids",
-        payload: { set_id: s.id },
-      })
-      .catch((e: unknown) => reportError(e, "remove set"));
     toast(`Set ${s.set_index + 1} removed`);
   };
 

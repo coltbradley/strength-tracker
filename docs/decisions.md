@@ -3176,3 +3176,28 @@ on every visibility change and every minute. A session left open for days
 delays the update that long unless the app is closed, which activates the
 waiting worker on the next launch; the overnight sweep closes stale sessions.
 
+## 2026-10-01 A correction keeps an owner-bound ACK witness in the outbox
+
+An offline correction is one local transaction: enqueue the replacement set,
+then its void, and persist the replacement-to-original relation. Once both
+operations receive server acknowledgements, the queue rows normally leave the
+outbox. The relation still matters after cache clear and reload, because the
+replacement alone is indistinguishable from a plain set and cannot prove that
+the original was voided.
+
+For a correction void acknowledged under a known owner, the outbox retains a
+small `receipt` metadata row containing the session, replacement set UUID,
+original set UUID, and owner. It is a relation witness only: it is excluded
+from queue counts, flush, inspect, pending-void handling, and queue exports.
+The receipt reader requires the current known owner to match. Unknown-owner
+operations never create a receipt. Cache clearing still clears the KV cache;
+the witness stays with the outbox and cannot authorize a write or establish
+that a server row exists. A pure receipt projection still needs exact owner-
+bound readback of the replacement set UUID and a `set_voids.set_id` equal to
+the original UUID before it can say Synced.
+
+Each corrected set leaves one small metadata row in this device's IndexedDB.
+It lives until the device's app data is cleared; there is no cleanup or
+compaction rule yet. That bounded growth preserves the append-only relation
+without adding a store, schema version, cross-account cache retention, or a
+production data migration.

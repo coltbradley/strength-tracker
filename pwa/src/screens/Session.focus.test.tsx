@@ -46,6 +46,7 @@ vi.mock("../lib/sync", () => ({
     pendingSets: vi.fn(async () => []),
     enqueue: vi.fn(async () => undefined),
     enqueueBatch: vi.fn(async () => undefined),
+    enqueueCorrection: vi.fn(async () => undefined),
   },
 }));
 
@@ -154,6 +155,7 @@ beforeEach(async () => {
   vi.mocked(getServerSessionSets).mockReset();
   vi.mocked(outbox.enqueue).mockReset();
   vi.mocked(outbox.enqueueBatch).mockReset();
+  vi.mocked(outbox.enqueueCorrection).mockReset();
   vi.mocked(getExercises).mockResolvedValue({
     data: [],
     error: null,
@@ -168,6 +170,7 @@ beforeEach(async () => {
   vi.mocked(getServerSessionSets).mockResolvedValue([] as any);
   vi.mocked(outbox.enqueue).mockResolvedValue(undefined);
   vi.mocked(outbox.enqueueBatch).mockResolvedValue(undefined);
+  vi.mocked(outbox.enqueueCorrection).mockResolvedValue(undefined);
   await seed();
 });
 
@@ -590,13 +593,96 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
     fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
 
-    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
-    const payload = firstQueuedSet();
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
+    const [sessionId, payload, originalId] = vi.mocked(outbox.enqueueCorrection).mock.calls[0]!;
+    expect(sessionId).toBe(active.id);
+    expect(originalId).toBe(old.id);
     expect(payload).toMatchObject({ load_kg: 31.75, entered_load: 70, entered_unit: "lb", set_index: 0 });
     expectAcceptedAuthoredLoad(payload);
-    expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
-      table: "set_voids", payload: { set_id: old.id },
-    });
+  });
+
+  it("keeps the original visible when the correction transaction fails", async () => {
+    const old: SetInsert = {
+      id: "bench-correction-failed", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working",
+      load_kg: 30, reps: 8, performed_at: "2026-09-12T12:05:00.000Z",
+      rest_seconds_actual: null, load_entry: "total", rpe: null,
+    };
+    await seed("reps", [prescription()], [old]);
+    await cacheSet(cacheKeys.sessionSetNotes(active.id), { [old.id]: "Grip felt uneven" });
+    vi.mocked(getServerSessionSets).mockResolvedValue([old]);
+    vi.mocked(outbox.enqueueCorrection).mockRejectedValueOnce(new Error("disk full"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      render(<MemoryRouter><Session /></MemoryRouter>);
+      fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
+      fireEvent.click(screen.getByRole("button", { name: "increase load by 2.5 kg" }));
+      fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith("[correct set]", expect.any(Error)));
+      expect(await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id))).toEqual([old]);
+      expect(await cacheGet<string[]>(cacheKeys.sessionVoids(active.id))).toBeUndefined();
+      expect(await cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(active.id)))
+        .toEqual({ [old.id]: "Grip felt uneven" });
+      expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
+      fireEvent.click(screen.getByRole("button", { name: "List" }));
+      expect(screen.getByRole("button", { name: "Correct logged set 1" })).toBeTruthy();
+      expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("keeps the rated set and rest source when quick RPE enqueue fails", async () => {
+    vi.mocked(outbox.enqueueCorrection).mockRejectedValueOnce(new Error("disk full"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      render(<MemoryRouter><Session /></MemoryRouter>);
+      fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+      await screen.findByRole("button", { name: "rpe 6.5" });
+      const before = await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id));
+      const restBefore = await cacheGet(cacheKeys.sessionRest(active.id));
+      expect(before).toHaveLength(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "rpe 6.5" }));
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith("[rate set]", expect.any(Error)));
+
+      expect(await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id))).toEqual(before);
+      expect(await cacheGet<string[]>(cacheKeys.sessionVoids(active.id))).toBeUndefined();
+      expect(await cacheGet(cacheKeys.sessionRest(active.id))).toEqual(restBefore);
+      expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("keeps a logged row visible when plain void enqueue fails", async () => {
+    const old: SetInsert = {
+      id: "bench-void-failed", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working",
+      load_kg: 30, reps: 8, performed_at: "2026-09-12T12:05:00.000Z",
+      rest_seconds_actual: null, load_entry: "total", rpe: null,
+    };
+    await seed("reps", [prescription()], [old]);
+    vi.mocked(getServerSessionSets).mockResolvedValue([old]);
+    vi.mocked(outbox.enqueue).mockRejectedValueOnce(new Error("disk full"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      render(<MemoryRouter><Session /></MemoryRouter>);
+      await screen.findByRole("button", { name: /— current — view full workout$/ });
+      fireEvent.click(await screen.findByRole("button", { name: "List" }));
+      await vi.waitFor(() => expect(screen.getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe("true"));
+      fireEvent.click(await screen.findByRole("button", { name: "Void logged set 1" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm void logged set 1" }));
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith("[remove set]", expect.any(Error)));
+
+      expect(await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id))).toEqual([old]);
+      expect(await cacheGet<string[]>(cacheKeys.sessionVoids(active.id))).toBeUndefined();
+      expect(screen.getByRole("button", { name: "Correct logged set 1" })).toBeTruthy();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("keeps a corrected stepper load consistent after changing to pounds", async () => {
@@ -616,8 +702,8 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "increase load by 5 lb" }));
     fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
 
-    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
-    const payload = firstQueuedSet();
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(outbox.enqueueCorrection).mock.calls[0]?.[1];
     expect(payload.entered_unit).toBe("lb");
     expect(payload.load_kg).not.toBe(old.load_kg);
     expectAcceptedAuthoredLoad(payload);
@@ -1668,8 +1754,9 @@ describe("Session focus presentation", () => {
     expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
-    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
-      payload: { exercise_id: "bench-press", reps: 9, load_kg: 20 },
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueueCorrection).mock.calls[0]?.[1]).toMatchObject({
+      exercise_id: "bench-press", reps: 9, load_kg: 20,
     });
   });
 
@@ -1720,10 +1807,9 @@ describe("Session focus presentation", () => {
     ).toBe("9");
 
     fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
-    // calls[0] logged Bench, calls[1] logged Squat, calls[2] is the
-    // correction's replacement row (calls[3] is its matching void).
-    expect(vi.mocked(outbox.enqueue).mock.calls[2]?.[0]).toMatchObject({
-      payload: { exercise_id: "back-squat", reps: 9 },
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueueCorrection).mock.calls[0]?.[1]).toMatchObject({
+      exercise_id: "back-squat", reps: 9,
     });
   });
 

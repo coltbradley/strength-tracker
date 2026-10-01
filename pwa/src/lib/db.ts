@@ -110,7 +110,7 @@ export interface OutboxItem {
   retries: number;
   last_error: string | null;
   /** 'dead' = permanently failing, skipped by flush until retryDead() */
-  status: "pending" | "dead";
+  status: "pending" | "dead" | "receipt";
   /**
    * The PostgREST code and HTTP status of the last failure, kept beside the
    * message. `last_error` is prose for a human; these two are what decides
@@ -139,6 +139,12 @@ export interface OutboxItem {
    * known; such an item is held and never claimed by a later sign-in (A-90).
    */
   user_id?: string | null;
+  /** Durable join on a correction's original void operation. */
+  correction_link?: {
+    session_id: string;
+    replacement_id: string;
+    original_id: string;
+  };
 }
 
 interface StrengthDB extends DBSchema {
@@ -367,6 +373,8 @@ export const cacheKeys = {
   sessionSets: (sessionId: string) => `sessionSets:${sessionId}`,
   /** set ids voided this session (filters merges of server+pending sets) */
   sessionVoids: (sessionId: string) => `sessionVoids:${sessionId}`,
+  /** durable replacement set id -> original set id for corrections */
+  sessionCorrectionLinks: (sessionId: string) => `sessionCorrectionLinks:${sessionId}`,
   /** entry keys the user marked skipped in this session */
   sessionSkips: (sessionId: string) => `sessionSkips:${sessionId}`,
   /** mid-session exercise substitutions, entry key -> the movement actually

@@ -35,6 +35,7 @@ vi.mock("../lib/sync", () => ({
   outbox: {
     pendingSets: vi.fn(async () => []),
     enqueue: vi.fn(async () => undefined),
+    enqueueCorrection: vi.fn(async () => undefined),
   },
 }));
 
@@ -227,17 +228,13 @@ describe("Session log lock", () => {
     fireEvent.click(saveButton);
 
     await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(3),
+      expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1),
     );
-    expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
-      kind: "insert",
-      table: "sets",
-      payload: { reps: 6 },
-    });
-    expect(vi.mocked(outbox.enqueue).mock.calls[2]?.[0]).toMatchObject({
-      kind: "insert",
-      table: "set_voids",
-    });
+    const [correctionSessionId, replacement, originalId] =
+      vi.mocked(outbox.enqueueCorrection).mock.calls[0] ?? [];
+    expect(correctionSessionId).toBe(active.id);
+    expect(replacement).toMatchObject({ reps: 6 });
+    expect(originalId).toEqual(expect.any(String));
   });
 
   it("keeps stepper and pad edits live while the log lock is engaged", async () => {
@@ -448,7 +445,7 @@ describe("Session hero capture", () => {
     );
 
     await screen.findByRole("heading", { name: "Bench Press" });
-    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[0]!);
     fireEvent.click(screen.getByRole("button", { name: "Out of time" }));
 
     const cached = await cacheGet<Record<string, unknown>>(

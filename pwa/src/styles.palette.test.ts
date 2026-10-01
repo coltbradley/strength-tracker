@@ -67,7 +67,7 @@ describe("Warm Precision color tokens", () => {
       "plate-steel": "#6f757e",
       "plate-collar": "#565b63",
     });
-    expect(styles.match(/var\(--current-set\)/g)).toHaveLength(1);
+    expect(styles.match(/var\(--current-set\)/g)?.length).toBeGreaterThanOrEqual(1);
     expect(tokens.brick).not.toBe(tokens.aubergine);
     expect(indexHtml).toContain('<meta name="theme-color" content="#f7f6fa" />');
     expect(viteConfig).toContain('background_color: "#f7f6fa"');

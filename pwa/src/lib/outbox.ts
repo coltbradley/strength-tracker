@@ -21,7 +21,7 @@
 //
 // The outbox knows nothing about screens; screens know nothing about sync.
 
-import type { Database, OutboxItem, OutboxOp } from "./db";
+import { cacheKeys, type Database, type OutboxItem, type OutboxOp } from "./db";
 import type { SetInsert } from "./types";
 
 export type SyncState = "idle" | "syncing" | "error";
@@ -82,6 +82,8 @@ export interface OutboxTransport {
 export interface Outbox {
   enqueue(op: OutboxOp): Promise<void>;
   enqueueBatch(ops: readonly OutboxOp[]): Promise<void>;
+  /** Atomically queue replacement then original void and persist their link. */
+  enqueueCorrection(sessionId: string, replacement: SetInsert, originalId: string): Promise<void>;
   flush(): Promise<void>;
   /**
    * Re-queue the dead items a retry could actually help, and flush. Items
@@ -142,6 +144,8 @@ export interface Outbox {
    * been ANSWERED, and re-asking is the one thing that must not happen.
    */
   pendingRatedSessionIds(): Promise<Set<string>>;
+  /** Owner-bound correction joins from pending voids and acknowledged witnesses. */
+  correctionLinks(sessionId: string): Promise<Record<string, string>>;
   /** Wire up app-start + 'online' triggers. */
   start(): void;
 }
@@ -314,6 +318,8 @@ export interface OutboxEntry {
   /** who queued it; undefined on items queued before multi-user, null when
    *  no identity was known at enqueue */
   user_id: string | null | undefined;
+  /** Original void keeps the correction join after replacement replay. */
+  correction_link?: OutboxItem["correction_link"];
   /**
    * 'waiting' goes on the next flush. 'held' was queued by another account
    * (or before identity resolved) and this device must not send it. 'dead'
@@ -398,7 +404,9 @@ export function createOutbox({
 
   function normalize(item: OutboxItem): OutboxItem {
     // items written before the dead-letter feature have no status field
-    return item.status === "dead" ? item : { ...item, status: "pending" };
+    return item.status === "dead" || item.status === "receipt"
+      ? item
+      : { ...item, status: "pending" };
   }
 
   async function readAll(db: Database): Promise<Row[]> {
@@ -420,6 +428,7 @@ export function createOutbox({
     let dead = 0;
     let held = 0;
     for (const r of rows) {
+      if (r.item.status === "receipt") continue;
       if (r.item.status === "dead") {
         dead++;
       } else {
@@ -536,7 +545,7 @@ export function createOutbox({
       let authRefreshTried = false;
 
       for (const row of rows) {
-        if (row.item.status === "dead") continue;
+        if (row.item.status === "dead" || row.item.status === "receipt") continue;
         // Someone else's queued work: leave it exactly where it is.
         if (!replayable(row.item)) continue;
         let item = row.item;
@@ -544,7 +553,14 @@ export function createOutbox({
         attempt: for (;;) {
           const err = await applyOp(item.op);
           if (err === null) {
-            await db.delete("outbox", row.key);
+            if (item.correction_link && typeof item.user_id === "string") {
+              // Keep only the owner-bound relation after the append-only void
+              // is acknowledged. Queue readers exclude status=receipt; exact
+              // server readback is still required before calling it Synced.
+              await db.put("outbox", { ...item, status: "receipt" }, row.key);
+            } else {
+              await db.delete("outbox", row.key);
+            }
             setStatus({ ...counts(await readAll(db)), lastError: null });
             try {
               onSynced?.(item.op);
@@ -679,6 +695,45 @@ export function createOutbox({
       void flush();
     },
 
+    async enqueueCorrection(sessionId, replacement, originalId) {
+      const db = await getDb();
+      const owner = stampOwner();
+      const tx = db.transaction(["outbox", "kv"], "readwrite");
+      const txDone = tx.done;
+      // Observe aborts immediately, since a request may reject before we
+      // reach the await below and IndexedDB then rejects `done` as well.
+      void txDone.catch(() => undefined);
+      const outboxStore = tx.objectStore("outbox");
+      const kvStore = tx.objectStore("kv");
+      const linkKey = cacheKeys.sessionCorrectionLinks(sessionId);
+      try {
+        await outboxStore.add(makePendingItem(
+          { kind: "insert", table: "sets", payload: replacement },
+          owner,
+        ));
+        await outboxStore.add({
+          ...makePendingItem(
+          { kind: "insert", table: "set_voids", payload: { set_id: originalId } },
+          owner,
+          ),
+          correction_link: {
+            session_id: sessionId,
+            replacement_id: replacement.id,
+            original_id: originalId,
+          },
+        });
+        const links = (await kvStore.get(linkKey) as Record<string, string> | undefined) ?? {};
+        await kvStore.put({ ...links, [replacement.id]: originalId }, linkKey);
+        await txDone;
+      } catch (error) {
+        try { tx.abort(); } catch { /* transaction may already have aborted */ }
+        await txDone.catch(() => undefined);
+        throw error;
+      }
+      await refreshCountsAfterCommit();
+      void flush();
+    },
+
     flush,
 
     async retryDead() {
@@ -798,7 +853,7 @@ export function createOutbox({
     async inspect() {
       const db = await getDb();
       const rows = await readAll(db);
-      return rows.map(({ key, item }): OutboxEntry => {
+      return rows.filter(({ item }) => item.status !== "receipt").map(({ key, item }): OutboxEntry => {
         const dead = item.status === "dead";
         return {
           key,
@@ -810,6 +865,7 @@ export function createOutbox({
           last_code: item.last_code ?? null,
           last_status: item.last_status ?? null,
           user_id: item.user_id,
+          correction_link: item.correction_link,
           state: dead ? "dead" : replayable(item) ? "waiting" : "held",
           cause: dead ? deadKind(item.last_code, item.last_status) : null,
           retryable: dead && isRetryable(item),
@@ -858,7 +914,7 @@ export function createOutbox({
       const db = await getDb();
       const rows = await readAll(db);
       return new Set(
-        rows
+        rows.filter(({ item }) => item.status !== "receipt")
           .map((r) => r.item.op)
           .filter(
             (
@@ -917,6 +973,20 @@ export function createOutbox({
           )
           .map((op) => op.id),
       );
+    },
+
+    async correctionLinks(sessionId) {
+      const owner = whoAmI();
+      if (!owner) return {};
+      const rows = await readAll(await getDb());
+      const links: Record<string, string> = {};
+      for (const { item } of rows) {
+        const link = item.correction_link;
+        if (item.user_id === owner && link?.session_id === sessionId) {
+          links[link.replacement_id] = link.original_id;
+        }
+      }
+      return links;
     },
 
     start() {
