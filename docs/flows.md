@@ -240,10 +240,24 @@ Supabase sends the stock link email and the paste path is the working one.
 
 ## History and corrections
 
-- **Pick an exercise** — a picker sheet at the top of the screen, LOGGED
-  tags on exercises that have data, first one with data selected on entry.
-  (Selection is component state: switching tabs and back resets it.)
-- **Charts** — per-exercise e1RM (with goal %) and weekly working sets.
+- **Record list** — `/history` opens on a list: a search field, PINNED GOALS
+  (each a card with the newest e1RM, target, % and a progress bar, plus a quiet
+  `◆ Pinned` text toggle), then RECENT (most recently performed day first;
+  ties broken by how many sessions in the last 90 days included the exercise,
+  then name; each row shows its e1RM and a `◇ Pin` toggle), then "Search the
+  full library" (the picker sheet), then bodyweight, then the week, check-ins,
+  coach observations and session log. Empty: "Your record starts with your
+  first finished session." Tapping a row opens its detail; `‹ Record` returns.
+  Selection is component state: switching tabs and back resets it.
+- **Pin** — an exercise is pinned exactly when a `goals` row exists for it.
+  `◇ Pin` writes one with a target a little above the current e1RM (about 5%,
+  rounded up to 2.5 kg / 5 lb); `◆ Pinned` deletes it. Needs an e1RM, so it is
+  disabled until the exercise has a 1–8 rep working set. Goal writes go
+  straight to PostgREST (not the outbox), so they need a connection; a failure
+  is reported and the list re-reads the server's state.
+- **Detail goal card** — pinned: the target with `−` / `+` (2.5 kg or 5 lb per
+  tap) and `◆ Pinned`; unpinned: "Pin as goal".
+- **Charts** — per-exercise e1RM (dashed goal line, goal %) and weekly working sets.
   Both show a loading state while fetching rather than their empty copy, and
   both refetch after a void or a discard so a correction is visible
   immediately.

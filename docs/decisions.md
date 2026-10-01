@@ -3176,3 +3176,32 @@ on every visibility change and every minute. A session left open for days
 delays the update that long unless the app is closed, which activates the
 waiting worker on the next launch; the overnight sweep closes stale sessions.
 
+## 2026-10-01 Record: pinned means having a goal; recent-first ordering
+
+The Record tab asked you to search the library for the lifts you actually
+train. It now lists them recent-first and lets you pin the ones you chase.
+
+**No schema change.** A pin is a `goals` row (an exercise with a target e1RM),
+so "pinned" is simply "has a goal"; there is no `pinned` flag to drift out of
+step with the target. `goals` already has owner CRUD RLS and `unique (user_id,
+exercise_id)`, so pin is an upsert on that key and unpin is a delete (the sets
+are untouched). The PWA previously only read goals (they were set from Claude
+via MCP `set_goal`); the writes go direct to PostgREST rather than the outbox,
+because the outbox is the append-only training record and its insert upserts
+on `id`. The cost is that pinning needs a connection; the screen applies the
+change optimistically, serialises writes, and re-reads `v_goal_progress` after
+the last one, so the percentage always comes from the view and is never
+computed or stored in the client.
+
+**Order.** Most recently performed calendar day first; "most done" breaks ties,
+defined as distinct sessions in the last 90 days (sessions, not sets, so a long
+back-off ladder does not outrank a lift trained more often); then name. Because
+the primary key is the day, everything from today's session ties and the lift
+trained most often rises. Dates and counts come from `v_live_sets`, the e1RM
+from `v_session_best_e1rm`, via `lib/record.ts` (ordering only, no metrics).
+A pinned exercise appears only under PINNED GOALS. An exercise with no
+1–8 rep working set has no e1RM and cannot be pinned yet.
+
+New offline cache keys `goals` and `recordIndex` join the set-derived
+invalidation family.
+
