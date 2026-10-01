@@ -272,6 +272,44 @@ describe("Session focus rest panel", () => {
   });
 });
 
+describe("Session focus keyboard", () => {
+  it("D12: after LOG, focus stays inside the screen instead of falling to <body>", async () => {
+    await seed([rx("bench", "bench-press", "Bench Press", 60)]);
+    renderSession();
+
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await settle();
+    const log = screen.getByRole("button", { name: "LOG SET" });
+    log.focus();
+    expect(document.activeElement).toBe(log);
+    fireEvent.click(log);
+    // a browser drops focus from a control that turns disabled while saving
+    log.blur();
+    await screen.findByText("LAST SET");
+    await settle();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.querySelector(".focus-deck")!.contains(document.activeElement)).toBe(true);
+    expect((document.activeElement as HTMLElement).textContent).toMatch(/LOG SET/);
+  });
+
+  it("D12: finishing an exercise's last set advances and keeps focus on the next LOG, not <body>", async () => {
+    await seed([rx("bench", "bench-press", "Bench Press", 60, 1), rx("row", "row", "Row", 40, 1)]);
+    renderSession();
+
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await settle();
+    const log = screen.getByRole("button", { name: "LOG SET" });
+    log.focus();
+    fireEvent.click(log);
+    log.blur();
+    await screen.findByText("LAST SET");
+    await settle();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(screen.getByRole("heading", { name: "Row" })).toBeTruthy();
+    expect((document.activeElement as HTMLElement).textContent).toMatch(/LOG SET/);
+  });
+});
+
 describe("Session focus load picture", () => {
   it("offers LOAD NEXT with the plates while resting on a plate-loaded exercise", async () => {
     equipment(["bench-press", "Bench Press", "barbell"]);

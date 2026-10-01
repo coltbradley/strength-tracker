@@ -365,7 +365,7 @@ export function FocusDeck({
   return (
     <section className="focus-deck">
       <div className="focus-deck-status" aria-live="polite">
-        <h1 className="focus-deck-name">
+        <h1 className="focus-deck-name" tabIndex={-1}>
           {supersetHeading ? supersetHeading.title : entry.name}
         </h1>
         <div className="focus-deck-position-row">

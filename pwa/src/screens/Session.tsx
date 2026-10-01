@@ -388,6 +388,27 @@ export function Session() {
   /** A set is being written to the local queue: the button says Saving… and
    *  cannot be pressed again until the write has settled. */
   const [logSaving, setLogSaving] = useState(false);
+  // LOG is disabled while the set saves, and a browser drops focus from a
+  // control that becomes disabled — then Tab starts again from the top of the
+  // page after every set (D12). Once the save settles, if focus fell to
+  // <body>, put it back where the next keystroke is useful.
+  const wasLogSaving = useRef(false);
+  useEffect(() => {
+    const was = wasLogSaving.current;
+    wasLogSaving.current = logSaving;
+    if (!was || logSaving) return;
+    const raf = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body && active.isConnected) return;
+      const deck = document.querySelector(".focus-deck");
+      const target =
+        deck?.querySelector<HTMLElement>(".focus-log:not(:disabled)") ??
+        deck?.querySelector<HTMLElement>(".focus-next") ??
+        deck?.querySelector<HTMLElement>(".focus-deck-name");
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [logSaving]);
   /** True for one `--motion-fast` pulse after a tap lands on the 200 ms
    *  duplicate-LOG lock. The tap did something — it just wasn't a second
    *  insert — and `.is-held` (styles.css) says so instead of the button
