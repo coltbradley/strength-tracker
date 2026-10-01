@@ -582,6 +582,13 @@ export function Session() {
   const [sessionUnitState, setSessionUnitState] = useState<{
     ownerId: string; sessionId: string; unit: Unit;
   } | null>(null);
+  // The unit the lifter picked for THIS session before any owner was known
+  // (F-8). Saving waits for an owner, but the visible switch still applies; it
+  // is adopted (and saved) when the owner arrives, and wins over a saved value
+  // so the screen never flips units under a staged number.
+  const [localUnitState, setLocalUnitState] = useState<{ sessionId: string; unit: Unit } | null>(null);
+  const localUnitRef = useRef(localUnitState);
+  localUnitRef.current = localUnitState;
   const [sessionEntryOrderState, setSessionEntryOrderState] = useState<{
     ownerId: string; sessionId: string; keys: string[];
   } | null>(null);
@@ -600,7 +607,9 @@ export function Session() {
       sessionUnitState?.ownerId === identityOwner &&
       sessionUnitState.sessionId === sessionId
     ? sessionUnitState.unit
-    : deviceUnit;
+    : sessionId && localUnitState?.sessionId === sessionId
+      ? localUnitState.unit
+      : deviceUnit;
   const prefsReady =
     !sessionId ||
     prefsReadyScope === prefsScope ||
@@ -630,7 +639,19 @@ export function Session() {
         cancelled || identityEpochRef.current !== identityEpoch ||
         knownOwner() !== ownerId || sessionIdRef.current !== requestedSession
       ) return;
-      setSessionUnitState(prefs.unit ? { ownerId, sessionId: requestedSession, unit: prefs.unit } : null);
+      const chosenHere = localUnitRef.current?.sessionId === requestedSession
+        ? localUnitRef.current.unit
+        : null;
+      const unitNow = chosenHere ?? prefs.unit ?? null;
+      setSessionUnitState(unitNow ? { ownerId, sessionId: requestedSession, unit: unitNow } : null);
+      if (chosenHere) {
+        setLocalUnitState(null);
+        void writeSessionPrefs(ownerId, requestedSession, { unit: chosenHere }, () =>
+          knownOwner() === ownerId && sessionIdRef.current === requestedSession,
+        ).catch((error: unknown) => {
+          reportError(error, "save session unit");
+        });
+      }
       setSessionEntryOrderState(prefs.entryOrder
         ? { ownerId, sessionId: requestedSession, keys: prefs.entryOrder }
         : null);
@@ -3082,10 +3103,14 @@ export function Session() {
         return nextDrafts;
       });
     }
+    if (!ownerId && requestedSession) {
+      // No owner to save under yet: apply it for this session, here only.
+      setLocalUnitState({ sessionId: requestedSession, unit: next });
+    }
     setSessionUnitState(ownerId && requestedSession
       ? { ownerId, sessionId: requestedSession, unit: next }
       : null);
-    if (ownerId && requestedSession) {
+    if (ownerId && requestedSession && !sessionOwnerHeld()) {
       const isCurrent = () =>
         identityEpochRef.current === identityEpoch &&
         knownOwner() === ownerId &&
@@ -4110,7 +4135,7 @@ export function Session() {
           unit={unit}
           deviceUnit={deviceUnit}
           onUnitChange={switchWorkoutUnit}
-          unitDisabled={!prefsReady || !identityOwner}
+          unitDisabled={!prefsReady}
           entryProgress={entryProgress}
           entryState={entryState}
           formatScheme={scheme}

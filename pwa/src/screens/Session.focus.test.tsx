@@ -804,6 +804,31 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() => expect(screen.queryByText(/belongs to another account/i)).toBeNull());
   });
 
+  it("F-8: with no known owner the unit switch still applies locally, and the owner arriving keeps the choice and saves it", async () => {
+    resetDbForTests();
+    localStorage.clear();
+    receiptIdentity.userId = null;
+    setSetting("unit", "kg");
+    await seed();
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    const toPounds = await unitToggle("Show weights in pounds");
+    expect((toPounds as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(toPounds);
+    await vi.waitFor(() => expect(unitButton("Show weights in kilograms").getAttribute("aria-pressed")).toBe("false"));
+    expect(unitButton("Show weights in pounds").getAttribute("aria-pressed")).toBe("true");
+    expect(getUnit()).toBe("kg"); // the device default is untouched
+
+    // the owner arrives with a different saved unit: this session's own choice wins
+    await cacheSet(cacheKeys.sessionPrefs(receiptOwner, active.id), { unit: "kg" });
+    receiptIdentity.userId = receiptOwner;
+    act(() => { for (const listener of receiptIdentity.listeners) listener(receiptOwner); });
+    await vi.waitFor(() => expect(sessionPrefsMock.write).toHaveBeenCalled());
+    expect(sessionPrefsMock.write.mock.calls.at(-1)?.[2]).toEqual({ unit: "lb" });
+    expect(unitButton("Show weights in pounds").getAttribute("aria-pressed")).toBe("true");
+    expect(getUnit()).toBe("kg");
+  });
+
   it("discards a delayed preference read after A changes to B", async () => {
     resetDbForTests();
     const ownerA = receiptOwner;
