@@ -180,3 +180,28 @@ describe("per-hand loads", () => {
     ]);
   });
 });
+
+describe("groupSets keeps what was typed (F-3)", () => {
+  const typedSet = (loadKg: number, enteredLoad: number, enteredUnit: "kg" | "lb") =>
+    ({ loadKg, warmup: false, enteredLoad, enteredUnit });
+
+  it("stores a typed 22.25 kg as 22.25, not 22.3", () => {
+    const [g] = groupSets([typedSet(22.25, 22.25, "kg")], 5, false, REST);
+    expect(g!.load_kg).toBe(22.25);
+    expect(g!.entered_load).toBe(22.25);
+    expect(g!.entered_unit).toBe("kg");
+  });
+
+  it("stores a typed 225.25 lb as 225.25, with the total the database recomputes", () => {
+    const [g] = groupSets([typedSet(fromDisplay(225.25, "lb"), 225.25, "lb")], 5, false, REST, 0, null, "reps", "total", "lb");
+    expect(g!.entered_load).toBe(225.25);
+    expect(g!.entered_unit).toBe("lb");
+    expect(g!.load_kg).toBe(102.17);
+  });
+
+  it("a stepped (untyped) 1.25 kg load keeps its second decimal", () => {
+    const [g] = groupSets([{ loadKg: 21.25, warmup: false }], 5, false, REST);
+    expect(g!.entered_load).toBe(21.25);
+    expect(g!.load_kg).toBe(21.25);
+  });
+});

@@ -211,6 +211,7 @@ import {
   stagedDisplayLoad,
   stepKgFor,
   toDisplay,
+  toTypedDisplay,
   type Unit,
 } from "../lib/units";
 import type {
@@ -1382,7 +1383,7 @@ export function Session() {
   const loadSteps = (exerciseId: string, u: Unit): StepDef[] => {
     const coarse = stepKgFor(exerciseId, u, false);
     const fine = stepKgFor(exerciseId, u, true);
-    const label = (kg: number) => toDisplay(kg, u);
+    const label = (kg: number) => toTypedDisplay(kg, u);
     // `announce` says the step in the unit the lifter reads. Without it the
     // spoken label carried the kg equivalent of a five-pound plate —
     // "increase load by 2.2679618500000003".
@@ -1817,7 +1818,7 @@ export function Session() {
       ? sourceEntryKg
       : repeatTyped !== undefined
         ? Math.round(fromDisplay(repeatTyped, unit) * 100) / 100
-        : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100;
+        : Math.round(fromDisplay(toTypedDisplay(sourceEntryKg, unit), unit) * 100) / 100;
     setEntryKg(prefilledLoad);
     setReps(p.reps);
     stagedDraftsRef.current[draftKey] = {
@@ -2786,7 +2787,7 @@ export function Session() {
           isMachineBase ? "BASE WEIGHT" : "BAR WEIGHT"
         } IN ${unit.toUpperCase()}`,
         action: "BACK TO PLATES",
-        initial: String(toDisplay(currentBaseKg, unit)),
+        initial: String(toTypedDisplay(currentBaseKg, unit)),
         allowDecimal: true,
         onCommit: (value) => {
           const kg = Math.min(
@@ -3009,7 +3010,7 @@ export function Session() {
         ? sourceEntryKg
         : repeatTyped !== undefined
           ? Math.round(fromDisplay(repeatTyped, unit) * 100) / 100
-          : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100,
+          : Math.round(fromDisplay(toTypedDisplay(sourceEntryKg, unit), unit) * 100) / 100,
       reps: prefill.reps,
       setType: kind,
       rpe: null,
@@ -3074,7 +3075,7 @@ export function Session() {
             ? draft
             : {
                 ...draft,
-                enteredLoad: toDisplay(draft.entryKg, unit),
+                enteredLoad: toTypedDisplay(draft.entryKg, unit),
                 enteredUnit: unit,
               };
         }
@@ -3843,7 +3844,7 @@ export function Session() {
               ? {
                   ...prior,
                   entryKg,
-                  enteredLoad: toDisplay(entryKg, unit),
+                  enteredLoad: toTypedDisplay(entryKg, unit),
                   enteredUnit: unit,
                   loadEdited: true,
                 }

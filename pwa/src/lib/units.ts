@@ -27,6 +27,22 @@ export function toDisplay(kg: number, unit: Unit): number {
   return Math.round(v * 10) / 10;
 }
 
+/**
+ * kg -> the number a lifter READS AND KEEPS in a load field: stepper face,
+ * step label, pad prefill, a draft's typed value. Unlike `toDisplay` it does
+ * not round a kg value to one decimal, because kg totals are stored at two
+ * (numeric(6,2)) and the 1.25 kg step lands on them: 21.25 stays 21.25, never
+ * 21.3. lb is a conversion of a 2-decimal kg total, so it reads at one
+ * decimal, the finest at which that total can be recovered. Use `toDisplay`
+ * for read-only quotes of a converted value; use this wherever the shown
+ * number feeds a write or becomes the typed value.
+ */
+export function toTypedDisplay(kg: number, unit: Unit): number {
+  return unit === "kg"
+    ? Math.round(kg * 100) / 100
+    : Math.round(kgToLb(kg) * 10) / 10;
+}
+
 /** Keep an already staged weight legible when the display unit changes.
  * Two decimals on the converted view preserve the hundredth-kg value held
  * by the draft; ordinary unstaged suggestions keep the usual one decimal. */
@@ -41,7 +57,7 @@ export function stagedDisplayLoad(
     const converted = unit === "kg" ? entryKg : kgToLb(entryKg);
     return Math.round(converted * 100) / 100;
   }
-  return toDisplay(entryKg, unit);
+  return toTypedDisplay(entryKg, unit);
 }
 
 /** value entered/shown in the display unit -> kg (unrounded). For DISPLAY

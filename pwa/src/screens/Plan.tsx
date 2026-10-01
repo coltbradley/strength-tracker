@@ -63,7 +63,7 @@ import { useArmed } from "../hooks/useArmed";
 import { useDragList } from "../hooks/useDragList";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { cacheGet, cacheKeys } from "../lib/db";
-import { fromDisplay, stepKg, toDisplay } from "../lib/units";
+import { fromDisplay, stepKg, toTypedDisplay } from "../lib/units";
 import {
   enteredKg,
   offersLoadEntry,
@@ -201,7 +201,7 @@ export function patchFrom(d: RxDraft): PrescriptionPatch {
   const direct =
     d.mode === "kg" && d.load_kg > 0 && d.entered_unit !== null
       ? buildSetLoad({
-          typedValue: d.entered_load ?? toDisplay(d.load_kg, d.entered_unit),
+          typedValue: d.entered_load ?? toTypedDisplay(d.load_kg, d.entered_unit),
           typedUnit: d.entered_unit,
           loadEntry: d.load_entry,
         })
@@ -945,7 +945,7 @@ export function Plan() {
     draft?.mode === "pct"
       ? `${draft.load_pct}% TM`
       : draft
-        ? `${toDisplay(draft.load_kg, unit)} ${unit}`
+        ? `${toTypedDisplay(draft.load_kg, unit)} ${unit}`
         : "";
 
   return (
@@ -1235,7 +1235,7 @@ export function Plan() {
                       entered, so the summary and the editor agree and a pair
                       of 20s never reads as a single 40. */}
                   {r.load_kg !== null
-                    ? ` · ${toDisplay(enteredKg(r.load_kg, r.load_entry ?? "total"), unit)} ${unit}${
+                    ? ` · ${toTypedDisplay(enteredKg(r.load_kg, r.load_entry ?? "total"), unit)} ${unit}${
                         r.load_entry === "per_side" ? "/hand" : ""
                       }`
                     : r.load_pct_tm !== null
@@ -1416,7 +1416,7 @@ export function Plan() {
                               : "ONE TOTAL WEIGHT"
                           } IN ${unit.toUpperCase()}`,
                           action: "SET",
-                          initial: String(toDisplay(draft.load_kg, unit)),
+                          initial: String(toTypedDisplay(draft.load_kg, unit)),
                           allowDecimal: true,
                           onCommit: (v) =>
                             setDraft({
@@ -1440,19 +1440,19 @@ export function Plan() {
                         ...draft,
                         load_kg: v,
                         entered_unit: unit,
-                        entered_load: toDisplay(v, unit),
+                        entered_load: toTypedDisplay(v, unit),
                       })}
                       snap
                       steps={[
                         {
                           label: "−",
                           delta: -stepKg(unit, false),
-                          announce: `${toDisplay(stepKg(unit, false), unit)} ${unit}`,
+                          announce: `${toTypedDisplay(stepKg(unit, false), unit)} ${unit}`,
                         },
                         {
                           label: "+",
                           delta: stepKg(unit, false),
-                          announce: `${toDisplay(stepKg(unit, false), unit)} ${unit}`,
+                          announce: `${toTypedDisplay(stepKg(unit, false), unit)} ${unit}`,
                         },
                       ]}
                     />

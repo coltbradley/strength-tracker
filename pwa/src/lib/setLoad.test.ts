@@ -10,7 +10,8 @@ import {
   shownLoadValue,
   typedFromDraft,
 } from "./setLoad";
-import { stagedDisplayLoad, toDisplay } from "./units";
+import { stagedDisplayLoad, toTypedDisplay, KG_PER_LB as KGLB } from "./units";
+import { stepTo } from "../components/Stepper";
 
 // The database half of the proof (every built load inserted into the real
 // trigger, thousands of cases) is scripts/load-integrity.test.mjs. These are
@@ -133,7 +134,48 @@ describe("display round trip", () => {
       const typed = typedFromDraft({ entryKg }, unit);
       expect(typed.unit).toBe(unit);
       expect(typed.value).toBe(stagedDisplayLoad(entryKg, undefined, undefined, unit));
-      expect(typed.value).toBe(toDisplay(entryKg, unit));
+      expect(typed.value).toBe(toTypedDisplay(entryKg, unit));
+    }
+  });
+
+  // F-2: a load stepped on the lifter's own grid keeps what the step says. The
+  // stepper walks a kg total (stepTo rounds it to 2 decimals); the typed
+  // number it implies, what buildSetLoad stores, and what is shown afterwards
+  // must all be the same number.
+  it("F-2: stepping the 1.25 kg and 2.5 lb grids stores and shows exactly the stepped number", () => {
+    const grids = [
+      { unit: "kg" as const, step: 1.25, deltaKg: 1.25 },
+      { unit: "lb" as const, step: 2.5, deltaKg: 2.5 * KGLB },
+    ];
+    for (const g of grids) {
+      for (const start of [0, 20, 22.5, 45, 62.5]) {
+        let entryKg = start;
+        for (let n = 1; n <= 240; n++) {
+          entryKg = stepTo(entryKg, g.deltaKg, 0, 999, true);
+          const typed = typedFromDraft({ entryKg }, g.unit);
+          // the stepper face, the typed number and the stored pair agree
+          expect(typed.value).toBe(toTypedDisplay(entryKg, g.unit));
+          expect(stagedDisplayLoad(entryKg, undefined, undefined, g.unit)).toBe(typed.value);
+          const built = buildSetLoad({ typedValue: typed.value, typedUnit: g.unit, loadEntry: "total" });
+          expect(built.entered_load).toBe(typed.value);
+          expect(built.entered_unit).toBe(g.unit);
+          expect(shownLoadValue(built, g.unit)).toBe(typed.value);
+          // and it is on the grid the lifter stepped, not a rounded neighbour
+          if (g.unit === "kg") expect(typed.value % 1.25).toBeCloseTo(0, 9);
+        }
+      }
+    }
+    // the named cases
+    expect(typedFromDraft({ entryKg: 21.25 }, "kg").value).toBe(21.25);
+    expect(typedFromDraft({ entryKg: 64.75 }, "kg").value).toBe(64.75);
+  });
+
+  it("F-2/F-3: a typed 2-decimal load is stored and shown exactly as typed in either unit", () => {
+    for (const [v, u] of [[21.25, "kg"], [22.25, "kg"], [62.25, "kg"], [225.25, "lb"], [102.5, "lb"]] as const) {
+      const b = buildSetLoad({ typedValue: v, typedUnit: u, loadEntry: "total" });
+      expect(b.entered_load).toBe(v);
+      expect(shownLoadValue(b, u)).toBe(v);
+      expect(stagedDisplayLoad(b.load_kg, b.entered_load!, b.entered_unit!, u)).toBe(v);
     }
   });
 

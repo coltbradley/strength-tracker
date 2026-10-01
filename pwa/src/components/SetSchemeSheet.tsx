@@ -19,7 +19,7 @@ import { Sheet } from "./Sheet";
 import { Stepper } from "./Stepper";
 import { NumberPad, type PadRequest } from "./NumberPad";
 import { formatClock, formatStoredTwin } from "../lib/format";
-import { fromDisplay, stepKg, toDisplay, type Unit } from "../lib/units";
+import { fromDisplay, stepKg, toTypedDisplay, type Unit } from "../lib/units";
 import { getDefaultRestSeconds } from "../lib/settings";
 import {
   enteredKg,
@@ -62,9 +62,23 @@ export function snapToUnit(kg: number, unit: Unit): number {
   return Math.max(step, Math.round(kg / step) * step);
 }
 
-interface PlannedSet {
+export interface PlannedSet {
   loadKg: number;
   warmup: boolean;
+  /** What the lifter typed on the pad, and its unit. The steppers only know a
+   *  kg total, which cannot give a typed 225.25 lb back (one decimal of lb),
+   *  so a typed value rides along until a stepper moves the load. `groupSets`
+   *  hands it to `buildSetLoad` as typed (F-3). */
+  enteredLoad?: number;
+  enteredUnit?: Unit;
+}
+
+/** The number to show for a planned set: what was typed when it was typed in
+ *  this unit, else the stepper's own reading of the kg total. */
+function shownPlannedLoad(s: PlannedSet, unit: Unit): number {
+  return s.enteredLoad !== undefined && s.enteredUnit === unit
+    ? s.enteredLoad
+    : toTypedDisplay(s.loadKg, unit);
 }
 
 const MAX_SETS = 20;
@@ -95,7 +109,9 @@ export function groupSets(
     const built =
       byFeel || s.loadKg <= 0
         ? null
-        : buildSetLoad({ typedValue: toDisplay(s.loadKg, unit), typedUnit: unit, loadEntry });
+        : s.enteredLoad !== undefined && s.enteredUnit !== undefined
+          ? buildSetLoad({ typedValue: s.enteredLoad, typedUnit: s.enteredUnit, loadEntry })
+          : buildSetLoad({ typedValue: toTypedDisplay(s.loadKg, unit), typedUnit: unit, loadEntry });
     // The database refuses a prescription of 0; no load is stored as none.
     const load = built?.load_kg ?? null;
     const last = out[out.length - 1];
@@ -231,7 +247,14 @@ export function SetSchemeSheet({
   /** Apply set 1's weight to everything below it. The "actually they're all
    *  the same" escape hatch, so a straight 5x5 is two taps, not five. */
   const matchAll = () =>
-    setSets((prev) => prev.map((s) => ({ ...s, loadKg: prev[0]!.loadKg })));
+    setSets((prev) =>
+      prev.map((s) => ({
+        ...s,
+        loadKg: prev[0]!.loadKg,
+        enteredLoad: prev[0]!.enteredLoad,
+        enteredUnit: prev[0]!.enteredUnit,
+      })),
+    );
 
   const groups = groupSets(
     sets,
@@ -467,7 +490,7 @@ export function SetSchemeSheet({
       ) : (
         sets.length > 1 && (
           <button type="button" className="btn btn-ghost" onClick={matchAll}>
-            Make every set {toDisplay(sets[0]!.loadKg, unit)} {unit}
+            Make every set {shownPlannedLoad(sets[0]!, unit)} {unit}
           </button>
         )
       )}
@@ -496,34 +519,40 @@ export function SetSchemeSheet({
                   setPad({
                     label: `SET ${i + 1} · LOAD IN ${unit.toUpperCase()}`,
                     action: "SET LOAD",
-                    initial: String(toDisplay(s.loadKg, unit)),
+                    initial: String(shownPlannedLoad(s, unit)),
                     allowDecimal: true,
-                    onCommit: (v) =>
-                      patch(i, {
-                        loadKg: Math.min(999, Math.max(0, fromDisplay(v, unit))),
-                      }),
+                    onCommit: (v) => {
+                      const kg = fromDisplay(v, unit);
+                      const clamped = Math.min(999, Math.max(0, kg));
+                      // A value the clamp changed is no longer what was typed.
+                      patch(i, clamped === kg
+                        ? { loadKg: clamped, enteredLoad: v, enteredUnit: unit }
+                        : { loadKg: clamped, enteredLoad: undefined, enteredUnit: undefined });
+                    },
                     onCancel: () => setPad(null),
                   })
                 }
-                display={`${toDisplay(s.loadKg, unit)} ${unit}`}
+                display={`${shownPlannedLoad(s, unit)} ${unit}`}
                 subText={
                   s.loadKg === 0 ? "bodyweight" : formatStoredTwin(s.loadKg, unit)
                 }
                 value={s.loadKg}
                 min={0}
                 max={999}
-                onChange={(v) => patch(i, { loadKg: v })}
+                onChange={(v) =>
+                  patch(i, { loadKg: v, enteredLoad: undefined, enteredUnit: undefined })
+                }
                 snap
                 steps={[
                   {
                     label: "−",
                     delta: -stepKg(unit, false),
-                    announce: `${toDisplay(stepKg(unit, false), unit)} ${unit}`,
+                    announce: `${toTypedDisplay(stepKg(unit, false), unit)} ${unit}`,
                   },
                   {
                     label: "+",
                     delta: stepKg(unit, false),
-                    announce: `${toDisplay(stepKg(unit, false), unit)} ${unit}`,
+                    announce: `${toTypedDisplay(stepKg(unit, false), unit)} ${unit}`,
                   },
                 ]}
               />

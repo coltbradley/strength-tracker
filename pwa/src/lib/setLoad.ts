@@ -306,8 +306,8 @@ export interface TypedLoad {
  * The typed number a draft stands for. A draft that carries an authored pair
  * (typed in some unit) is that pair, whatever unit the screen shows now; a
  * draft that does not is the kg value read in the screen's unit at the one
- * decimal the steppers display. Display and write both call this, so what the
- * lifter sees on the stepper is what is saved.
+ * decimal (lb) or two (kg) the steppers display. Display and write both call
+ * this, so what the lifter sees on the stepper is what is saved.
  */
 export function typedFromDraft(
   draft: { entryKg: number; enteredLoad?: number; enteredUnit?: LoadUnit },
@@ -315,8 +315,12 @@ export function typedFromDraft(
 ): TypedLoad {
   if (draft.enteredLoad !== undefined && draft.enteredUnit)
     return { value: draft.enteredLoad, unit: draft.enteredUnit };
-  const v = displayUnit === "kg" ? draft.entryKg : draft.entryKg / KG_PER_LB;
-  return { value: Math.round(v * 10) / 10, unit: displayUnit };
+  // kg keeps the two decimals the stepper lands on (1.25 kg steps: 21.25);
+  // lb is a conversion of a 2-decimal kg total, so it reads at one decimal.
+  const value = displayUnit === "kg"
+    ? Math.round(draft.entryKg * 100) / 100
+    : Math.round((draft.entryKg / KG_PER_LB) * 10) / 10;
+  return { value, unit: displayUnit };
 }
 
 // ---- display ----------------------------------------------------------------

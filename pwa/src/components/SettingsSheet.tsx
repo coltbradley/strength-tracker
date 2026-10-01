@@ -49,7 +49,7 @@ import {
   usePlatesOnHand,
   useSettingRaw,
 } from "../hooks/useSettings";
-import { fromDisplay, toDisplay, type Unit } from "../lib/units";
+import { fromDisplay, toDisplay, toTypedDisplay, type Unit } from "../lib/units";
 import {
   currentTrainingMax,
   getExercises,
@@ -738,12 +738,12 @@ function SettingControl({
         return (
           <PadRow
             label={def.label}
-            display={`${toDisplay(value as number, unit)} ${unit}`}
+            display={`${toTypedDisplay(value as number, unit)} ${unit}`}
             onOpen={() =>
               openPad({
                 label: `${def.label.toUpperCase()} · ${unit.toUpperCase()}`,
                 action: "SET",
-                initial: String(toDisplay(value as number, unit)),
+                initial: String(toTypedDisplay(value as number, unit)),
                 allowDecimal: true,
                 onCommit: (v) =>
                   commit(
@@ -765,12 +765,12 @@ function SettingControl({
         return (
           <PadRow
             label={`${def.label} · ${unit}`}
-            display={`± ${toDisplay(per[unit], unit)} ${unit}`}
+            display={`± ${toTypedDisplay(per[unit], unit)} ${unit}`}
             onOpen={() =>
               openPad({
                 label: `${def.label.toUpperCase()} · ${unit.toUpperCase()}`,
                 action: "SET",
-                initial: String(toDisplay(per[unit], unit)),
+                initial: String(toTypedDisplay(per[unit], unit)),
                 allowDecimal: true,
                 onCommit: (v) => {
                   const kg = fromDisplay(v, unit);
@@ -1006,7 +1006,7 @@ function ExerciseOverrides({
           parts.push(`REST ${formatClock(pref.restSeconds)}`);
         }
         if (pref.loadStepKg !== undefined) {
-          parts.push(`± ${toDisplay(pref.loadStepKg, unit)}`);
+          parts.push(`± ${toTypedDisplay(pref.loadStepKg, unit)}`);
         }
         return (
           <button
