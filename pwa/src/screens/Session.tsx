@@ -1715,7 +1715,9 @@ export function Session() {
     stagedDraftsRef.current[draftKey] = {
       entryKg: prefilledLoad,
       reps: p.reps,
-      setType: stagedKind,
+      // a freshly opened entry takes its type from ITS plan, never from the
+      // toggle another exercise left behind
+      setType: fresh ? openingKind : stagedKind,
       rpe: fresh ? null : rpe,
       durationSeconds,
       enteredLoad: authoredInDisplayUnit ? bracket?.entered_load ?? undefined : undefined,
