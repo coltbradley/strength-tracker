@@ -94,6 +94,11 @@ function ratio(tokens: Record<string, string>, fg: string, bg: string): number {
 }
 
 const SURFACES = ["bg", "bg-raised", "bg-input"];
+// Version D focus-dock surfaces: the dock panel, a card or number sitting on
+// it, the keys and chips on top, the pressed key, and the current-row tint.
+// (surface-key-press is a momentary state and is left out of the secondary
+// text and outline pairs: light --text-dim is 4.4:1 on it, a known shortfall.)
+const DOCK = ["surface-dock", "surface-card", "surface-key", "surface-current"];
 // the rest strip sits on its own tinted surfaces, not on a page surface
 const REST = ["rest-surface", "rest-ready-surface"];
 
@@ -117,7 +122,26 @@ const PAIRS: [string, string[], number, string][] = [
   ["control-border-color", SURFACES, 3, "control outlines (WCAG 1.4.11)"],
   ["focus-set-future", SURFACES, 3, "upcoming-set outline"],
   ["accent", SURFACES, 3, "accent UI (focus ring, fills)"],
+  // Version D dock and current-row surfaces (and the receipts, state words and
+  // load picture that sit on them)
+  ["text", [...DOCK, "surface-key-press"], 4.5, "dock: load, reps, keys, row text"],
+  ["text-dim", DOCK, 4.5, "dock: secondary text, receipts, state words"],
+  ["state-skipped", DOCK, 4.5, "skipped state word"],
+  ["accent-dim", ["surface-dock", "surface-card", "surface-current"], 4.5, "accent as text on dock cards (NOW, receipts)"],
+  ["focus-set-current", ["surface-dock", "surface-card", "surface-current"], 4.5, "current-set label on dock and current row"],
+  ["danger", ["surface-dock", "surface-card", "surface-current"], 4.5, "Needs review receipt, errors"],
+  ["info", ["surface-dock", "surface-card", "surface-current"], 4.5, "On this phone receipt"],
+  ["control-border-color", DOCK, 3, "dock: control outlines"],
+  ["focus-set-future", DOCK, 3, "dock: upcoming-set outline"],
+  ["text-on-accent", ["accent", "accent-press"], 4.5, "Log button and accent fills"],
+  ["focus-set-completed-mark", ["focus-set-completed"], 4.5, "completed mark"],
 ];
+
+// The load picture: every plate class and the steel read against the surface
+// they are drawn on (graphical objects, WCAG 1.4.11). Dark only: the light
+// palette is the approved design, and its yellow 15 plate is identified by its
+// hairline edge and label rather than by contrast with white.
+const PLATES = ["plate-25", "plate-20", "plate-15", "plate-10", "plate-5", "plate-2h", "lp-steel"];
 
 const THEMES: [string, Record<string, string>][] = [
   ["light", LIGHT],
@@ -129,6 +153,16 @@ describe.each(THEMES)("%s theme contrast", (_name, tokens) => {
     for (const bg of bgs) {
       it(`${fg} on ${bg} >= ${min}:1 (${why})`, () => {
         expect(ratio(tokens, fg, bg)).toBeGreaterThanOrEqual(min);
+      });
+    }
+  }
+});
+
+describe("dark theme load picture", () => {
+  for (const plate of PLATES) {
+    for (const surface of ["surface-dock", "surface-card", "bg"]) {
+      it(`${plate} on ${surface} >= 3:1`, () => {
+        expect(ratio(DARK, plate, surface)).toBeGreaterThanOrEqual(3);
       });
     }
   }
@@ -158,5 +192,23 @@ describe("input placeholder contrast", () => {
   });
   it("light does not regress below 4.4:1", () => {
     expect(ratio(LIGHT, "placeholder", "bg-input")).toBeGreaterThanOrEqual(4.4);
+  });
+});
+
+// A colour added to `:root` without a dark value silently keeps its LIGHT
+// value in dark. Every literal-colour token must be overridden in the dark
+// block or be listed here with the reason it need not be.
+describe("dark block coverage", () => {
+  // alpha-only or theme-neutral by construction
+  const THEME_NEUTRAL: Record<string, string> = {
+    "mask-opaque": "alpha-only: a mask shows the layer where it is opaque",
+  };
+  it("overrides every literal colour token declared in :root", () => {
+    const dark = decls(block(':root[data-theme="dark"]'));
+    const missing = Object.entries(LIGHT)
+      .filter(([, value]) => /^(#[0-9a-f]{3,8}|rgb\(\s*\d)/i.test(value))
+      .map(([name]) => name)
+      .filter((name) => !(name in dark) && !(name in THEME_NEUTRAL));
+    expect(missing).toEqual([]);
   });
 });

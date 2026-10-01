@@ -372,10 +372,31 @@
 
     /* competition plates: same hues, lifted so the dark ones (5 kg, collar)
      * still separate from the dark page; the edge flips to a light hairline */
-    --plate-5: #5d646f;
+    --plate-5: #707885;
     --plate-collar: #7b828c;
     --plate-steel: #8f959e;
     --plate-edge: rgb(255 255 255 / 0.28);
+
+    /* the rest of the competition plates and the generic stack/shaft grey
+     * (lib/loadPicture drawings): lifted a step so each one stays >= 3:1 on
+     * the dock and cards, hues unchanged so the stack still reads by colour */
+    --plate-25: #d4606b;
+    --plate-20: #6d93de;
+    --plate-15: #d9b440;
+    --plate-10: #4fa575;
+    --plate-2h: #c2646f;
+    --plate-1h: #9ba1aa;
+
+    /* Version D focus-dock surfaces (palette slots; the roles --surface-* and
+     * --text-on-accent in :root follow them). Stepped up from the page so the
+     * dock reads as a panel, cards sit above it, keys above cards, and the
+     * current row carries a warm ochre-tinted fill. --cream is the "ink on a
+     * dark fill" slot, which in dark is the page itself. */
+    --cream: #16131c;
+    --white: #2a2533;
+    --mist: #362f43;
+    --haze: #1e1a26;
+    --straw: #3b2f18;
   }
 
   :root[data-demo-text-scale="130"] {
