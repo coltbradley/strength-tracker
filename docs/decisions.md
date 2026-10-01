@@ -3198,6 +3198,16 @@ the original UUID before it can say Synced.
 
 Each corrected set leaves one small metadata row in this device's IndexedDB.
 It lives until the device's app data is cleared; there is no cleanup or
-compaction rule yet. That bounded growth preserves the append-only relation
-without adding a store, schema version, cross-account cache retention, or a
-production data migration.
+compaction rule yet. Storage growth is proportional to the number of
+corrections and has no lifetime bound short of clearing app data. This
+preserves the append-only relation without adding a store, schema version,
+cross-account cache retention, or a production data migration.
+
+Rollback limitation: an older app does not recognize the `receipt` status. Its
+normalizer treats the witness as pending, may replay the already-acknowledged
+void idempotently, and then deletes the witness. If KV was also cleared, the
+next version cannot determine that the replacement was a correction. The pure
+projector has no evidence to distinguish it from an ordinary set and can call
+an exact replacement row Synced. Task 3 does not detect or prevent this case;
+it may lose correction receipt context, though the append-only server rows
+remain unchanged.

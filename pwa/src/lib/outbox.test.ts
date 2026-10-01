@@ -227,6 +227,125 @@ describe("outbox", () => {
     }]);
   });
 
+  it("keeps the original visible when a dead replacement is followed by an independent set", async () => {
+    const replacement = { ...setA, id: "77777777-7777-4777-8777-777777777777" };
+    const calls: Call[] = [];
+    let online = false;
+    const transport: OutboxTransport = {
+      async insert(table, payload) {
+        calls.push({ kind: "insert", table, payload });
+        if (table === "sets" && (payload as SetInsert).id === replacement.id) return checkErr;
+        return null;
+      },
+      async update() { return null; },
+    };
+    const box = createOutbox({ getDb, transport, isOnline: () => online,
+      currentUserId: () => "alice", stampUserId: () => "alice" });
+    await box.enqueueCorrection(session.id, replacement, setA.id);
+    await box.enqueue({ kind: "insert", table: "sets", payload: setB });
+
+    online = true;
+    await box.flush();
+
+    expect(calls.map((call) => [call.table, (call.payload as { id?: string; set_id?: string }).id ?? (call.payload as { set_id?: string }).set_id]))
+      .toEqual([["sets", replacement.id], ["sets", setB.id]]);
+    expect(await box.inspect()).toMatchObject([
+      { table: "sets", state: "dead" },
+      { table: "set_voids", state: "waiting", correction_link: { original_id: setA.id } },
+    ]);
+
+    // A fresh outbox instance simulates reload. The correction void remains
+    // queued and cannot hide the already accepted original set.
+    const reloaded = createOutbox({ getDb, transport, isOnline: () => online,
+      currentUserId: () => "alice", stampUserId: () => "alice" });
+    await reloaded.flush();
+    expect(calls).toHaveLength(2);
+    expect((await reloaded.inspect()).map((row) => [row.table, row.state]))
+      .toEqual([["sets", "dead"], ["set_voids", "waiting"]]);
+  });
+
+  it("sends a linked void after retrying and acknowledging its replacement", async () => {
+    const replacement = { ...setA, id: "88888888-8888-4888-8888-888888888888" };
+    const calls: Call[] = [];
+    const responses: Array<TransportError | null> = [rlsErr];
+    let online = false;
+    const transport: OutboxTransport = {
+      async insert(table, payload) {
+        calls.push({ kind: "insert", table, payload });
+        const response = responses.shift();
+        return response === undefined ? null : response;
+      },
+      async update() { return null; },
+    };
+    const box = createOutbox({ getDb, transport, isOnline: () => online,
+      currentUserId: () => "alice", stampUserId: () => "alice" });
+    await box.enqueueCorrection(session.id, replacement, setA.id);
+    online = true;
+    await box.flush();
+    expect(calls.map((call) => call.table)).toEqual(["sets"]);
+    expect(await box.inspect()).toMatchObject([
+      { table: "sets", state: "dead" },
+      { table: "set_voids", state: "waiting" },
+    ]);
+
+    await box.retryDead();
+
+    expect(calls.map((call) => call.table)).toEqual(["sets", "sets", "set_voids"]);
+    expect(await box.inspect()).toEqual([]);
+  });
+
+  it("keeps a dead linked void parked when its replacement cannot be retried", async () => {
+    const replacement = { ...setA, id: "99999999-9999-4999-8999-999999999999" };
+    const { calls, transport } = makeTransport();
+    let online = false;
+    const box = createOutbox({ getDb, transport, isOnline: () => online,
+      currentUserId: () => "alice", stampUserId: () => "alice" });
+    await box.enqueueCorrection(session.id, replacement, setA.id);
+    const db = await getDb();
+    for (const key of await db.getAllKeys("outbox")) {
+      const item = (await db.get("outbox", key))!;
+      const replacementRow = item.op.kind === "insert" && item.op.table === "sets";
+      await db.put("outbox", {
+        ...item,
+        status: "dead",
+        last_error: replacementRow ? checkErr.message : rlsErr.message,
+        last_code: replacementRow ? checkErr.code : rlsErr.code,
+        last_status: replacementRow ? checkErr.status : rlsErr.status,
+      }, key);
+    }
+
+    online = true;
+    expect(await box.retryDead()).toEqual({ requeued: 0, stuck: 2 });
+    expect(calls).toEqual([]);
+    expect((await box.inspect()).map((row) => [row.table, row.state]))
+      .toEqual([["sets", "dead"], ["set_voids", "dead"]]);
+  });
+
+  it("retries a dead linked void only alongside its retryable replacement", async () => {
+    const replacement = { ...setA, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
+    const { calls, transport } = makeTransport();
+    let online = false;
+    const box = createOutbox({ getDb, transport, isOnline: () => online,
+      currentUserId: () => "alice", stampUserId: () => "alice" });
+    await box.enqueueCorrection(session.id, replacement, setA.id);
+    const db = await getDb();
+    for (const key of await db.getAllKeys("outbox")) {
+      const item = (await db.get("outbox", key))!;
+      await db.put("outbox", {
+        ...item,
+        status: "dead",
+        last_error: "permission denied",
+        last_code: "42501",
+        last_status: 403,
+      }, key);
+    }
+
+    online = true;
+    expect(await box.retryDead()).toEqual({ requeued: 2, stuck: 0 });
+    expect(calls.map((call) => call.table)).toEqual(["sets", "set_voids"]);
+    expect(await box.inspect()).toEqual([]);
+  });
+
   it("keeps an owner-bound ACK witness after both writes leave the queue", async () => {
     const { transport, calls } = makeTransport();
     let online = false;

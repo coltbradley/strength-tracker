@@ -419,6 +419,26 @@ export function createOutbox({
     return out;
   }
 
+  /**
+   * A correction's original void must wait while its replacement is anywhere
+   * in the durable queue, including dead letters. Read current IndexedDB state
+   * here because an earlier row in this flush may just have been acknowledged
+   * and deleted; the flush-start snapshot cannot distinguish that from pending.
+   */
+  async function correctionReplacementQueued(
+    db: Database,
+    item: OutboxItem,
+  ): Promise<boolean> {
+    const link = item.correction_link;
+    if (!link) return false;
+    const rows = await db.getAll("outbox");
+    return rows.some((candidate) =>
+      candidate.op.kind === "insert" &&
+      candidate.op.table === "sets" &&
+      candidate.op.payload.id === link.replacement_id
+    );
+  }
+
   function counts(rows: Row[]): {
     pending: number;
     dead: number;
@@ -549,6 +569,14 @@ export function createOutbox({
         // Someone else's queued work: leave it exactly where it is.
         if (!replayable(row.item)) continue;
         let item = row.item;
+        if (
+          item.op.kind === "insert" && item.op.table === "set_voids" &&
+          item.correction_link && await correctionReplacementQueued(db, item)
+        ) {
+          // Keep the original set visible until the replacement has actually
+          // left the durable queue after an ACK. Continue independent writes.
+          continue;
+        }
 
         attempt: for (;;) {
           const err = await applyOp(item.op);
@@ -743,8 +771,22 @@ export function createOutbox({
       const rows = await readAll(db);
       const queuedSetIds = new Set(rows.flatMap(({ item }) =>
         item.op.kind === "insert" && item.op.table === "sets" ? [item.op.payload.id] : []));
+      const retryingSetIds = new Set(rows.flatMap(({ item }) =>
+        item.status === "dead" && isRetryable(item) &&
+        item.op.kind === "insert" && item.op.table === "sets"
+          ? [item.op.payload.id]
+          : []));
       for (const row of rows) {
         if (row.item.status !== "dead") continue;
+        const correctionLink = row.item.correction_link;
+        if (correctionLink && row.item.op.kind === "insert" &&
+            row.item.op.table === "set_voids") {
+          const replacementQueued = await correctionReplacementQueued(db, row.item);
+          if (replacementQueued && !retryingSetIds.has(correctionLink.replacement_id)) {
+            stuck++;
+            continue;
+          }
+        }
         // A refused void/note cannot pass RLS until its parent set is on the
         // server. Keep it parked while that set remains anywhere in this queue.
         if (row.item.op.kind === "insert" &&
