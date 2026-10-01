@@ -23,6 +23,12 @@ import {
 } from "../lib/data";
 import { outbox } from "../lib/sync";
 import { reportError, toast } from "../lib/errors";
+import { getCurrentUserId } from "../lib/currentUser";
+import {
+  readFinishedSessionProof,
+  type FinishedSessionProof,
+} from "../lib/finishedProof";
+import { useOnline } from "../hooks/useFabDrag";
 import { useUnit } from "../hooks/useUnit";
 import {
   fromDisplay,
@@ -88,9 +94,43 @@ interface EndDraft {
   noteOpen: boolean;
 }
 
+/**
+ * What the two receipt tiles may say. Only a proof read by exact set UUID
+ * (`readFinishedSessionProof`) puts a number on ON SERVER; a server-confirmed
+ * zero is the one other thing that is known. Everything else is "unknown" and
+ * the tile says so instead of guessing.
+ */
+export type EndReceipts =
+  | { known: true; onServer: number; onPhone: number }
+  | { known: false; reason: "checking" | "offline" | "unavailable" };
+
+export function endReceipts({
+  proof,
+  confirmedEmpty,
+  online,
+  readSettled,
+}: {
+  proof: FinishedSessionProof | null;
+  confirmedEmpty: boolean;
+  online: boolean;
+  readSettled: boolean;
+}): EndReceipts {
+  if (confirmedEmpty) return { known: true, onServer: 0, onPhone: 0 };
+  if (proof) {
+    return { known: true, onServer: proof.confirmed, onPhone: proof.unconfirmed };
+  }
+  if (!online) return { known: false, reason: "offline" };
+  return { known: false, reason: readSettled ? "unavailable" : "checking" };
+}
+
 export function End() {
   const navigate = useNavigate();
   const unit = useUnit();
+  const online = useOnline();
+  const [proof, setProof] = useState<FinishedSessionProof | null>(null);
+  const [proofSettled, setProofSettled] = useState(false);
+  // bumps whenever the queue moves, so the tiles follow a flush that lands
+  const [queueTick, setQueueTick] = useState(0);
   const [active, setActive] = useState<ActiveSession | null | undefined>(
     undefined,
   );
@@ -252,6 +292,33 @@ export function End() {
     const t = setInterval(() => setNow(Date.now()), DURATION_TICK_MS);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = outbox.subscribe(() => setQueueTick((n) => n + 1));
+    return unsubscribe;
+  }, []);
+
+  // Receipts for the two tiles. Evidence only ever adds: a read that cannot
+  // run (offline, no known owner, a failed request) leaves `proof` null and the
+  // tile says it does not know.
+  const activeId = active?.id ?? null;
+  useEffect(() => {
+    const owner = getCurrentUserId();
+    if (activeId === null || !online || !owner) {
+      setProof(null);
+      setProofSettled(false);
+      return;
+    }
+    let cancelled = false;
+    void readFinishedSessionProof(activeId, owner).then((p) => {
+      if (cancelled) return;
+      setProof(p);
+      setProofSettled(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, online, queueTick, setCount]);
 
   // A discard queued while offline may settle later from the global outbox
   // online/foreground retry. Keep the End screen authoritative until that
@@ -575,14 +642,26 @@ export function End() {
       }
     : null;
 
+  const receipts = endReceipts({
+    proof,
+    confirmedEmpty,
+    online,
+    readSettled: proofSettled,
+  });
+  const unknownCopy = (r: Extract<EndReceipts, { known: false }>): string =>
+    r.reason === "checking"
+      ? "checking…"
+      : r.reason === "offline"
+        ? "offline, can’t check"
+        : "can’t confirm yet";
+
   return (
     <div className="screen end-screen">
-      <h1 className="screen-title">End session</h1>
+      <h1 className="end-title">That’s the session.</h1>
       {/* the exercise breakdown is device-local; when the set count came from
           the server instead (cold cache) there is no breakdown to show, and
           "0 OF 7 EXERCISES" next to "3 SETS LOGGED" would just be wrong */}
-      <section className="end-summary-card" aria-label="Session summary">
-        <span className="field-label">SESSION SUMMARY</span>
+      <section className="end-summary-block" aria-label="Session summary">
         <p className="end-summary">
           {duration !== null && `${duration} · `}
           {countKnown
@@ -596,9 +675,37 @@ export function End() {
         </p>
       </section>
 
-      <section className="rule-section">
-        <div className="section-head">
-          <span className="field-label">SESSION RPE</span>
+      {/* Receipts, not hopes: ON SERVER counts only sets the server returned
+          by exact UUID. Anything unconfirmed is ON PHONE, and when the read
+          itself cannot be made the tile says so. */}
+      <section className="end-tiles" aria-label="Where this session’s sets are">
+        <div className="end-tile end-tile-server">
+          <span className="end-tile-label">✓ ON SERVER</span>
+          <span className="end-tile-value">
+            {receipts.known ? receipts.onServer : "—"}
+          </span>
+          {!receipts.known && (
+            <span className="end-tile-note" role="status">
+              {unknownCopy(receipts)}
+            </span>
+          )}
+        </div>
+        <div className="end-tile end-tile-phone">
+          <span className="end-tile-label">◐ ON PHONE</span>
+          <span className="end-tile-value">
+            {receipts.known ? receipts.onPhone : "—"}
+          </span>
+          {!receipts.known && (
+            <span className="end-tile-note">
+              {receipts.reason === "checking" ? "checking…" : "not confirmed"}
+            </span>
+          )}
+        </div>
+      </section>
+
+      <section className="end-block" aria-labelledby="end-rpe-label">
+        <div id="end-rpe-label" className="end-question">
+          How hard was it overall?
         </div>
         <div className="rpe-grid">
           {SESSION_RPE_CHOICES.map((n) => (
@@ -615,78 +722,79 @@ export function End() {
         </div>
       </section>
 
-      <section className="rule-section">
-        <div className="section-head">
-          <span className="field-label">BODYWEIGHT · {unit.toUpperCase()}</span>
-          {bwOpen && <span className="section-meta">{bwSub}</span>}
-        </div>
+      <div className="end-add-row">
         {bwOpen ? (
-          <Stepper
-            label="bodyweight"
-            inline
-            display={String(toDisplay(bwKg, unit))}
-            onTapValue={() => setBwPad(true)}
-            value={bwKg}
-            min={1}
-            max={MAX_BODYWEIGHT_KG}
-            onChange={setBwKg}
-            steps={[
-              { label: "−", delta: -stepKg(unit, true) },
-              { label: "+", delta: stepKg(unit, true) },
-            ]}
-          />
+          <section className="end-bw" aria-label="Bodyweight">
+            <div className="end-bw-head">
+              <span className="end-question">Bodyweight · {unit}</span>
+              <span className="section-meta">{bwSub}</span>
+            </div>
+            <Stepper
+              label="bodyweight"
+              inline
+              display={String(toDisplay(bwKg, unit))}
+              onTapValue={() => setBwPad(true)}
+              value={bwKg}
+              min={1}
+              max={MAX_BODYWEIGHT_KG}
+              onChange={setBwKg}
+              steps={[
+                { label: "−", delta: -stepKg(unit, true) },
+                { label: "+", delta: stepKg(unit, true) },
+              ]}
+            />
+          </section>
         ) : (
           <button
             type="button"
-            className="btn btn-secondary"
+            className="end-add-btn"
             onClick={() => setBwOpen(true)}
           >
-            Add bodyweight
+            + Bodyweight
           </button>
         )}
-      </section>
-
-      <section className="rule-section">
-        <div className="section-head">
-          <span className="field-label">NOTE · OPTIONAL</span>
-        </div>
-        {noteOpen ? (
-          <>
-            <textarea
-              className="input note-input"
-              placeholder="How did it go?"
-              rows={3}
-              autoFocus
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-            <div className="chip-row">
-              {NOTE_CHIPS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className="chip"
-                  onClick={() => addChip(c)}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          </>
-        ) : (
-          // collapsed like Bodyweight above — the primary action stays in view
+        {!noteOpen && (
           <button
             type="button"
-            className="btn btn-secondary"
+            className="end-add-btn"
             onClick={() => setNoteOpen(true)}
           >
-            Add note
+            + Note
           </button>
         )}
-      </section>
+      </div>
+      {noteOpen && (
+        <section className="end-block" aria-label="Note">
+          <textarea
+            className="input note-input"
+            placeholder="How did it go?"
+            aria-label="Session note"
+            rows={3}
+            autoFocus
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <div className="chip-row">
+            {NOTE_CHIPS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                className="chip"
+                onClick={() => addChip(c)}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {confirmedEmpty ? (
         <>
+          <div className="end-note">
+            The server confirms nothing was logged. Discard it, or end it and
+            count the day as done.
+          </div>
           {/* an accidental start must not mark the planned day DONE — with
               nothing logged AND the server agreeing, discard is the honest
               default. An UNCONFIRMED zero never gets here. */}
@@ -740,17 +848,17 @@ export function End() {
         </div>
       ) : setCount > 0 ? (
         <div className="microcopy">
-          Sessions with logged sets stay in your training history. End the
-          session to keep this workout recorded.
+          Sets still on this phone keep sending after you end.
         </div>
       ) : null}
       <button
         type="button"
         className="btn btn-ghost btn-block"
+        aria-label="Back to session"
         onClick={() => navigate("/session")}
         disabled={discardAttemptAt !== null}
       >
-        Back to session
+        ‹ Back
       </button>
 
 
