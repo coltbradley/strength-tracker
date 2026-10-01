@@ -148,7 +148,7 @@ Supabase sends the stock link email and the paste path is the working one.
   full workout" button), exercise name, `SET n OF m`, one hero value (load
   for a loaded implement, reps for bodyweight — whichever is hard to get
   right for the movement), the plate bar or per-hand breakdown when it
-  applies (plates vs stack, per exercise and device-local — a stack/cable
+  applies (plates vs stack, per exercise and synced to your account — a stack/cable
   exercise gets no calculator at all, since a weight pin has no plates to
   show), the secondary field with its target quietly beside it, a "Last: 145
   kg × 5 working" line once something is logged (tapping it opens the same
@@ -267,13 +267,17 @@ Supabase sends the stock link email and the paste path is the working one.
 
 ## Settings and data
 
-Gear icon, top right, from any screen. All of it is device-local: there is
-no settings table in Postgres (see decisions.md). Sections:
+Gear icon, top right, from any screen. Global settings are device-local;
+there is no `user_settings` table. The one exception is the per-exercise
+overrides (base weight, plates vs stack, one or two dumbbells, rest, step,
+unit), which sync to your account (decisions.md, 2026-10-01): set on one phone,
+true on the others, dropped from a phone when a different account signs in.
+Sections:
 
 - **UNITS / GYM / LOGGING / TIMING / DISPLAY** — a typed registry renders
   itself, so every setting carries its own validation, migration and
   control: unit; plate and bar inventories and the default bar; coarse and
-  fine load steps; per-exercise overrides (bar, rest, increment); fallback
+  fine load steps; per-exercise overrides (bar, rest, increment; synced); fallback
   load and reps; default rest; auto-start-rest; week start day. Rest alerts
   sit alongside them as a bespoke row, because the value is a browser
   notification permission rather than a stored preference — and the rest

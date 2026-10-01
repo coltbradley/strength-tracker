@@ -508,7 +508,8 @@ batch of correctness bugs, and settings. What changed structurally, and why:
   "PWA writes actuals" and "both write plans", for data no view and no MCP
   tool reads. Accepted cost: settings do not sync across devices, and a
   cleared browser storage loses them. Export exists; training data is never
-  in there.
+  in there. (Reversed for the per-exercise record by 2026-10-01 "Per-exercise
+  prefs sync across devices"; global settings stay device-local.)
 - **Two correctness fixes changed semantics, not just behaviour.** A planned
   day now reads DONE only when its session has `ended_at` — an open session
   used to mark its day done, so mid-workout the same day showed RESUME and
@@ -3214,8 +3215,14 @@ not from the kv cache. The settings envelope already holds the device copy,
 and a cached server read could only be older, or another account's in the
 moment before the cache owner check runs. The device merges them per exercise
 by `updated_at` and uploads what the server is behind on. A client clock that
-runs fast wins conflicts until real time catches up. We accept that for a
-display preference.
+runs fast wins conflicts until real time catches up, but only within a bound:
+the database refuses an `updated_at` more than a day ahead of its own clock or
+not finite (an unbounded stamp such as 9999-12-31 or `infinity` would have beaten
+every later write for ever, with no delete policy to undo it), and the device
+ignores a stamp past that bound rather than building on it. Equal stamps are
+broken by value, identically in the trigger and the client merge, so two devices
+that stamped the same millisecond still converge. We accept the rest of the skew
+for a display preference.
 
 No delete policy. A preference would normally qualify for one, like
 `coach_memory` or `bodyweight_log`, but under last-write-wins a hard delete
@@ -3235,4 +3242,20 @@ and the flusher holds it for that person. Accepted cost: two people sharing
 one phone no longer share per-exercise prefs, and a change made in the boot
 window before a different account's identity resolves is dropped with the
 rest of the previous owner's prefs. "Reset all settings" resets this device
-only, and the synced prefs return on the next merge.
+only; it asks for a merge straight away and the synced prefs return with it.
+
+Reconcile triggers: start, sign-in (the ownership claim runs synchronously on
+the identity change, not behind a possibly hung read), the `online` event, and
+a return to the foreground at most every five minutes. A read that failed does
+not start the five-minute clock. The read pages past PostgREST's `max_rows`
+and refuses to merge a partial list.
+
+Hardening, decided with the table (the migration was edited before it shipped):
+the insert and update policies also require the exercise to be visible to the
+caller, so another account's private custom exercise is refused exactly like a
+nonexistent id, instead of the foreign key answering differently (an existence
+oracle). A pref the server refuses for good (exercise gone or not visible,
+23503 or an RLS 42501) is discarded from the outbox and dropped locally, not
+parked as a dead item, which every reconcile would otherwise re-queue. The
+unit switch no longer remaps a base weight that is not in any bar list (a
+sled's 34 kg), and a remap it does make is stamped and synced like any edit.

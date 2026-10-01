@@ -1111,7 +1111,7 @@ export function Session() {
   // the total is what the column caps, so a per-side entry caps at half
   const maxEntryKg = perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
 
-  /** Flip the convention for this exercise, persisted device-locally beside
+  /** Flip the convention for this exercise, saved with the exercise's prefs (synced to the account) beside
    *  its bar and increment. The number on screen deliberately does NOT move:
    *  it is what is written on the implement, and only the count of implements
    *  changed. */
@@ -1128,7 +1128,7 @@ export function Session() {
     setExerciseLoadEntry(openEntry.exercise_id, perSide ? "total" : "per_side");
   };
 
-  /** Flip plates<->stack for this exercise, persisted device-locally. Only
+  /** Flip plates<->stack for this exercise, saved with its prefs (synced to the account). Only
    *  meaningful for machine/cable work — a barbell's icon has no
    *  `onToggle` at all (see `styleIcon` below), so this is never reachable
    *  for one. */
@@ -2176,7 +2176,7 @@ export function Session() {
       roundInputKey === null
         ? null
         : (entries.find((entry) => entry.key === roundInputKey) ?? null);
-    // Base/bar weight is a device-local per-exercise setting, not part of
+    // Base/bar weight is a per-exercise pref (synced to the account), not part of
     // any draft — it does not go through the round-vs-open-entry draft
     // split below, which exists only for entryKg/reps.
     if (pad.kind === "base") {
