@@ -1183,63 +1183,36 @@
   .train-home {
     display: flex;
     flex-direction: column;
-    gap: var(--s-5);
-    min-height: min(520px, calc(100dvh - 150px));
-    padding-top: var(--s-4);
-  }
-
-  .train-home .train-date {
-    color: var(--text-dim);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-label));
-  }
-
-  .train-week-context {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-    padding: var(--s-4) var(--s-3) var(--s-2);
-    border: var(--rule-hair);
-    border-radius: var(--radius-card);
-    background: var(--paper-raised);
-  }
-
-  .train-week-context .week-track {
-    margin-inline: calc(var(--s-3) * -1);
-  }
-
-  .train-week-context .week-page {
-    padding-inline: var(--s-3);
-  }
-
-  .train-week-context .week-cell {
-    min-width: var(--tap-min);
-  }
-
-  .train-week-hint {
-    margin: 0;
-    color: var(--text-dim);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
-    line-height: 1.35;
+    gap: var(--s-8);
+    padding-top: var(--s-6);
   }
 
   .train-date,
   .train-kicker {
     color: var(--accent);
     font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
+    font-size: var(--fs-meta);
     font-weight: 700;
     letter-spacing: var(--track-3);
     text-transform: uppercase;
   }
 
+  /* Top-aligned, directly under the week strip: content used to be centred
+   * in a tall box, which left an empty gap above it and the action far below. */
   .train-state {
     display: flex;
     flex-direction: column;
-    gap: var(--s-5);
-    padding: var(--s-6);
-    border: var(--rule-hair);
-    border-radius: var(--radius-card);
-    background: var(--paper-raised);
+    justify-content: flex-start;
+    gap: var(--s-6);
+    padding: 0;
+  }
+
+  .train-date {
+    color: var(--text-dim);
+  }
+
+  .train-kicker-dim {
+    color: var(--text-dim);
   }
 
   .train-title {
@@ -1254,7 +1227,7 @@
   .train-shape {
     color: var(--text-dim);
     font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-label));
+    font-size: var(--fs-meta);
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--track-2);
     text-transform: uppercase;
@@ -1265,19 +1238,32 @@
   }
 
   .train-first-up {
+    background: var(--paper-raised);
     border: var(--rule-hair);
     border-radius: var(--radius-card);
-    background: var(--paper);
     display: flex;
     flex-direction: column;
-    gap: var(--s-3);
-    padding: var(--s-4);
+    gap: var(--s-2);
+    padding: var(--s-7) var(--s-7);
+  }
+
+  .train-first-up em {
+    color: var(--text-dim);
+    font-size: var(--fs-sm);
+    font-style: normal;
+  }
+
+  .train-first-up small {
+    color: var(--text-dim);
+    font-size: var(--fs-sm);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
   }
 
   .train-first-up span {
     color: var(--text-dim);
     font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
+    font-size: var(--fs-meta);
     font-weight: 700;
     letter-spacing: var(--track-3);
     text-transform: uppercase;
@@ -1297,7 +1283,7 @@
   .train-cache-note {
     color: var(--text-dim);
     font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
+    font-size: var(--fs-meta);
     letter-spacing: var(--track-2);
     text-transform: uppercase;
   }
@@ -1321,14 +1307,155 @@
     background: var(--accent-press);
   }
 
+  /* The one big action. Go opens the preview sheet, where Start lives. */
+  .train-go {
+    min-height: var(--tap-log);
+    font-size: var(--fs-lg);
+    font-weight: 700;
+  }
+
+  /* Check in is a real 44px pill here, not the tiny text link Program uses. */
+  .train-home .date-heading-row {
+    align-items: center;
+  }
+
+  .train-home .checkin-link {
+    min-height: var(--tap-min);
+    padding: 0 var(--s-7);
+    border-radius: var(--radius);
+    background: var(--rule-hair-color);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* Offline / could-not-refresh / draft: dashed, quiet, never alarming. */
+  .train-note {
+    border: var(--bw) dashed var(--control-outline);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--fs-sm);
+    line-height: 1.4;
+    padding: var(--s-5) var(--s-6);
+  }
+
+  /* The turn after Finish: confirm it before saying anything about rest. */
+  .train-finished {
+    background: var(--paper-raised);
+    border: var(--bw-hair) solid var(--rule-color);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--fs-body);
+    font-weight: 700;
+    line-height: 1.4;
+    padding: var(--s-6) var(--s-7);
+  }
+
+  /* Coach note: ink, with a speech bubble. Ochre is only ever the current
+   * set, so the coach never borrows it. */
+  .train-coach {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-4);
+    color: var(--text);
+    font-size: var(--fs-sm);
+    line-height: 1.45;
+  }
+
+  .train-coach-icon {
+    flex: none;
+    margin-top: var(--s-1);
+  }
+
+  .train-coach p {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* This week, with the state spelled out under each day's glyph. */
+  .train-week {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--s-2);
+  }
+
+  .train-day {
+    align-items: center;
+    border-radius: var(--radius);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-height: var(--tap-min);
+    padding: var(--s-3) 0;
+    text-decoration: none;
+  }
+
+  .train-day-today {
+    background: var(--rule-hair-color);
+  }
+
+  .train-day-letter,
+  .train-day-word {
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+  }
+
+  .train-day-letter {
+    color: var(--text-dim);
+  }
+
+  .train-day-glyph {
+    font-size: var(--fs-base);
+    line-height: 1.2;
+  }
+
+  .train-day-word {
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  .train-day-done,
+  .train-day-skipped,
+  .train-day-past,
+  .train-day-rest {
+    color: var(--text-dim);
+  }
+
+  .train-day-missed {
+    color: var(--danger);
+  }
+
+  .train-day-today .train-day-glyph,
+  .train-day-today .train-day-word {
+    color: var(--accent-dim);
+  }
+
+  /* Seven 44px cells need 308px; a 320px phone offers 284px. Same escape as
+   * .week-strip (see the responsive contract in the token block): bleed into
+   * the gutter and drop the gap, 320 / 7 = 45.7px per cell. */
+  @media (max-width: 359px) {
+    .train-week {
+      margin-left: calc(var(--gutter) * -1);
+      margin-right: calc(var(--gutter) * -1);
+      gap: 0;
+    }
+  }
+
   .train-next-workout {
     display: flex;
     flex-direction: column;
     gap: var(--s-2);
+  }
+
+  .train-next-workout {
+    background: var(--paper-raised);
     border: var(--rule-hair);
     border-radius: var(--radius-card);
-    background: var(--paper);
-    padding: var(--s-4);
+    padding: var(--s-7);
   }
 
   .train-next-workout span,
@@ -1341,6 +1468,10 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--track-2);
     text-transform: uppercase;
+  }
+
+  .train-next-workout span {
+    font-size: var(--fs-meta);
   }
 
   .train-next-workout strong {

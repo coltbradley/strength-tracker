@@ -27,9 +27,52 @@ link the email had stopped containing.
 Custom templates need custom SMTP (`scripts/push-auth-config.sh`). Without it
 Supabase sends the stock link email and the paste path is the working one.
 
+## Train
+
+- **Train tab** (default). Top to bottom, with no empty gap under the strip:
+  the date and a 44px Check in button; this week's seven days, each a glyph
+  with a short state word under it (DONE, SKIP, TODAY, NEXT, REST, DRAFT,
+  MISSED, PAST); then the day. The words come from the same state Program's
+  strip uses, so DONE still means the session has `ended_at` and an empty day
+  is DRAFT, never MISSED. MISSED is said only for a dated, non-empty, unfinished
+  past day AND only once the done-state has been read; if that read failed with
+  nothing cached the past day reads PAST ("not knowing is not failing"). A date
+  with two workouts shows today's pending one over a done one. Tapping a day
+  opens Program (its spoken name ends "open program").
+- **A workout day**: `TODAY · {program}`, the workout label, "{n} movements ·
+  {m} sets" (no duration: nothing in the plan or log yields an honest one),
+  a FIRST UP card (first movement and its scheme, "then …" for the second), the
+  coach note with an ink speech-bubble icon (ochre is reserved for the current
+  set), and a big **Go**. Go opens the workout preview sheet; Start lives there.
+- **Session open**: `IN PROGRESS · N MIN` (past 12 hours it says when it
+  started instead: `STARTED YESTERDAY`), the label, `n sets logged · m planned`
+  (server sets plus sets queued on this phone, less corrections still queued;
+  it includes warmups and extras, so it is not "n of m") and **Resume**. If the
+  server read failed and nothing is cached the count is left out, never 0. An
+  unrecovered open session still gets the orphan card instead.
+- **After finishing today**: a `✓ {label} finished` card comes first, then
+  what is true about the sets, read from the outbox (set writes only, any
+  session): `checking…` until the outbox has been read and who is signed in is
+  known; `N waiting on this phone` (waiting or held: a held write is NOT on the
+  server); `N need review` (refused); and only with none of those, `all sets on
+  the server`. Other queued writes (session end, voids, notes, bodyweight) are
+  never called sets: they add `· N other changes waiting`. Then REST DAY /
+  Recover. and the next workout.
+- **Draft today**: the label and a dashed "Draft — nothing planned in it yet.
+  Not a missed day." with Fill in this day. Offline or failed refresh shows a
+  dashed one-line note over the cached plan.
+- **Nothing ready today**: for a SKIPPED, NO DATE or MISSED day with nothing
+  else to start, the card says "Rest day / Nothing is ready to start today."
+  with View program.
+- **More than one confirmed program**: when any confirmed program has dated
+  days, the strip and cards use the days of all of them (one shared calendar;
+  the card names the program the day belongs to). Undated DAY 1..N programs
+  have no shared order, so only the newest is shown and the others are named in
+  a note ("Also confirmed, not shown here: …").
+
 ## Weekly planning
 
-- **View week** — Today tab (default). A Mon–Sun strip: each cell shows the
+- **View week** — Program tab. A Mon–Sun strip: each cell shows the
   weekday letter and date, and carries its state as a glyph — accent
   underline on today, a dot under a DONE day, struck-through for SKIPPED,
   red for MISSED, a hairline underline for an upcoming planned day, dim for

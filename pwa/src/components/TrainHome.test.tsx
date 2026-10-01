@@ -3,7 +3,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { TrainHome, summarizeTrainWorkout } from "./TrainHome";
+import {
+  TrainHome,
+  inProgressClock,
+  syncLine,
+  summarizeTrainWorkout,
+  type TrainSyncSummary,
+  trainDayWord,
+  type TrainWeekDay,
+} from "./TrainHome";
 import type { PlannedWorkoutRow, ResolvedPrescriptionRow } from "../lib/types";
 
 afterEach(cleanup);
@@ -124,11 +132,11 @@ describe("TrainHome", () => {
 
     expect(screen.getByText("Upper strength")).toBeTruthy();
     expect(screen.getByText("3 movements · 10 sets")).toBeTruthy();
-    expect(screen.getByText("First up")).toBeTruthy();
+    expect(screen.getByText("FIRST UP")).toBeTruthy();
     expect(screen.getByText("Bench press")).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: "View program" }).getAttribute("href"),
-    ).toBe("/program");
+    expect(screen.getByText(/then Chest-supported row/)).toBeTruthy();
+    // no duration is fabricated: the plan has none to compute one from
+    expect(screen.queryByText(/about \d+ min/)).toBeNull();
     expect(screen.queryByRole("button", { name: /check in/i })).toBeNull();
     expect(screen.queryByText(/weigh/i)).toBeNull();
     expect(screen.queryByText(/calendar/i)).toBeNull();
@@ -145,7 +153,7 @@ describe("TrainHome", () => {
       active: {
         id: "session-1",
         planned_workout_id: workout.id,
-        started_at: "2026-09-12T12:00:00.000Z",
+        started_at: new Date().toISOString(),
         workout_label: workout.label,
       },
     });
@@ -153,6 +161,7 @@ describe("TrainHome", () => {
     expect(
       screen.getByRole("link", { name: "Resume" }).getAttribute("href"),
     ).toBe("/session");
+    expect(screen.getByText(/IN PROGRESS · \d+ MIN/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
     expect(screen.queryByText("Bench press")).toBeNull();
   });
@@ -160,6 +169,7 @@ describe("TrainHome", () => {
   it("treats a completed workout as a Record action", () => {
     renderHome({ workout: { workout, state: "DONE" } });
 
+    expect(screen.getByText(/Upper strength finished/)).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "View record" }).getAttribute("href"),
     ).toBe("/history");
@@ -177,12 +187,13 @@ describe("TrainHome", () => {
     renderHome({ workout: { workout, state: "DRAFT" }, prescriptions: [] });
 
     expect(screen.getByText("Upper strength")).toBeTruthy();
-    expect(screen.getByText("No exercises planned yet.")).toBeTruthy();
-    expect(screen.queryByText("Rest day")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    expect(screen.getByText(/Draft — nothing planned in it yet/)).toBeTruthy();
+    expect(screen.getByText(/Not a missed day/)).toBeTruthy();
+    expect(screen.queryByText(/rest day/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Go" })).toBeNull();
     expect(
-      screen.getByRole("link", { name: "View program" }).getAttribute("href"),
-    ).toBe("/program");
+      screen.getByRole("link", { name: "Fill in this day" }).getAttribute("href"),
+    ).toBe("/plan/push");
   });
 
   it("keeps loading and load failures truthful without a dashboard", () => {
@@ -252,8 +263,10 @@ describe("TrainHome", () => {
   it("routes rest days and first runs to Program or existing coach access", () => {
     const onOpenCoach = vi.fn();
     const { rerender } = renderHome({ workout: null });
-    expect(screen.getByText("Rest day")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "View program" })).toBeTruthy();
+    expect(screen.getByText("REST DAY")).toBeTruthy();
+    expect(screen.getByText("Recover.")).toBeTruthy();
+    expect(screen.queryByText(/finished/)).toBeNull();
+    expect(screen.getByRole("link", { name: "See the plan" })).toBeTruthy();
 
     rerender(
       <MemoryRouter>
@@ -290,5 +303,192 @@ describe("check in link", () => {
   it("is absent when there is no one to check in", () => {
     renderHome();
     expect(screen.queryByRole("button", { name: /check in/i })).toBeNull();
+  });
+});
+
+const day = (
+  iso: string,
+  letter: string,
+  state: TrainWeekDay["state"],
+  isToday = false,
+): TrainWeekDay => ({ iso, letter, name: `Day ${iso}`, state, isToday });
+
+describe("week strip state words", () => {
+  it("maps every state to the short word the design names", () => {
+    expect(trainDayWord("DONE")).toBe("DONE");
+    expect(trainDayWord("SKIPPED")).toBe("SKIP");
+    expect(trainDayWord("TODAY")).toBe("TODAY");
+    expect(trainDayWord("REST")).toBe("REST");
+    expect(trainDayWord("UPCOMING")).toBe("NEXT");
+    expect(trainDayWord("DRAFT")).toBe("DRAFT");
+  });
+
+  it("draws a word under each glyph and never reads a DRAFT as missed", () => {
+    renderHome({
+      week: [
+        day("2026-09-07", "M", "DONE"),
+        day("2026-09-08", "T", "SKIPPED"),
+        day("2026-09-09", "W", "DRAFT"),
+        day("2026-09-10", "T", "REST"),
+        day("2026-09-11", "F", "UPCOMING"),
+        day("2026-09-12", "S", "TODAY", true),
+        day("2026-09-13", "S", "MISSED"),
+      ],
+    });
+    const nav = screen.getByRole("navigation", { name: "This week" });
+    const words = [...nav.querySelectorAll(".train-day-word")].map(
+      (n) => n.textContent,
+    );
+    expect(words).toEqual(["DONE", "SKIP", "DRAFT", "REST", "NEXT", "TODAY", "MISSED"]);
+    // the DRAFT cell is named draft, not missed
+    const draft = nav.querySelector(".train-day-draft")!;
+    expect(draft.getAttribute("aria-label")).toBe("Day 2026-09-09, draft, open program");
+    expect(draft.className).not.toContain("missed");
+    expect(nav.querySelector("[aria-current=date]")?.className).toContain(
+      "train-day-today",
+    );
+  });
+
+  it("omits the strip for a program with no dates", () => {
+    renderHome({ week: null });
+    expect(screen.queryByRole("navigation", { name: "This week" })).toBeNull();
+  });
+});
+
+const sync = (over: Partial<TrainSyncSummary> = {}): TrainSyncSummary => ({
+  checked: true,
+  identityKnown: true,
+  waiting: 0,
+  held: 0,
+  dead: 0,
+  otherPending: 0,
+  ...over,
+});
+
+describe("finished today", () => {
+  const props = {
+    workout: { workout: { ...workout, id: "next", label: "Lower B" }, state: "UPCOMING" as const },
+    finishedToday: { ...workout, label: "Lower A" },
+    completedToday: true,
+  };
+
+  it("confirms the finished session before the rest-day content", () => {
+    renderHome({ ...props, sync: sync() });
+    const confirm = screen.getByRole("status");
+    expect(confirm.textContent).toContain("Lower A finished");
+    expect(confirm.textContent).toContain("all sets on the server");
+    expect(screen.getByText("REST DAY")).toBeTruthy();
+    expect(
+      confirm.compareDocumentPosition(screen.getByText("Recover.")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByText("Lower B")).toBeTruthy();
+  });
+
+  it("does not claim everything is on the server while sets are queued", () => {
+    renderHome({ ...props, sync: sync({ waiting: 3 }) });
+    const text = screen.getByRole("status").textContent!;
+    expect(text).not.toContain("on the server");
+    expect(text).toContain("3 waiting on this phone");
+  });
+
+  it("says when the server refused something", () => {
+    renderHome({ ...props, sync: sync({ dead: 1 }) });
+    expect(screen.getByRole("status").textContent).toContain("1 needs review");
+  });
+
+  it("never says all sets are on the server while sets are held (T1)", () => {
+    renderHome({ ...props, sync: sync({ held: 2 }) });
+    const text = screen.getByRole("status").textContent!;
+    expect(text).not.toContain("on the server");
+    expect(text).toContain("2 waiting on this phone");
+  });
+
+  it("says nothing it cannot prove before the outbox is read or identity is known", () => {
+    expect(syncLine(sync({ checked: false }))).toBe("checking…");
+    expect(syncLine(sync({ identityKnown: false }))).toBe("checking…");
+    expect(syncLine(sync({ identityKnown: false, held: 4 }))).toBe(
+      "4 waiting on this phone",
+    );
+  });
+
+  it("does not let other writes pose as sets (T2)", () => {
+    expect(syncLine(sync({ otherPending: 1 }))).toBe(
+      "all sets on the server · 1 other change waiting",
+    );
+    expect(syncLine(sync({ otherPending: 2, dead: 1 }))).toBe(
+      "1 needs review · 2 other changes waiting",
+    );
+  });
+
+  it("prefers exact-UUID receipts to an empty queue, and names what the server did not return", () => {
+    expect(
+      syncLine(sync({ proof: { sets: 6, confirmed: 6, unconfirmed: 0 } })),
+    ).toBe("6 sets confirmed on the server");
+    expect(
+      syncLine(sync({ proof: { sets: 1, confirmed: 1, unconfirmed: 0 } })),
+    ).toBe("1 set confirmed on the server");
+    expect(
+      syncLine(sync({ proof: { sets: 6, confirmed: 4, unconfirmed: 2 } })),
+    ).toBe("2 of 6 sets not confirmed on the server");
+    // queued sets are already counted by the queue: never twice
+    expect(
+      syncLine(sync({ waiting: 2, proof: { sets: 6, confirmed: 4, unconfirmed: 2 } })),
+    ).toBe("2 waiting on this phone");
+    // no proof read: the queue-only wording stands
+    expect(syncLine(sync({ proof: null }))).toBe("all sets on the server");
+  });
+
+  it("renders no sync claim at all without a summary", () => {
+    renderHome({ ...props, sync: null });
+    expect(screen.getByRole("status").textContent).not.toContain("server");
+  });
+});
+
+describe("in-progress card", () => {
+  const active = {
+    id: "session-1",
+    planned_workout_id: workout.id,
+    started_at: new Date().toISOString(),
+    workout_label: workout.label,
+  };
+
+  it("shows nothing for an unknown set count, never 0", () => {
+    renderHome({ active, activeProgress: { setsDone: null, setsPlanned: 12 } });
+    expect(screen.queryByText(/sets? logged/)).toBeNull();
+    expect(screen.queryByText(/0\/12/)).toBeNull();
+  });
+
+  it("separates logged sets from planned sets", () => {
+    renderHome({ active, activeProgress: { setsDone: 14, setsPlanned: 12 } });
+    expect(screen.getByText("14 sets logged · 12 planned")).toBeTruthy();
+  });
+
+  it("does not read a day-old open session as minutes (T7)", () => {
+    const now = Date.parse("2026-10-01T10:00:00");
+    expect(inProgressClock("2026-10-01T09:30:00", now)).toBe("30 MIN");
+    expect(inProgressClock("2026-09-30T09:00:00", now)).toBe("STARTED YESTERDAY");
+    expect(inProgressClock("2026-09-25T09:00:00", now)).toMatch(/^STARTED 25 SEP/);
+  });
+});
+
+describe("PAST", () => {
+  it("is a neutral word, never MISSED, and the cell says it was not checked", () => {
+    expect(trainDayWord("PAST")).toBe("PAST");
+    renderHome({ week: [day("2026-09-07", "M", "PAST")] });
+    const cell = screen
+      .getByRole("navigation", { name: "This week" })
+      .querySelector("a")!;
+    expect(cell.getAttribute("aria-label")).toBe(
+      "Day 2026-09-07, past, completion not checked, open program",
+    );
+    expect(cell.className).not.toContain("missed");
+  });
+});
+
+describe("other confirmed programs", () => {
+  it("names a confirmed program it is not showing", () => {
+    renderHome({ otherPrograms: ["Spring block"] });
+    expect(screen.getByText(/Also confirmed, not shown here: Spring block/)).toBeTruthy();
   });
 });

@@ -24,7 +24,9 @@ import { RateSessionCard } from "../components/RateSessionCard";
 import { CalendarSheet, type CalendarDay } from "../components/CalendarSheet";
 import { TemplateSheet } from "../components/TemplateSheet";
 import { CheckInSheet } from "../components/CheckInSheet";
-import { TrainHome } from "../components/TrainHome";
+import { TrainHome, type TrainWeekDay } from "../components/TrainHome";
+import { useOutboxStatus } from "../hooks/useOutboxStatus";
+import { readFinishedSessionProof, type FinishedSessionProof } from "../lib/finishedProof";
 import {
   applyTemplate,
   createPlannedWorkout,
@@ -36,6 +38,7 @@ import {
   getResolvedPrescriptions,
   getServerSessionSets,
   invalidateForSessionClose,
+  mergeSets,
   staleReason,
   syncOpenSessions,
   updatePlannedWorkout,
@@ -56,7 +59,12 @@ import {
   type EndedSession,
 } from "../lib/review";
 import { useOnline } from "../hooks/useFabDrag";
-import { addDays, startOfWeek, weekDates } from "../lib/calendar";
+import {
+  addDays,
+  startOfWeek,
+  weekDates,
+  weekDates as calendarWeek,
+} from "../lib/calendar";
 import { cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import type { OutboxEntry } from "../lib/outbox";
@@ -91,6 +99,10 @@ export type WorkoutState =
   | "SKIPPED"
   | "TODAY"
   | "MISSED"
+  /** a past, non-empty, not-done day whose completion this device could not
+   *  check (the done-state read failed and nothing is cached). Not knowing is
+   *  not failing, so it must never be worded as MISSED. */
+  | "PAST"
   | "UPCOMING"
   | "NO DATE"
   /** dated, but nothing programmed into it yet. "Plan a workout" creates the
@@ -185,6 +197,9 @@ export function workoutStates(
   doneIds: Set<string>,
   anyDates: boolean,
   today: string,
+  /** false until the done-state read has answered (or been served from the
+   *  device cache). While false, a past day reads PAST, never MISSED. */
+  doneKnown = true,
 ): Map<string, WorkoutState> {
   const map = new Map<string, WorkoutState>();
   let todayAssigned = false;
@@ -198,7 +213,8 @@ export function workoutStates(
     } else if (anyDates) {
       if (w.scheduled_date === null) map.set(w.id, "NO DATE");
       else if (w.scheduled_date === today) map.set(w.id, "TODAY");
-      else if (w.scheduled_date < today) map.set(w.id, "MISSED");
+      else if (w.scheduled_date < today)
+        map.set(w.id, doneKnown ? "MISSED" : "PAST");
       else map.set(w.id, "UPCOMING");
     } else if (!todayAssigned) {
       map.set(w.id, "TODAY");
@@ -208,6 +224,30 @@ export function workoutStates(
     }
   }
   return map;
+}
+
+/**
+ * One strip cell from EVERY workout on its date (a date can hold more than
+ * one: same-day overflow is supported). Today's pending workout beats a done
+ * one, because there is still something to do; otherwise anything done reads
+ * DONE, since that is what happened. No workouts is a rest day.
+ */
+export function dayStripState(
+  states: readonly WorkoutState[],
+): WorkoutState | "REST" {
+  if (states.length === 0) return "REST";
+  if (states.includes("TODAY")) return "TODAY";
+  if (states.includes("DONE")) return "DONE";
+  for (const s of [
+    "UPCOMING",
+    "MISSED",
+    "PAST",
+    "SKIPPED",
+    "DRAFT",
+    "NO DATE",
+  ] as const)
+    if (states.includes(s)) return s;
+  return states[0];
 }
 
 /**
@@ -271,7 +311,12 @@ export function trainWorkoutForToday(
  * answer works, whereas rescheduling there is meaningless and is gated off.
  */
 export function canDoWorkoutNow(state: WorkoutState): boolean {
-  return state === "UPCOMING" || state === "MISSED" || state === "NO DATE";
+  return (
+    state === "UPCOMING" ||
+    state === "MISSED" ||
+    state === "PAST" ||
+    state === "NO DATE"
+  );
 }
 
 /**
@@ -363,6 +408,10 @@ export function Today({
   const [list, setList] = useState<WorkoutList | null>(null);
   const [stale, setStale] = useState<StaleReason | null>(null);
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
+  // false until the done-state read has answered or been served from cache.
+  // An empty `doneIds` before that is "not known", not "nothing is done", and
+  // would otherwise read every past day as MISSED.
+  const [doneKnown, setDoneKnown] = useState(false);
   // Lazily loaded per row, same idea as `rx`/`loadRx` below: a whole
   // week's worth of these costs real reads for a number most days never
   // show. Keyed by workout id; a day with no cached entry (an older DONE
@@ -459,8 +508,29 @@ export function Today({
     setSelectedDate((d) => (d === was ? today : d));
   }, [today]);
 
-  // most recent confirmed program drives the week
+  // The most recent confirmed program is `program`: it owns new days and is
+  // the one named when there is only one. Confirmed programs are not mutually
+  // exclusive, though, and showing only programs[0] silently hid a second
+  // one's days. When ANY confirmed program has dated days, the week shows the
+  // days of ALL of them (they share one calendar, and getDoneWorkoutIds is
+  // read per program). Undated DAY 1..N programs have no shared order, so
+  // there only programs[0] is shown, and the others are NAMED, never hidden.
   const program = list?.programs[0] ?? null;
+  const shownPrograms = useMemo(() => {
+    if (!list || !program) return [];
+    const ids = new Set(list.programs.map((p) => p.id));
+    const dated = list.workouts.some(
+      (w) => ids.has(w.program_id) && w.scheduled_date !== null,
+    );
+    return dated ? list.programs : [program];
+  }, [list, program]);
+  const otherProgramNames = useMemo(
+    () =>
+      (list?.programs ?? [])
+        .filter((p) => !shownPrograms.some((s) => s.id === p.id))
+        .map((p) => p.name),
+    [list, shownPrograms],
+  );
   const firstRun = showFirstRun({
     loaded: list !== null,
     hasProgram: program !== null,
@@ -468,12 +538,12 @@ export function Today({
   });
   const workouts = useMemo(
     () =>
-      program
+      shownPrograms.length > 0
         ? (list?.workouts ?? [])
-            .filter((w) => w.program_id === program.id)
+            .filter((w) => shownPrograms.some((p) => p.id === w.program_id))
             .sort(weekOrder)
         : [],
-    [list, program],
+    [list, shownPrograms],
   );
 
   // Only the newest reload may write state: a slow mount read answering
@@ -595,23 +665,36 @@ export function Today({
   }, [reload, today]);
 
   useEffect(() => {
-    if (!program || workouts.length === 0) return;
+    if (shownPrograms.length === 0 || workouts.length === 0) return;
     // A newer week or plan supersedes this read (A-13).
     let cancelled = false;
-    getDoneWorkoutIds(
-      program.id,
-      workouts.map((w) => w.id),
-    )
-      .then((r) => {
-        if (!cancelled) setDoneIds(new Set(r.data));
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) reportError(e, "load week state");
-      });
+    const reads = shownPrograms.map((p) =>
+      getDoneWorkoutIds(
+        p.id,
+        workouts.filter((w) => w.program_id === p.id).map((w) => w.id),
+      ).then(
+        (r) => ({ ok: true as const, ids: r.data }),
+        (e: unknown) => {
+          if (!cancelled) reportError(e, "load week state");
+          return { ok: false as const, ids: [] as string[] };
+        },
+      ),
+    );
+    void Promise.all(reads).then((rs) => {
+      if (cancelled) return;
+      // A failed read keeps what was known before it; it only ever stops us
+      // from CLAIMING to know.
+      if (rs.every((r) => r.ok)) {
+        setDoneIds(new Set(rs.flatMap((r) => r.ids)));
+        setDoneKnown(true);
+      } else {
+        setDoneIds((prev) => new Set([...prev, ...rs.flatMap((r) => r.ids)]));
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, [program, workouts, doneTick]);
+  }, [shownPrograms, workouts, doneTick]);
 
   // Which DONE days get "Review with the coach": the ones whose session ended
   // in the last 24 hours (lib/review.ts). Read only while online — the coach
@@ -720,8 +803,8 @@ export function Today({
   };
 
   const states = useMemo(
-    () => workoutStates(workouts, doneIds, anyDates, today),
-    [workouts, doneIds, anyDates, today],
+    () => workoutStates(workouts, doneIds, anyDates, today, doneKnown),
+    [workouts, doneIds, anyDates, today, doneKnown],
   );
 
   const doneCount = workouts.filter((w) => states.get(w.id) === "DONE").length;
@@ -1123,18 +1206,13 @@ export function Today({
 
   /** One day of the strip. `live` is false for the weeks either side of the
    *  selected one: they are drawn but unreachable until swiped to. */
-  const weekCell = (
-    iso: string,
-    live: boolean,
-    openProgram = false,
-    selectedDateOverride = selectedDate,
-  ) => {
+  const weekCell = (iso: string, live: boolean) => {
     const w = byDate.get(iso) ?? null;
     const cellState: WorkoutState | "REST" = w
       ? (states.get(w.id) ?? "UPCOMING")
       : "REST";
     const isToday = iso === today;
-    const isSelected = live && iso === selectedDateOverride;
+    const isSelected = live && iso === selectedDate;
     return (
       <button
         key={iso}
@@ -1156,7 +1234,6 @@ export function Today({
         onClick={() => {
           setSelectedDate(iso);
           if (w) loadRx(w.id);
-          if (openProgram) navigate("/program");
         }}
       >
         <span className="week-cell-letter">{formatWeekdayLetter(iso)}</span>
@@ -1181,40 +1258,6 @@ export function Today({
       </button>
     );
   };
-
-  // Train uses the same dated week and status map as Program. Keeping these
-  // cells here preserves their existing selection, swipe and state callbacks.
-  const trainWeekDates = weekPages(today, weekStart)[1];
-  const trainWeekContext = list !== null && (workouts.length === 0 || anyDates) ? (
-    <section className="train-week-context" aria-label="Training week">
-      <p className="train-week-hint">Choose a day to view its plan in Program.</p>
-      <div className="section-head">
-        <span className="field-label">THIS WEEK</span>
-      </div>
-      <div
-        className="week-strip"
-        role="group"
-        aria-label={`week beginning ${parseLocalDate(trainWeekDates[0]).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}`}
-      >
-        {trainWeekDates.map((iso) => weekCell(iso, true, true, today))}
-      </div>
-      {selectedDate !== today && (
-        <div className="week-jump">
-          <button
-            type="button"
-            className="btn btn-secondary week-today"
-            onClick={() => {
-              setSelectedDate(today);
-              const w = byDate.get(today);
-              if (w) loadRx(w.id);
-            }}
-          >
-            {selectedDate > today ? "← Today" : "Today →"}
-          </button>
-        </div>
-      )}
-    </section>
-  ) : null;
 
   /** Exactly one start affordance may be live at a time. An active session
    *  owns the screen (the RESUME banner is the primary); an unrecovered
@@ -1251,6 +1294,124 @@ export function Today({
   useEffect(() => {
     if (presentation === "train" && trainWorkoutId) loadRx(trainWorkoutId);
   }, [presentation, trainWorkoutId, loadRx]);
+  // The Train strip is THIS week, anchored on today (Program's strip follows
+  // its own selection). A program with no dates has no calendar to draw.
+  const trainWeek: TrainWeekDay[] | null =
+    list !== null && anyDates
+      ? calendarWeek(today, weekStart).map((iso) => {
+          const d = parseLocalDate(iso);
+          // every workout on the date, not the first one (T5)
+          const onDay = workouts
+            .filter((w) => w.scheduled_date === iso)
+            .map((w) => states.get(w.id) ?? "UPCOMING");
+          return {
+            iso,
+            letter: formatWeekdayLetter(iso),
+            name: `${d.toLocaleDateString("en-GB", { weekday: "long" })} ${d.getDate()}`,
+            state: dayStripState(onDay) as TrainWeekDay["state"],
+            isToday: iso === today,
+          };
+        })
+      : null;
+  // The outbox, read itself. Its counts are global (every table, every
+  // account) and start at zero before the first read, which is exactly the
+  // shape that used to say "all sets on the server" on every cold start.
+  // `null` = not read yet.
+  const outboxStatus = useOutboxStatus();
+  const [outboxEntries, setOutboxEntries] = useState<
+    readonly OutboxEntry[] | null
+  >(null);
+  // Only the finished-today confirmation speaks about the server, so only it
+  // pays for the read.
+  const needsSyncLine = presentation === "train" && trainWorkoutToday?.state === "DONE";
+  useEffect(() => {
+    if (!needsSyncLine) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await outbox.inspect();
+        if (!cancelled) setOutboxEntries(rows);
+      } catch {
+        if (!cancelled) setOutboxEntries(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needsSyncLine, outboxStatus]);
+  // Exact-UUID receipts for the session that finished today, the same proof
+  // the Session screen shows per set. Only while online and only when the
+  // session is known (reviewable lists sessions ended in the last day).
+  const finishedSessionId =
+    needsSyncLine && trainWorkoutToday
+      ? (reviewable.get(trainWorkoutToday.workout.id)?.id ?? null)
+      : null;
+  const [finishedProof, setFinishedProof] =
+    useState<FinishedSessionProof | null>(null);
+  useEffect(() => {
+    if (!finishedSessionId || !userId || !online) {
+      setFinishedProof(null);
+      return;
+    }
+    let cancelled = false;
+    void readFinishedSessionProof(finishedSessionId, userId).then((proof) => {
+      if (!cancelled) setFinishedProof(proof);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [finishedSessionId, userId, online, outboxStatus]);
+  const trainSync = (() => {
+    const rows = outboxEntries ?? [];
+    const setRows = rows.filter((e) => e.table === "sets");
+    return {
+      checked: outboxEntries !== null,
+      identityKnown: Boolean(userId),
+      waiting: setRows.filter((e) => e.state === "waiting").length,
+      held: setRows.filter((e) => e.state === "held").length,
+      dead: setRows.filter((e) => e.state === "dead").length,
+      otherPending: rows.length - setRows.length,
+      proof: finishedProof,
+    };
+  })();
+  // Sets logged in the open session: what the server has plus what this phone
+  // still holds, less corrections still waiting to land. null = not known (a
+  // failed read), which renders as nothing, never as 0.
+  const [activeSetCount, setActiveSetCount] = useState<number | null>(null);
+  const activeId = active?.id ?? null;
+  const activePlannedId = active?.planned_workout_id ?? null;
+  useEffect(() => {
+    if (presentation !== "train" || !activeId) {
+      setActiveSetCount(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [server, pending, voided] = await Promise.all([
+          getServerSessionSets(activeId, { orNull: true }),
+          outbox.pendingSets(activeId),
+          outbox.pendingVoidIds(),
+        ]);
+        if (cancelled) return;
+        setActiveSetCount(
+          server === null
+            ? null
+            : mergeSets(server, pending).filter((r) => !voided.has(r.id))
+                .length,
+        );
+      } catch {
+        if (!cancelled) setActiveSetCount(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [presentation, activeId]);
+  // The plan's set total is a separate read, so it does not re-run the count.
+  useEffect(() => {
+    if (presentation === "train" && activePlannedId) loadRx(activePlannedId);
+  }, [presentation, activePlannedId, loadRx]);
   const orphanRecovery = orphan ? (
     <div className="orphan-card">
       <div className="orphan-title">
@@ -1317,8 +1478,16 @@ export function Today({
     return (
       <div className="screen" data-presentation={presentation}>
         <TrainHome
-          dateContext={formatTodayHeading()}
-          programName={program?.name ?? null}
+          dateContext={formatTodayHeading().replace(/^TODAY · /, "")}
+          programName={
+            (trainWorkout
+              ? list?.programs.find(
+                  (p) => p.id === trainWorkout.workout.program_id,
+                )?.name
+              : undefined) ??
+            program?.name ??
+            null
+          }
           loading={list === null && loadError === null}
           loadIssue={loadError}
           stale={stale}
@@ -1327,9 +1496,31 @@ export function Today({
           prescriptionLoadState={trainPrescriptionLoadState}
           active={active}
           recovery={recovery}
-          weekContext={trainWeekContext}
           startEnabled={canStart}
           completedToday={promoteNextWorkout}
+          finishedToday={
+            trainWorkoutToday?.state === "DONE"
+              ? trainWorkoutToday.workout
+              : null
+          }
+          sync={trainSync}
+          otherPrograms={otherProgramNames}
+          week={trainWeek}
+          activeProgress={
+            active
+              ? {
+                  setsDone: activeSetCount,
+                  setsPlanned: (() => {
+                    const rows = active.planned_workout_id
+                      ? rx[active.planned_workout_id]
+                      : undefined;
+                    return rows && rows.length > 0
+                      ? rows.reduce((n, r) => n + r.sets, 0)
+                      : null;
+                  })(),
+                }
+              : null
+          }
           unit={unit}
           onStart={(workout) => void start(workout)}
           onOpenCoach={() => openCoach()}
@@ -1360,6 +1551,7 @@ export function Today({
     const canReschedule =
       canStart &&
       (state === "MISSED" ||
+        state === "PAST" ||
         state === "NO DATE" ||
         (state === "UPCOMING" && anyDates));
     const canDoNow = canStart && canDoWorkoutNow(state);
@@ -1582,7 +1774,16 @@ export function Today({
       </div>
       {/* provenance (source_note) deliberately not shown here — the week is
           the subject; where a program came from lives with Claude/the coach */}
-      {program && <div className="today-context">{program.name}</div>}
+      {program && (
+        <div className="today-context">
+          {shownPrograms.map((p) => p.name).join(" · ")}
+        </div>
+      )}
+      {otherProgramNames.length > 0 && (
+        <div className="today-context">
+          Also confirmed, not shown here: {otherProgramNames.join(", ")}
+        </div>
+      )}
 
       {stale === "offline" && (
         <div className="cache-note">offline — showing cached plan</div>

@@ -73,15 +73,21 @@ vi.mock("../lib/data", () => ({
     }),
 }));
 
-vi.mock("../lib/sync", () => ({
+vi.mock("../lib/sync", () => {
+  const status = { pending: 0, dead: 0, held: 0, state: "idle", lastError: null };
+  return {
   outbox: {
+    subscribe: () => () => {},
+    getStatus: () => status,
+    pendingSets: vi.fn().mockResolvedValue([]),
     flush: vi.fn().mockResolvedValue(undefined),
     pendingSessionUpdateIds: vi.fn().mockResolvedValue(new Set()),
     pendingRatedSessionIds: vi.fn().mockResolvedValue(new Set()),
     inspect: vi.fn().mockResolvedValue([]),
     enqueue: vi.fn(),
   },
-}));
+  };
+});
 
 vi.mock("../lib/errors", () => ({
   reportError: vi.fn(),
@@ -91,7 +97,7 @@ vi.mock("../lib/errors", () => ({
 import { Today } from "./Today";
 import { cacheSet, resetDbForTests } from "../lib/db";
 import { doneSummaryKey } from "./End";
-import { addDays, startOfWeek } from "../lib/calendar";
+import { addDays } from "../lib/calendar";
 import {
   formatPlannedDate,
   parseLocalDate,
@@ -194,7 +200,7 @@ describe("Today Train week navigation", () => {
     const today = todayLocalIso();
     const tomorrow = addDays(today, 1);
     const todayButtonName = new RegExp(
-      `${parseLocalDate(today).toLocaleDateString("en-GB", { weekday: "long" })} ${parseLocalDate(today).getDate()}, done`,
+      `${parseLocalDate(today).toLocaleDateString("en-GB", { weekday: "long" })} ${parseLocalDate(today).getDate()}, done, open program`,
       "i",
     );
     const todayWorkout = { ...WORKOUT, id: "today-workout", scheduled_date: today };
@@ -219,16 +225,18 @@ describe("Today Train week navigation", () => {
 
     const view = render(<Today userId="u1" presentation="train" />);
 
-    const week = await screen.findByRole("group", { name: /week beginning/i });
-    const tomorrowButton = screen.getByRole("button", {
-      name: new RegExp(`${parseLocalDate(tomorrow).toLocaleDateString("en-GB", { weekday: "long" })} ${parseLocalDate(tomorrow).getDate()}, to come`, "i"),
+    // Train's own strip (feat/train-d): one link per day of THIS week, each
+    // naming its state in words and opening Program; it never starts a day.
+    const week = await screen.findByRole("navigation", { name: /this week/i });
+    const dayName = (iso: string) =>
+      `${parseLocalDate(iso).toLocaleDateString("en-GB", { weekday: "long" })} ${parseLocalDate(iso).getDate()}`;
+    const tomorrowLink = screen.getByRole("link", {
+      name: new RegExp(`${dayName(tomorrow)}, upcoming, open program`, "i"),
     });
-    expect(week.contains(tomorrowButton)).toBe(true);
-    fireEvent.click(tomorrowButton);
-
-    expect(navigateMock).toHaveBeenCalledWith("/program");
-    expect(tomorrowButton.getAttribute("aria-current")).toBeNull();
-    expect(screen.getByRole("button", { name: todayButtonName }).getAttribute("aria-current")).toBe("date");
+    expect(week.contains(tomorrowLink)).toBe(true);
+    expect(tomorrowLink.getAttribute("href")).toBe("/program");
+    expect(tomorrowLink.getAttribute("aria-current")).toBeNull();
+    expect((await screen.findByRole("link", { name: todayButtonName })).getAttribute("aria-current")).toBe("date");
     expect(navigateMock).not.toHaveBeenCalledWith("/session");
 
     // Returning from Program after choosing an earlier week keeps Program's
@@ -243,7 +251,7 @@ describe("Today Train week navigation", () => {
     expect(earlierButton?.getAttribute("aria-current")).toBe("date");
 
     view.rerender(<Today userId="u1" presentation="train" />);
-    expect(screen.getByRole("group", { name: new RegExp(`week beginning ${parseLocalDate(startOfWeek(today, 1)).getDate()}`, "i") })).toBeTruthy();
-    expect(screen.getByRole("button", { name: todayButtonName }).getAttribute("aria-current")).toBe("date");
+    expect(screen.getByRole("navigation", { name: /this week/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: todayButtonName }).getAttribute("aria-current")).toBe("date");
   });
 });
