@@ -390,6 +390,9 @@ export const cacheKeys = {
   /** staged End-screen input (sRPE / bodyweight / note), so a trip back to
    *  the session and forward again does not lose what was typed */
   sessionEndDraft: (sessionId: string) => `sessionEndDraft:${sessionId}`,
+  /** Session-owned choices live by owner and session, outside derived cache families. */
+  sessionPrefs: (ownerId: string, sessionId: string) =>
+    `sessionPrefs:${ownerId}:${sessionId}`,
   doneWorkouts: (programId: string) => `${P.doneWorkouts}${programId}`,
   e1rm: (exerciseId: string) => `${P.e1rm}${exerciseId}`,
   volume: (exerciseId: string) => `${P.volume}${exerciseId}`,
