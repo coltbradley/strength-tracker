@@ -295,6 +295,18 @@ export function FocusDeck({
   onUnskip,
 }: FocusDeckProps) {
   const [skipPromptOpen, setSkipPromptOpen] = useState(false);
+  // The reasons open at the TOP of the middle band and take focus: appended
+  // below the rest card they sat under the dock where nothing showed that
+  // Skip had done anything (D1).
+  const skipPromptRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!skipPromptOpen) return;
+    const prompt = skipPromptRef.current;
+    if (!prompt) return;
+    const scroller = prompt.closest(".focus-middle");
+    if (scroller) scroller.scrollTop = 0;
+    prompt.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+  }, [skipPromptOpen]);
   // Is there more in the middle band than shows above the dock? Then it fades
   // at the bottom edge and says so; with nothing hidden it is left alone.
   const middleRef = useRef<HTMLDivElement>(null);
@@ -322,7 +334,7 @@ export function FocusDeck({
     supersetHeading,
   );
   const complete = entryDone(entry) && !skipped;
-  const next = complete
+  const next = entryDone(entry)
     ? (entries
         .slice(entryIndex + 1)
         .find((candidate) => !entryDone(candidate)) ?? null)
@@ -358,8 +370,14 @@ export function FocusDeck({
         </h1>
         <div className="focus-deck-position-row">
           <div className="focus-deck-position">
-            {supersetHeading ? supersetHeading.subtitle : setPosition}
-            {(warmupRun || warmupPosition) && !supersetHeading ? " · WARMUP" : ""}
+            {supersetHeading
+              ? supersetHeading.subtitle
+              : skipped
+                ? "SKIPPED"
+                : setPosition}
+            {(warmupRun || warmupPosition) && !supersetHeading && !skipped
+              ? " · WARMUP"
+              : ""}
           </div>
           {onOpenMore && (
             <button
@@ -375,7 +393,9 @@ export function FocusDeck({
         {/* Its own line: beside the position it squeezed "SET 1 OF 2 · WARMUP"
             into one word per row at 320 px. */}
         {unitNote && <div className="focus-unit-note">{unitNote}</div>}
-        <FocusSetProgress progress={progress} target={target} warmup={warmupRun} />
+        {(!skipped || supersetHeading) && (
+          <FocusSetProgress progress={progress} target={target} warmup={warmupRun} />
+        )}
       </div>
 
       <div className="focus-middle-wrap">
@@ -383,30 +403,13 @@ export function FocusDeck({
         className={`focus-middle${moreBelow ? " focus-middle--more" : ""}`}
         ref={middleRef}
       >
-        {resting ? restSlot : !workoutComplete && !complete && picture}
-        {/* Outside the rest branch: a rest often runs after the final set,
-            and "+ Extra set" must stay reachable while it does. */}
-        {(workoutComplete || complete) && !extraSetArmed && (
-          <div className="focus-complete">
-            <div className="focus-complete-title">
-              {workoutComplete
-                ? "All planned sets logged."
-                : `${entry.name}: all planned sets logged.`}
-            </div>
-            {onAddExtraSet && (
-              <button type="button" className="focus-chip-btn" onClick={onAddExtraSet}>
-                + Extra set
-              </button>
-            )}
-          </div>
-        )}
-        {skipped && (
-          <p className="focus-skipped">
-            Skipped{skipReason ? ` · ${skipReason}` : ""}. Unskip to log it.
-          </p>
-        )}
         {onSkip && !skipped && skipPromptOpen && (
-          <div className="skip-reason-prompt chip-row" role="group" aria-label="Skip reason">
+          <div
+            ref={skipPromptRef}
+            className="skip-reason-prompt chip-row"
+            role="group"
+            aria-label="Skip reason"
+          >
             {SKIP_REASON_CHIPS.map((chip) => (
               <button
                 key={chip}
@@ -437,6 +440,30 @@ export function FocusDeck({
             >
               Cancel
             </button>
+          </div>
+        )}
+        {skipped && (
+          <p className="focus-skipped">
+            Skipped{skipReason ? ` · ${skipReason}` : ""}.
+          </p>
+        )}
+        {resting
+          ? restSlot
+          : !workoutComplete && !complete && (!skipped || supersetHeading) && picture}
+        {/* Outside the rest branch: a rest often runs after the final set,
+            and "+ Extra set" must stay reachable while it does. */}
+        {(workoutComplete || complete) && !extraSetArmed && (
+          <div className="focus-complete">
+            <div className="focus-complete-title">
+              {workoutComplete
+                ? "All planned sets logged."
+                : `${entry.name}: all planned sets logged.`}
+            </div>
+            {onAddExtraSet && (
+              <button type="button" className="focus-chip-btn" onClick={onAddExtraSet}>
+                + Extra set
+              </button>
+            )}
           </div>
         )}
         {warmupChoice && !skipped && !complete && (

@@ -336,6 +336,42 @@ describe("FocusDeck", () => {
     expect(screen.queryByRole("group", { name: "Skip reason" })).toBeNull();
   });
 
+  it("D1: while resting, the skip reasons open ABOVE the rest card and take focus", () => {
+    const { container } = render(
+      <FocusDeck {...withKeys({ restSlot: <div data-testid="rest">REST 1:20</div> })} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    const prompt = screen.getByRole("group", { name: "Skip reason" });
+    const rest = screen.getByTestId("rest");
+    expect(container.querySelector(".focus-middle")!.contains(prompt)).toBe(true);
+    expect(prompt.compareDocumentPosition(rest) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(prompt.contains(document.activeElement)).toBe(true);
+  });
+
+  it("D7: after a skip the next exercise is offered and the skipped one drops its stale set state", () => {
+    const onChooseNext = vi.fn();
+    const { container } = render(
+      <FocusDeck
+        {...props({
+          entry: entries[1]!,
+          entryDone: (c) => c.key === "squat" || c.key === "deadlift",
+          skipped: true,
+          skipReason: "Equipment taken",
+          onUnskip: vi.fn(),
+          onChooseNext,
+          picture: <p>Nothing to count. Tap Done after each set.</p>,
+        })}
+      />,
+    );
+    expect(screen.getByText("Skipped · Equipment taken.")).toBeTruthy();
+    expect(screen.queryByText(/Nothing to count/)).toBeNull();
+    expect(screen.queryByText(/SET 1 OF/)).toBeNull();
+    expect(container.querySelector(".focus-set-progress")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Next exercise: Press" }));
+    expect(onChooseNext).toHaveBeenCalledWith(entries[2]);
+    expect(screen.getByRole("button", { name: "Unskip" })).toBeTruthy();
+  });
+
   it("skips with no reason, and Cancel closes the prompt without skipping", () => {
     const onSkip = vi.fn();
     render(<FocusDeck {...withKeys({ onSkip })} />);
@@ -353,7 +389,7 @@ describe("FocusDeck", () => {
     const onUnskip = vi.fn();
     render(<FocusDeck {...withKeys({ skipped: true, onUnskip })} />);
 
-    expect(screen.getByText("Skipped. Unskip to log it.")).toBeTruthy();
+    expect(screen.getByText("Skipped.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Unskip" }));
     expect(onUnskip).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
@@ -373,7 +409,7 @@ describe("FocusDeck", () => {
     );
 
     expect(screen.queryByRole("button", { name: "DONE 1 OF 3" })).toBeNull();
-    expect(screen.getByText("Skipped. Unskip to log it.")).toBeTruthy();
+    expect(screen.getByText("Skipped.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Unskip" }));
     expect(onUnskip).toHaveBeenCalledTimes(1);
   });

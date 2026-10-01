@@ -492,6 +492,6 @@ describe("Session hero capture", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Today's workout,/ }));
     fireEvent.click(await screen.findByRole("button", { name: /^Bench Press — skipped/ }));
     expect(await screen.findByRole("button", { name: "Unskip" })).toBeTruthy();
-    expect(screen.getByText(/Skipped\. Unskip to log it\./)).toBeTruthy();
+    expect(screen.getByText(/Skipped\./)).toBeTruthy();
   });
 });

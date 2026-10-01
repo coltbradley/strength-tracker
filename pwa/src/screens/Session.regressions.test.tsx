@@ -420,7 +420,7 @@ describe("Skipping during a rest", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     fireEvent.click(screen.getByRole("button", { name: "Out of time" }));
-    expect(await screen.findByText("Skipped · Out of time. Unskip to log it.")).toBeTruthy();
+    expect(await screen.findByText("Skipped · Out of time.")).toBeTruthy();
     expect(screen.queryByText(/^NEXT SET/)).toBeNull();
     expect(screen.queryByText("LOAD NEXT")).toBeNull();
   });
