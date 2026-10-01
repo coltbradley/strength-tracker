@@ -1,6 +1,6 @@
 # deps
-node_modules/
-pwa/node_modules/
+node_modules
+pwa/node_modules
 
 # env / secrets
 .env
