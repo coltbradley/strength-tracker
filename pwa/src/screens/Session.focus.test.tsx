@@ -22,7 +22,7 @@ import {
   type Database,
 } from "../lib/db";
 import { createOutbox, type OutboxTransport } from "../lib/outbox";
-import { resetAllSettings, setSetting } from "../lib/settings";
+import { getUnit, resetAllSettings, setSetting } from "../lib/settings";
 const receiptIdentity = vi.hoisted(() => ({
   userId: "aaaaaaaa-1111-4111-8111-111111111111" as string | null,
   listeners: new Set<(id: string | null) => void>(),
@@ -558,6 +558,49 @@ describe("Session focus presentation", () => {
     expectAcceptedAuthoredLoad(payload);
   });
 
+  it("persists the unit for this owner and session without changing the device default", async () => {
+    resetDbForTests();
+    setSetting("unit", "kg");
+    await seed();
+    const first = render(<MemoryRouter><Session /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Show weights in pounds" }));
+    await vi.waitFor(() => expect(cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).resolves.toMatchObject({ unit: "lb" }));
+    expect(getUnit()).toBe("kg");
+    first.unmount();
+
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect((await screen.findByRole("button", { name: "Show weights in pounds" })).getAttribute("aria-pressed")).toBe("true");
+    expect(getUnit()).toBe("kg");
+  });
+
+  it("uses the device default for another session and for a different owner", async () => {
+    resetDbForTests();
+    setSetting("unit", "kg");
+    await seed();
+    const first = render(<MemoryRouter><Session /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Show weights in pounds" }));
+    await vi.waitFor(() => expect(cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).resolves.toMatchObject({ unit: "lb" }));
+    first.unmount();
+
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect((await screen.findByRole("button", { name: "Show weights in pounds" })).getAttribute("aria-pressed")).toBe("true");
+    receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
+    act(() => { for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId); });
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true"));
+    expect(await cacheGet(cacheKeys.sessionPrefs(receiptIdentity.userId, active.id))).toBeUndefined();
+    receiptIdentity.userId = receiptOwner;
+    act(() => { for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId); });
+    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Show weights in pounds" }).getAttribute("aria-pressed")).toBe("true"));
+    cleanup();
+
+    const nextSession = { ...active, id: "session-focus-next" };
+    await cacheSet(cacheKeys.activeSession, nextSession);
+    await cacheSet(cacheKeys.sessionRx(nextSession.id), [prescription()]);
+    await cacheSet(cacheKeys.sessionSets(nextSession.id), []);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    expect((await screen.findByRole("button", { name: "Show weights in kilograms" })).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("restores the exact typed pound value when switching back during the same set", async () => {
     resetDbForTests();
     setSetting("unit", "lb");
@@ -641,7 +684,7 @@ describe("Session focus presentation", () => {
     const [sessionId, payload, originalId] = vi.mocked(outbox.enqueueCorrection).mock.calls[0]!;
     expect(sessionId).toBe(active.id);
     expect(originalId).toBe(old.id);
-    expect(payload).toMatchObject({ load_kg: 31.75, entered_load: 70, entered_unit: "lb", set_index: 0 });
+    expect(payload).toMatchObject({ load_kg: 31.75, entered_load: 70, entered_unit: "lb", load_entry: "total", set_index: 0 });
     expectAcceptedAuthoredLoad(payload);
   });
 

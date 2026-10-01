@@ -61,6 +61,7 @@ import {
   useKeyboardInset,
 } from "../components/Sheet";
 import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
+import { readSessionPrefs, writeSessionPrefs } from "../lib/sessionPrefs";
 import type { OutboxOp } from "../lib/db";
 import {
   getExercises,
@@ -125,7 +126,6 @@ import {
   setExerciseBarKg,
   setExerciseLoadEntry,
   setExerciseLoadStyle,
-  setUnit,
 } from "../lib/settings";
 import { readSkipsCache, type SkipRecord } from "../lib/skips";
 import { useWakeLock } from "../hooks/useWakeLock";
@@ -207,9 +207,8 @@ function bodyweightFallback(equipment: string | null) {
 
 export function Session() {
   const navigate = useNavigate();
-  const unit = useUnit();
+  const deviceUnit = useUnit();
   const autoStartRest = useAutoStartRest();
-  const inventory = usePlatesOnHand(unit);
 
   const [active, setActive] = useState<ActiveSession | null | undefined>(
     undefined,
@@ -465,6 +464,62 @@ export function Session() {
   }, [sheet]);
 
   const sessionId = active?.id ?? null;
+  const [identityOwner, setIdentityOwner] = useState(getCurrentUserId);
+  const identityEpochRef = useRef(0);
+  const [identityRevision, setIdentityRevision] = useState(0);
+  useEffect(() => onUserChange((id) => {
+    const nextEpoch = identityEpochRef.current + 1;
+    identityEpochRef.current = nextEpoch;
+    setIdentityRevision(nextEpoch);
+    setIdentityOwner(id);
+  }), []);
+  const [sessionUnitState, setSessionUnitState] = useState<{
+    ownerId: string; sessionId: string; unit: Unit;
+  } | null>(null);
+  const [prefsReadyScope, setPrefsReadyScope] = useState<string | null>(null);
+  const prefsScope =
+    identityOwner && sessionId ? `${identityOwner}:${sessionId}` : null;
+  const unit = prefsScope &&
+      sessionUnitState?.ownerId === identityOwner &&
+      sessionUnitState.sessionId === sessionId
+    ? sessionUnitState.unit
+    : deviceUnit;
+  const prefsReady = !sessionId || (!!identityOwner && prefsReadyScope === prefsScope);
+  const inventory = usePlatesOnHand(unit);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ownerId = identityOwner;
+    const requestedSession = sessionId;
+    const identityEpoch = identityEpochRef.current;
+    const scope = ownerId && requestedSession ? `${ownerId}:${requestedSession}` : null;
+    setPrefsReadyScope(null);
+    if (!ownerId || !requestedSession) {
+      setSessionUnitState(null);
+      setPrefsReadyScope(scope);
+      return;
+    }
+    void readSessionPrefs(ownerId, requestedSession).then((prefs) => {
+      if (
+        cancelled || identityEpochRef.current !== identityEpoch ||
+        getCurrentUserId() !== ownerId || sessionIdRef.current !== requestedSession
+      ) return;
+      setSessionUnitState(prefs.unit ? { ownerId, sessionId: requestedSession, unit: prefs.unit } : null);
+      setPrefsReadyScope(scope);
+    }).catch((error: unknown) => {
+      if (
+        cancelled || identityEpochRef.current !== identityEpoch ||
+        getCurrentUserId() !== ownerId || sessionIdRef.current !== requestedSession
+      ) return;
+      reportError(error, "read session preferences");
+      setSessionUnitState(null);
+      setPrefsReadyScope(scope);
+    });
+    return () => { cancelled = true; };
+  }, [identityOwner, identityRevision, sessionId]);
+
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
   const [receiptSnapshot, setReceiptSnapshot] = useState<{
     sessionId: string | null;
     ownerId: string | null;
@@ -1590,7 +1645,7 @@ export function Session() {
 
     // setsFailed: see the state declaration — an empty `setsRef` we could not
     // verify would number this set 0 on top of whatever is already logged.
-    if (!entryToLog || !sessionId || logLocked || !setsLoaded || setsFailed)
+    if (!entryToLog || !sessionId || logLocked || !setsLoaded || !prefsReady || setsFailed)
       return false;
     setLogLocked(true);
 
@@ -1724,7 +1779,7 @@ export function Session() {
     // Kept synchronous with the tap: iOS will only permit this cue unlock in
     // a user gesture, not after the durable local queue awaits.
     unlockRestCue();
-    if (!sessionId || logLocked || !setsLoaded || setsFailed) return;
+    if (!sessionId || logLocked || !setsLoaded || !prefsReady || setsFailed) return;
     const first = entries.find((entry) => entry.key === round.keys[0]);
     const second = entries.find((entry) => entry.key === round.keys[1]);
     if (!first || !second) return;
@@ -2810,7 +2865,7 @@ export function Session() {
               target: scheme(focusSupersetPair[1]),
               editor: roundEditorFor(focusSupersetPair[1], roundA2),
             }}
-            disabled={!setsLoaded || setsFailed}
+            disabled={!setsLoaded || !prefsReady || setsFailed}
             heldPulse={logHeld}
             error={roundError}
             singleLogLabel={`Log ${focusSupersetPair[0].name} only`}
@@ -2828,7 +2883,7 @@ export function Session() {
             }
             onLogA1Only={() =>
               tapLog(() => {
-                if (!sessionId || !setsLoaded || setsFailed) return;
+                if (!sessionId || !setsLoaded || !prefsReady || setsFailed) return;
                 void logSet(roundA1, focusSupersetPair[0]).then((saved) => {
                   if (!saved) return;
                   setRoundDrafts((prior) => {
@@ -2841,7 +2896,7 @@ export function Session() {
             }
             onLogA2Only={() =>
               tapLog(() => {
-                if (!sessionId || !setsLoaded || setsFailed) return;
+                if (!sessionId || !setsLoaded || !prefsReady || setsFailed) return;
                 void logSet(roundA2, focusSupersetPair[1]).then((saved) => {
                   if (!saved) return;
                   setRoundDrafts((prior) => {
@@ -2939,7 +2994,7 @@ export function Session() {
             onEditLastSet={
               newestSetForThis ? () => startCorrection(newestSetForThis) : undefined
             }
-            disabled={!setsLoaded || setsFailed}
+            disabled={!setsLoaded || !prefsReady || setsFailed}
             onDraftChange={(next) => {
               setLogError(null);
               if (!editing) rememberStagedDraft(entry, next);
@@ -3569,7 +3624,10 @@ export function Session() {
   };
 
   const switchWorkoutUnit = (next: Unit) => {
-    if (next === unit) return;
+    if (next === unit || !prefsReady) return;
+    const ownerId = getCurrentUserId();
+    const requestedSession = sessionId;
+    const identityEpoch = identityEpochRef.current;
     // Stamp a prefilled draft's displayed value before changing units. An
     // authored value already has its own unit and must keep that provenance.
     if (!editing && openEntry && currentDraft?.enteredUnit === undefined) {
@@ -3594,7 +3652,24 @@ export function Session() {
         return nextDrafts;
       });
     }
-    setUnit(next);
+    setSessionUnitState(ownerId && requestedSession
+      ? { ownerId, sessionId: requestedSession, unit: next }
+      : null);
+    if (ownerId && requestedSession) {
+      const isCurrent = () =>
+        identityEpochRef.current === identityEpoch &&
+        getCurrentUserId() === ownerId &&
+        sessionIdRef.current === requestedSession;
+      void writeSessionPrefs(
+        ownerId,
+        requestedSession,
+        { unit: next },
+        isCurrent,
+      ).catch((error: unknown) => {
+        reportError(error, "save session unit");
+        if (isCurrent()) toast("Unit choice may reset after reload");
+      });
+    }
   };
 
   const roundEditorFor = (entry: ExerciseEntry, draft: SetDraft) => {
@@ -3668,7 +3743,7 @@ export function Session() {
         isBodyweightEquipment(equipment) && storedLoad === 0,
         entryMode,
       ),
-      disabled: logLocked || !setsLoaded || setsFailed,
+      disabled: logLocked || !setsLoaded || !prefsReady || setsFailed,
       onDraftChange: (next: Partial<SetDraft>) => {
         setRoundDrafts((prior) => ({
           ...prior,
@@ -3693,7 +3768,7 @@ export function Session() {
    *  Warmups count against the warmups the coach wrote, working sets against
    *  the working sets — two runs, two targets, never added together. */
   const logLabel = (entry: ExerciseEntry): string => {
-    if (!setsLoaded) return "LOADING…";
+    if (!setsLoaded || !prefsReady) return "LOADING…";
     if (setsFailed) return "LOG UNAVAILABLE";
     if (isTick(entry)) {
       // a tick has no warmup/working distinction to make; it counts against
@@ -3834,6 +3909,10 @@ export function Session() {
       />
   );
 
+  if (sessionId && !prefsReady) {
+    return <div className="session-shell" role="status">Loading workout choices…</div>;
+  }
+
   return (
     <div className="session-shell">
       <div
@@ -3870,7 +3949,11 @@ export function Session() {
                     {doneEntries} OF {entries.length} DONE
                   </span>
                 )}
-                <UnitSwitch unit={unit} onChange={switchWorkoutUnit} />
+                <UnitSwitch
+                  unit={unit}
+                  onChange={switchWorkoutUnit}
+                  disabled={!prefsReady}
+                />
               </div>
             </div>
           )}
@@ -3879,7 +3962,13 @@ export function Session() {
             <FocusDeck
               entries={entries}
               entry={focusEntry}
-              unitSwitch={<UnitSwitch unit={unit} onChange={switchWorkoutUnit} />}
+              unitSwitch={
+                <UnitSwitch
+                  unit={unit}
+                  onChange={switchWorkoutUnit}
+                  disabled={!prefsReady}
+                />
+              }
               entryProgress={entryProgress}
               entryDone={entryDone}
               entryState={entryState}

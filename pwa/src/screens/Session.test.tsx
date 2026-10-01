@@ -45,6 +45,11 @@ vi.mock("../lib/sync", () => ({
   },
 }));
 
+vi.mock("../lib/currentUser", () => ({
+  getCurrentUserId: () => "aaaaaaaa-1111-4111-8111-111111111111",
+  onUserChange: () => () => undefined,
+}));
+
 import { outbox } from "../lib/sync";
 import { getServerSessionSets } from "../lib/data";
 import { Session } from "./Session";
