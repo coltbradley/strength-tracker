@@ -3212,7 +3212,6 @@ export function Session() {
         kind: "bodyweight",
         addedOn: draft.entryKg > 0 || bwAddOpen === entry.key,
         timed: isTimed(entry),
-        onAddLoad: () => setBwAddOpen(entry.key),
       };
     }
     return null;
@@ -3262,6 +3261,7 @@ export function Session() {
           view.bodyweight && trackingOf(entry) === "reps"
             ? {
                 on: draft.entryKg > 0 || bwAddOpen === entry.key,
+                onAdd: () => setBwAddOpen(entry.key),
                 onRemove: () => {
                   setBwAddOpen(null);
                   onDraftChange({

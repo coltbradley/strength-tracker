@@ -415,3 +415,22 @@ describe("N10 a swapped exercise does not show the planned exercise's coach cue"
     expect(document.querySelector(".focus-cue")).toBeNull();
   });
 });
+
+describe("N6 bodyweight + Add load stays reachable during a rest", () => {
+  it("is still offered, and works, while the rest panel is showing", async () => {
+    equipment(["push-up", "Push Up", "body only"]);
+    await seed([rx("pushup", "push-up", "Push Up", null, 3)]);
+    renderSession();
+    await screen.findByRole("heading", { name: "Push Up" });
+    await pause(120);
+    fireEvent.click(screen.getByRole("button", { name: /^LOG SET/ }));
+    await vi.waitFor(() => expect(queuedSets()).toHaveLength(1));
+    expect(await screen.findByRole("timer", { name: /^rest timer/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "+ Add load (belt or vest)" }));
+    fireEvent.click(screen.getByRole("button", { name: /^increase added load/ }));
+    await pause(260);
+    fireEvent.click(screen.getByRole("button", { name: /^LOG SET/ }));
+    await vi.waitFor(() => expect(queuedSets()).toHaveLength(2));
+    expect(queuedSets()[1]!.load_kg).toBeGreaterThan(0);
+  });
+});

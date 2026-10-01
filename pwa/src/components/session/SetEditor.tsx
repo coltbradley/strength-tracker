@@ -55,7 +55,7 @@ export interface SetEditorProps {
   /** Bodyweight movements: reps stay the big number and any added load (belt,
    *  vest) is a small secondary row under them. `on` while that row is
    *  showing; `onRemove` sets the load back to nothing. */
-  addedLoad?: { on: boolean; onRemove(): void } | null;
+  addedLoad?: { on: boolean; onRemove(): void; onAdd?(): void } | null;
   onDraftChange(next: Partial<SetDraft>): void;
   onLog(): void;
   onOpenPad?(kind: "load" | "reps" | "duration"): void;
@@ -235,6 +235,13 @@ export function SetEditor({
     numbers = (
       <>
         {repsCard(true)}
+        {/* In the dock, not the picture: the picture gives way to the rest
+            panel, and a rest is when the belt goes on (N6). */}
+        {addedLoad && !addedLoad.on && addedLoad.onAdd && (
+          <button type="button" className="text-link dock-add-load" onClick={addedLoad.onAdd}>
+            + Add load (belt or vest)
+          </button>
+        )}
         {addedLoad?.on && (
           <div className="dock-added-load">
             <span className="dock-added-load-text">
