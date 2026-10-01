@@ -375,6 +375,10 @@ export const cacheKeys = {
    *  fact about today's performance, not a projection of anything on the
    *  server, so nothing a set or a session close does can stale it. */
   sessionSwaps: (sessionId: string) => `sessionSwaps:${sessionId}`,
+  /** today's entry order, a string[] of entry keys. Session-scoped and
+   *  device-local like swaps and skips: a presentation order for one
+   *  performance, never the (locked) plan, and in no invalidation family. */
+  sessionOrder: (sessionId: string) => `sessionOrder:${sessionId}`,
   /** live rest-timer state, so Home round-trips / reloads don't lose it */
   sessionRest: (sessionId: string) => `sessionRest:${sessionId}`,
   /** per-set notes for the in-flight session, set_id -> note */

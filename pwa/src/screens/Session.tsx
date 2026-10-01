@@ -127,6 +127,7 @@ import {
   setExerciseLoadStyle,
   setUnit,
 } from "../lib/settings";
+import { applyEntryOrder, orderKeysAfterMove } from "../lib/entryOrder";
 import { readSkipsCache, type SkipRecord } from "../lib/skips";
 import { useWakeLock } from "../hooks/useWakeLock";
 import { unlockRestCue } from "../lib/restCue";
@@ -221,6 +222,10 @@ export function Session() {
    * slot the plan asked for.
    */
   const [subs, setSubs] = useState<Substitutions>({});
+  /** Today's order of entry keys. Device-local and session-scoped like
+   *  `skips`/`subs`/`extras`; a presentation order, never the locked plan
+   *  (lib/entryOrder.ts). Empty = the plan's natural order. */
+  const [entryOrder, setEntryOrder] = useState<string[]>([]);
   /** exercise chosen mid-session, awaiting its declared scheme */
   const [declaring, setDeclaring] = useState<ExerciseRow | null>(null);
   /** name typed in the picker that matched nothing they wanted */
@@ -504,6 +509,7 @@ export function Session() {
           voidsCached,
           skipsCached,
           subsCached,
+          orderCached,
           restCached,
           notesCached,
           actuals,
@@ -516,6 +522,7 @@ export function Session() {
             cacheKeys.sessionSkips(a.id),
           ),
           cacheGet<Substitutions>(cacheKeys.sessionSwaps(a.id)),
+          cacheGet<string[]>(cacheKeys.sessionOrder(a.id)),
           cacheGet<RestCache>(cacheKeys.sessionRest(a.id)),
           cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(a.id)),
           getLastActuals(a.id).catch(() => ({ data: {} as LastActuals })),
@@ -561,6 +568,11 @@ export function Session() {
         setVoids(voided);
         setSkips(readSkipsCache(skipsCached));
         setSubs(subsCached ?? {});
+        setEntryOrder(
+          Array.isArray(orderCached)
+            ? orderCached.filter((k): k is string => typeof k === "string")
+            : [],
+        );
         setSetNotes(notesCached ?? {});
         setLastActuals(actuals.data);
         setEquipMap(
@@ -674,8 +686,12 @@ export function Session() {
   // ramps collapsed, extras appended, orphan sets given a home — see
   // lib/entries.ts, where the rules are pure and unit-tested
   const entries: ExerciseEntry[] = useMemo(
-    () => buildEntries(rx, extras, sets, allExercises, subs),
-    [rx, extras, sets, allExercises, subs],
+    () =>
+      applyEntryOrder(
+        buildEntries(rx, extras, sets, allExercises, subs),
+        entryOrder,
+      ),
+    [rx, extras, sets, allExercises, subs, entryOrder],
   );
 
   const openEntry = useMemo(
@@ -1955,6 +1971,18 @@ export function Session() {
   // append-only — or to write it in prose that no view, chart or MCP tool can
   // read. A real user did the second: "Had to switch tricep cable with
   // dumbbell overhead extension".
+
+  /** Move one unit (lone exercise or whole superset) in today's order. Only
+   *  `entryOrder` changes: no plan row, set_index or prescription_id. */
+  const moveUnit = (fromUnit: number, toUnit: number) => {
+    const next = orderKeysAfterMove(entries, fromUnit, toUnit);
+    if (next === null) return;
+    setEntryOrder(next);
+    if (sessionId)
+      cacheSet(cacheKeys.sessionOrder(sessionId), next).catch((e: unknown) =>
+        reportError(e, "cache entry order"),
+      );
+  };
 
   const persistSubs = (next: Substitutions) => {
     setSubs(next);
@@ -3733,6 +3761,7 @@ export function Session() {
                 entryProgress={entryProgress}
                 isSkipped={(entry) => Boolean(skips[entry.key])}
                 entryState={entryState}
+                onMoveUnit={moveUnit}
                 hasSections={hasSections}
                 supersetInfo={supersetInfo}
                 formatScheme={scheme}

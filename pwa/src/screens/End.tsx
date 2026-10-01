@@ -442,6 +442,7 @@ export function End() {
       cacheKeys.sessionSets(id),
       cacheKeys.sessionVoids(id),
       cacheKeys.sessionSkips(id),
+      cacheKeys.sessionOrder(id),
       cacheKeys.sessionRest(id),
       cacheKeys.sessionSetNotes(id),
       cacheKeys.sessionEndDraft(id),
