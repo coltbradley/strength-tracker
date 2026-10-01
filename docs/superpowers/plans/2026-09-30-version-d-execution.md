@@ -52,7 +52,7 @@ Review full branch for data durability, identity, correction receipt, grouping, 
 
 ## Progress
 
-Tasks 1–9 are locally implemented, tested and independently reviewed. The final whole-branch review is pending. This status does not close phone, seeded authenticated browser, production UUID readback, deployment or human acceptance.
+Tasks 1–9 are locally implemented, tested and independently reviewed. The final whole-branch review found two Important durability issues, fixed in `125d203` and accepted by a fresh scoped re-review; no reviewed findings remain open. This status does not close phone, seeded authenticated browser, production UUID readback, deployment or human acceptance.
 
 | Task | Result | Commits | Latest automated evidence |
 | --- | --- | --- | --- |
@@ -64,13 +64,15 @@ Tasks 1–9 are locally implemented, tested and independently reviewed. The fina
 | 6 | Whole-group session order with persistent preferences | 79bb52b, 743aaf0, 1053796 | 1,151 full PWA tests; typecheck/build |
 | 7 | Train week, preview and Finish light cards | a02c18e, 14ac111, 49f11fe | 1,157 full PWA tests; typecheck/build |
 | 8 | Actual Program calendar/day, Plan editor, Record and shared sheets | aa1465c, 831c878, 6d61e42 | 1,158 full tests before breakpoint fix; fix 55 covering tests/typecheck |
-| 9 | Final Focus visual, DEV matrix, integrated verification and docs | 1c197ff, 850a91b, 3c5ba73, 7214497, 5aa29ec, f0755f4, 3b7b1d7 | Final 97 files / 1,172 tests, typecheck/build pass at 3b7b1d7; scoped reviews pass |
+| 9 | Final Focus visual, DEV matrix, integrated verification and docs | 1c197ff, 850a91b, 3c5ba73, 7214497, 5aa29ec, f0755f4, 3b7b1d7, 125d203 | Final 97 files / 1,178 tests, typecheck/build pass at 125d203; all task and final scoped reviews pass |
 
 All tasks received fresh GPT-6 Luna spec/quality reviews. Important findings in Tasks 2–5, 8 and 9 were addressed and received scoped re-review. Task 6's insertion index, adjacency guard and narrow title width were corrected during implementation. Task 7's Train week was anchored to Today instead of Program's selected date; whole-program counters were removed from its weekly strip. Behavioral changes have RED/GREEN evidence in the ignored task reports. CSS-only changes rely on existing behavior tests plus rendered geometry, rather than class-name snapshots.
 
 Local demo observations through Task 8 include staged values across Focus/List, same-clock rest, exact fabricated receipt labels, one replacement at the corrected set's original index, session lb while Settings stays kg, whole-pair movement with selection preserved, Go/Close without starting, RPE/note preserved through Back to Session, full 320px editor names, and Program calendar paging. Program buttons measure 44px at 320, 50.28px at 360, 54.57px at 390 and 45.71px at 402; no page horizontal overflow was observed. These are mock/browser facts. Native pointer drag did not page the week; horizontal wheel did. No phone touch or OS keyboard acceptance is inferred.
 
-One earlier full run in Task 3 and one in Task 8 timed out in a Session test; targeted/immediate full reruns passed. The integrated run at 7214497 reproduced the preference assertion failure; test boundary assertions now retain stronger persistence checks, but no production cause is claimed. A later End-test bootstrap race was reproduced and its fixture corrected. Final coordinator source 3b7b1d7 passed all 1,172 tests, typecheck and build. See the tracked report for the failed-run history and diagnostic limits. Vite retains its existing main-chunk >500 kB advisory.
+One earlier full run in Task 3 and one in Task 8 timed out in a Session test; targeted/immediate full reruns passed. The integrated run at 7214497 reproduced the preference assertion failure; test boundary assertions now retain stronger persistence checks, but no production cause is claimed. A later End-test bootstrap race was reproduced and its fixture corrected. Coordinator source 3b7b1d7 passed all 1,172 tests, typecheck and build; the final durability patch 125d203 passed all 1,178 tests, forced typecheck and build. See the tracked report for the failed-run history and diagnostic limits. Vite retains its existing main-chunk >500 kB advisory.
+
+The final review found that a separate note enqueue could strand an annotation after correction commit, and delayed owner sampling could mis-stamp a queue item during account switching (composite FKs refuse it). The one final fix wave at `125d203` atomically includes the optional note and its cached remap, captures owner at API entry across single/batch/correction admission, and adds storage-failure, reopened-database and identity-switch tests. The independent final scoped re-review accepted both findings without new breakage. Local demo readback confirmed the note survives quick RPE and normal load correction.
 
 ### Correction relationship ruling and rollback
 
@@ -80,4 +82,4 @@ Cost: one metadata row per correction remains locally until app data is cleared;
 
 The original authored-load consistency cause was fixed at `40676f5`; the recovery tool remains available. Colt waived recovery of the old failed records. Its historical NOT RUN evidence remains intact.
 
-Final local verification, limits and rollback will be recorded in [the tracked evidence report](2026-10-01-version-d-local-verification.md). Ignored `.superpowers/sdd/2026-09-30-version-d-execution/` reports preserve detailed commands and review artifacts; they are not deployed-state evidence.
+Final local verification, limits and rollback are recorded in [the tracked evidence report](2026-10-01-version-d-local-verification.md). Ignored `.superpowers/sdd/2026-09-30-version-d-execution/` reports preserve detailed commands and review artifacts; they are not deployed-state evidence.

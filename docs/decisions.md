@@ -3211,3 +3211,23 @@ projector has no evidence to distinguish it from an ordinary set and can call
 an exact replacement row Synced. Task 3 does not detect or prevent this case;
 it may lose correction receipt context, though the append-only server rows
 remain unchanged.
+
+## 2026-10-01 Correction annotations share durable admission
+
+A correction's existing note follows the replacement UUID in the same local
+outbox/KV transaction as the replacement, original void and relationship.
+Accepting the correction before a separate note enqueue could strand the
+annotation on the voided row if storage failed. Both normal corrections and
+quick RPE changes now accept visible changes only after the whole bundle
+commits; failure leaves the original row and note intact. The existing note
+cache is remapped in that transaction for the still-matching device identity,
+so offline reopen retains the annotation without a new store or schema.
+
+All queue admission APIs capture the initiating owner before opening storage.
+A delayed open cannot transfer A's write to B after an account switch. The
+persisted identity fallback can preserve A's cache while live refresh is
+unresolved, but replay still requires live A. An unknown owner cannot populate
+the note cache. Composite owner foreign keys would refuse the wrong-owner
+rows, so the fixed risk was stranded writes, not demonstrated server-side
+misattribution. This is a local PWA change at `125d203`; phone/server acceptance
+and deployment remain separate checks.

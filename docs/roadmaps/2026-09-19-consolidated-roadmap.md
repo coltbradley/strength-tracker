@@ -2,7 +2,7 @@
 
 ## Version D local implementation, 2026-10-01
 
-The nine scoped light-redesign tasks are locally implemented, tested and reviewed on `codex/version-d-light-plan`; final whole-branch review is pending. See the [local evidence report](../superpowers/plans/2026-10-01-version-d-local-verification.md) for current scope and acceptance limits. This branch work does not change the historical deployed facts below or close Phase 2 phone/server acceptance. Old failed-record recovery is waived; new-write durability remains required.
+The nine scoped light-redesign tasks are locally implemented, tested and reviewed on `codex/version-d-light-plan`; the whole-branch review and its final durability fixes are complete at source `125d203` (1,178 tests, typecheck/build and scoped re-review pass). See the [local evidence report](../superpowers/plans/2026-10-01-version-d-local-verification.md) for current scope and acceptance limits. This branch work does not change the historical deployed facts below or close Phase 2 phone/server acceptance. Old failed-record recovery is waived; new-write durability remains required.
 
 ## Current status (2026-09-24)
 
