@@ -3180,11 +3180,38 @@ waiting worker on the next launch; the overnight sweep closes stale sessions.
 
 Train used to answer "Rest day" the moment today's session ended and show the
 next workout, which read as the app not knowing the session was done. It now
-leads with `✓ {label} finished` plus whether the outbox is empty (so "all sets
-on the server" is only said when `pending - held` and `dead` are both zero),
-then REST DAY / Recover. and the next workout. Train also gained the week strip
-with a short state word under each glyph (DONE, SKIP, TODAY, NEXT, REST, DRAFT;
-MISSED is kept for a past, non-empty, unfinished day), derived from the same
-`workoutStates` as Program, so DONE still requires `ended_at` and a DRAFT never
-reads as missed. The duration the design mocked ("about 65 min") is not shown
-because nothing here can compute one honestly.
+leads with `✓ {label} finished` plus what is true about the sets, then REST DAY
+/ Recover. and the next workout.
+
+The sync line rule (corrected the same day; the first version said "all sets on
+the server" when `pending - held` and `dead` were zero, which is wrong because a
+held write is queued on this phone and will not be sent by it, and an unknown
+identity holds EVERY write at boot). "All sets on the server" is a claim and is
+said only when it is proven: identity known, the outbox read at least once, and
+no SET write (not any other table) waiting, held or dead. Held counts as not on
+the server. Otherwise the card says `checking…`, `N waiting on this phone` or
+`N need review`; non-set writes are counted apart ("N other changes waiting")
+and never called sets. It counts every set write in the outbox, not only this
+session's, because a queued set cannot be mapped back to a finished session
+once the session row has landed; a stray older set can only make the line more
+cautious, never less.
+
+The week strip has a short state word under each glyph (DONE, SKIP, TODAY, NEXT,
+REST, DRAFT, MISSED, PAST), derived from the same `workoutStates` as Program, so
+DONE still requires `ended_at` and a DRAFT never reads as missed. MISSED is
+spelled out in full everywhere (never "MISS"), and is said only when completion
+is KNOWN: until the done-state read has answered (or been served from cache) a
+past day reads PAST, per "not knowing is not failing". A date holding several
+workouts shows today's pending one over a done one. The in-progress count is
+`n sets logged · m planned`, left out when the server read failed (never a 0),
+with pending voids subtracted; a session open for over 12 hours says when it
+started instead of a minute count.
+
+Confirmed programs are not exclusive, and Today used to show only
+`programs[0]`, silently hiding a second one. Now, when any confirmed program has
+dated days, the week shows the days of all of them (done-state is read per
+program); `programs[0]` still owns new days. Undated programs have no shared
+order, so only `programs[0]` is shown there and the others are named in a note.
+
+The duration the design mocked ("about 65 min") is not shown because nothing
+here can compute one honestly.
