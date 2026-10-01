@@ -80,12 +80,12 @@ describe("Warm Precision color tokens", () => {
   });
 
   it("uses the semantic focus progress role in each state selector", () => {
-    expect(ruleBody(styles, ".focus-set-segment")).toContain("var(--focus-set-future,");
+    expect(ruleBody(styles, ".focus-set-segment")).toContain("var(--focus-set-future)");
     expect(ruleBody(styles, ".focus-set-segment--completed")).toContain(
-      "var(--focus-set-completed,",
+      "var(--focus-set-completed)",
     );
     expect(ruleBody(styles, ".focus-set-segment--current")).toContain(
-      "var(--focus-set-current,",
+      "var(--focus-set-current)",
     );
   });
 });

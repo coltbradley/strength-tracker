@@ -31,40 +31,69 @@
 //   ordinary answer. Rating a set after the fact is a correction like any
 //   other, because `sets` is append-only.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { type StepDef } from "../components/Stepper";
 import { Note } from "../components/Note";
-import { RestTimer, type ActiveRest } from "../components/RestTimer";
+import {
+  RestDockTag,
+  RestTimer,
+  silenceRestCue,
+  useRestCue,
+  type ActiveRest,
+} from "../components/RestTimer";
 import { OutboxSheet } from "../components/OutboxSheet";
-import { SetReceiptStatus } from "../components/session/SetReceiptStatus";
-import { FocusLoadStage } from "../components/session/FocusLoadStage";
-import { SetRow } from "../components/SetRow";
+import {
+  SetReceiptStatus,
+  RECEIPT_GLYPH,
+  receiptKind,
+  type ReceiptKind,
+} from "../components/session/SetReceiptStatus";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
 import {
   SetEditor,
   type SetDraft,
-  type SetEditorProps,
 } from "../components/session/SetEditor";
-import { SupersetRoundEditor } from "../components/session/SupersetRoundEditor";
-import { UnitSwitch } from "../components/session/UnitSwitch";
-import { FocusDeck } from "../components/session/FocusDeck";
+import { DockKeys, FocusDeck, type FocusKeys } from "../components/session/FocusDeck";
 import { FocusMoreSheet } from "../components/session/FocusMoreSheet";
 import { WorkoutOverview } from "../components/session/WorkoutOverview";
-import { RpeChips } from "../components/RpeChips";
+import {
+  LoadPicture,
+  PlateDiagram,
+  type LoadPictureModel,
+} from "../components/session/LoadPicture";
+import { SupersetRound, type RoundMemberCard } from "../components/session/SupersetRound";
+import {
+  SessionHeaderControls,
+  SessionHeaderPortal,
+} from "../components/session/SessionHeader";
+import { TodayWorkoutSheet } from "../components/session/TodayWorkoutSheet";
+import { RpeSheet } from "../components/session/RpeSheet";
+import { NoteSheet } from "../components/session/NoteSheet";
+import { CorrectionSheet } from "../components/session/CorrectionSheet";
+import { LoggedSetRow } from "../components/session/LoggedSetRow";
+import { RestLastSetCard } from "../components/session/RestLastSetCard";
+import { useOutboxStatus } from "../hooks/useOutboxStatus";
+import { plateText } from "../lib/loadPicture";
+import { formatSetLine, setPositionLabel } from "../lib/setLine";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { NewExerciseSheet } from "../components/NewExerciseSheet";
-import {
-  prefersReducedMotion,
-  Sheet,
-  useKeyboardInset,
-} from "../components/Sheet";
+import { Sheet } from "../components/Sheet";
 import { cacheDelete, cacheGet, cacheSet, cacheKeys } from "../lib/db";
 import { readSessionPrefs, writeSessionPrefs } from "../lib/sessionPrefs";
 import {
+  blockMoveIndex,
   moveSessionEntry,
+  orderedEntryBlocks,
   reconcileEntryOrder,
   sessionEntryMoveIndex,
 } from "../lib/sessionOrder";
@@ -101,16 +130,23 @@ import {
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
 import { getCurrentUserId, onUserChange } from "../lib/currentUser";
-import { projectSetReceipt, type SetReceipt } from "../lib/setReceipt";
+import {
+  projectSetReceipt,
+  setQueueHeld,
+  type SetReceipt,
+} from "../lib/setReceipt";
 import type { OutboxEntry } from "../lib/outbox";
-import { supersetGroupEntries } from "../lib/sessionFocus";
+import {
+  roundPlacement,
+  supersetGroupEntries,
+  supersetRoundView,
+} from "../lib/sessionFocus";
 import { uuid } from "../lib/uuid";
 import { correctedSet, isNoopCorrection } from "../lib/corrections";
 import { getPrefillFallback, prefillSet } from "../lib/prefill";
 import { split } from "../lib/plates";
 import {
   formatClock,
-  formatPlate,
   formatRepRange,
   formatRxTarget,
   rxHasNoTm,
@@ -120,14 +156,15 @@ import { useUnit } from "../hooks/useUnit";
 import { useArmed } from "../hooks/useArmed";
 import {
   useAutoStartRest,
-  useExerciseBarKg,
-  useExercisePref,
   usePlatesOnHand,
+  useSetting,
 } from "../hooks/useSettings";
 import {
   getExerciseBarKg,
   getExercisePref,
+  type ExercisePref,
   getExerciseRestSeconds,
+  hasExerciseBase,
   MAX_BAR_KG,
   setExerciseBarKg,
   setExerciseLoadEntry,
@@ -139,7 +176,6 @@ import { unlockRestCue } from "../lib/restCue";
 import {
   focusEntryKey,
   isFocusEligible,
-  pinnedOverviewEntryKey,
   railState,
   transitionPresentation,
   twoMemberSuperset,
@@ -155,18 +191,21 @@ import {
   resolveLoadEntry,
   totalKg,
 } from "../lib/loadEntry";
-import { loadGridFor } from "../lib/loadGrid";
 import {
   offersLoadStyle,
+  offersLoadStyleSwitch,
   resolveLoadStyle,
   type LoadStyle,
 } from "../lib/loadStyle";
 import {
-  BarbellIcon,
-  PlateMachineIcon,
-  StackIcon,
-} from "../components/icons/LoadIcons";
-import { fromDisplay, kgToLb, loadToKg, stagedDisplayLoad, stepKgFor, toDisplay, type Unit } from "../lib/units";
+  fromDisplay,
+  kgToLb,
+  loadToKg,
+  stagedDisplayLoad,
+  stepKgFor,
+  toDisplay,
+  type Unit,
+} from "../lib/units";
 import type {
   ActiveSession,
   ExerciseRow,
@@ -188,6 +227,8 @@ type PadKind = "load" | "reps" | "duration" | "rest" | "base";
 interface PadSpec {
   kind: PadKind;
   fromPlates?: boolean;
+  /** the number being typed belongs to the Fix sheet's own draft */
+  forCorrection?: boolean;
 }
 
 const LOG_LOCK_MS = 200;
@@ -195,13 +236,6 @@ const LOG_LOCK_MS = 200;
 const MAX_REPS = 100;
 const MAX_LOAD_KG = 999;
 const MAX_REST_SECONDS = 3600;
-
-type SupersetRoundDraft = {
-  keys: readonly [string, string];
-  roundIndex: number;
-  a1: SetDraft;
-  a2: SetDraft;
-};
 
 /** A movement with no implement starts at zero load, never at the empty-bar
  *  fallback: in focus mode its load field is hidden, so a 20 kg default would
@@ -269,6 +303,8 @@ export function Session() {
     useState<SessionPresentation>("focus");
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const priorFocusKey = useRef<string | null>(null);
+  // "Today's workout", opened from the header's ☰ count.
+  const [workoutSheetOpen, setWorkoutSheetOpen] = useState(false);
 
   // The number the USER types. On a per-side exercise it is one side; the
   // total that reaches `sets.load_kg` is derived at the edges (see
@@ -278,23 +314,22 @@ export function Session() {
   const [durationSeconds, setDurationSeconds] = useState(60);
   const [setType, setSetType] = useState<SetType>("working");
   /**
-   * The staged rating, and which exercises have asked to see the chips.
-   *
-   * Two pieces of state because they have opposite lifetimes. The chip ROW is
-   * sticky per exercise — asking for it once should not mean asking again
-   * every set — while the VALUE is cleared after every log and on every fresh
-   * open. Load and reps are sticky because they are a plan that repeats; a
-   * rating is an observation of one set, and carrying it forward would invent
-   * data nobody stated, silently, on an append-only table.
-   *
-   * Keyed by exercise rather than by entry: a swap changes the movement, and
-   * how the cable felt says nothing about the dumbbell standing in for it.
+   * The staged rating for the NEXT set. Cleared after every log and on every
+   * fresh open: load and reps are sticky because they are a plan that
+   * repeats; a rating is an observation of one set, and carrying it forward
+   * would invent data nobody stated, silently, on an append-only table. It is
+   * set from the RPE sheet (the key shows "RPE 8" once it is).
    */
   const [rpe, setRpe] = useState<number | null>(null);
   const stagedDraftsRef = useRef<Record<string, SetDraft>>({});
+  // Drafts the lifter actually CHANGED. `stagedDraftsRef` also holds the
+  // untouched prefill of every exercise opened, so counting it made "leave
+  // the session" ask about unlogged changes after nothing had been touched.
+  const dirtyDraftsRef = useRef(new Set<string>());
   const rememberStagedDraft = (
     entry: ExerciseEntry,
     next: Partial<SetDraft>,
+    userEdit = true,
   ) => {
     const key = `${entry.key}:${entry.exercise_id}`;
     const prior = stagedDraftsRef.current[key] ?? {
@@ -305,9 +340,12 @@ export function Session() {
       durationSeconds,
     };
     stagedDraftsRef.current[key] = { ...prior, ...next };
+    if (userEdit) dirtyDraftsRef.current.add(key);
   };
-  const [rpeAsked, setRpeAsked] = useState<Set<string>>(new Set());
   const [logLocked, setLogLocked] = useState(false);
+  /** A set is being written to the local queue: the button says Saving… and
+   *  cannot be pressed again until the write has settled. */
+  const [logSaving, setLogSaving] = useState(false);
   /** True for one `--motion-fast` pulse after a tap lands on the 200 ms
    *  duplicate-LOG lock. The tap did something — it just wasn't a second
    *  insert — and `.is-held` (styles.css) says so instead of the button
@@ -318,9 +356,14 @@ export function Session() {
    * the controlled draft so the lifter can retry without re-entering values. */
   const [logError, setLogError] = useState<string | null>(null);
   const [roundDrafts, setRoundDrafts] = useState<Record<string, SetDraft>>({});
-  const [roundError, setRoundError] = useState<string | null>(null);
+  /** The member the lifter tapped to log out of order (the partner's warmup,
+   *  an A2 first). Cleared by any log; honoured only while that member still
+   *  has work to do. */
+  const [roundNowOverride, setRoundNowOverride] = useState<string | null>(null);
   const [leavePromptOpen, setLeavePromptOpen] = useState(false);
   const [extraSetArmed, setExtraSetArmed] = useState(false);
+  /** Bodyweight movements show added load only once somebody asks for it. */
+  const [bwAddOpen, setBwAddOpen] = useState<string | null>(null);
   /** Which paired editor owns the ephemeral pad or plate sheet, if either. */
   const [roundInputKey, setRoundInputKey] = useState<string | null>(null);
 
@@ -385,34 +428,29 @@ export function Session() {
   // corrections: voided set ids (append-only voiding) and skipped entry keys
   const [voids, setVoids] = useState<Set<string>>(new Set());
 
-  // The set the rest strip's RPE row rates. Set at the moment of logging
-  // (logSet / logRound below) and updated, never cleared, by `rateLastSet`
-  // itself -- a rating is a correction, and a correction changes the set's
-  // id, so this must follow it or the second tap would try to correct a row
-  // that `set_voids` already hides. Going stale after the rest strip is
-  // dismissed is harmless: the row that reads it (`restTimerEl` below) is
-  // gated on `rest`, which becomes null at the same time.
-  const [lastLoggedSet, setLastLoggedSet] = useState<SetInsert | null>(null);
   const [skips, setSkips] = useState<Record<string, SkipRecord>>({});
   const [voidArm, setVoidArm] = useArmed();
-  // The set being CORRECTED, with the stepper values it displaced so Cancel
-  // can put them back. A correction is a void plus a new row at the same
-  // index (lib/corrections.ts); this is only the screen's side of it.
+  // The set being CORRECTED, as a draft of its own. A correction is a void
+  // plus a new row at the same index (lib/corrections.ts); this is only the
+  // screen's side of it. It never borrows the dock's staged values, and it
+  // carries the load convention of the exercise the SET belongs to, so what
+  // is open when Fix is tapped cannot change what gets written (C1).
   const [editing, setEditing] = useState<{
     set: SetInsert;
-    stagedKey: string;
-    staged: {
-      entryKg: number;
-      reps: number;
-      setType: SetType;
-      rpe: number | null;
-      durationSeconds: number;
-      enteredLoad?: number;
-      enteredUnit?: Unit;
-    };
+    /** the entry that owns the set, for naming it */
+    name: string;
+    equipment: string | null;
+    loadEntry: LoadEntry;
+    tracking: "reps" | "time";
+    entryKg: number;
+    reps: number;
+    setType: SetType;
+    rpe: number | null;
+    /** what the lifter reads in the load card, in the unit it was authored in */
     enteredLoad: number;
     enteredUnit: Unit;
     loadEdited: boolean;
+    saving: boolean;
   } | null>(null);
   // A durable write can take longer than a double tap. Lock by original row
   // so correction, quick RPE, and void cannot commit competing operations.
@@ -420,13 +458,11 @@ export function Session() {
 
   // per-set notes (set_id -> note); "" = cleared
   const [setNotes, setSetNotes] = useState<Record<string, string>>({});
-  const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
+  /** the set the Note sheet is open on; always a live row */
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [rpeSheetOpen, setRpeSheetOpen] = useState(false);
 
   const [dropArm, setDropArm] = useArmed();
-  // the one keyboard-covered surface that is not a sheet: the per-set note
-  // editor sits deep in the scroller with its Save/Cancel row underneath
-  const kbInset = useKeyboardInset();
   const [sheet, setSheet] = useState<"search" | "swap" | "plates" | "outbox" | null>(null);
   const [receiptReviewReason, setReceiptReviewReason] = useState<string | null>(null);
   // Focus mode's one door to everything its default screen hides: RPE, a set
@@ -970,31 +1006,24 @@ export function Session() {
     [sets, rx, knownRxIds],
   );
 
-  const editingEntryKey = useMemo(() => {
-    if (!editing) return null;
-    return (
-      entries.find((entry) =>
-        setsForEntry(entry).some((set) => set.id === editing.set.id),
-      )?.key ?? null
+  /** The newest live set among these, by when it was done: corrections keep
+   *  `performed_at`, so a replacement takes its original's place, and a voided
+   *  row is not in `sets` at all. */
+  const newestOf = (list: readonly SetInsert[]): SetInsert | null =>
+    list.reduce<SetInsert | null>(
+      (a, b) =>
+        a === null ||
+        b.performed_at > a.performed_at ||
+        (b.performed_at === a.performed_at && b.set_index > a.set_index)
+          ? b
+          : a,
+      null,
     );
-  }, [editing, entries, setsForEntry]);
 
-  /**
-   * Whether the rating row is on screen for a movement: because somebody
-   * asked for it, or because a set of this movement is already rated.
-   *
-   * The second half is what makes it survive a reload. `rpeAsked` is screen
-   * state and dies with the page, and a lifter who has been rating every set
-   * should not come back from an app switch to find the row gone and her
-   * ratings sitting in LOGGED with no way to add the next one but a rediscovery
-   * tap. Reading it off the sets themselves needs no cache and cannot go stale.
-   */
-  const rpeShown = useCallback(
-    (exerciseId: string) =>
-      rpeAsked.has(exerciseId) ||
-      sets.some((s) => s.exercise_id === exerciseId && s.rpe != null),
-    [rpeAsked, sets],
-  );
+  /** The last set saved, whatever it was — derived from the live rows, never
+   *  held as a copy. After a correction it IS the replacement, so the LAST SET
+   *  card, "Fix last" and the Note key can never point at a voided row (C2). */
+  const lastSet = useMemo(() => newestOf(sets), [sets]);
 
   /** Working sets logged against an entry — the number that answers "am I
    *  done with this exercise". Everything that is not a WARMUP counts,
@@ -1049,19 +1078,43 @@ export function Session() {
   // member. A round is one unit of work, not two independently focused cards.
   const focusEntry = focusSupersetPair?.[0] ?? selectedFocusEntry;
 
+  // The live superset round, member by member: which member the dock edits
+  // and logs (NOW), the state of both cards, and "round 2 of 4". One question,
+  // answered once (lib/sessionFocus.ts), so the card, the dock label, the
+  // heading and the rest decision can never disagree. A SKIPPED member counts
+  // as finished, so the partner is NOW and can be logged (H1).
+  const roundView = useMemo(() => {
+    if (!focusSupersetPair) return null;
+    const progressOf = (e: ExerciseEntry) => ({
+      progress: entryProgress(e),
+      target: targetSets(e),
+      skipped: e.key in skips,
+    });
+    const override =
+      roundNowOverride === focusSupersetPair[0].key
+        ? 0
+        : roundNowOverride === focusSupersetPair[1].key
+          ? 1
+          : null;
+    return supersetRoundView(
+      progressOf(focusSupersetPair[0]),
+      progressOf(focusSupersetPair[1]),
+      override,
+    );
+  }, [focusSupersetPair, entryProgress, skips, roundNowOverride]);
+  /** the entry the dock is editing: the round's NOW member, else the focus
+   *  entry */
+  const nowEntry =
+    roundView && focusSupersetPair
+      ? focusSupersetPair[roundView.nowIndex]
+      : focusEntry;
+
   // One state per entry, from the shared vocabulary (StateGlyph.tsx),
-  // feeding both the focus rail and the overview rows so the two surfaces
-  // can never describe the same entry two different ways.
+  // feeding the Today's workout rows and the List so the surfaces can never
+  // describe the same entry two different ways.
   const currentKeys = useMemo(
-    () =>
-      new Set(
-        focusSupersetPair
-          ? [focusSupersetPair[0].key, focusSupersetPair[1].key]
-          : focusEntry
-            ? [focusEntry.key]
-            : [],
-      ),
-    [focusSupersetPair, focusEntry],
+    () => new Set(nowEntry ? [nowEntry.key] : []),
+    [nowEntry],
   );
   const entryState = useCallback(
     (e: ExerciseEntry): ProgressState =>
@@ -1102,17 +1155,6 @@ export function Session() {
     setPresentation("focus");
   }, [orderedEntries, entryDone, focusEligible, openKey, setsLoaded, prefsReady]);
 
-  // Focus is meant to read as one exercise at arm's length, so route chrome
-  // and the wordmark hide while this screen is actually showing focus. The
-  // compact utility group remains in the shared topbar for support and
-  // recovery. A body class rather than lifted state keeps App out of Session's
-  // presentation decision. Always cleaned up on unmount or mode change.
-  useEffect(() => {
-    if (presentation !== "focus") return;
-    document.body.classList.add("focus-chrome-hidden");
-    return () => document.body.classList.remove("focus-chrome-hidden");
-  }, [presentation]);
-
   // The "more" sheet describes ONE exercise (or round); switching what focus
   // is showing under it — by advancing, or by leaving focus altogether —
   // must not leave it open describing something no longer on screen.
@@ -1127,35 +1169,16 @@ export function Session() {
   // The focus deck's own header, for the one case it isn't just the
   // exercise name: a live round replaces "Romanian Deadlift / SET 1 OF 3"
   // with "Superset A" / "round 1 of 3" so the two member names underneath
-  // are never named twice on one screen. Mirrors the exhaustion math
-  // `renderEditor` uses to build `SupersetRoundEditor`'s (now aria-only)
-  // label — kept here too because FocusDeck renders its own header outside
-  // that closure. Null falls back to FocusDeck's default (entry name +
-  // set position), which covers correction and the plain single-exercise case.
+  // are never named twice on one screen.
   const focusRoundHeading =
-    !editing && presentation === "focus" && focusSupersetPair !== null
-      ? (() => {
-          const [a1, a2] = focusSupersetPair;
-          const letter = (supersetInfo.get(a1.key)?.tag ?? "A1").replace(
-            /\d+$/,
-            "",
-          );
-          const progressA = entryProgress(a1);
-          const progressB = entryProgress(a2);
-          const targetA = targetSets(a1);
-          const targetB = targetSets(a2);
-          const exhaustedA = targetA > 0 && progressA >= targetA;
-          const exhaustedB = targetB > 0 && progressB >= targetB;
-          const tail = exhaustedA !== exhaustedB;
-          const index = Math.min(progressA, progressB) + 1;
-          const total = tail
-            ? Math.max(targetA, targetB)
-            : Math.min(targetA, targetB);
-          return {
-            title: `Superset ${letter}`,
-            subtitle: `round ${index} of ${total}`,
-          };
-        })()
+    presentation === "focus" && roundView !== null && focusSupersetPair !== null
+      ? {
+          title: `Superset ${(supersetInfo.get(focusSupersetPair[0].key)?.tag ?? "A1").replace(/\d+$/, "")}`,
+          subtitle:
+            roundView.roundTotal > 0
+              ? `round ${roundView.roundIndex} of ${roundView.roundTotal}`
+              : `round ${roundView.roundIndex}`,
+        }
       : null;
 
   /** Does this day have any named part? If not, it needs no headings at all. */
@@ -1224,57 +1247,133 @@ export function Session() {
   // secondary button never has to be read twice.
   const advanceTo = partnerEntry ?? nextEntry;
 
-  const equipment = openEntry
-    ? (equipMap[openEntry.exercise_id] ?? null)
-    : null;
-  // Focus's hero is load or reps depending on whether there is an implement
-  // at all. Gated to focus mode only (see SetEditor's `noLoad`) — the
-  // accordion's long-standing load field is unchanged here.
-  // Only while the staged load really is zero: a bodyweight movement with a
-  // load staged (a weighted pull-up, or a fallback that got through) must
-  // keep its load visible, because `sets` is append-only and a number nobody
-  // could see would be logged for good.
-  const noLoadEditor =
-    presentation === "focus" &&
-    isBodyweightEquipment(equipment) &&
-    entryKg === 0;
-  // per-exercise bar (0 = plate-loaded, e.g. leg press); persisted choice
-  const exerciseBarKg = useExerciseBarKg(
-    openEntry?.exercise_id ?? null,
-    unit,
-    equipment,
-  );
-  const exercisePref = useExercisePref(openEntry?.exercise_id ?? null);
+  // ---- helpers every surface shares ----------------------------------------
+  //
+  // Defined once, ahead of anything that renders, so the Focus dock, the List
+  // card, a superset member, the Fix sheet and the rest scene all read an
+  // exercise the same way (and none of them can be handed another exercise's
+  // convention).
 
-  // Load style: which of the six load modes this exercise uses. Barbell and
-  // any machine/cable-like equipment are eligible for the plate calculator
-  // (fixed for a barbell, toggleable for machine/cable); everything else
-  // (dumbbell, kettlebell, bodyweight) has no bar/pin concept at all and
-  // `loadStyle` below is never consulted for it.
-  const loadStyleEligible =
-    equipment === "barbell" ||
-    offersLoadStyle(equipment, openEntry?.name ?? "");
-  const loadStyle: LoadStyle | null = loadStyleEligible
-    ? resolveLoadStyle(exercisePref.loadStyle, equipment, openEntry?.name ?? "")
-    : null;
-  const plateable = loadStyle === "plates";
-  const canToggleLoadStyle = offersLoadStyle(equipment, openEntry?.name ?? "");
+  // Every exercise's device-local preference, subscribed as a whole: a toggle
+  // made on a superset's OTHER member (its dumbbell count, its sled weight)
+  // must re-render this screen, which a per-exercise hook on the open entry
+  // would never notice.
+  const prefs = useSetting("exercisePrefs");
+  const outboxStatus = useOutboxStatus();
+  const prefFor = (exerciseId: string): ExercisePref => prefs[exerciseId] ?? {};
 
-  // ---- accordion -----------------------------------------------------------
+  /** A movement logged by ticking it off rather than by weight and reps. */
+  const isTick = (entry: ExerciseEntry | null): boolean =>
+    entry?.brackets[0]?.tracking === "done";
+  const isTimed = (entry: ExerciseEntry | null): boolean =>
+    entry?.brackets[0]?.tracking === "time";
+  const trackingOf = (entry: ExerciseEntry): "reps" | "done" | "time" =>
+    isTick(entry) ? "done" : isTimed(entry) ? "time" : "reps";
 
-  const toggleOpen = (key: string) => {
-    setOpenKey((prev) =>
-      pinnedOverviewEntryKey(prev === key ? null : key, editingEntryKey),
-    );
+  /** "1×8-15 @ 90 KG · 3×3-5" — an entry's full prescribed scheme. */
+  const scheme = (entry: ExerciseEntry): string =>
+    entry.brackets
+      .map((b) => {
+        // Tick prescriptions encode reps as zero because there is no numeric
+        // rep target. Quoting the shared rep formatter directly turned that
+        // implementation value into a false "3×0" target in List.
+        if (b.tracking === "done") return `${b.sets}×done`;
+        if (b.tracking === "time") return `${b.sets}×time`;
+        const loadEntry = resolveLoadEntry({
+          override: prefFor(entry.exercise_id).loadEntry,
+          prescribed: entry.substitutedFor ? null : (b.load_entry ?? null),
+          equipment: equipMap[entry.exercise_id] ?? null,
+          name: entry.name,
+        });
+        return formatRxTarget({ ...b, load_entry: loadEntry }, unit);
+      })
+      .join(" · ");
+
+  /** The load stepper's buttons: coarse pair outside, fine pair inside. Both
+   *  the label and the delta come from `stepKgFor`, so a per-exercise or
+   *  per-unit increment can never disagree with what the button says. The
+   *  fine pair is dropped when it would duplicate the coarse one. */
+  const loadSteps = (exerciseId: string, u: Unit): StepDef[] => {
+    const coarse = stepKgFor(exerciseId, u, false);
+    const fine = stepKgFor(exerciseId, u, true);
+    const label = (kg: number) => toDisplay(kg, u);
+    // `announce` says the step in the unit the lifter reads. Without it the
+    // spoken label carried the kg equivalent of a five-pound plate —
+    // "increase load by 2.2679618500000003".
+    const say = (kg: number) => `${label(kg)} ${u}`;
+    const steps: StepDef[] = [
+      { label: `− ${label(coarse)}`, delta: -coarse, announce: say(coarse) },
+      { label: `+ ${label(coarse)}`, delta: coarse, announce: say(coarse) },
+    ];
+    if (label(fine) === label(coarse)) return steps;
+    return [
+      steps[0],
+      {
+        label: `− ${label(fine)}`,
+        delta: -fine,
+        fine: true,
+        announce: say(fine),
+      },
+      {
+        label: `+ ${label(fine)}`,
+        delta: fine,
+        fine: true,
+        announce: say(fine),
+      },
+      steps[1],
+    ];
+  };
+
+  /**
+   * "Last time · 60 kg × 8, 8, 6" — the previous SESSION's working sets for
+   * this movement, in the convention given.
+   *
+   * The run, not one set. A single "60 kg × 8" is the top of a shape and
+   * says nothing about whether the last set of it was a grind: what a lifter
+   * standing at the rack is deciding is whether to repeat the day or add
+   * weight, and the reps that fell away are the whole of that answer. When
+   * the load moved across the run each set is quoted with its own, because
+   * "60, 65, 70 × 8, 8, 6" would be a puzzle rather than a reminder.
+   *
+   * Reference text: it never competes with the target or the log button.
+   */
+  const lastTime = (
+    exerciseId: string,
+    entryMode: LoadEntry,
+    latestOnly = false,
+    repsOnly = false,
+  ): string | null => {
+    const a = lastActuals[exerciseId];
+    if (!a) return null;
+    const shown = (kg: number) =>
+      `${toDisplay(enteredKg(kg, entryMode), unit)} ${unit}${entryMode === "per_side" ? "/side" : ""}`;
+    if (latestOnly)
+      return repsOnly
+        ? `Last time · ${a.reps} reps`
+        : `Last time · ${shown(a.load_kg)} × ${a.reps}`;
+    // a value cached before runs existed carries only the top set
+    const run = a.run && a.run.length > 0 ? a.run : [a];
+    const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);
+    const body = sameLoad
+      ? `${shown(run[0].load_kg)} × ${run.map((s) => s.reps).join(", ")}`
+      : run.map((s) => `${shown(s.load_kg)} × ${s.reps}`).join(" · ");
+    return `Last time · ${body}`;
+  };
+
+  // ---- navigation ----------------------------------------------------------
+
+  /** Make this exercise the one on screen, in whichever view is showing. */
+  const jumpToEntry = (entry: ExerciseEntry) => {
+    setFocusKey(entry.key);
+    setOpenKey(entry.key);
+    setSelectedEntryKey(entry.key);
+    setRoundNowOverride(null);
+    setExtraSetArmed(false);
   };
 
   const showOverview = () => {
     priorFocusKey.current = openKey;
-    // A correction in progress pins the presentation switch to its own
-    // entry, the same way `toggleOpen` pins the accordion: a set is being
-    // fixed against a specific exercise, and neither an unrelated selection
-    // nor the entry that happened to be open before may steal it.
-    const current = editingEntryKey ?? focusKey ?? openKey ?? selectedEntryKey;
+    const current = focusKey ?? openKey ?? selectedEntryKey;
     setSelectedEntryKey(current);
     setOpenKey(current);
     setPresentation("overview");
@@ -1282,12 +1381,6 @@ export function Session() {
 
   const enterFocus = () => {
     if (!focusEligible) return;
-    if (editingEntryKey) {
-      setOpenKey(editingEntryKey);
-      setFocusKey(editingEntryKey);
-      setPresentation("focus");
-      return;
-    }
     const next = transitionPresentation(
       presentation,
       "focus",
@@ -1300,26 +1393,38 @@ export function Session() {
     setPresentation(next.presentation);
   };
 
-  const changePresentation = (next: SessionPresentation) => {
-    if (next === "focus") enterFocus();
-    else showOverview();
-  };
+  // ---- today's order -------------------------------------------------------
 
-  const moveIndex = useCallback(
-    (key: string, direction: "up" | "down") =>
+  // The movable units (whole blocks) in the order shown. What may move, and
+  // where, is lib/sessionOrder.ts's decision; this only asks and applies.
+  const blocks = useMemo(
+    () =>
+      orderedEntryBlocks(
+        entries,
+        orderedEntries.map((entry) => entry.key),
+      ),
+    [entries, orderedEntries],
+  );
+  const reorderLocked =
+    !prefsReady ||
+    editing !== null ||
+    logLocked ||
+    logSaving ||
+    pendingEntryWrites > 0 ||
+    orderWritePending;
+  const canMoveBlock = (index: number, direction: "up" | "down"): boolean => {
+    const key = blocks[index]?.[0]?.key;
+    return (
+      key !== undefined &&
       sessionEntryMoveIndex(
         entries,
         key,
         direction,
         orderedEntries.map((entry) => entry.key),
-      ),
-    [entries, orderedEntries],
-  );
-  const canReorderEntries =
-    prefsReady && editing === null && !logLocked && pendingEntryWrites === 0 &&
-    !orderWritePending;
-  const moveEntry = async (key: string, toIndex: number) => {
-    if (!canReorderEntries || orderWritePendingRef.current) return;
+      ) !== null
+    );
+  };
+  const persistEntryOrder = async (keys: string[]) => {
     const ownerId = getCurrentUserId();
     const requestedSession = sessionId;
     if (!ownerId || !requestedSession) return;
@@ -1328,15 +1433,6 @@ export function Session() {
       identityEpochRef.current === identityEpoch &&
       getCurrentUserId() === ownerId &&
       sessionIdRef.current === requestedSession;
-    const next = moveSessionEntry(
-      entries,
-      key,
-      toIndex,
-      orderedEntries.map((entry) => entry.key),
-    );
-    const keys = next.map((entry) => entry.key);
-    if (keys.every((entryKey, index) => entryKey === orderedEntries[index]?.key)) return;
-
     setSessionEntryOrderState({ ownerId, sessionId: requestedSession, keys });
     orderWritePendingRef.current = true;
     setOrderWritePending(true);
@@ -1349,6 +1445,25 @@ export function Session() {
       orderWritePendingRef.current = false;
       setOrderWritePending(false);
     }
+  };
+  /** Move the block at `fromBlock` to `toBlock`. Returns false when the order
+   *  rules refuse (it would split a section or superset) or nothing would
+   *  change, so the sheet can say so. */
+  const moveBlock = (fromBlock: number, toBlock: number): boolean => {
+    if (reorderLocked || orderWritePendingRef.current) return false;
+    const key = blocks[fromBlock]?.[0]?.key;
+    if (key === undefined || !getCurrentUserId() || !sessionId) return false;
+    const currentKeys = orderedEntries.map((entry) => entry.key);
+    const next = moveSessionEntry(
+      entries,
+      key,
+      blockMoveIndex(blocks, fromBlock, toBlock),
+      currentKeys,
+    );
+    const keys = next.map((entry) => entry.key);
+    if (keys.every((entryKey, index) => entryKey === currentKeys[index])) return false;
+    void persistEntryOrder(keys);
+    return true;
   };
 
   // ---- prefill on entry open / bracket advance -----------------------------
@@ -1402,112 +1517,124 @@ export function Session() {
   /** Is this slot being performed with a movement the plan did not name? */
   const swapped = openEntry?.substitutedFor !== undefined;
 
-  // ---- per-side convention -------------------------------------------------
+  // ---- how an exercise is loaded -------------------------------------------
 
-  // How this movement's load is expressed: the user's own choice, then the
-  // coach's prescription, then a guess from the equipment (lib/loadEntry.ts).
-  // `entryKg` is one side when this is "per_side"; `totalLoadKg` is what the
-  // database always stores.
-  const loadEntryInput = {
-    override: exercisePref.loadEntry,
-    // The coach's convention describes the movement the coach named. A cable
-    // stack is a total; the pair of dumbbells standing in for it is not, and
-    // inheriting "total" from the prescription would store one hand's weight
-    // as the whole system load. Dropped on a swap so the chain falls through
-    // to this exercise's own equipment, which is what actually got lifted.
-    prescribed: swapped ? null : (currentBracket?.load_entry ?? null),
-    equipment,
-    name: openEntry?.name ?? "",
+  /**
+   * Everything a surface needs to know about HOW this exercise is loaded,
+   * for the draft shown: the convention (per hand or total), the plates or
+   * stack, the base weight, the caps. A pure read — handlers are attached
+   * later, where the sheets exist — and keyed by the entry it is given, never
+   * by whichever one is open, so a superset's other member and the Fix sheet
+   * ask the same question and get that exercise's own answer.
+   *
+   * `entryKg` in a draft is what the lifter TYPES: one side on a per-side
+   * movement. The total that reaches `sets.load_kg` is derived at the edges
+   * (see lib/loadEntry.ts); the base weight only changes how plates are
+   * worked out, never the logged load.
+   */
+  const viewFor = (entry: ExerciseEntry, draft: SetDraft) => {
+    const equip = equipMap[entry.exercise_id] ?? null;
+    const pref = prefFor(entry.exercise_id);
+    const kind: BracketKind = draft.setType === "warmup" ? "warmup" : "working";
+    const bracket = bracketFor(entry, countFor(entry, kind), kind);
+    const input = {
+      override: pref.loadEntry,
+      // The coach's convention describes the movement the coach named. A cable
+      // stack is a total; the pair of dumbbells standing in for it is not, and
+      // inheriting "total" from the prescription would store one hand's weight
+      // as the whole system load. Dropped on a swap so the chain falls through
+      // to this exercise's own equipment, which is what actually got lifted.
+      prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
+      equipment: equip,
+      name: entry.name,
+    };
+    const mode: LoadEntry = resolveLoadEntry(input);
+    const perSideMode = mode === "per_side";
+    const totalLoadKg = totalKg(draft.entryKg, mode);
+    const styleEligible =
+      equip === "barbell" || offersLoadStyle(equip, entry.name);
+    const style: LoadStyle | null = styleEligible
+      ? resolveLoadStyle(pref.loadStyle, equip, entry.name)
+      : null;
+    const baseKg = getExerciseBarKg(entry.exercise_id, unit, equip);
+    const bodyweight = isBodyweightEquipment(equip);
+    const lowerEquip = equip?.toLowerCase() ?? "";
+    return {
+      equipment: equip,
+      bracket,
+      mode,
+      perSide: perSideMode,
+      canToggleEntry: offersLoadEntry(input),
+      totalLoadKg,
+      // the total is what the column caps, so a per-side entry caps at half
+      maxEntryKg: perSideMode ? MAX_LOAD_KG / 2 : MAX_LOAD_KG,
+      bodyweight,
+      /** no implement and nothing staged: reps are the only number */
+      noLoad: bodyweight && draft.entryKg === 0,
+      style,
+      baseKg,
+      baseKnown: hasExerciseBase(entry.exercise_id, equip),
+      baseName: (equip === "barbell" ? "Bar" : "Sled") as "Bar" | "Sled",
+      plateSplit:
+        style === "plates" ? split(totalLoadKg, baseKg, inventory) : null,
+      canSwitchStyle: offersLoadStyleSwitch(equip, entry.name, pref.loadStyle),
+      bellWord: (lowerEquip === "dumbbell"
+        ? "dumbbell"
+        : lowerEquip.startsWith("kettlebell")
+          ? "kettlebell"
+          : null) as "dumbbell" | "kettlebell" | null,
+    };
   };
-  const loadEntry: LoadEntry = resolveLoadEntry(loadEntryInput);
-  const perSide = loadEntry === "per_side";
-  const totalLoadKg = totalKg(entryKg, loadEntry);
+
+  // The dock's draft for the entry being edited at the top level (the open
+  // entry): the staged values plus the authored number they were typed as.
   const currentDraft = openEntry
     ? stagedDraftsRef.current[`${openEntry.key}:${openEntry.exercise_id}`]
     : undefined;
+  const openDraft: SetDraft = {
+    entryKg,
+    reps,
+    setType: setType as BracketKind,
+    rpe,
+    durationSeconds,
+    enteredLoad: currentDraft?.enteredLoad,
+    enteredUnit: currentDraft?.enteredUnit,
+  };
+  const openView = openEntry ? viewFor(openEntry, openDraft) : null;
+  // The open entry's convention and equipment, which the prefill effect and
+  // the staged-load display read.
+  const equipment = openView?.equipment ?? null;
+  const loadEntry: LoadEntry = openView?.mode ?? "total";
+  const perSide = loadEntry === "per_side";
   const displayedLoad = stagedDisplayLoad(
     entryKg,
-    editing?.enteredLoad ?? currentDraft?.enteredLoad,
-    editing?.enteredUnit ?? currentDraft?.enteredUnit,
+    currentDraft?.enteredLoad,
+    currentDraft?.enteredUnit,
     inputUnit,
   );
-  const loadGrid = openEntry && currentBracket?.load_pct_tm == null
-    ? loadGridFor(
-        { id: openEntry.exercise_id, name: openEntry.name, equipment },
-        inputUnit,
-        loadEntry,
-        { typedValue: displayedLoad },
-      )
-    : null;
-  const nearbyLoads = loadGrid?.nearbyStandardValues(displayedLoad).slice(0, 3) ?? [];
-  // the total is what the column caps, so a per-side entry caps at half
-  const maxEntryKg = perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
 
-  /** Flip the convention for this exercise, persisted device-locally beside
-   *  its bar and increment. The number on screen deliberately does NOT move:
-   *  it is what is written on the implement, and only the count of implements
+  /** Flip the convention for an exercise, persisted device-locally beside its
+   *  bar and increment. The number on screen deliberately does NOT move: it is
+   *  what is written on the implement, and only the count of implements
    *  changed. */
-  const toggleLoadEntry = () => {
-    if (!openEntry) return;
-    if (editing) {
-      setEditing({
-        ...editing,
-        enteredLoad: displayedLoad,
-        enteredUnit: unit,
-        loadEdited: true,
-      });
-    }
-    setExerciseLoadEntry(openEntry.exercise_id, perSide ? "total" : "per_side");
+  const toggleLoadEntryFor = (entry: ExerciseEntry, mode: LoadEntry) => {
+    setExerciseLoadEntry(entry.exercise_id, mode === "per_side" ? "total" : "per_side");
   };
 
-  /** Flip plates<->stack for this exercise, persisted device-locally. Only
-   *  meaningful for machine/cable work — a barbell's icon has no
-   *  `onToggle` at all (see `styleIcon` below), so this is never reachable
-   *  for one. */
-  const toggleLoadStyle = () => {
-    if (!openEntry) return;
-    setExerciseLoadStyle(
-      openEntry.exercise_id,
-      loadStyle === "plates" ? "stack" : "plates",
-    );
+  /** Flip plates <-> stack for an exercise, persisted device-locally. Offered
+   *  only where a plate-loaded alternative plausibly exists. */
+  const toggleLoadStyleFor = (entry: ExerciseEntry, style: LoadStyle | null) => {
+    setExerciseLoadStyle(entry.exercise_id, style === "plates" ? "stack" : "plates");
   };
-
-  /** Which load-mode icon the hero shows: a fixed barbell, a plates<->stack
-   *  toggle for machine/cable work, or nothing for hand-held implements
-   *  and bodyweight (those keep the existing per-hand chip, with its own
-   *  icon named by `perSideIcon`). */
-  const styleIcon: SetEditorProps["loadPresentation"]["styleIcon"] =
-    !loadStyleEligible || !openEntry
-      ? null
-      : equipment === "barbell"
-        ? { Icon: BarbellIcon, label: "barbell — loaded with plates" }
-        : {
-            Icon: loadStyle === "plates" ? PlateMachineIcon : StackIcon,
-            label:
-              loadStyle === "plates"
-                ? "plate-loaded machine — switch to a weight stack"
-                : "weight stack — switch to plate-loaded",
-            onToggle: canToggleLoadStyle ? toggleLoadStyle : undefined,
-          };
-  const perSideIcon: "dumbbell" | "kettlebell" | null =
-    equipment?.toLowerCase() === "dumbbell"
-      ? "dumbbell"
-      : (equipment?.toLowerCase().startsWith("kettlebell") ?? false)
-        ? "kettlebell"
-        : null;
 
   const prefilledFor = useRef<string | null>(null);
   const openedFor = useRef<string | null>(null);
   useEffect(() => {
     // wait for the sets merge: a mid-workout reload otherwise prefills from
     // the wrong bracket and can clobber staged values while a sheet is open.
-    // A correction in progress holds `entryKg`/`reps`/`setType`/`rpe` as the
-    // set BEING FIXED, not a draft — showOverview/enterFocus pin the open
-    // entry to it, but if presentation state ever changes openEntry out from
-    // under an active correction some other way, this must not overwrite
-    // those staged values with a fresh prefill for whatever is now open. That
-    // is how a correction on Bench once saved with Squat's numbers.
-    if (!setsLoaded || !openEntry || prefillKey === null || editing) return;
+    // A correction has a draft of its own (see `editing`), so nothing about
+    // staging the next set can overwrite the set being fixed.
+    if (!setsLoaded || !openEntry || prefillKey === null) return;
     // Opening an exercise is the one moment the TYPE is decided for you: the
     // plan's outstanding warmup, if it has one. This used to be a flat
     // `setSetType("working")` on every prefill, and logSet reset to working
@@ -1645,13 +1772,16 @@ export function Session() {
     action();
   };
 
-  const hasUnloggedChanges =
-    Object.keys(stagedDraftsRef.current).length > 0 ||
+  /** Anything the lifter has typed or tapped that is not yet a logged set. The
+   *  untouched prefill of an exercise does not count: asking "discard your
+   *  unlogged changes?" after nothing was changed is a false alarm. */
+  const hasUnloggedChanges = () =>
+    dirtyDraftsRef.current.size > 0 ||
     Object.keys(roundDrafts).length > 0 ||
     editing !== null;
 
   const goHome = () => {
-    if (hasUnloggedChanges) setLeavePromptOpen(true);
+    if (hasUnloggedChanges()) setLeavePromptOpen(true);
     else navigate("/");
   };
 
@@ -1731,6 +1861,7 @@ export function Session() {
     if (!entryToLog || !sessionId || logLocked || !setsLoaded || !prefsReady || setsFailed)
       return false;
     setLogLocked(true);
+    setLogSaving(true);
 
     const nextIndex = setIndexFor(entryToLog.exercise_id);
     const bracket = bracketFor(
@@ -1746,25 +1877,57 @@ export function Session() {
       equipment: equipMap[entryToLog.exercise_id] ?? null,
       name: entryToLog.name,
     });
+
+    // Where this set falls in a superset round, from what is logged BEFORE it.
+    // A superset is done a member at a time (A1, then A2, then rest); the gap
+    // between the two halves of a round is not a rest, so the second member
+    // records an UNKNOWN rest rather than the time since its partner (H3: that
+    // number would be stored on an append-only row for good), and rest begins
+    // only once the round is complete.
+    const kind: BracketKind = loggedDraft.setType === "warmup" ? "warmup" : "working";
+    const pair = twoMemberSuperset(orderedEntries, entryToLog.key);
+    const partner = pair
+      ? pair[0].key === entryToLog.key
+        ? pair[1]
+        : pair[0]
+      : null;
+    const placement = roundPlacement(
+      {
+        progress:
+          kind === "warmup" ? warmupCount(entryToLog) : entryProgress(entryToLog),
+      },
+      partner === null
+        ? null
+        : kind === "warmup"
+          ? {
+              progress: warmupCount(partner),
+              finished:
+                partner.key in skips || warmupCount(partner) >= warmupSets(partner),
+            }
+          : { progress: entryProgress(partner), finished: entryDone(partner) },
+    );
+
     const set = buildSetInsert(
       entryToLog,
       loggedDraft,
       bracket,
       targetLoadEntry,
       nextIndex,
-      recordableRest(),
+      placement.secondOfRound ? null : recordableRest(),
     );
     try {
       // The outbox is the only durable local copy while offline. A regular
       // set used to update React first and fire this write in the background,
       // so a rejected IndexedDB transaction produced a convincing but false
-      // LOGGED state. Superset rounds already use this boundary.
+      // LOGGED state. Every set — each superset member included — is its own
+      // durable write.
       await outbox.enqueue({ kind: "insert", table: "sets", payload: set });
 
       setVoidArm(null);
-      delete stagedDraftsRef.current[
-        `${entryToLog.key}:${entryToLog.exercise_id}`
-      ];
+      const draftKey = `${entryToLog.key}:${entryToLog.exercise_id}`;
+      delete stagedDraftsRef.current[draftKey];
+      dirtyDraftsRef.current.delete(draftKey);
+      setRoundNowOverride(null);
       // Logging on a skipped exercise means it happened after all, but only
       // after the set has a durable local record.
       if (skips[entryToLog.key]) {
@@ -1773,7 +1936,6 @@ export function Session() {
         persistSkips(unskipped);
       }
       const next = applySets((prev) => [...prev, set]);
-      setLastLoggedSet(set);
       setLogError(null);
       cacheSet(cacheKeys.sessionSets(sessionId), next).catch((e: unknown) =>
         reportError(e, "cache session sets"),
@@ -1787,10 +1949,8 @@ export function Session() {
         // is never treated as skipped here
         (e.key in skips && e.key !== entryToLog.key) ||
         entryMet(e, setsForEntryOf(e, next, rx, knownRxIds));
-      // Mid-superset the rest strip is a countdown to nothing: the next thing
-      // to do is the partner, not a wait. Only the STRIP is held — the clock
-      // below always starts, because `rest_seconds_actual` is data and
-      // append-only, so a rest not measured now can never be recorded later.
+      // Mid-superset the next thing to do is the partner, not a wait and not
+      // the next exercise: only a finished pair hands on.
       const roundOpen = supersetPartnerOf(orderedEntries, entryToLog.key, doneAfter);
       if (doneAfter(entryToLog) && roundOpen === null) {
         const index = orderedEntries.findIndex((entry) => entry.key === entryToLog.key);
@@ -1801,17 +1961,26 @@ export function Session() {
         }
       }
 
-      // The clock always starts MEASURING (rest_seconds_actual is data, and
-      // append-only means it can never be added later); auto-start governs only
-      // whether the strip appears.
+      // The clock MEASURES from the end of the last complete round, so it is
+      // restarted only when this log closes one (rest_seconds_actual is data,
+      // and append-only means it can never be added later); auto-start
+      // governs only whether the strip appears. Mid-round the clock keeps
+      // running from the previous round's end, which is what the NEXT round's
+      // first member will record.
       const now = Date.now();
-      restRef.current = { startedAt: now };
-      const forLabel = `${entryToLog.name} set ${nextIndex + 1}`;
+      if (!placement.roundOpenAfter) restRef.current = { startedAt: now };
+      const position = setPositionLabel(set, setsForEntryOf(entryToLog, next, rx, knownRxIds));
+      const forLabel = `${entryToLog.name} ${position.text}`;
       const targetRestSeconds = getExerciseRestSeconds(
         entryToLog.exercise_id,
         bracket?.rest_seconds ?? null,
       );
-      const showStrip = autoStartRest && roundOpen === null;
+      // No rest after the pair's own last set either: what follows is the
+      // next exercise, and the same as the old "Log round" the clock keeps
+      // measuring for it.
+      const pairFinished =
+        partner !== null && doneAfter(entryToLog) && doneAfter(partner);
+      const showStrip = autoStartRest && !placement.roundOpenAfter && !pairFinished;
       if (showStrip)
         setRest({ startedAt: now, targetSeconds: targetRestSeconds, forLabel });
       else setRest(null);
@@ -1854,165 +2023,25 @@ export function Session() {
       setLogError("This set could not be saved locally. Check storage and retry.");
       return false;
     } finally {
+      setLogSaving(false);
       window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
     }
   };
 
-  const logRound = async (round: SupersetRoundDraft) => {
-    // Kept synchronous with the tap: iOS will only permit this cue unlock in
-    // a user gesture, not after the durable local queue awaits.
-    unlockRestCue();
-    if (!sessionId || logLocked || !setsLoaded || !prefsReady || setsFailed) return;
-    const first = orderedEntries.find((entry) => entry.key === round.keys[0]);
-    const second = orderedEntries.find((entry) => entry.key === round.keys[1]);
-    if (!first || !second) return;
-    const members = [first, second] as const;
-
-    setLogLocked(true);
-    setVoidArm(null);
-    const actualRest = recordableRest();
-    const nextByExercise = new Map<string, number>();
-    const nextIndex = (exerciseId: string) => {
-      const value = nextByExercise.get(exerciseId) ?? setIndexFor(exerciseId);
-      nextByExercise.set(exerciseId, value + 1);
-      return value;
-    };
-    const buildRoundSet = (
-      entry: ExerciseEntry,
-      draft: SetDraft,
-      restSecondsActual: number | null,
-    ) => {
-      const bracket = bracketFor(
-        entry,
-        countFor(entry, draft.setType),
-        draft.setType,
-      );
-      const entryMode = resolveLoadEntry({
-        override: getExercisePref(entry.exercise_id).loadEntry,
-        prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
-        equipment: equipMap[entry.exercise_id] ?? null,
-        name: entry.name,
-      });
-      return buildSetInsert(
-        entry,
-        draft,
-        bracket,
-        entryMode,
-        nextIndex(entry.exercise_id),
-        restSecondsActual,
-      );
-    };
-    // A round is one tap: A1 and A2 land together, so only A1 (the round's
-    // first member) was actually rested for `actualRest` — that clock ran
-    // from the last set logged, which was A2's previous round. A2 itself did
-    // not rest at all; recording A1's elapsed time against it too would
-    // double-count one rest as two, so its own rest is unknown (null), the
-    // same as any other set whose rest was never measured.
-    const secondBracket = bracketFor(
-      second,
-      countFor(second, round.a2.setType),
-      round.a2.setType,
-    );
-    // The rest that follows THIS round is the one the coach wrote for
-    // whichever exercise was just performed last — A2, matching `forLabel`
-    // below — never the top-level `restSeconds` hook value, which reflects
-    // whichever entry happens to be `openEntry` (often A1, and possibly a
-    // different bracket_rest_seconds entirely).
-    const roundRestSeconds = getExerciseRestSeconds(
-      second.exercise_id,
-      secondBracket?.rest_seconds ?? null,
-    );
-    const inserts = [
-      buildRoundSet(first, round.a1, actualRest),
-      buildRoundSet(second, round.a2, null),
-    ];
-
-    try {
-      // This transaction is the local commit point. No set reaches React or
-      // the cache until both queue rows exist together in IndexedDB.
-      await outbox.enqueueBatch(
-        inserts.map((payload) => ({
-          kind: "insert" as const,
-          table: "sets" as const,
-          payload,
-        })),
-      );
-      // Logging on a skipped exercise means it happened after all, but the
-      // historical skip must survive if the all-or-nothing round batch did
-      // not make a durable local commit. This mirrors logSet's ordering.
-      if (skips[first.key] || skips[second.key]) {
-        const unskipped = { ...skips };
-        delete unskipped[first.key];
-        delete unskipped[second.key];
-        persistSkips(unskipped);
-      }
-      const next = applySets((prior) => [...prior, ...inserts]);
-      cacheSet(cacheKeys.sessionSets(sessionId), next).catch((error: unknown) =>
-        reportError(error, "cache superset round"),
-      );
+  /** One member of a superset round: the same durable path as any set
+   *  (logSet), then that member's round draft is cleared so the next round
+   *  stages fresh from the plan. Rest and the recorded rest follow the
+   *  round, not the member (see `placement` in logSet). */
+  const logRoundMember = (member: ExerciseEntry, draft: SetDraft) => {
+    if (!sessionId || !setsLoaded || !prefsReady || setsFailed) return;
+    void logSet(draft, member).then((saved) => {
+      if (!saved) return;
       setRoundDrafts((prior) => {
         const next = { ...prior };
-        delete next[round.keys[0]];
-        delete next[round.keys[1]];
+        delete next[member.key];
         return next;
       });
-      for (const entry of members)
-        delete stagedDraftsRef.current[`${entry.key}:${entry.exercise_id}`];
-      setRoundError(null);
-
-      // What the NEXT round should stage, from the plan rather than a stale
-      // toggle — the same carry-over logSet does. Only the member that IS
-      // the open entry needs it here: `roundDraftFor` reads the top-level
-      // `setType` for that one and recomputes a fresh default for the other
-      // on every render, so the other member's warmup->working transition
-      // already happens on its own from the updated `sets`.
-      for (const entry of members) {
-        if (entry.key !== openEntry?.key) continue;
-        const warmupsLogged = setsForEntryOf(
-          entry,
-          next,
-          rx,
-          knownRxIds,
-        ).filter((s) => s.set_type === "warmup").length;
-        setSetType(warmupsLogged < warmupSets(entry) ? "warmup" : "working");
-      }
-
-      const doneAfter = (entry: ExerciseEntry): boolean =>
-        entry.key in skips ||
-        entryMet(entry, setsForEntryOf(entry, next, rx, knownRxIds));
-      if (doneAfter(members[0]) && doneAfter(members[1])) {
-        const index = orderedEntries.findIndex((entry) => entry.key === members[1].key);
-        const nextEntry = orderedEntries.slice(index + 1).find((entry) => !doneAfter(entry));
-        if (nextEntry) {
-          setFocusKey(nextEntry.key);
-          setOpenKey(nextEntry.key);
-        }
-      }
-      const now = Date.now();
-      restRef.current = { startedAt: now };
-      // RPE belongs to the last set in the durable batch, A2. The upcoming
-      // rest belongs to the next A1 log instead.
-      setLastLoggedSet(inserts[1]);
-      const forLabel = `${members[0].name} set ${inserts[0].set_index + 1}`;
-      const showStrip =
-        autoStartRest && !doneAfter(members[0]) && !doneAfter(members[1]);
-      if (showStrip)
-        setRest({ startedAt: now, targetSeconds: roundRestSeconds, forLabel });
-      else setRest(null);
-      disarmRestAlert();
-      if (showStrip) armRestAlert(now + roundRestSeconds * 1000, forLabel);
-      mirrorRest(
-        showStrip ? roundRestSeconds : null,
-        showStrip ? forLabel : null,
-      );
-    } catch (error) {
-      reportError(error, "queue superset round");
-      setRoundError(
-        "This round could not be saved locally. Check storage and retry.",
-      );
-    } finally {
-      window.setTimeout(() => setLogLocked(false), LOG_LOCK_MS);
-    }
+    });
   };
 
   const openSheet = (
@@ -2033,9 +2062,10 @@ export function Session() {
     kind: PadKind,
     fromPlates = false,
     memberKey: string | null = null,
+    forCorrection = false,
   ) => {
     setRoundInputKey(memberKey);
-    setPad({ kind, fromPlates });
+    setPad({ kind, fromPlates, forCorrection });
     setSheet(null);
   };
 
@@ -2072,104 +2102,120 @@ export function Session() {
 
   // ---- corrections ---------------------------------------------------------
 
-  /** Tap a logged set: its numbers move into the steppers, LOG becomes
-   *  SAVE SET N. The old row is untouched until Save. */
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  /** The entry that holds a set. */
+  const entryOfSet = (s: SetInsert): ExerciseEntry | null =>
+    entries.find((e) => setsForEntry(e).some((x) => x.id === s.id)) ?? null;
+
+  /**
+   * What a set was lifted on — its own exercise's name, equipment and
+   * convention (per hand or total) — never the open entry's. Fix can be
+   * tapped for a set of an exercise that is not the one on screen (the LAST
+   * SET card after the final set of an exercise, a superset's other member),
+   * and deriving the convention from whatever happened to be open stored a
+   * bench set as "12.5 × 2" (C1).
+   */
+  const conventionForSet = (s: SetInsert) => {
+    const entry = entryOfSet(s);
+    const equipmentOfSet = equipMap[s.exercise_id] ?? null;
+    const swappedAway =
+      entry?.substitutedFor !== undefined &&
+      s.exercise_id === entry.substitutedFor.exercise_id;
+    const name =
+      (swappedAway ? entry?.substitutedFor?.name : undefined) ??
+      (entry && entry.exercise_id === s.exercise_id ? entry.name : undefined) ??
+      allExercises.find((x) => x.id === s.exercise_id)?.name ??
+      entry?.name ??
+      "this set";
+    const bracket = entry?.brackets.find((b) => b.id === s.prescription_id);
+    const mode = resolveLoadEntry({
+      override: getExercisePref(s.exercise_id).loadEntry,
+      // the coach's convention describes the movement the coach named
+      prescribed:
+        bracket && bracket.exercise_id === s.exercise_id
+          ? (bracket.load_entry ?? null)
+          : null,
+      equipment: equipmentOfSet,
+      name,
+    });
+    return {
+      entry,
+      name,
+      equipment: equipmentOfSet,
+      loadEntry: mode,
+    };
+  };
+
+  /** Tap a logged set: its numbers open in the Fix sheet. The old row is
+   *  untouched until Save, and a row that is already gone (voided, replaced)
+   *  cannot be fixed. */
   const startCorrection = (s: SetInsert) => {
     if (editing?.set.id === s.id) return;
+    // Always the live row: a copy of a set that has since been corrected would
+    // re-void the original and insert a second replacement.
+    const live = setsRef.current.find((x) => x.id === s.id);
+    if (!live) return;
     setVoidArm(null);
-    setNoteEditingId(null);
-    // Correcting a set — reached from focus mode only via the "more" sheet's
-    // LOGGED list — is a deliberate switch to the hero editor. Leaving the
-    // sheet open over it would show SAVE/Cancel behind an overlay meant for
-    // browsing, not for the one active edit.
     setMoreOpen(false);
-    // Only the first tap displaces the staged values; re-tapping a different
-    // set mid-correction must still restore what was there BEFORE editing.
-    const stagedKey = editing?.stagedKey ?? (openEntry
-      ? `${openEntry.key}:${openEntry.exercise_id}`
-      : `${s.prescription_id ?? "extra"}:${s.exercise_id}`);
-    const priorDraft = stagedDraftsRef.current[stagedKey];
-    const staged = editing?.staged ?? {
-      entryKg, reps, setType, rpe, durationSeconds,
-      enteredLoad: priorDraft?.enteredLoad ?? toDisplay(entryKg, unit),
-      enteredUnit: priorDraft?.enteredUnit ?? unit,
-    };
-    const correctionEntryKg = Math.round(enteredKg(s.load_kg, loadEntry) * 100) / 100;
-    const oldAuthored = s.load_entry === loadEntry &&
-      s.entered_load != null && s.entered_unit != null;
+    setRpeSheetOpen(false);
+    setNoteFor(null);
+    const conv = conventionForSet(live);
+    const typedKg = round2(enteredKg(live.load_kg, conv.loadEntry));
+    const oldAuthored =
+      live.load_entry === conv.loadEntry &&
+      live.entered_load != null &&
+      live.entered_unit != null;
     setEditing({
-      set: s, stagedKey, staged,
+      set: live,
+      name: conv.name,
+      equipment: conv.equipment,
+      loadEntry: conv.loadEntry,
+      tracking: isTimed(conv.entry) ? "time" : "reps",
+      entryKg: typedKg,
+      reps: live.reps,
+      setType: live.set_type,
+      // A correction is the only way to rate a set after the fact, so the
+      // row's rating comes into the sheet exactly as its load and reps do.
+      rpe: live.rpe ?? null,
+      // load_kg is the TOTAL; it is shown in the convention the exercise is
+      // in NOW, so Save — which totals the entry by that same convention —
+      // round-trips exactly even if the toggle was flipped since the set.
       enteredLoad: oldAuthored
-        ? s.entered_load!
+        ? live.entered_load!
         : unit === "kg"
-          ? correctionEntryKg
-          : Math.round(kgToLb(correctionEntryKg) * 100) / 100,
-      enteredUnit: oldAuthored ? s.entered_unit! : unit,
+          ? typedKg
+          : round2(kgToLb(typedKg)),
+      enteredUnit: oldAuthored ? live.entered_unit! : unit,
       loadEdited: false,
+      saving: false,
     });
-    // load_kg is the TOTAL; show it in whatever convention the exercise is
-    // in NOW, so Save — which totals the entry by that same convention —
-    // round-trips exactly even if the toggle was flipped since the set.
-    setEntryKg(correctionEntryKg);
-    setReps(s.reps);
-    setSetType(s.set_type);
-    // A correction is the only way to rate a set after the fact, so the row's
-    // rating comes into the chips exactly as its load and reps do. `rpeShown`
-    // is already true for a rated set; an unrated one still needs the reveal,
-    // which is the same one tap it always was.
-    setRpe(s.rpe ?? null);
   };
 
-  const cancelCorrection = () => {
-    if (!editing) return;
-    setEntryKg(editing.staged.entryKg);
-    setReps(editing.staged.reps);
-    setSetType(editing.staged.setType);
-    setRpe(editing.staged.rpe);
-    setDurationSeconds(editing.staged.durationSeconds);
-    // A legacy backoff can still be staged in state; it is not selectable in
-    // new brackets but the original draft must survive Cancel unchanged.
-    stagedDraftsRef.current[editing.stagedKey] = {
-      ...editing.staged,
-      setType: editing.staged.setType as BracketKind,
-    };
-    setEditing(null);
-  };
+  const cancelCorrection = () => setEditing(null);
 
-  /** Void the old row and append its replacement at the same set_index.
-   *  Nothing about WHEN the set happened changes: performed_at, the rest
-   *  before it and the rest clock after it all stand. */
-  const saveCorrection = async () => {
-    // Corrections are never gated by the log lock (Decision 6): the lock
-    // exists only to stop a double LOG tap inserting the same set twice, and
-    // a correction is a deliberate edit to a set that already exists. It
-    // must not engage the lock either — before this, correcting a set right
-    // after logging one silently blocked the NEXT log for up to 400 ms.
-    if (!editing || !sessionId) return;
-    const old = editing.set;
-    const correctedTotalKg = editing.loadEdited
-      ? Math.round(loadToKg(editing.enteredLoad, editing.enteredUnit, loadEntry) * 100) / 100
-      : old.load_kg;
-    const correction = {
-      load_kg: correctedTotalKg,
-      reps,
-      set_type: setType,
-      load_entry: loadEntryForSet(loadEntry, correctedTotalKg),
-      entered_load: correctedTotalKg === old.load_kg
-        ? old.entered_load ?? null
-        : correctedTotalKg > 0
-          ? editing.enteredLoad
-          : null,
-      entered_unit: correctedTotalKg === old.load_kg
-        ? old.entered_unit ?? null
-        : (correctedTotalKg > 0 ? editing.enteredUnit : null),
-      rpe,
-    };
-    if (isNoopCorrection(old, correction)) {
-      cancelCorrection();
-      return;
-    }
-    if (pendingSetMutationIdsRef.current.has(old.id)) return;
+  /** Void the old row and append its replacement at the same set_index, in one
+   *  durable local transaction (replacement first, so a void can never land
+   *  without it). Nothing about WHEN the set happened changes: performed_at,
+   *  the rest before it and the rest clock after it all stand. Visible state
+   *  changes only after the commit; a failure leaves the original on screen. */
+  const commitCorrection = async (
+    old: SetInsert,
+    correction: {
+      load_kg: number;
+      reps: number;
+      set_type: SetType;
+      load_entry: LoadEntry | null;
+      entered_load?: number | null;
+      entered_unit?: Unit | null;
+      rpe: number | null;
+    },
+    failureContext: string,
+    successToast?: string,
+  ): Promise<boolean> => {
+    if (!sessionId) return false;
+    if (isNoopCorrection(old, correction)) return true;
+    if (pendingSetMutationIdsRef.current.has(old.id)) return false;
     const next = correctedSet(old, correction);
     const note = setNotes[old.id] || undefined;
     pendingSetMutationIdsRef.current.add(old.id);
@@ -2193,72 +2239,79 @@ export function Session() {
         delete nextNotes[old.id];
         setSetNotes(nextNotes);
       }
-
-      setEntryKg(editing.staged.entryKg);
-      setReps(editing.staged.reps);
-      setSetType(editing.staged.setType);
-      setRpe(editing.staged.rpe);
-      setDurationSeconds(editing.staged.durationSeconds);
-      stagedDraftsRef.current[editing.stagedKey] = {
-        ...editing.staged,
-        setType: editing.staged.setType as BracketKind,
-      };
-      setEditing(null);
-      toast(`Set ${old.set_index + 1} corrected`);
+      if (successToast) toast(successToast);
+      return true;
     } catch (e) {
-      reportError(e, "correct set");
+      reportError(e, failureContext);
+      return false;
     } finally {
       pendingSetMutationIdsRef.current.delete(old.id);
       setPendingEntryWrites((count) => Math.max(0, count - 1));
     }
   };
 
-  /** Rate the set the rest strip is currently resting after, without
-   *  entering the full correction UI -- tapping an RPE chip mid-rest should
-   *  not flip the hero into "SAVE SET N" the way tapping a LOGGED row does.
-   *  Still a correction underneath (void + new row at the same set_index),
-   *  because `sets` is append-only and this IS a correction: only `rpe`
-   *  changes. */
-  const rateLastSet = async (nextRpe: number | null) => {
-    const old = lastLoggedSet;
-    if (!old || !sessionId) return;
+  const saveCorrection = async () => {
+    // Corrections are never gated by the log lock (Decision 6): the lock
+    // exists only to stop a double LOG tap inserting the same set twice, and
+    // a correction is a deliberate edit to a set that already exists.
+    if (!editing || !sessionId || editing.saving) return;
+    const draft = editing;
+    const old = draft.set;
+    const correctedTotalKg = draft.loadEdited
+      ? round2(loadToKg(draft.enteredLoad, draft.enteredUnit, draft.loadEntry))
+      : old.load_kg;
     const correction = {
-      load_kg: old.load_kg,
-      reps: old.reps,
-      set_type: old.set_type,
-      load_entry: old.load_entry ?? null,
-      rpe: nextRpe,
+      load_kg: correctedTotalKg,
+      reps: draft.reps,
+      set_type: draft.setType,
+      load_entry: loadEntryForSet(draft.loadEntry, correctedTotalKg),
+      entered_load:
+        correctedTotalKg === old.load_kg
+          ? old.entered_load ?? null
+          : correctedTotalKg > 0
+            ? draft.enteredLoad
+            : null,
+      entered_unit:
+        correctedTotalKg === old.load_kg
+          ? old.entered_unit ?? null
+          : correctedTotalKg > 0
+            ? draft.enteredUnit
+            : null,
+      rpe: draft.rpe,
     };
-    if (isNoopCorrection(old, correction)) return;
-    if (pendingSetMutationIdsRef.current.has(old.id)) return;
-    const next = correctedSet(old, correction);
-    const note = setNotes[old.id] || undefined;
-    pendingSetMutationIdsRef.current.add(old.id);
-    setPendingEntryWrites((count) => count + 1);
-    try {
-      await outbox.enqueueCorrection(sessionId, next, old.id, note);
-      const nextVoids = new Set(voids);
-      nextVoids.add(old.id);
-      setVoids(nextVoids);
-      cacheSet(cacheKeys.sessionVoids(sessionId), [...nextVoids]).catch(
-        (e: unknown) => reportError(e, "cache voids"),
-      );
-      const nextSets = applySets((prev) => prev.map((x) => x.id === old.id ? next : x));
-      cacheSet(cacheKeys.sessionSets(sessionId), nextSets).catch((e: unknown) =>
-        reportError(e, "cache session sets"),
-      );
-      if (note) {
-        const nextNotes = { ...setNotes, [next.id]: note };
-        delete nextNotes[old.id];
-        setSetNotes(nextNotes);
-      }
-      setLastLoggedSet(next);
-    } catch (e) {
-      reportError(e, "rate set");
-    } finally {
-      pendingSetMutationIdsRef.current.delete(old.id);
-      setPendingEntryWrites((count) => Math.max(0, count - 1));
+    if (isNoopCorrection(old, correction)) {
+      setEditing(null);
+      return;
     }
+    setEditing({ ...draft, saving: true });
+    const holder = entryOfSet(old);
+    const position = setPositionLabel(old, holder ? setsForEntry(holder) : [old]);
+    const ok = await commitCorrection(
+      old,
+      correction,
+      "correct set",
+      `${position.kind === "warmup" ? "Warmup" : "Set"} ${position.number} corrected`,
+    );
+    // closed only once the replacement is durable; a failure keeps the sheet
+    // (and every value typed in it) open for another try
+    setEditing(ok ? null : { ...draft, saving: false });
+  };
+
+  /** Rate a set without opening the Fix sheet: still a correction underneath
+   *  (void + new row at the same set_index, `sets` is append-only), only the
+   *  rating changes. */
+  const rateSet = async (old: SetInsert, nextRpe: number | null) => {
+    await commitCorrection(
+      old,
+      {
+        load_kg: old.load_kg,
+        reps: old.reps,
+        set_type: old.set_type,
+        load_entry: old.load_entry ?? null,
+        rpe: nextRpe,
+      },
+      "rate set",
+    );
   };
 
   /** Void a logged set: hide it from every view via an append-only
@@ -2279,7 +2332,8 @@ export function Session() {
     pendingSetMutationIdsRef.current.delete(s.id);
     setPendingEntryWrites((count) => Math.max(0, count - 1));
     setVoidArm(null);
-    if (editing?.set.id === s.id) cancelCorrection();
+    if (editing?.set.id === s.id) setEditing(null);
+    if (noteFor === s.id) setNoteFor(null);
     // voiding the set that started the current rest cancels the clock —
     // the rest was being measured from a set that no longer counts
     const startedClock = setsRef.current.every(
@@ -2457,33 +2511,83 @@ export function Session() {
 
   // ---- per-set notes -------------------------------------------------------
 
-  const openNote = (setId: string) => {
-    setNoteEditingId(setId);
-    setNoteDraft(setNotes[setId] ?? "");
-  };
-
-  const saveNote = (setId: string) => {
-    if (!sessionId) return;
-    const note = noteDraft.trim();
-    const next = { ...setNotes, [setId]: note };
-    setSetNotes(next);
-    setNoteEditingId(null);
-    cacheSet(cacheKeys.sessionSetNotes(sessionId), next).catch((e: unknown) =>
-      reportError(e, "cache set notes"),
-    );
-    outbox
-      .enqueue({
+  /** Save a note on a LIVE set. The note appears only once its outbox write is
+   *  durable; a failure keeps the sheet (and what was typed) open. */
+  const saveNote = async (setId: string, note: string): Promise<boolean> => {
+    if (!sessionId) return false;
+    // never a voided or replaced row: those are not in `sets`
+    if (!setsRef.current.some((x) => x.id === setId)) return false;
+    try {
+      await outbox.enqueue({
         kind: "insert",
         table: "set_notes",
         payload: { set_id: setId, note },
-      })
-      .catch((e: unknown) => reportError(e, "save set note"));
+      });
+    } catch (e) {
+      reportError(e, "save set note");
+      return false;
+    }
+    const next = { ...setNotes, [setId]: note };
+    setSetNotes(next);
+    cacheSet(cacheKeys.sessionSetNotes(sessionId), next).catch((e: unknown) =>
+      reportError(e, "cache set notes"),
+    );
+    return true;
   };
 
   // ---- pad request ---------------------------------------------------------
 
   const padRequest = (): PadRequest | null => {
-    if (!pad || !openEntry) return null;
+    if (!pad) return null;
+    // The Fix sheet's own numbers: its draft, its convention, its caps.
+    if (pad.forCorrection && editing && (pad.kind === "load" || pad.kind === "reps")) {
+      const draft = editing;
+      if (pad.kind === "reps") {
+        return {
+          label: `${draft.name.toUpperCase()} · REPS`,
+          action: "SET REPS",
+          initial: String(draft.reps),
+          allowDecimal: false,
+          onCommit: (value) => {
+            setEditing((prior) =>
+              prior
+                ? { ...prior, reps: Math.min(MAX_REPS, Math.max(0, Math.round(value))) }
+                : prior,
+            );
+            setPad(null);
+          },
+          onCancel: () => setPad(null),
+        };
+      }
+      const perSideDraft = draft.loadEntry === "per_side";
+      const maxKg = perSideDraft ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
+      return {
+        label: `${draft.name.toUpperCase()} · ${
+          perSideDraft ? "WEIGHT ON EACH DUMBBELL" : "ONE TOTAL WEIGHT"
+        } IN ${unit.toUpperCase()}`,
+        action: "SET LOAD",
+        initial: String(
+          stagedDisplayLoad(draft.entryKg, draft.enteredLoad, draft.enteredUnit, unit),
+        ),
+        allowDecimal: true,
+        onCommit: (value) => {
+          const kg = Math.min(maxKg, Math.max(0, fromDisplay(value, unit)));
+          setEditing((prior) =>
+            prior
+              ? {
+                  ...prior,
+                  entryKg: round2(kg),
+                  enteredLoad: value,
+                  enteredUnit: unit,
+                  loadEdited: true,
+                }
+              : prior,
+          );
+          setPad(null);
+        },
+        onCancel: () => setPad(null),
+      };
+    }
     const roundEntry =
       roundInputKey === null
         ? null
@@ -2493,6 +2597,7 @@ export function Session() {
     // split below, which exists only for entryKg/reps.
     if (pad.kind === "base") {
       const baseTarget = roundEntry ?? openEntry;
+      if (!baseTarget) return null;
       const baseEquipment = equipMap[baseTarget.exercise_id] ?? null;
       const isMachineBase = baseEquipment !== "barbell";
       const currentBaseKg = getExerciseBarKg(
@@ -2594,7 +2699,8 @@ export function Session() {
         onCancel: () => setPad(null),
       };
     }
-    if (pad.kind === "load") {
+    if (pad.kind === "load" && openEntry) {
+      const maxEntryKg = openView?.maxEntryKg ?? MAX_LOAD_KG;
       return {
         label: `${openEntry.name.toUpperCase()} · ${
           perSide ? "WEIGHT ON EACH DUMBBELL" : "ONE TOTAL WEIGHT"
@@ -2605,11 +2711,7 @@ export function Session() {
         onCommit: (v) => {
           const kg = Math.min(maxEntryKg, Math.max(0, fromDisplay(v, inputUnit)));
           const entryKg = Math.round(kg * 100) / 100;
-          if (editing) {
-            setEditing({ ...editing, enteredLoad: v, enteredUnit: inputUnit, loadEdited: true });
-          } else {
-            rememberStagedDraft(openEntry, { entryKg, enteredLoad: v, enteredUnit: inputUnit });
-          }
+          rememberStagedDraft(openEntry, { entryKg, enteredLoad: v, enteredUnit: inputUnit });
           setEntryKg(entryKg);
           setPad(null);
           if (pad.fromPlates) setSheet("plates");
@@ -2620,7 +2722,7 @@ export function Session() {
         },
       };
     }
-    if (pad.kind === "reps") {
+    if (pad.kind === "reps" && openEntry) {
       return {
         label: `${openEntry.name.toUpperCase()} · REPS`,
         action: "SET REPS",
@@ -2628,14 +2730,14 @@ export function Session() {
         allowDecimal: false,
         onCommit: (v) => {
           const reps = Math.min(MAX_REPS, Math.max(0, Math.round(v)));
-          if (!editing) rememberStagedDraft(openEntry, { reps });
+          rememberStagedDraft(openEntry, { reps });
           setReps(reps);
           setPad(null);
         },
         onCancel: () => setPad(null),
       };
     }
-    if (pad.kind === "duration") {
+    if (pad.kind === "duration" && openEntry) {
       return {
         label: `${openEntry.name.toUpperCase()} · DURATION IN SECONDS`,
         action: "SET DURATION",
@@ -2643,13 +2745,14 @@ export function Session() {
         allowDecimal: false,
         onCommit: (value) => {
           const next = Math.min(3600, Math.max(0, Math.round(value)));
-          if (!editing) rememberStagedDraft(openEntry, { durationSeconds: next });
+          rememberStagedDraft(openEntry, { durationSeconds: next });
           setDurationSeconds(next);
           setPad(null);
         },
         onCancel: () => setPad(null),
       };
     }
+    if (pad.kind !== "rest") return null;
     // rest: type the seconds REMAINING; target = elapsed + typed
     const el = restElapsedSeconds() ?? 0;
     const remaining = rest
@@ -2675,981 +2778,19 @@ export function Session() {
     };
   };
 
-  // ---- render --------------------------------------------------------------
+  // ---- round drafts, units, and what comes next ----------------------------
+  //
+  // Everything below is derived from state declared above and used by the
+  // render and by hooks that must run on every render, so it lives ahead of
+  // the loading early-returns.
 
-  if (active === undefined) return <div className="screen muted">Loading…</div>;
-  if (!active) return null;
-
-  const entrySets = openEntry ? setsForEntry(openEntry) : [];
-  // The set just logged — the only one whose note affordance is spelled out.
-  // The clock breaks the tie, because a swapped entry holds two runs of
-  // set_index, each counting from 0 (the index is scoped per exercise).
-  const newestSetId =
-    entrySets.length === 0
-      ? null
-      : entrySets.reduce((a, b) =>
-          b.set_index > a.set_index ||
-          (b.set_index === a.set_index && b.performed_at > a.performed_at)
-            ? b
-            : a,
-        ).id;
-
-  /**
-   * `part` decides which of this entry's three pieces render:
-   *  - "full" (the accordion, unchanged): context (target/last-time/swap),
-   *    the editor, and the full LOGGED history, in that order.
-   *  - "hero" (focus mode's default screen): just the correcting note (when
-   *    a correction is in progress — that state was entered deliberately and
-   *    stays visible) and the editor itself. Context and LOGGED are left to
-   *    "detail" so the default screen stays to the load/reps and LOG.
-   *  - "detail" (focus mode's "more" sheet): context, the correcting note,
-   *    and the full LOGGED history — everything "hero" leaves out. Never the
-   *    editor itself: the hero editor is not duplicated into the sheet.
-   */
-  const renderEditor = (
-    entry: ExerciseEntry,
-    showAdvance = true,
-    part: "full" | "hero" | "detail" = "full",
-  ) => {
-    const prescribed = entry.brackets.length > 0;
-    const done = entryProgress(entry);
-    const total = prescribed ? targetSets(entry) : null;
-    const planMet = total !== null && done >= total;
-    const pairedRound =
-      !editing &&
-      presentation === "focus" &&
-      focusSupersetPair !== null &&
-      !focusSupersetPair.every(entryDone) &&
-      entry.key === focusSupersetPair[0].key;
-    const roundA1 = pairedRound ? roundDraftFor(focusSupersetPair[0]) : null;
-    const roundA2 = pairedRound ? roundDraftFor(focusSupersetPair[1]) : null;
-    const roundTagA1 = pairedRound
-      ? (supersetInfo.get(focusSupersetPair[0].key)?.tag ?? "A1")
-      : "A1";
-    const roundTagA2 = pairedRound
-      ? (supersetInfo.get(focusSupersetPair[1].key)?.tag ?? "A2")
-      : "A2";
-    const roundLetter = roundTagA1.replace(/\d+$/, "");
-    // A member with a numeric target it has already MET has nothing left to
-    // pair with a partner still short of its own — the round is over for it,
-    // even though its raw progress can still equal the partner's (both
-    // logged 3 when A1's target was 3 and A2's was 4). Without distinguishing
-    // "exhausted" from merely "equal progress", that equality read as one
-    // more full round, offering "Log round" to add an unprescribed 4th set to
-    // A1 alongside A2's legitimate one, and the label undercounted the day's
-    // real round total.
-    const roundProgressA = pairedRound
-      ? entryProgress(focusSupersetPair[0])
-      : 0;
-    const roundProgressB = pairedRound
-      ? entryProgress(focusSupersetPair[1])
-      : 0;
-    const roundTargetA = pairedRound ? targetSets(focusSupersetPair[0]) : 0;
-    const roundTargetB = pairedRound ? targetSets(focusSupersetPair[1]) : 0;
-    const roundExhaustedA = roundTargetA > 0 && roundProgressA >= roundTargetA;
-    const roundExhaustedB = roundTargetB > 0 && roundProgressB >= roundTargetB;
-    const roundTail = roundExhaustedA !== roundExhaustedB;
-    const roundIndex = pairedRound
-      ? Math.min(roundProgressA, roundProgressB) + 1
-      : 0;
-    const roundTotal = pairedRound
-      ? roundTail
-        ? Math.max(roundTargetA, roundTargetB)
-        : Math.min(roundTargetA, roundTargetB)
-      : 0;
-    const pendingRoundMember = pairedRound
-      ? roundTail
-        ? roundExhaustedA
-          ? "a2"
-          : "a1"
-        : roundProgressA === roundProgressB
-          ? null
-          : roundProgressA < roundProgressB
-            ? "a1"
-            : "a2"
-      : null;
-
-    const contextBlock = (
-      <>
-        <span className="rx-context">
-          {prescribed ? (
-            <>
-              TARGET {scheme(entry).toUpperCase()}
-              {entry.brackets.length > 1 && currentBracket
-                ? ` · NOW ${formatRepRange(currentBracket.reps_min, currentBracket.reps_max)} REPS`
-                : ""}
-              {currentBracket?.rest_seconds != null
-                ? ` · REST ${formatClock(currentBracket.rest_seconds)}`
-                : ""}
-              {entry.brackets.some(rxHasNoTm) ? " · NO TM SET" : ""}
-            </>
-          ) : (
-            `NO TARGET · BY FEEL${equipment ? ` · ${equipment.toUpperCase()}` : ""}`
-          )}
-        </span>
-
-        {/* "Last time" is the CHOSEN movement's own history:
-                          `entry.exercise_id` is what is being lifted, and
-                          `lastActuals` is keyed by exercise, so the swap
-                          moves this line with it and never quotes the
-                          planned movement's numbers at a different one. */}
-        {lastTime(entry.exercise_id) && (
-          <div className="microcopy">{lastTime(entry.exercise_id)}</div>
-        )}
-
-        {entry.substitutedFor && (
-          <div className="microcopy swap-note">
-            Instead of {entry.substitutedFor.name}. The plan’s target still
-            counts here.
-            {swapFrozen(entry)
-              ? " Sets are logged against it, so it stays."
-              : ""}
-          </div>
-        )}
-
-        {/* Only while nothing has been logged against the swap.
-                          Those sets name the chosen exercise and are
-                          append-only, so there is nothing left here to undo —
-                          see `swapFrozen`. Not mid-correction either: the set
-                          being corrected keeps the exercise it was logged
-                          under, and offering to change the movement in the
-                          same breath only invites the reader to think
-                          otherwise. */}
-        {!swapFrozen(entry) && !editing && (
-          <div className="swap-actions">
-            <button
-              type="button"
-              className="swap-action"
-              onClick={() => openSheet("swap")}
-            >
-              {entry.substitutedFor ? "SWAP AGAIN" : "SWAP EXERCISE"}
-            </button>
-            {entry.substitutedFor && (
-              <button
-                type="button"
-                className="swap-action"
-                onClick={() => undoSwap(entry)}
-              >
-                UNDO SWAP
-              </button>
-            )}
-          </div>
-        )}
-      </>
-    );
-
-    // The correction in progress is a state the lifter entered deliberately
-    // (tapping a logged set in "detail"), so it stays visible in "hero" too —
-    // unlike the rest of contextBlock, hiding this one would leave SAVE/
-    // Cancel on screen with no explanation of what they apply to.
-    const correctingNote = editing && (
-      <div className="microcopy correcting-note">
-        Correcting set {editing.set.set_index + 1} · was{" "}
-        {toDisplay(
-          enteredKg(editing.set.load_kg, editing.set.load_entry ?? "total"),
-          unit,
-        )}{" "}
-        {unit}
-        {editing.set.load_entry === "per_side" ? "/side" : ""} ×{" "}
-        {editing.set.reps}
-      </div>
-    );
-
-    // Scoped to THIS entry, not the outer `entrySets` (which tracks
-    // `openEntry`): a superset's "detail" view calls this twice, once per
-    // member, and each one's own logged history must follow its own
-    // exercise — reading the outer, single-entry value here would show A1's
-    // sets under A2's heading whenever A2 is not the entry currently open.
-    // Hoisted above `editorBlock` (was below it) because the hero's own
-    // "Last: ..." line needs the newest set before the editor is built.
-    const entrySetsForThis = setsForEntry(entry);
-    const newestSetIdForThis =
-      entrySetsForThis.length === 0
-        ? null
-        : entrySetsForThis.reduce((a, b) =>
-            b.set_index > a.set_index ||
-            (b.set_index === a.set_index && b.performed_at > a.performed_at)
-              ? b
-              : a,
-          ).id;
-    const newestSetForThis =
-      entrySetsForThis.find((s) => s.id === newestSetIdForThis) ?? null;
-    /** "Last: 145 kg × 5 working" — the focus hero's tappable line onto
-     *  `startCorrection`. Ticks have nothing numeric to show or correct via
-     *  this route; `SetEditor` never renders it for `tracking === "done"`. */
-    const lastSetLine =
-      newestSetForThis === null
-        ? null
-        : `Last: ${toDisplay(
-            enteredKg(
-              newestSetForThis.load_kg,
-              newestSetForThis.load_entry ?? "total",
-            ),
-            unit,
-          )} ${unit}${
-            newestSetForThis.load_entry === "per_side" ? "/side" : ""
-          } × ${newestSetForThis.reps} ${newestSetForThis.set_type}`;
-
-    const focusActions = presentation === "focus" && !editing ? (
-      <>
-        <button
-          type="button"
-          aria-label={`add an RPE rating to ${entry.name}`}
-          onClick={() =>
-            setRpeAsked((prior) => new Set([...prior, entry.exercise_id]))
-          }
-        >
-          RPE
-        </button>
-        <button type="button" onClick={() => setMoreOpen(true)}>Note</button>
-        <button type="button" onClick={() => skipEntryWithReason(entry, null)}>
-          Skip
-        </button>
-        {plateSplit !== null ? (
-          <button type="button" onClick={() => openSheet("plates", entry.key)}>
-            Plates
-          </button>
-        ) : !swapFrozen(entry) ? (
-          <button type="button" onClick={() => openSheet("swap")}>
-            Swap
-          </button>
-        ) : newestSetForThis ? (
-          <button type="button" onClick={() => startCorrection(newestSetForThis)}>
-            Fix last
-          </button>
-        ) : (
-          <button type="button" onClick={() => setMoreOpen(true)}>More</button>
-        )}
-      </>
-    ) : undefined;
-
-    const editorBlock = (
-      <>
-        {pairedRound && roundA1 && roundA2 ? (
-          <SupersetRoundEditor
-            label={`SUPERSET ${roundLetter} · ROUND ${roundIndex} OF ${roundTotal}`}
-            a1={{
-              tag: roundTagA1,
-              target: scheme(focusSupersetPair[0]),
-              editor: roundEditorFor(focusSupersetPair[0], roundA1),
-            }}
-            a2={{
-              tag: roundTagA2,
-              target: scheme(focusSupersetPair[1]),
-              editor: roundEditorFor(focusSupersetPair[1], roundA2),
-            }}
-            disabled={!setsLoaded || !prefsReady || setsFailed}
-            heldPulse={logHeld}
-            error={roundError}
-            singleLogLabel={`Log ${focusSupersetPair[0].name} only`}
-            pendingMember={pendingRoundMember}
-            focusActions={entry.key === focusSupersetPair[0].key ? focusActions : undefined}
-            onLogRound={(drafts) =>
-              tapLog(() =>
-                void logRound({
-                  keys: [focusSupersetPair[0].key, focusSupersetPair[1].key],
-                  roundIndex,
-                  a1: drafts.a1,
-                  a2: drafts.a2,
-                }),
-              )
-            }
-            onLogA1Only={() =>
-              tapLog(() => {
-                if (!sessionId || !setsLoaded || !prefsReady || setsFailed) return;
-                void logSet(roundA1, focusSupersetPair[0]).then((saved) => {
-                  if (!saved) return;
-                  setRoundDrafts((prior) => {
-                    const next = { ...prior };
-                    delete next[focusSupersetPair[0].key];
-                    return next;
-                  });
-                });
-              })
-            }
-            onLogA2Only={() =>
-              tapLog(() => {
-                if (!sessionId || !setsLoaded || !prefsReady || setsFailed) return;
-                void logSet(roundA2, focusSupersetPair[1]).then((saved) => {
-                  if (!saved) return;
-                  setRoundDrafts((prior) => {
-                    const next = { ...prior };
-                    delete next[focusSupersetPair[1].key];
-                    return next;
-                  });
-                });
-              })
-            }
-          />
-        ) : (
-          <SetEditor
-            entry={entry}
-            /* A legacy backoff is legal historical data but not a
-                           selectable kind. Passing it through preserves an
-                           unchanged correction until the lifter picks one of
-                           the two supported kinds. */
-            draft={{
-              entryKg,
-              reps,
-              setType: setType as BracketKind,
-              rpe,
-              durationSeconds,
-              enteredLoad: editing?.enteredLoad ?? currentDraft?.enteredLoad,
-              enteredUnit: editing?.enteredUnit ?? currentDraft?.enteredUnit,
-            }}
-            tracking={isTick(entry) ? "done" : isTimed(entry) ? "time" : "reps"}
-            loadPresentation={{
-              perSide,
-              totalKg: totalLoadKg,
-              plateSplit,
-              barKg: exerciseBarKg,
-              hint,
-              canToggleEntry: offersLoadEntry(loadEntryInput),
-              noLoad: noLoadEditor,
-              styleIcon,
-              perSideIcon,
-            }}
-            unit={inputUnit}
-            maxEntryKg={maxEntryKg}
-            loadSteps={loadSteps(entry.exercise_id, inputUnit)}
-            nearbyLoads={nearbyLoads}
-            onChooseNearbyLoad={(value) => {
-              const nextKg = fromDisplay(value, inputUnit);
-              if (editing) {
-                setEditing({ ...editing, enteredLoad: value, enteredUnit: inputUnit, loadEdited: true });
-              } else {
-                rememberStagedDraft(entry, {
-                  entryKg: nextKg,
-                  enteredLoad: value,
-                  enteredUnit: inputUnit,
-                });
-              }
-              setEntryKg(nextKg);
-            }}
-            rpeShown={rpeShown(entry.exercise_id)}
-            logLabel={
-              editing
-                ? `SAVE SET ${editing.set.set_index + 1}`
-                : presentation === "focus" && workoutDone
-                  ? extraSetArmed ? "Log extra set" : "FINISH"
-                  : presentation === "focus"
-                    ? isTick(entry)
-                      ? "DONE"
-                      : "LOG SET"
-                    : logLabel(entry)
-            }
-            logClassName={`btn ${planMet && !editing ? "btn-outline-ink" : "btn-primary"} btn-log${logHeld && !editing ? " is-held" : ""}`}
-            // A correction is a deliberate, one-off edit to history, exempt
-            // from focus mode's default minimalism: every field (type, RPE,
-            // fine adjustment) stays inline and reachable rather than behind
-            // "more", which is closed the moment a correction starts anyway
-            // (see `startCorrection`).
-            variant={
-              presentation === "focus" && !editing ? "focus" : "overview"
-            }
-            lastPerformance={
-              presentation === "focus" && !isTick(entry)
-                ? lastTime(entry.exercise_id, true, noLoadEditor)
-                : null
-            }
-            restSlot={undefined}
-            hasWarmupBracket={warmupSets(entry) > 0}
-            onAlreadyWarm={() => {
-              if (!editing) rememberStagedDraft(entry, { setType: "working" });
-              setSetType("working");
-            }}
-            lastSetLine={presentation === "focus" ? lastSetLine : null}
-            lastSetReceipt={newestSetForThis ? (() => {
-              const receipt = receiptForSet(newestSetForThis.id);
-              return <SetReceiptStatus receipt={receipt} onReview={() => openReceiptReview(receipt)} />;
-            })() : null}
-            focusActions={focusActions}
-            onEditLastSet={
-              newestSetForThis ? () => startCorrection(newestSetForThis) : undefined
-            }
-            disabled={!setsLoaded || !prefsReady || setsFailed}
-            onDraftChange={(next) => {
-              setLogError(null);
-              if (!editing) rememberStagedDraft(entry, next);
-              if (next.entryKg !== undefined) {
-                if (editing) {
-                  setEditing({
-                    ...editing,
-                    enteredLoad: next.enteredLoad ?? toDisplay(next.entryKg, unit),
-                    enteredUnit: next.enteredUnit ?? unit,
-                    loadEdited: true,
-                  });
-                }
-                setEntryKg(next.entryKg);
-              }
-              if (next.reps !== undefined) setReps(next.reps);
-              if (next.setType !== undefined) setSetType(next.setType);
-              if (next.rpe !== undefined) setRpe(next.rpe);
-              if (next.durationSeconds !== undefined) {
-                setDurationSeconds(next.durationSeconds);
-                if (!editing) rememberStagedDraft(entry, { durationSeconds: next.durationSeconds });
-              }
-            }}
-            onLog={
-              editing
-                ? saveCorrection
-                : presentation === "focus" && workoutDone && !extraSetArmed
-                  ? finishWorkout
-                  : () => tapLog(() => logSet())
-            }
-            onOpenPlates={() => openSheet("plates")}
-            onOpenPad={openPad}
-            onToggleLoadEntry={toggleLoadEntry}
-            onRevealRpe={() =>
-              setRpeAsked((prev) => new Set([...prev, entry.exercise_id]))
-            }
-          />
-        )}
-
-        {logError && (
-          <p className="form-error" role="alert">
-            {logError}
-          </p>
-        )}
-
-        {setsFailed && (
-          <p className="microcopy">
-            This session’s logged sets could not be read from this device, so a
-            new set would be numbered as if nothing had been logged. Reload to
-            try again. Nothing already logged is lost.
-          </p>
-        )}
-
-        {editing && (
-          <button
-            type="button"
-            className="btn btn-ghost btn-block"
-            onClick={cancelCorrection}
-          >
-            Cancel correction
-          </button>
-        )}
-
-        {/* The partner mid-superset, the next exercise once the
-                          round is over. It leads only once this exercise's
-                          own plan is met — the same rule as before, so
-                          exactly one of these two buttons is ever primary. */}
-        {showAdvance && advanceTo && !editing && (
-          <button
-            type="button"
-            className={`btn ${planMet ? "btn-primary" : "btn-outline-ink"} btn-block`}
-            onClick={() => setOpenKey(advanceTo.key)}
-          >
-            Next · {advanceTo.name}
-          </button>
-        )}
-      </>
-    );
-
-    const loggedBlock = entrySetsForThis.length > 0 && (
-      <section className="rule-section">
-        <div className="section-head">
-          <span className="field-label">LOGGED</span>
-          <span className="section-meta">
-            {done}
-            {total !== null ? ` OF ${total}` : ""}
-          </span>
-        </div>
-        <div className="logged-sets">
-          {entrySetsForThis
-            .slice()
-            // set_index is scoped per EXERCISE, so after a
-            // swap two movements in one entry both count
-            // from 0 and the index alone no longer orders
-            // them. When it ties, the clock decides — the
-            // newest set belongs at the top either way.
-            .sort(
-              (a, b) =>
-                b.set_index - a.set_index ||
-                b.performed_at.localeCompare(a.performed_at),
-            )
-            .map((s) => (
-              <div key={s.id} className="logged-set-wrap">
-                <SetRow
-                  set={s}
-                  unit={unit}
-                  restLabel={restAfter(s)}
-                  onVoid={() => voidSet(s)}
-                  voidArmed={voidArm === s.id}
-                  onArmVoid={() => setVoidArm(s.id)}
-                  /* a tick has no numbers to correct */
-                  onEdit={isTick(entry) ? undefined : () => startCorrection(s)}
-                  editing={editing?.set.id === s.id}
-                />
-                {noteEditingId === s.id ? (
-                  <div className="set-note-editor">
-                    <textarea
-                      className="input note-input set-note-input"
-                      rows={2}
-                      autoFocus
-                      enterKeyHint="done"
-                      value={noteDraft}
-                      onChange={(e) => setNoteDraft(e.target.value)}
-                      /* the keyboard animates in over ~250ms;
-                                         scroll once it has settled so Save and
-                                         Cancel land above it */
-                      onFocus={(e) => {
-                        const el = e.currentTarget
-                          .parentElement as HTMLElement | null;
-                        window.setTimeout(() => {
-                          if (typeof el?.scrollIntoView === "function")
-                            el.scrollIntoView({
-                              block: "center",
-                              behavior: prefersReducedMotion()
-                                ? "auto"
-                                : "smooth",
-                            });
-                        }, 300);
-                      }}
-                      placeholder="Note on this set…"
-                    />
-                    <div className="set-note-actions">
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => setNoteEditingId(null)}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => saveNote(s.id)}
-                      >
-                        Save
-                      </button>
-                    </div>
-                  </div>
-                ) : setNotes[s.id] ? (
-                  <button
-                    type="button"
-                    className="set-note-preview"
-                    onClick={() => openNote(s.id)}
-                  >
-                    {setNotes[s.id]}
-                  </button>
-                ) : s.id === newestSetIdForThis ? (
-                  /* + NOTE on the NEWEST set only. A set that
-                                     already HAS a note still shows it (the
-                                     branch above), and an older one can still
-                                     be annotated by tapping its row — but five
-                                     logged sets meant five rows of empty note
-                                     chrome, which roughly doubled the height of
-                                     this section for an action almost nobody
-                                     takes on a set from twenty minutes ago. */
-                  <button
-                    type="button"
-                    className="set-note-add"
-                    onClick={() => openNote(s.id)}
-                  >
-                    + NOTE
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="set-note-add set-note-add-quiet"
-                    aria-label={`add a note to set ${s.set_index + 1}`}
-                    onClick={() => openNote(s.id)}
-                  >
-                    +
-                  </button>
-                )}
-              </div>
-            ))}
-        </div>
-        {/* Shown on the FIRST set of a session only. It taught
-                            something worth knowing once — the set itself is
-                            the tap target, ✕ removes — and then repeated
-                            itself under every open exercise, in every
-                            session, forever. By the third week it was
-                            furniture. */}
-        {entrySetsForThis.length === 1 && (
-          <div className="microcopy">
-            Wrong number? Tap the set to correct it, or ✕ to remove it.
-          </div>
-        )}
-      </section>
-    );
-
-    if (part === "hero") {
-      return (
-        <>
-          {correctingNote}
-          {editorBlock}
-        </>
-      );
-    }
-    if (part === "detail") {
-      return (
-        <>
-          {contextBlock}
-          {correctingNote}
-          {loggedBlock}
-        </>
-      );
-    }
-    return (
-      <>
-        {contextBlock}
-        {correctingNote}
-        {editorBlock}
-        {loggedBlock}
-      </>
-    );
-  };
-
-  /** The draft + change handler for whichever entry the "more" sheet is
-   *  currently showing a warmup/working toggle or RPE row for — the round
-   *  drafts for a paired superset member, or the top-level staged draft
-   *  otherwise. Mirrors `roundEditorFor`'s and the plain `<SetEditor>`'s own
-   *  `onDraftChange` exactly, so a set type or RPE change made from the
-   *  sheet is indistinguishable from one made through the hero editor. */
-  const moreDraftFor = (
-    target: ExerciseEntry,
-  ): { draft: SetDraft; onChange: (next: Partial<SetDraft>) => void } => {
-    if (
-      focusSupersetPair &&
-      (target.key === focusSupersetPair[0].key ||
-        target.key === focusSupersetPair[1].key)
-    ) {
-      return {
-        draft: roundDraftFor(target),
-        onChange: (next) => {
-          setRoundDrafts((prior) => ({
-            ...prior,
-            [target.key]: { ...roundDraftFor(target), ...next },
-          }));
-          setRoundError(null);
-        },
-      };
-    }
-    return {
-      draft: { entryKg, reps, setType: setType as BracketKind, rpe },
-      onChange: (next) => {
-        if (!editing) rememberStagedDraft(target, next);
-        if (next.entryKg !== undefined) setEntryKg(next.entryKg);
-        if (next.reps !== undefined) setReps(next.reps);
-        if (next.setType !== undefined) setSetType(next.setType);
-        if (next.rpe !== undefined) setRpe(next.rpe);
-      },
-    };
-  };
-
-  /** Warmup/working, RPE, skip, the plate calculator, and the per-hand/total
-   *  toggle for ONE entry — everything the focus hero used to show inline,
-   *  now living only in the "more" sheet. A tick exercise has no numeric
-   *  draft to fine-tune (see `SetEditor`'s own `tracking === "done"`
-   *  branch), so only skip is offered for one. */
-  const moreExtrasFor = (target: ExerciseEntry) => {
-    const skipped = Boolean(skips[target.key]);
-    const skipAction = (
-      <button
-        type="button"
-        className="btn btn-ghost"
-        onClick={() => toggleSkip(target)}
-      >
-        {skipped ? "UNSKIP" : "SKIP"}
-      </button>
-    );
-    const howToAction = (
-      <button
-        type="button"
-        className="btn btn-ghost"
-        aria-label={`how to do ${target.name}`}
-        onClick={() => {
-          setDemoFor({ id: target.exercise_id, name: target.name });
-          setMoreOpen(false);
-        }}
-      >
-        How to
-      </button>
-    );
-    if (isTick(target)) {
-      return (
-        <div className="focus-more-actions">
-          {howToAction}
-          {skipAction}
-        </div>
-      );
-    }
-    const targetEquipment = equipMap[target.exercise_id] ?? null;
-    const targetLoadStyleEligible =
-      targetEquipment === "barbell" ||
-      offersLoadStyle(targetEquipment, target.name);
-    const targetLoadStyle: LoadStyle | null = targetLoadStyleEligible
-      ? resolveLoadStyle(
-          getExercisePref(target.exercise_id).loadStyle,
-          targetEquipment,
-          target.name,
-        )
-      : null;
-    const targetPlateable = targetLoadStyle === "plates";
-    const targetCanToggleStyle = offersLoadStyle(
-      targetEquipment,
-      target.name,
-    );
-    const targetLoadEntryInput = {
-      override: getExercisePref(target.exercise_id).loadEntry,
-      prescribed: target.substitutedFor
-        ? null
-        : (target.brackets[0]?.load_entry ?? null),
-      equipment: targetEquipment,
-      name: target.name,
-    };
-    const targetCanToggle = offersLoadEntry(targetLoadEntryInput);
-    const targetLoadEntry = resolveLoadEntry(targetLoadEntryInput);
-    const { draft, onChange } = moreDraftFor(target);
-    return (
-      <div className="focus-more-extras">
-        <div className="seg seg-types">
-          {(["warmup", "working"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={`seg-btn ${draft.setType === t ? "seg-on" : ""}`}
-              onClick={() => onChange({ setType: t })}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <div className="focus-more-actions">
-          {howToAction}
-          {targetPlateable && (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => openSheet("plates", target.key)}
-            >
-              Plate calculator
-            </button>
-          )}
-          {targetCanToggle && (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() =>
-                setExerciseLoadEntry(
-                  target.exercise_id,
-                  targetLoadEntry === "per_side" ? "total" : "per_side",
-                )
-              }
-            >
-              {targetLoadEntry === "per_side"
-                ? "each hand"
-                : "one total weight"}
-            </button>
-          )}
-          {targetLoadStyleEligible && targetCanToggleStyle && (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() =>
-                setExerciseLoadStyle(
-                  target.exercise_id,
-                  targetLoadStyle === "plates" ? "stack" : "plates",
-                )
-              }
-            >
-              {targetLoadStyle === "plates"
-                ? "switch to weight stack"
-                : "switch to plates"}
-            </button>
-          )}
-          {skipAction}
-        </div>
-        <RpeChips
-          shown
-          value={draft.rpe}
-          onChange={(rpe) => onChange({ rpe })}
-        />
-      </div>
-    );
-  };
-
-  // plate maths is always about the whole loaded implement
-  const plateSplit = plateable
-    ? split(totalLoadKg, exerciseBarKg, inventory)
-    : null;
-  const hint = plateSplit
-    ? (() => {
-        const r = plateSplit;
-        return r.plates.length > 0
-          ? r.plates
-              .map(
-                (p) =>
-                  `${p.count > 1 ? `${p.count}×` : ""}${formatPlate(p.plate, unit)}`,
-              )
-              .join("·")
-          : exerciseBarKg > 0
-            ? "BAR ONLY"
-            : "EMPTY";
-      })()
-    : null;
-
-  /**
-   * "Last time · 60 kg × 8, 8, 6" — the previous SESSION's working sets for
-   * this movement, in the convention the screen is currently using.
-   *
-   * The run, not one set. A single "60 kg × 8" is the top of a shape and
-   * says nothing about whether the last set of it was a grind: what a lifter
-   * standing at the rack is deciding is whether to repeat the day or add
-   * weight, and the reps that fell away are the whole of that answer. When
-   * the load moved across the run each set is quoted with its own, because
-   * "60, 65, 70 × 8, 8, 6" would be a puzzle rather than a reminder.
-   *
-   * Reference text: it never competes with the target or the log button.
-   */
-  const lastTime = (
-    exerciseId: string,
-    latestOnly = false,
-    repsOnly = false,
-    entryMode: LoadEntry = loadEntry,
-  ): string | null => {
-    const a = lastActuals[exerciseId];
-    if (!a) return null;
-    const shown = (kg: number) =>
-      `${toDisplay(enteredKg(kg, entryMode), unit)} ${unit}${entryMode === "per_side" ? "/side" : ""}`;
-    if (latestOnly)
-      return repsOnly
-        ? `Last time · ${a.reps} reps`
-        : `Last time · ${shown(a.load_kg)} × ${a.reps}`;
-    // a value cached before runs existed carries only the top set
-    const run = a.run && a.run.length > 0 ? a.run : [a];
-    const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);
-    const body = sameLoad
-      ? `${shown(run[0].load_kg)} × ${run.map((s) => s.reps).join(", ")}`
-      : run.map((s) => `${shown(s.load_kg)} × ${s.reps}`).join(" · ");
-    return `Last time · ${body}`;
-  };
-
-  /** rest AFTER a given set: next exercise-set's stored value, or live timer.
-   *
-   *  Scoped to the set's OWN exercise, not the entry's: set_index counts per
-   *  exercise, so a swapped entry holds two runs that both start at 0 and
-   *  "the set after this one" must never be read across them. Identical to
-   *  the old behaviour when nothing was swapped, where the two are the same
-   *  list. The live clock belongs to the newest set of all, for the same
-   *  reason: each run has a last set, and only one of them just happened. */
-  const restAfter = (s: SetInsert): string | null => {
-    const run = setsForExercise(s.exercise_id);
-    const nextSet = run.find((x) => x.set_index === s.set_index + 1);
-    if (nextSet)
-      return nextSet.rest_seconds_actual !== null
-        ? `rest ${formatClock(nextSet.rest_seconds_actual)}`
-        : null;
-    const isLast =
-      s.id === newestSetId && run.every((x) => x.set_index <= s.set_index);
-    if (isLast && restRef.current) {
-      const el = restElapsedSeconds();
-      if (el !== null && el <= MAX_REST_SECONDS)
-        return `rest ${formatClock(el)}`;
-    }
-    return null;
-  };
-
-  const renderLoggedRows = (entry: ExerciseEntry) => {
-    const logged = setsForEntry(entry)
-      .slice()
-      .sort(
-        (a, b) =>
-          b.set_index - a.set_index ||
-          b.performed_at.localeCompare(a.performed_at),
-      );
-    if (logged.length === 0) return null;
-    return (
-      <div className="logged-sets wk-list-logged-sets" aria-label={`logged sets for ${entry.name}`}>
-        {logged.map((set) => (
-          <div key={set.id} className="logged-set-wrap">
-            <SetRow
-              set={set}
-              unit={unit}
-              onVoid={() => voidSet(set)}
-              voidArmed={voidArm === set.id}
-              onArmVoid={() => setVoidArm(set.id)}
-              onEdit={isTick(entry) ? undefined : () => startCorrection(set)}
-              editing={editing?.set.id === set.id}
-            />
-            {(() => {
-              const receipt = receiptForSet(set.id);
-              return <SetReceiptStatus receipt={receipt} announce={false} onReview={() => openReceiptReview(receipt)} />;
-            })()}
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  /** "1×8-15 @ 90 KG · 3×3-5" — an entry's full prescribed scheme. */
-  const scheme = (entry: ExerciseEntry): string =>
-    entry.brackets
-      .map((b) => {
-        // Tick prescriptions encode reps as zero because there is no numeric
-        // rep target. Quoting the shared rep formatter directly turned that
-        // implementation value into a false "3×0" target in List.
-        if (b.tracking === "done") return `${b.sets}×done`;
-        if (b.tracking === "time") return `${b.sets}×time`;
-        const loadEntry = resolveLoadEntry({
-          override: getExercisePref(entry.exercise_id).loadEntry,
-          prescribed: entry.substitutedFor ? null : (b.load_entry ?? null),
-          equipment: equipMap[entry.exercise_id] ?? null,
-          name: entry.name,
-        });
-        return formatRxTarget({ ...b, load_entry: loadEntry }, unit);
-      })
-      .join(" · ");
-
-  /** The load stepper's buttons: coarse pair outside, fine pair inside. Both
-   *  the label and the delta come from `stepKgFor`, so a per-exercise or
-   *  per-unit increment can never disagree with what the button says. The
-   *  fine pair is dropped when it would duplicate the coarse one. */
-  const loadSteps = (exerciseId: string, u: Unit): StepDef[] => {
-    const coarse = stepKgFor(exerciseId, u, false);
-    const fine = stepKgFor(exerciseId, u, true);
-    const label = (kg: number) => toDisplay(kg, u);
-    // `announce` says the step in the unit the lifter reads. Without it the
-    // spoken label carried the kg equivalent of a five-pound plate —
-    // "increase load by 2.2679618500000003".
-    const say = (kg: number) => `${label(kg)} ${u}`;
-    const steps: StepDef[] = [
-      { label: `− ${label(coarse)}`, delta: -coarse, announce: say(coarse) },
-      { label: `+ ${label(coarse)}`, delta: coarse, announce: say(coarse) },
-    ];
-    if (label(fine) === label(coarse)) return steps;
-    return [
-      steps[0],
-      {
-        label: `− ${label(fine)}`,
-        delta: -fine,
-        fine: true,
-        announce: say(fine),
-      },
-      {
-        label: `+ ${label(fine)}`,
-        delta: fine,
-        fine: true,
-        announce: say(fine),
-      },
-      steps[1],
-    ];
-  };
-
-  /** A movement logged by ticking it off rather than by weight and reps. */
-  const isTick = (entry: ExerciseEntry | null): boolean =>
-    entry?.brackets[0]?.tracking === "done";
-  const isTimed = (entry: ExerciseEntry | null): boolean =>
-    entry?.brackets[0]?.tracking === "time";
-
+  /** A superset member that is not the open entry has no staged draft: stage
+   *  one from the plan, exactly as opening it would. */
   const defaultRoundDraft = (entry: ExerciseEntry): SetDraft => {
     const kind = suggestedKind(entry);
     const bracket = bracketFor(entry, countFor(entry, kind), kind);
     const entryMode = resolveLoadEntry({
-      override: getExercisePref(entry.exercise_id).loadEntry,
+      override: prefFor(entry.exercise_id).loadEntry,
       prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
       equipment: equipMap[entry.exercise_id] ?? null,
       name: entry.name,
@@ -3696,6 +2837,28 @@ export function Session() {
         : defaultRoundDraft(entry));
   };
 
+  /** Is this entry one half of the superset round on screen? */
+  const inLiveRound = (entry: ExerciseEntry): boolean =>
+    focusSupersetPair !== null &&
+    roundView !== null &&
+    (entry.key === focusSupersetPair[0].key || entry.key === focusSupersetPair[1].key);
+  /** The member key to hand a sheet or the pad so its edits land in that
+   *  member's round draft; null for an ordinary entry, whose staged values
+   *  live at the top level. */
+  const memberKeyFor = (entry: ExerciseEntry): string | null =>
+    inLiveRound(entry) ? entry.key : null;
+
+  /** The draft the dock shows for an entry. */
+  const draftOf = (entry: ExerciseEntry): SetDraft =>
+    inLiveRound(entry)
+      ? roundDraftFor(entry)
+      : entry.key === openEntry?.key
+        ? openDraft
+        : defaultRoundDraft(entry);
+
+  /** Switching the unit changes what is DISPLAYED for this session only; it
+   *  never rewrites how a staged number was entered, and never touches the
+   *  device default (Settings) or a logged row. */
   const switchWorkoutUnit = (next: Unit) => {
     if (next === unit || !prefsReady) return;
     const ownerId = getCurrentUserId();
@@ -3703,13 +2866,14 @@ export function Session() {
     const identityEpoch = identityEpochRef.current;
     // Stamp a prefilled draft's displayed value before changing units. An
     // authored value already has its own unit and must keep that provenance.
-    if (!editing && openEntry && currentDraft?.enteredUnit === undefined) {
-      rememberStagedDraft(openEntry, {
-        enteredLoad: displayedLoad,
-        enteredUnit: unit,
-      });
+    if (openEntry && currentDraft?.enteredUnit === undefined) {
+      rememberStagedDraft(
+        openEntry,
+        { enteredLoad: displayedLoad, enteredUnit: unit },
+        false,
+      );
     }
-    if (!editing && focusSupersetPair) {
+    if (focusSupersetPair) {
       setRoundDrafts((prior) => {
         const nextDrafts = { ...prior };
         for (const member of focusSupersetPair) {
@@ -3745,151 +2909,6 @@ export function Session() {
     }
   };
 
-  const roundEditorFor = (entry: ExerciseEntry, draft: SetDraft) => {
-    const bracket = bracketFor(
-      entry,
-      countFor(entry, draft.setType),
-      draft.setType,
-    );
-    const equipment = equipMap[entry.exercise_id] ?? null;
-    const roundUnit = unit;
-    const entryMode = resolveLoadEntry({
-      override: getExercisePref(entry.exercise_id).loadEntry,
-      prescribed: entry.substitutedFor ? null : (bracket?.load_entry ?? null),
-      equipment,
-      name: entry.name,
-    });
-    const storedLoad = totalKg(draft.entryKg, entryMode);
-    const perSide = entryMode === "per_side";
-    const barKg = getExerciseBarKg(entry.exercise_id, roundUnit, equipment);
-    const roundLoadStyleEligible =
-      equipment === "barbell" || offersLoadStyle(equipment, entry.name);
-    const roundLoadStyle: LoadStyle | null = roundLoadStyleEligible
-      ? resolveLoadStyle(
-          getExercisePref(entry.exercise_id).loadStyle,
-          equipment,
-          entry.name,
-        )
-      : null;
-    const plateSplit =
-      roundLoadStyle === "plates" ? split(storedLoad, barKg, inventory) : null;
-    const styleIcon: SetEditorProps["loadPresentation"]["styleIcon"] =
-      !roundLoadStyleEligible
-        ? null
-        : equipment === "barbell"
-          ? { Icon: BarbellIcon, label: "barbell — loaded with plates" }
-          : {
-              Icon: roundLoadStyle === "plates" ? PlateMachineIcon : StackIcon,
-              label: roundLoadStyle === "plates"
-                ? "plate-loaded machine — switch to a weight stack"
-                : "weight stack — switch to plate-loaded",
-            };
-    const hint = plateSplit
-      ? plateSplit.plates.length > 0
-        ? plateSplit.plates
-            .map(
-              (plate) =>
-                `${plate.count > 1 ? `${plate.count}×` : ""}${formatPlate(plate.plate, roundUnit)}`,
-            )
-            .join("·")
-        : barKg > 0
-          ? "BAR ONLY"
-          : "EMPTY"
-      : null;
-    return {
-      entry,
-      draft,
-      tracking: isTick(entry) ? "done" as const : isTimed(entry) ? "time" as const : "reps" as const,
-      cue: bracket?.notes ?? null,
-      equipment,
-      loadPresentation: {
-        perSide,
-        totalKg: storedLoad,
-        plateSplit,
-        barKg,
-        hint,
-        noLoad: isBodyweightEquipment(equipment) && storedLoad === 0,
-        styleIcon,
-        canToggleEntry: offersLoadEntry({
-          override: getExercisePref(entry.exercise_id).loadEntry,
-          prescribed: entry.substitutedFor
-            ? null
-            : (bracket?.load_entry ?? null),
-          equipment,
-          name: entry.name,
-        }),
-      },
-      unit: roundUnit,
-      maxEntryKg: perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG,
-      loadSteps: loadSteps(entry.exercise_id, roundUnit),
-      rpeShown: rpeShown(entry.exercise_id),
-      logLabel: "unused",
-      lastPerformance: lastTime(
-        entry.exercise_id,
-        true,
-        isBodyweightEquipment(equipment) && storedLoad === 0,
-        entryMode,
-      ),
-      disabled: logLocked || !setsLoaded || !prefsReady || setsFailed,
-      onDraftChange: (next: Partial<SetDraft>) => {
-        setRoundDrafts((prior) => ({
-          ...prior,
-          [entry.key]: { ...roundDraftFor(entry), ...next },
-        }));
-        setRoundError(null);
-      },
-      onLog: () => undefined,
-      onOpenPlates: () => openSheet("plates", entry.key),
-      onOpenPad: (kind: "load" | "reps") => openPad(kind, false, entry.key),
-      onToggleLoadEntry: () =>
-        setExerciseLoadEntry(
-          entry.exercise_id,
-          entryMode === "per_side" ? "total" : "per_side",
-        ),
-      onRevealRpe: () =>
-        setRpeAsked((prior) => new Set([...prior, entry.exercise_id])),
-    };
-  };
-
-  /** "LOG WARMUP 1 OF 2", "LOG SET 2 OF 5", or "LOG EXTRA SET" past the plan.
-   *  Warmups count against the warmups the coach wrote, working sets against
-   *  the working sets — two runs, two targets, never added together. */
-  const logLabel = (entry: ExerciseEntry): string => {
-    if (!setsLoaded || !prefsReady) return "LOADING…";
-    if (setsFailed) return "LOG UNAVAILABLE";
-    if (isTick(entry)) {
-      // a tick has no warmup/working distinction to make; it counts against
-      // whatever its plan actually asked for
-      const n = entryProgress(entry) + 1;
-      const total = targetSets(entry);
-      return total > 0 && n <= total ? `DONE ${n} OF ${total}` : "MARK DONE";
-    }
-    if (setType === "warmup") {
-      const n = warmupCount(entry) + 1;
-      const total = warmupSets(entry);
-      return total > 0 && n <= total
-        ? `LOG WARMUP ${n} OF ${total}`
-        : "LOG WARMUP SET";
-    }
-    const n = workingCount(entry) + 1;
-    if (entry.brackets.length === 0) return `LOG SET ${n}`;
-    const total = workingSets(entry);
-    return n > total ? "LOG EXTRA SET" : `LOG SET ${n} OF ${total}`;
-  };
-
-  const roundInputEntry =
-    roundInputKey === null
-      ? null
-      : (entries.find((entry) => entry.key === roundInputKey) ?? null);
-  const roundInputEditor = roundInputEntry
-    ? roundEditorFor(roundInputEntry, roundDraftFor(roundInputEntry))
-    : null;
-  const plateEntry = roundInputEntry ?? openEntry;
-  const req = padRequest();
-  const sheetOpen =
-    sheet !== null || pad !== null || demoFor !== null || moreOpen;
-  const inFocusDeck =
-    presentation === "focus" && focusEligible && focusEntry !== null;
   // Every set of the whole workout is done — not just the current exercise.
   // The primary action has nothing left to log against, so it becomes the
   // one way out of the workout instead of a button that would only stage an
@@ -3900,175 +2919,979 @@ export function Session() {
     disarmRestAlert();
     navigate("/end");
   };
-  /** "Next: Squat 145 x 5, set 3 of 4" -- the same set the focus hero's own
-   *  "next dot" line and the state rail's "next" dot point at. If the open
-   *  entry itself is not done yet, the very next set is just its own next
-   *  rep of the same exercise; only once it IS done does this look at
-   *  advanceTo (partnerEntry ?? nextEntry, see above). Null once there is
-   *  nothing left -- RestTimer falls back to naming what the rest was
-   *  recorded against. */
+
+  /** Where the NEXT set of an entry falls, the way the lifter counts it:
+   *  "set 3 of 4", or "warmup 2 of 2" while a warmup is staged. Null for a set
+   *  by feel, which has no count to quote. */
+  const nextPositionText = (entry: ExerciseEntry, draft: SetDraft): string | null => {
+    if (draft.setType === "warmup") {
+      const planned = warmupSets(entry);
+      const number = warmupCount(entry) + 1;
+      return `warmup ${number} of ${Math.max(planned, number)}`;
+    }
+    const total = targetSets(entry);
+    return total === 0 ? null : `set ${Math.min(entryProgress(entry) + 1, total)} of ${total}`;
+  };
+
+  /** "Next: Row · set 3 of 4" — one line, from the same logic the focus
+   *  deck's own labels use, so the two never name a different next set. In a
+   *  live round the next thing is the round (or the member that goes on);
+   *  otherwise it is the open entry's next set, or the next exercise once it
+   *  is done. Null once there is nothing left. */
   const nextSetLabel = (): string | null => {
-    if (rest && focusSupersetPair) {
-      const [a1, a2] = focusSupersetPair;
-      const progressA1 = entryProgress(a1);
-      const progressA2 = entryProgress(a2);
-      const totalA1 = targetSets(a1);
-      const totalA2 = targetSets(a2);
-      if (
-        progressA1 === progressA2 &&
-        progressA1 < totalA1 &&
-        progressA2 < totalA2
-      ) {
-        const letter = supersetLetter(a1.brackets[0]?.superset_group ?? 1);
-        return `Next: Superset ${letter}, round ${progressA1 + 1} of ${Math.min(totalA1, totalA2)}`;
+    if (focusSupersetPair && roundView) {
+      if (!roundView.tail) {
+        const letter = supersetLetter(focusSupersetPair[0].brackets[0]?.superset_group ?? 1);
+        return roundView.roundTotal > 0
+          ? `Next: Superset ${letter}, round ${roundView.roundIndex} of ${roundView.roundTotal}`
+          : `Next: Superset ${letter}, round ${roundView.roundIndex}`;
       }
+      const going = focusSupersetPair[roundView.nowIndex];
+      const total = targetSets(going);
+      return total === 0
+        ? `Next: ${going.name} · by feel`
+        : `Next: ${going.name} · set ${Math.min(entryProgress(going) + 1, total)} of ${total}`;
     }
     const target = openEntry && !entryDone(openEntry) ? openEntry : advanceTo;
     if (!target) return null;
-    const total = targetSets(target);
-    const schemeText = scheme(target);
-    const position =
-      total === 0
-        ? "by feel"
-        : `set ${Math.min(entryProgress(target) + 1, total)} of ${total}`;
-    return schemeText
-      ? `Next: ${target.name} ${schemeText}, ${position}`
-      : `Next: ${target.name}, ${position}`;
+    const position = nextPositionText(target, draftOf(target)) ?? "by feel";
+    return `Next: ${target.name} · ${position}`;
   };
 
-  const lastRestSetLabel = (): string | null => {
-    if (!lastLoggedSet) return null;
-    const entry = entries.find(
-      (candidate) =>
-        candidate.exercise_id === lastLoggedSet.exercise_id ||
-        candidate.substitutedFor?.exercise_id === lastLoggedSet.exercise_id,
-    );
-    const name = entry?.name ?? "Set";
-    if (entry && isTick(entry)) return `${name} · completed`;
-    if (entry && isTimed(entry)) {
-      const duration = lastLoggedSet.duration_seconds;
-      return `${name} · ${duration == null ? "timed set" : `${formatClock(duration)} held`}`;
-    }
-    if (lastLoggedSet.load_entry === "per_side") {
-      return `${name} · ${toDisplay(enteredKg(lastLoggedSet.load_kg, "per_side"), unit)} ${unit}/hand × ${lastLoggedSet.reps}`;
-    }
-    if (lastLoggedSet.load_entry === "total") {
-      return `${name} · ${toDisplay(lastLoggedSet.load_kg, unit)} ${unit} total × ${lastLoggedSet.reps}`;
-    }
-    return `${name} · ${toDisplay(lastLoggedSet.load_kg, unit)} ${unit} load unclassified × ${lastLoggedSet.reps}`;
-  };
+  // The rest-over tone and notification, once per rest, whatever is on screen
+  // when the target is reached (H2). Mounted here, at the top of the screen,
+  // rather than inside a rest component that comes and goes with sheets and
+  // with the Focus/List switch.
+  useRestCue(rest, nextSetLabel());
 
-  const focusStageNode = focusEntry ? (() => {
-    const renderStage = (target: ExerciseEntry, draft: SetDraft) => {
-      const stage = roundEditorFor(target, draft);
-      return (
-        <FocusLoadStage
-          key={target.key}
-          entry={target}
-          draft={stage.draft}
-          tracking={stage.tracking}
-          loadPresentation={stage.loadPresentation}
-          unit={stage.unit}
-          equipment={stage.equipment}
-          cue={stage.cue}
-        />
+  // ---- render --------------------------------------------------------------
+
+  if (active === undefined) return <div className="screen muted">Loading…</div>;
+  if (!active) return null;
+
+  // ---- receipts: one set's own state, never the aggregate chip -------------
+
+  const receiptKindOf = (setId: string): { receipt: SetReceipt; kind: ReceiptKind } => {
+    const receipt = receiptForSet(setId);
+    const held =
+      receipt.state === "local" &&
+      setQueueHeld(
+        receiptSnapshot.entries,
+        setId,
+        receiptSnapshot.correctionLinks[setId],
       );
-    };
-    if (focusSupersetPair) {
-      return (
-        <div className="focus-load-stage-pair">
-          {focusSupersetPair.map((member) => renderStage(member, roundDraftFor(member)))}
-        </div>
-      );
-    }
+    // "Sending" claims only what the queue can prove: it is flushing right now
+    // and this set's writes are waiting in it (not held, not already
+    // acknowledged). The outbox has no per-operation in-flight evidence.
+    const sending =
+      receipt.state === "local" && !held && outboxStatus.state === "syncing";
+    return { receipt, kind: receiptKind(receipt, { sending, held }) };
+  };
+  const receiptFor = (setId: string, announce = true, mark = false) => {
+    const { receipt, kind } = receiptKindOf(setId);
     return (
-      <FocusLoadStage
-        entry={focusEntry}
-        draft={{
-          entryKg,
-          reps,
-          setType: setType as BracketKind,
-          rpe,
-          durationSeconds,
-          enteredLoad: editing?.enteredLoad ?? currentDraft?.enteredLoad,
-          enteredUnit: editing?.enteredUnit ?? currentDraft?.enteredUnit,
+      <SetReceiptStatus
+        receipt={receipt}
+        sending={kind === "sending"}
+        held={kind === "held"}
+        announce={announce}
+        mark={mark}
+        onReview={() => openReceiptReview(receipt)}
+      />
+    );
+  };
+
+  // ---- reading a logged set back -------------------------------------------
+
+  const lineForSet = (s: SetInsert): string => {
+    const holder = entryOfSet(s);
+    return formatSetLine(s, {
+      unit,
+      tracking: holder ? (isTick(holder) ? "done" : isTimed(holder) ? "time" : "reps") : "reps",
+      bodyweight: isBodyweightEquipment(equipMap[s.exercise_id] ?? null),
+    });
+  };
+  const positionOfSet = (s: SetInsert) => {
+    const holder = entryOfSet(s);
+    return setPositionLabel(s, holder ? setsForEntry(holder) : [s]);
+  };
+
+  /** rest AFTER a given set: next exercise-set's stored value, or live timer.
+   *
+   *  Scoped to the set's OWN exercise, not the entry's: set_index counts per
+   *  exercise, so a swapped entry holds two runs that both start at 0 and
+   *  "the set after this one" must never be read across them. The live clock
+   *  belongs to the newest set of all. */
+  const restAfter = (s: SetInsert): string | null => {
+    const run = setsForExercise(s.exercise_id);
+    const nextSet = run.find((x) => x.set_index === s.set_index + 1);
+    if (nextSet)
+      return nextSet.rest_seconds_actual !== null
+        ? `rest ${formatClock(nextSet.rest_seconds_actual)}`
+        : null;
+    const isLast = s.id === lastSet?.id && run.every((x) => x.set_index <= s.set_index);
+    if (isLast && restRef.current) {
+      const el = restElapsedSeconds();
+      if (el !== null && el <= MAX_REST_SECONDS) return `rest ${formatClock(el)}`;
+    }
+    return null;
+  };
+
+  /** The logged sets of an entry as ledger rows: where each sits, what it was,
+   *  its own receipt, tap to fix, ✕ to void. */
+  const renderLoggedRows = (entry: ExerciseEntry) => {
+    const own = setsForEntry(entry);
+    const logged = own
+      .slice()
+      .sort(
+        (a, b) =>
+          b.set_index - a.set_index ||
+          b.performed_at.localeCompare(a.performed_at),
+      );
+    if (logged.length === 0) return null;
+    return (
+      <div className="ledger-sets" role="group" aria-label={`logged sets for ${entry.name}`}>
+        {logged.map((set) => {
+          const position = setPositionLabel(set, own);
+          const meta = [
+            set.rpe != null ? `RPE ${set.rpe}` : null,
+            restAfter(set),
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <LoggedSetRow
+              key={set.id}
+              label={position.kind === "warmup" ? `W${position.number}` : String(position.number)}
+              position={position.text}
+              text={lineForSet(set)}
+              meta={meta || undefined}
+              note={setNotes[set.id] || undefined}
+              receipt={receiptFor(set.id, false, true)}
+              // a tick has no numbers to correct
+              onFix={isTick(entry) ? undefined : () => startCorrection(set)}
+              onVoid={() => void voidSet(set)}
+              voidArmed={voidArm === set.id}
+              onArmVoid={() => setVoidArm(set.id)}
+              editing={editing?.set.id === set.id}
+            />
+          );
+        })}
+      </div>
+    );
+  };
+
+  // ---- the dock ------------------------------------------------------------
+
+  /** the staged set the dock is editing, and how its exercise is loaded */
+  const nowDraft = nowEntry ? draftOf(nowEntry) : null;
+  const nowView = nowEntry && nowDraft ? viewFor(nowEntry, nowDraft) : null;
+
+  /** How a change to an entry's staged set is applied: a round member keeps
+   *  its own draft; anything else edits the top-level staged values. */
+  const draftChangeFor = (entry: ExerciseEntry) => (next: Partial<SetDraft>) => {
+    setLogError(null);
+    if (inLiveRound(entry)) {
+      setRoundDrafts((prior) => ({
+        ...prior,
+        [entry.key]: { ...roundDraftFor(entry), ...next },
+      }));
+      return;
+    }
+    rememberStagedDraft(entry, next);
+    if (next.entryKg !== undefined) setEntryKg(next.entryKg);
+    if (next.reps !== undefined) setReps(next.reps);
+    if (next.setType !== undefined) setSetType(next.setType);
+    if (next.rpe !== undefined) setRpe(next.rpe);
+    if (next.durationSeconds !== undefined) setDurationSeconds(next.durationSeconds);
+  };
+
+  /** "LOG SET", "LOG WARMUP", "LOG EXTRA SET", "DONE", or "Log A1" in a round. */
+  const logLabelFor = (entry: ExerciseEntry, draft: SetDraft, tag?: string): string => {
+    if (!setsLoaded || !prefsReady) return "LOADING…";
+    if (setsFailed) return "LOG UNAVAILABLE";
+    if (tag) return `Log ${tag}`;
+    if (isTick(entry)) return "DONE";
+    if (draft.setType === "warmup") return "LOG WARMUP";
+    return entryDone(entry) ? "LOG EXTRA SET" : "LOG SET";
+  };
+
+  /** Where the pad and the plate sheet read their numbers from: a round
+   *  member's draft or the open entry's, never a stale other one. */
+  const roundInputEntry =
+    roundInputKey === null
+      ? null
+      : (entries.find((entry) => entry.key === roundInputKey) ?? null);
+  const plateEntry = roundInputEntry ?? openEntry;
+
+  const req = padRequest();
+
+  /** The picture of an exercise's load, with the handlers of THIS screen. */
+  const pictureFor = (
+    entry: ExerciseEntry,
+    draft: SetDraft,
+    tag = "",
+  ): LoadPictureModel | null => {
+    if (isTick(entry)) return null;
+    const view = viewFor(entry, draft);
+    const tagPrefix = tag ? `${tag} · ` : "";
+    const memberKey = memberKeyFor(entry);
+    if (view.style === "plates" && view.plateSplit) {
+      return {
+        kind: "plates",
+        split: view.plateSplit,
+        baseKg: view.baseKg,
+        baseName: view.baseName,
+        baseKnown: view.baseKnown,
+        tag: tagPrefix,
+        onOpen: () => openSheet("plates", memberKey),
+      };
+    }
+    if (view.style === "stack") {
+      return {
+        kind: "stack",
+        totalKg: view.totalLoadKg,
+        canSwitch: view.canSwitchStyle,
+        tag: tagPrefix,
+        onOpen: view.canSwitchStyle ? () => openSheet("plates", memberKey) : undefined,
+      };
+    }
+    if (view.bellWord !== null) {
+      return {
+        kind: "dumbbell",
+        implementKg: draft.entryKg,
+        displayLoad: stagedDisplayLoad(
+          draft.entryKg,
+          draft.enteredLoad,
+          draft.enteredUnit,
+          unit,
+        ),
+        pair: view.perSide,
+        word: view.bellWord,
+        onToggle: view.canToggleEntry
+          ? () => toggleLoadEntryFor(entry, view.mode)
+          : undefined,
+      };
+    }
+    if (view.bodyweight) {
+      return {
+        kind: "bodyweight",
+        addedOn: draft.entryKg > 0 || bwAddOpen === entry.key,
+        timed: isTimed(entry),
+        onAddLoad: () => setBwAddOpen(entry.key),
+      };
+    }
+    return null;
+  };
+
+  /** The dock for the entry being edited: the numbers, the keys, LOG. In a
+   *  live superset round that is the NOW member, and LOG says which. */
+  const renderDock = (keys: ReactNode) => {
+    const entry = nowEntry;
+    if (!entry) return null;
+    const draft = draftOf(entry);
+    const view = viewFor(entry, draft);
+    const inRound = inLiveRound(entry);
+    const tag = inRound
+      ? (supersetInfo.get(entry.key)?.tag ?? undefined)
+      : undefined;
+    const onDraftChange = draftChangeFor(entry);
+    return (
+      <>
+      {logError && (
+        <p className="form-error session-error" role="alert">
+          {logError}
+        </p>
+      )}
+      {setsFailed && (
+        <p className="microcopy session-error">
+          This session’s logged sets could not be read from this device, so a
+          new set would be numbered as if nothing had been logged. Reload to
+          try again. Nothing already logged is lost.
+        </p>
+      )}
+      <SetEditor
+        entry={entry}
+        draft={draft}
+        tracking={trackingOf(entry)}
+        loadPresentation={{ perSide: view.perSide, noLoad: view.noLoad }}
+        unit={unit}
+        maxEntryKg={view.maxEntryKg}
+        loadSteps={loadSteps(entry.exercise_id, unit)}
+        logLabel={logLabelFor(entry, draft, tag)}
+        logClassName={`btn ${entryDone(entry) && !inRound ? "btn-outline-ink" : "btn-primary"} btn-log${logHeld ? " is-held" : ""}`}
+        saving={logSaving}
+        disabled={!setsLoaded || !prefsReady || setsFailed}
+        keysSlot={keys}
+        memberTag={tag}
+        addedLoad={
+          view.bodyweight && trackingOf(entry) === "reps"
+            ? {
+                on: draft.entryKg > 0 || bwAddOpen === entry.key,
+                onRemove: () => {
+                  setBwAddOpen(null);
+                  onDraftChange({
+                    entryKg: 0,
+                    enteredLoad: undefined,
+                    enteredUnit: undefined,
+                  });
+                },
+              }
+            : null
+        }
+        onDraftChange={onDraftChange}
+        onLog={() =>
+          tapLog(() => {
+            if (inRound) logRoundMember(entry, draft);
+            else void logSet(draft, entry);
+          })
+        }
+        onOpenPad={(kind) => openPad(kind, false, memberKeyFor(entry))}
+      />
+      </>
+    );
+  };
+
+  // ---- the keys ------------------------------------------------------------
+
+  /** The newest live set of what is on screen: this entry's, or either
+   *  member's in a round. */
+  const scopeNewestSet = newestOf(
+    focusSupersetPair
+      ? [...setsForEntry(focusSupersetPair[0]), ...setsForEntry(focusSupersetPair[1])]
+      : focusEntry
+        ? setsForEntry(focusEntry)
+        : [],
+  );
+  /** A rest is running for a set that was just saved: RPE, Note and Fix last
+   *  then refer to THAT set (the panel above the dock says LAST SET), not to
+   *  the next one being staged (M1, M2). */
+  const restedSet = rest !== null ? lastSet : null;
+  const keyTargetSet = restedSet ?? scopeNewestSet;
+  const stagedRpe = nowEntry ? draftOf(nowEntry).rpe : null;
+
+  const focusKeys: FocusKeys = {
+    onRpe: () => setRpeSheetOpen(true),
+    rpeValue: restedSet ? (restedSet.rpe ?? null) : stagedRpe,
+    onNote: keyTargetSet ? () => setNoteFor(keyTargetSet.id) : null,
+    fourth:
+      focusEntry && scopeNewestSet === null && !swapFrozen(focusEntry)
+        ? {
+            label: focusEntry.substitutedFor ? "Swap again" : "Swap",
+            onPress: () => openSheet("swap"),
+          }
+        : keyTargetSet
+          ? { label: "Fix last", onPress: () => startCorrection(keyTargetSet) }
+          : null,
+  };
+
+  // ---- the rest scene ------------------------------------------------------
+
+  const adjustRest = (d: number) => {
+    if (!rest) return;
+    const targetSeconds = Math.max(0, rest.targetSeconds + d);
+    setRest({ ...rest, targetSeconds });
+    mirrorRest(targetSeconds, rest.forLabel);
+    // the closed-app alert follows the target
+    armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
+  };
+
+  const lastSetLine = (s: SetInsert): string => {
+    const holder = entryOfSet(s);
+    const name = holder
+      ? (holder.substitutedFor && s.exercise_id === holder.substitutedFor.exercise_id
+          ? holder.substitutedFor.name
+          : holder.name)
+      : "Last set";
+    return `${name} · ${positionOfSet(s).text} · ${lineForSet(s)}`;
+  };
+
+  const loadNextView = nowEntry ? viewFor(nowEntry, draftOf(nowEntry)) : null;
+  const focusRestSlot = rest ? (
+    <>
+      <RestTimer
+        variant="panel"
+        rest={rest}
+        onAdjust={adjustRest}
+        onEdit={() => openPad("rest")}
+        nextSetLabel={nextSetLabel()}
+      />
+      {lastSet && (
+        <RestLastSetCard
+          line={lastSetLine(lastSet)}
+          receipt={receiptFor(lastSet.id, true)}
+          onFix={() => startCorrection(lastSet)}
+        />
+      )}
+      {nowEntry &&
+        loadNextView?.style === "plates" &&
+        loadNextView.plateSplit &&
+        loadNextView.baseKnown && (
+          <button
+            type="button"
+            className="focus-load-next"
+            onClick={() => openSheet("plates", memberKeyFor(nowEntry))}
+          >
+            <PlateDiagram split={loadNextView.plateSplit} unit={unit} compact />
+            <span>
+              <span className="focus-card-eyebrow">LOAD NEXT</span>
+              <span className="focus-load-next-text">
+                {plateText(loadNextView.plateSplit, loadNextView.baseKg, unit, loadNextView.baseName)}
+              </span>
+            </span>
+          </button>
+        )}
+    </>
+  ) : null;
+
+  const nextSetTag = (() => {
+    if (focusRoundHeading) return `NEXT SET · ${focusRoundHeading.subtitle.toUpperCase()}`;
+    if (!nowEntry || !nowDraft) return "NEXT SET";
+    const position = nextPositionText(nowEntry, nowDraft);
+    return position === null ? "NEXT SET" : `NEXT SET · ${position.toUpperCase()}`;
+  })();
+  const focusDockTag =
+    rest && !workoutDone ? (
+      <RestDockTag
+        rest={rest}
+        label={nextSetTag}
+        onEndNow={(elapsed) => {
+          // a deliberate end is the lifter's own act: no tone, no buzz for it
+          silenceRestCue(rest.startedAt);
+          const targetSeconds = Math.max(0, elapsed);
+          setRest({ ...rest, targetSeconds });
+          mirrorRest(targetSeconds, rest.forLabel);
+          disarmRestAlert();
         }}
-        tracking={isTick(focusEntry) ? "done" : isTimed(focusEntry) ? "time" : "reps"}
-        loadPresentation={{
-          perSide,
-          totalKg: totalLoadKg,
-          plateSplit,
-          barKg: exerciseBarKg,
-          noLoad: noLoadEditor,
-          styleIcon,
+      />
+    ) : null;
+
+  // ---- the middle band -----------------------------------------------------
+
+  const roundMiddle = (() => {
+    if (!focusSupersetPair || !roundView || !nowEntry || !nowDraft) return null;
+    const pair = focusSupersetPair;
+    const tags = [
+      supersetInfo.get(pair[0].key)?.tag ?? "A1",
+      supersetInfo.get(pair[1].key)?.tag ?? "A2",
+    ] as const;
+    const cardLine = (member: ExerciseEntry): string => {
+      const d = draftOf(member);
+      const v = viewFor(member, d);
+      const load = stagedDisplayLoad(d.entryKg, d.enteredLoad, d.enteredUnit, unit);
+      return v.noLoad
+        ? `${d.reps} reps`
+        : `${load} ${unit}${v.perSide ? " each" : ""} × ${d.reps}`;
+    };
+    const going = roundView.nowIndex;
+    const other = going === 0 ? 1 : 0;
+    const otherState = roundView.states[other];
+    const hint = roundView.tail
+      ? `${tags[other]} is ${otherState === "skipped" ? "skipped" : "finished"}. ${tags[going]} carries on, with a rest after each set.`
+      : going === 1 && otherState === "done"
+        ? `${tags[0]} logged. Log ${tags[1]} now, no rest between. Rest comes after.`
+        : going === 1
+          ? `${tags[1]} first this round. ${tags[0]} still to go. Rest comes after the round.`
+          : otherState === "done"
+            ? `${tags[1]} is already ahead. Log ${tags[0]} to catch up.`
+            : `Log ${tags[0]}, then go straight to ${tags[1]}. Rest comes after.`;
+    const card = (i: 0 | 1): RoundMemberCard => ({
+      tag: tags[i],
+      name: pair[i].name,
+      line: cardLine(pair[i]),
+      state: roundView.states[i],
+      onChoose:
+        roundView.states[i] === "now" ||
+        roundView.states[i] === "skipped" ||
+        roundView.tail
+          ? undefined
+          : () => setRoundNowOverride(pair[i].key),
+      onUnskip:
+        roundView.states[i] === "skipped"
+          ? () => toggleSkip(pair[i])
+          : undefined,
+    });
+    return {
+      heading: `${tags[0]} THEN ${tags[1]} · REST AFTER ${tags[1]}`,
+      cards: [card(0), card(1)] as [RoundMemberCard, RoundMemberCard],
+      hint,
+      tag: tags[going],
+    };
+  })();
+
+  const focusPicture = roundMiddle && nowEntry && nowDraft ? (
+    <SupersetRound
+      heading={roundMiddle.heading}
+      members={roundMiddle.cards}
+      hint={roundMiddle.hint}
+      picture={pictureFor(nowEntry, nowDraft, roundMiddle.tag)}
+      unit={unit}
+    />
+  ) : (() => {
+    if (!nowEntry || !nowDraft) return null;
+    if (isTick(nowEntry))
+      return <p className="focus-tick-help">Nothing to count. Tap Done after each set.</p>;
+    const model = pictureFor(nowEntry, nowDraft);
+    return model ? <LoadPicture model={model} unit={unit} /> : null;
+  })();
+
+  const warmupChoice =
+    nowEntry && nowDraft && warmupSets(nowEntry) > 0 && !isTick(nowEntry)
+      ? {
+          staged: (nowDraft.setType === "warmup" ? "warmup" : "working") as "warmup" | "working",
+          onChange: (next: "warmup" | "working") =>
+            draftChangeFor(nowEntry)({ setType: next }),
+          onAlreadyWarm:
+            nowDraft.setType === "warmup"
+              ? () => draftChangeFor(nowEntry)({ setType: "working" })
+              : undefined,
+        }
+      : null;
+  // A mixed entry's warmup counts its own warmups: "SET 1 OF 2 · WARMUP".
+  const focusWarmupPosition =
+    focusEntry &&
+    !focusSupersetPair &&
+    nowDraft?.setType === "warmup" &&
+    workingSets(focusEntry) > 0
+      ? (() => {
+          const planned = warmupSets(focusEntry);
+          const number = warmupCount(focusEntry) + 1;
+          return { number, of: Math.max(planned, number) };
+        })()
+      : null;
+
+  // ---- sheets and overlays -------------------------------------------------
+
+  const inFocusDeck =
+    presentation === "focus" && focusEligible && focusEntry !== null;
+
+  // The ☰ n/m count: sets done over sets the plan asks for. Progress is
+  // capped at each entry's own target so an extra set cannot push the count
+  // past the total, entries with no plan (extras) are in neither number, and
+  // a SKIPPED exercise leaves both: the day reads complete when everything
+  // that is still to be done is done (L6).
+  const headerEntries = entries.filter((e) => !(e.key in skips));
+  const headerTotal = headerEntries.reduce((n, e) => n + targetSets(e), 0);
+  const headerDone = headerEntries.reduce(
+    (n, e) => n + Math.min(entryProgress(e), targetSets(e)),
+    0,
+  );
+
+  /** A roll-up of the receipts of an exercise's sets, for its row in Today's
+   *  workout: the first thing that needs attention wins. */
+  const receiptMark = (members: readonly ExerciseEntry[]) => {
+    const kinds = members
+      .flatMap((entry) => setsForEntry(entry))
+      .map((set) => receiptKindOf(set.id).kind);
+    if (kinds.length === 0) return null;
+    const order: ReceiptKind[] = ["review", "held", "sending", "local", "synced"];
+    const kind = order.find((k) => kinds.includes(k)) ?? "synced";
+    const words: Record<ReceiptKind, string> = {
+      review: "Some sets need review",
+      held: "Some sets are held for their account",
+      sending: "Sets are sending",
+      local: "Some sets are on this phone, waiting to send",
+      synced: "All sets saved to the server",
+    };
+    return { glyph: RECEIPT_GLYPH[kind], label: words[kind] };
+  };
+
+  const unitNote = unit !== deviceUnit ? `${unit} this session · Settings says ${deviceUnit}` : null;
+
+  /** What the RPE key rates: the set just saved while a rest runs, else the
+   *  set being staged. The sheet's title says which. */
+  const rpeSheet = (() => {
+    if (!rpeSheetOpen || !nowEntry || !nowDraft) return null;
+    const scopeEntries = focusSupersetPair ?? (focusEntry ? [focusEntry] : []);
+    const rows = scopeEntries.map((entry) => (
+      <div key={entry.key}>
+        {scopeEntries.length > 1 && (
+          <div className="rpe-sheet-subheading">
+            {supersetInfo.get(entry.key)?.tag} · {entry.name}
+          </div>
+        )}
+        {renderLoggedRows(entry)}
+      </div>
+    ));
+    const hasRows = scopeEntries.some((entry) => setsForEntry(entry).length > 0);
+    const target = restedSet;
+    return (
+      <RpeSheet
+        title={
+          target
+            ? `Rate ${positionOfSet(target).text}, just saved`
+            : roundMiddle
+              ? `RPE for ${roundMiddle.tag}`
+              : "RPE for the next set"
+        }
+        question={
+          target
+            ? `How hard was ${lastSetLine(target)}? Optional; blank is fine.`
+            : "How hard will this set be? Optional; blank is fine."
+        }
+        value={target ? (target.rpe ?? null) : nowDraft.rpe}
+        onChange={(next) => {
+          if (target) void rateSet(target, next);
+          else draftChangeFor(nowEntry)({ rpe: next });
         }}
-        unit={inputUnit}
-        equipment={equipment}
-        cue={currentBracket?.notes ?? null}
+        loggedHeading={`Logged for ${scopeEntries.map((e) => e.name).join(" and ")}`}
+        loggedRows={hasRows ? rows : null}
+        onMore={() => {
+          setRpeSheetOpen(false);
+          setMoreOpen(true);
+        }}
+        onClose={() => setRpeSheetOpen(false)}
+      />
+    );
+  })();
+
+  const noteTargetSet = noteFor ? (sets.find((s) => s.id === noteFor) ?? null) : null;
+  const noteSheet = noteTargetSet ? (
+    <NoteSheet
+      key={noteTargetSet.id}
+      title={`Note on ${positionOfSet(noteTargetSet).text}`}
+      initial={setNotes[noteTargetSet.id] ?? ""}
+      onSave={(note) => {
+        void saveNote(noteTargetSet.id, note).then((ok) => {
+          if (ok) setNoteFor(null);
+        });
+      }}
+      onClose={() => setNoteFor(null)}
+    />
+  ) : null;
+
+  const correctionSheet = editing ? (() => {
+    const view = {
+      perSide: editing.loadEntry === "per_side",
+      maxEntryKg: editing.loadEntry === "per_side" ? MAX_LOAD_KG / 2 : MAX_LOAD_KG,
+    };
+    const position = positionOfSet(editing.set);
+    const bodyweightNoLoad =
+      isBodyweightEquipment(editing.equipment) && editing.set.load_kg === 0 && editing.entryKg === 0;
+    return (
+      <CorrectionSheet
+        title={`Fix ${position.text}`}
+        summary={`${editing.name} · logged ${lineForSet(editing.set)}`}
+        unit={unit}
+        perSide={view.perSide}
+        showReps={editing.tracking !== "time"}
+        load={
+          bodyweightNoLoad
+            ? null
+            : {
+                display: stagedDisplayLoad(
+                  editing.entryKg,
+                  editing.enteredLoad,
+                  editing.enteredUnit,
+                  unit,
+                ),
+                entryKg: editing.entryKg,
+                maxEntryKg: view.maxEntryKg,
+                steps: loadSteps(editing.set.exercise_id, unit),
+              }
+        }
+        reps={editing.reps}
+        setType={editing.setType}
+        rpe={editing.rpe}
+        onLoadChange={(entryKg) =>
+          setEditing((prior) =>
+            prior
+              ? {
+                  ...prior,
+                  entryKg,
+                  enteredLoad: toDisplay(entryKg, unit),
+                  enteredUnit: unit,
+                  loadEdited: true,
+                }
+              : prior,
+          )
+        }
+        onRepsChange={(next) => setEditing((prior) => (prior ? { ...prior, reps: next } : prior))}
+        onSetType={(next) => setEditing((prior) => (prior ? { ...prior, setType: next } : prior))}
+        onRpe={(next) => setEditing((prior) => (prior ? { ...prior, rpe: next } : prior))}
+        onOpenPad={(kind) => openPad(kind, false, null, true)}
+        onSave={() => void saveCorrection()}
+        onCancel={cancelCorrection}
+        saving={editing.saving}
       />
     );
   })() : null;
 
-  const restTimerEl = (
-      <RestTimer
-        variant={presentation === "focus" ? "scene" : "strip"}
-        rest={rest}
-        onAdjust={(d) => {
-          if (!rest) return;
-          const targetSeconds = Math.max(0, rest.targetSeconds + d);
-          setRest({ ...rest, targetSeconds });
-          mirrorRest(targetSeconds, rest.forLabel);
-          // the closed-app alert follows the target
-          armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
+  // ---- everything the plain screen leaves out, for the More sheet ----------
+
+  /** Target, last time, and swap — the context the dock deliberately omits. */
+  const contextBlock = (entry: ExerciseEntry) => {
+    const prescribed = entry.brackets.length > 0;
+    const draft = draftOf(entry);
+    const view = viewFor(entry, draft);
+    const last = lastTime(entry.exercise_id, view.mode);
+    return (
+      <>
+        <span className="rx-context">
+          {prescribed ? (
+            <>
+              TARGET {scheme(entry).toUpperCase()}
+              {entry.brackets.length > 1 && view.bracket
+                ? ` · NOW ${formatRepRange(view.bracket.reps_min, view.bracket.reps_max)} REPS`
+                : ""}
+              {view.bracket?.rest_seconds != null
+                ? ` · REST ${formatClock(view.bracket.rest_seconds)}`
+                : ""}
+              {entry.brackets.some(rxHasNoTm) ? " · NO TM SET" : ""}
+            </>
+          ) : (
+            `NO TARGET · BY FEEL${view.equipment ? ` · ${view.equipment.toUpperCase()}` : ""}`
+          )}
+        </span>
+
+        {/* "Last time" is the CHOSEN movement's own history: `lastActuals` is
+            keyed by exercise, so a swap moves this line with it and never
+            quotes the planned movement's numbers at a different one. */}
+        {last && <div className="microcopy">{last}</div>}
+
+        {entry.substitutedFor && (
+          <div className="microcopy swap-note">
+            Instead of {entry.substitutedFor.name}. The plan’s target still
+            counts here.
+            {swapFrozen(entry) ? " Sets are logged against it, so it stays." : ""}
+          </div>
+        )}
+
+        {/* Only while nothing has been logged against the swap: those sets
+            name the chosen exercise and are append-only, so there is nothing
+            left here to undo — see `swapFrozen`. */}
+        {!swapFrozen(entry) && (
+          <div className="swap-actions">
+            <button
+              type="button"
+              className="swap-action"
+              onClick={() => {
+                setMoreOpen(false);
+                openSheet("swap");
+              }}
+            >
+              {entry.substitutedFor ? "SWAP AGAIN" : "SWAP EXERCISE"}
+            </button>
+            {entry.substitutedFor && (
+              <button
+                type="button"
+                className="swap-action"
+                onClick={() => undoSwap(entry)}
+              >
+                UNDO SWAP
+              </button>
+            )}
+          </div>
+        )}
+      </>
+    );
+  };
+
+  /** Warmup/working, how-to, the plate calculator, the per-hand toggle, skip:
+   *  everything the dock shows nowhere else, for ONE entry. */
+  const moreExtrasFor = (target: ExerciseEntry) => {
+    const skipped = Boolean(skips[target.key]);
+    const skipAction = (
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={() => toggleSkip(target)}
+      >
+        {skipped ? "UNSKIP" : "SKIP"}
+      </button>
+    );
+    const howToAction = (
+      <button
+        type="button"
+        className="btn btn-ghost"
+        aria-label={`how to do ${target.name}`}
+        onClick={() => {
+          setDemoFor({ id: target.exercise_id, name: target.name });
+          setMoreOpen(false);
         }}
-        onEdit={() => openPad("rest")}
-        /* dismissing hides the strip only: the clock keeps measuring, so
-           the mirror keeps its startedAt with a null target — and a strip
-           nobody wants to see is a buzz nobody wants either */
-        onDone={() => {
-          setRest(null);
-          mirrorRest(null, null);
-          disarmRestAlert();
-        }}
-        nextSetLabel={nextSetLabel()}
-        lastSetRpe={lastLoggedSet?.rpe ?? null}
-        lastSetLabel={lastRestSetLabel()}
-        lastSetReceipt={lastLoggedSet ? (() => {
-          const receipt = receiptForSet(lastLoggedSet.id);
-          return <SetReceiptStatus receipt={receipt} onReview={() => openReceiptReview(receipt)} />;
-        })() : null}
-        onRateLastSet={rest && !editing && lastLoggedSet ? rateLastSet : undefined}
-        onNoteLastSet={rest && !editing && lastLoggedSet
-          ? () => {
-              openNote(lastLoggedSet.id);
-              setMoreOpen(true);
-            }
-          : undefined}
-      />
-  );
+      >
+        How to
+      </button>
+    );
+    if (isTick(target)) {
+      return (
+        <div className="focus-more-actions">
+          {howToAction}
+          {skipAction}
+        </div>
+      );
+    }
+    const draft = draftOf(target);
+    const view = viewFor(target, draft);
+    return (
+      <div className="focus-more-extras">
+        <div className="seg seg-types" role="group" aria-label="Set type">
+          {(["warmup", "working"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`seg-btn ${draft.setType === t ? "seg-on" : ""}`}
+              aria-pressed={draft.setType === t}
+              onClick={() => draftChangeFor(target)({ setType: t })}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <div className="focus-more-actions">
+          {howToAction}
+          {view.style === "plates" && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                setMoreOpen(false);
+                openSheet("plates", memberKeyFor(target));
+              }}
+            >
+              Plate calculator
+            </button>
+          )}
+          {view.canToggleEntry && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => toggleLoadEntryFor(target, view.mode)}
+            >
+              {view.perSide ? "each hand" : "one total weight"}
+            </button>
+          )}
+          {view.canSwitchStyle && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => toggleLoadStyleFor(target, view.style)}
+            >
+              {view.style === "plates" ? "switch to weight stack" : "switch to plates"}
+            </button>
+          )}
+          {skipAction}
+        </div>
+      </div>
+    );
+  };
+
+  // ---- render --------------------------------------------------------------
 
   if (sessionId && !prefsReady) {
     return <div className="session-shell" role="status">Loading workout choices…</div>;
   }
 
+  /** the open List card: its logged sets, then what is left to do */
+  const renderCurrent = (entry: ExerciseEntry) => {
+    const skipped = Boolean(skips[entry.key]);
+    const complete = entryDone(entry) && !skipped;
+    const removable = entry.brackets.length === 0 && setsForEntry(entry).length === 0;
+    return (
+      <>
+        {renderLoggedRows(entry)}
+        {roundMiddle && inLiveRound(entry) && (
+          <SupersetRound
+            heading={roundMiddle.heading}
+            members={roundMiddle.cards}
+            hint={roundMiddle.hint}
+            picture={null}
+            unit={unit}
+          />
+        )}
+        {skipped ? (
+          <button type="button" className="btn btn-outline-ink btn-block" onClick={() => toggleSkip(entry)}>
+            Unskip
+          </button>
+        ) : complete && !extraSetArmed ? (
+          <div className="focus-complete">
+            <div className="focus-complete-title">All planned sets logged.</div>
+            <button type="button" className="focus-chip-btn" onClick={() => setExtraSetArmed(true)}>
+              + Extra set
+            </button>
+          </div>
+        ) : (
+          <div className="wk-list-dock">
+            {rest && <div className="wk-list-next-tag">{nextSetTag}</div>}
+            {renderDock(
+              <DockKeys
+                keys={focusKeys}
+                skip={{ label: "Skip", onPress: () => skipEntryWithReason(entry, null) }}
+              />,
+            )}
+          </div>
+        )}
+        {removable && (
+          <button
+            type="button"
+            className={`drawer-action ${dropArm === entry.key ? "drawer-action-armed" : ""}`}
+            onClick={() => {
+              if (dropArm === entry.key) {
+                setDropArm(null);
+                void removeExtra(entry);
+              } else setDropArm(entry.key);
+            }}
+          >
+            {dropArm === entry.key ? "UNDO ADD?" : "UNDO ADD"}
+          </button>
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="session-shell">
-      <div
-        className="session-scroll"
-        style={
-          noteEditingId && kbInset > 0 ? { paddingBottom: kbInset } : undefined
-        }
-      >
+      <SessionHeaderPortal>
+        <SessionHeaderControls
+          done={headerDone}
+          total={headerTotal}
+          presentation={presentation}
+          focusEligible={focusEligible}
+          onOpenWorkout={() => setWorkoutSheetOpen(true)}
+          onFocus={enterFocus}
+          onList={showOverview}
+        />
+      </SessionHeaderPortal>
+
+      {workoutSheetOpen && (
+        <TodayWorkoutSheet
+          blocks={blocks}
+          unit={unit}
+          deviceUnit={deviceUnit}
+          onUnitChange={switchWorkoutUnit}
+          unitDisabled={!prefsReady}
+          entryProgress={entryProgress}
+          entryState={entryState}
+          formatScheme={scheme}
+          receiptMark={receiptMark}
+          onSelect={jumpToEntry}
+          isLocked={() => editing !== null}
+          onMoveBlock={moveBlock}
+          canMoveBlock={canMoveBlock}
+          reorderLocked={reorderLocked}
+          hasSections={hasSections}
+          supersetInfo={supersetInfo}
+          selectedKey={nowEntry?.key ?? null}
+          onAddExercise={() => {
+            setWorkoutSheetOpen(false);
+            openSheet("search");
+          }}
+          onHome={() => {
+            setWorkoutSheetOpen(false);
+            goHome();
+          }}
+          onFinish={finishWorkout}
+          onClose={() => setWorkoutSheetOpen(false)}
+        />
+      )}
+
+      <div className="session-scroll">
         {/* Session notes move to the top of the "more" sheet in focus mode —
             see below — so the default screen stays to the hero and LOG. */}
         {!inFocusDeck && (active.plan_note || active.coach_note) && (
           <div className="session-notes">
-            {active.plan_note && (
-              <Note label="PLAN NOTE" text={active.plan_note} />
-            )}
-            {active.coach_note && (
-              <Note label="COACH" text={active.coach_note} />
-            )}
+            {active.plan_note && <Note label="PLAN NOTE" text={active.plan_note} />}
+            {active.coach_note && <Note label="COACH" text={active.coach_note} />}
           </div>
         )}
 
@@ -4077,79 +3900,49 @@ export function Session() {
             <div className="section-head">
               {/* the screen's h1: the workout being logged */}
               <h1 className="field-label">
-                {active.workout_label
-                  ? active.workout_label.toUpperCase()
-                  : "WORKOUT"}
+                {active.workout_label ? active.workout_label.toUpperCase() : "WORKOUT"}
               </h1>
-              <div className="session-heading-controls">
-                {entries.length > 0 && (
-                  <span className="section-meta">
-                    {doneEntries} OF {entries.length} DONE
-                  </span>
-                )}
-                <UnitSwitch
-                  unit={unit}
-                  onChange={switchWorkoutUnit}
-                  disabled={!prefsReady}
-                />
-              </div>
+              {entries.length > 0 && (
+                <span className="section-meta">
+                  {doneEntries} OF {entries.length} DONE
+                </span>
+              )}
             </div>
           )}
 
           {inFocusDeck && focusEntry ? (
             <FocusDeck
+              key={focusEntry.key}
               entries={orderedEntries}
-              entry={focusEntry}
-              unitSwitch={
-                <UnitSwitch
-                  unit={unit}
-                  onChange={switchWorkoutUnit}
-                  disabled={!prefsReady}
-                />
-              }
+              entry={nowEntry ?? focusEntry}
               entryProgress={entryProgress}
               entryDone={entryDone}
-              entryState={entryState}
-              onViewFullWorkout={showOverview}
-              onChangePresentation={changePresentation}
-              onChooseNext={(entry) => {
-                setFocusKey(entry.key);
-                setOpenKey(entry.key);
-              }}
-              canAdvance={
-                !editing &&
-                (focusSupersetPair === null ||
-                  focusSupersetPair.every(entryDone))
-              }
-              renderEditor={(entry) => renderEditor(entry, false, "hero")}
-              onOpenMore={() => setMoreOpen(true)}
+              onChooseNext={jumpToEntry}
+              canAdvance={focusSupersetPair === null}
+              renderEditor={(_entry, keys) => renderDock(keys)}
               formatScheme={scheme}
-              stageSlot={focusStageNode}
-              topSlot={!sheetOpen && rest ? restTimerEl : undefined}
-              workoutComplete={workoutDone && !editing}
+              workoutComplete={workoutDone}
               extraSetArmed={extraSetArmed}
               onFinishWorkout={finishWorkout}
               onAddExtraSet={() => setExtraSetArmed(true)}
               supersetHeading={focusRoundHeading}
-              onSwap={
-                focusEntry && !editing && !swapFrozen(focusEntry)
-                  ? () => openSheet("swap")
-                  : undefined
-              }
-              swapLabel={
-                focusEntry
-                  ? focusEntry.substitutedFor
-                    ? "Swap again"
-                    : "Swap exercise"
+              picture={focusPicture}
+              cue={nowView?.bracket?.notes ?? null}
+              lastTime={
+                nowEntry && nowView && !isTick(nowEntry) && !roundMiddle
+                  ? lastTime(nowEntry.exercise_id, nowView.mode, true, nowView.noLoad)
                   : null
               }
-              onSkip={
-                focusEntry
-                  ? (reason) => skipEntryWithReason(focusEntry, reason)
-                  : undefined
-              }
-              skipped={focusEntry ? Boolean(skips[focusEntry.key]) : false}
-              onUnskip={focusEntry ? () => toggleSkip(focusEntry) : undefined}
+              restSlot={focusRestSlot}
+              dockTag={focusDockTag}
+              keys={focusKeys}
+              warmupPosition={focusWarmupPosition}
+              warmupChoice={warmupChoice}
+              unitNote={unitNote}
+              onOpenMore={() => setMoreOpen(true)}
+              onSkip={(reason) => skipEntryWithReason(nowEntry ?? focusEntry, reason)}
+              skipped={Boolean((nowEntry ?? focusEntry).key in skips)}
+              onUnskip={() => toggleSkip(nowEntry ?? focusEntry)}
             />
           ) : (
             <>
@@ -4157,74 +3950,40 @@ export function Session() {
                 <p className="microcopy focus-unavailable">
                   {overviewOnlyCircuit
                     ? `This workout opens in List because Superset ${supersetLetter(overviewOnlyCircuit[0]?.brackets[0]?.superset_group ?? 1)} has ${overviewOnlyCircuit.length} exercises.`
-                    : "Duration tracking is not available in focus mode. This workout stays in the full view."}
+                    : "This workout stays in the full view."}
                 </p>
               )}
               <WorkoutOverview
-                variant="list"
-                onChangePresentation={changePresentation}
-                editingEntryKey={editingEntryKey}
-                renderLoggedRows={renderLoggedRows}
                 entries={orderedEntries}
-                selectedEntryKey={selectedEntryKey}
-                expandedEntryKey={openKey}
-                onSelectEntry={setSelectedEntryKey}
-                onToggleEntry={toggleOpen}
-                canReorder={canReorderEntries}
-                moveIndex={moveIndex}
-                onMoveEntry={(key, toIndex) => { void moveEntry(key, toIndex); }}
-                onEnterFocus={enterFocus}
-                focusModeAvailable={focusEligible}
+                currentKey={nowEntry?.key ?? null}
+                entryState={entryState}
                 entryProgress={entryProgress}
                 isSkipped={(entry) => Boolean(skips[entry.key])}
-                entryState={entryState}
                 hasSections={hasSections}
                 supersetInfo={supersetInfo}
                 formatScheme={scheme}
-                onOpenDemo={(entry) =>
-                  setDemoFor({ id: entry.exercise_id, name: entry.name })
-                }
-                renderRowAction={(entry) => {
-                  const removable =
-                    entry.brackets.length === 0 &&
-                    setsForEntry(entry).length === 0;
-                  const skipped = Boolean(skips[entry.key]);
-                  return (
-                    <button
-                      type="button"
-                      className={`drawer-action ${
-                        removable && dropArm === entry.key
-                          ? "drawer-action-armed"
-                          : ""
-                      }`}
-                      onClick={() => {
-                        if (!removable) {
-                          toggleSkip(entry);
-                          return;
-                        }
-                        if (dropArm === entry.key) {
-                          setDropArm(null);
-                          void removeExtra(entry);
-                        } else {
-                          setDropArm(entry.key);
-                        }
+                onJump={jumpToEntry}
+                restSlot={
+                  rest ? (
+                    <RestTimer
+                      variant="strip"
+                      rest={rest}
+                      onAdjust={adjustRest}
+                      onEdit={() => openPad("rest")}
+                      /* dismissing hides the strip only: the clock keeps
+                         measuring, so the mirror keeps its startedAt with a
+                         null target — and a strip nobody wants to see is a
+                         buzz nobody wants either */
+                      onDone={() => {
+                        setRest(null);
+                        mirrorRest(null, null);
+                        disarmRestAlert();
                       }}
-                    >
-                      {removable
-                        ? dropArm === entry.key
-                          ? "UNDO ADD?"
-                          : "UNDO ADD"
-                        : skipped
-                          ? "UNSKIP"
-                          : "SKIP"}
-                    </button>
-                  );
-                }}
-                renderEditor={(entry, mode) =>
-                  mode === "focus"
-                    ? renderEditor(entry, false, "hero")
-                    : renderEditor(entry)
+                      nextSetLabel={nextSetLabel()}
+                    />
+                  ) : null
                 }
+                renderCurrent={renderCurrent}
               />
 
               {entries.length === 0 && (
@@ -4245,30 +4004,21 @@ export function Session() {
         </section>
       </div>
 
-      {/* In focus mode, the plain hero editor renders this same timer
-          inline, just above its own bottom bar (restSlot) — the fixed strip
-          would otherwise duplicate it below a footer that is itself hidden
-          there. Mid-correction or mid-round, neither of which has a bottom
-          bar of its own to sit above, it falls back to this fixed strip. */}
-      {!sheetOpen && !inFocusDeck && restTimerEl}
-
-      <div className="session-footer">
-        <button
-          type="button"
-          className="btn btn-ghost"
-          aria-label="back to Today — session keeps running"
-          onClick={goHome}
-        >
-          Home
-        </button>
-        <button
-          type="button"
-          className="btn btn-outline-ink"
-          onClick={finishWorkout}
-        >
-          Finish
-        </button>
-      </div>
+      {!inFocusDeck && (
+        <div className="session-footer">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            aria-label="back to Today — session keeps running"
+            onClick={goHome}
+          >
+            Home
+          </button>
+          <button type="button" className="btn btn-outline-ink" onClick={finishWorkout}>
+            Finish
+          </button>
+        </div>
+      )}
 
       {sheet === "outbox" && (
         <OutboxSheet
@@ -4331,9 +4081,7 @@ export function Session() {
           knownSections={knownSections}
           supersetMembers={supersetMembers}
           unit={unit}
-          startKg={
-            lastActuals[declaring.id]?.load_kg ?? getPrefillFallback().loadKg
-          }
+          startKg={lastActuals[declaring.id]?.load_kg ?? getPrefillFallback().loadKg}
           busy={false}
           onCancel={() => setDeclaring(null)}
           onSave={(groups) => void saveDeclared(declaring, groups)}
@@ -4352,21 +4100,21 @@ export function Session() {
         <PlateSheet
           exerciseId={plateEntry.exercise_id}
           exerciseName={plateEntry.name}
-          targetKg={roundInputEditor?.loadPresentation.totalKg ?? totalLoadKg}
+          targetKg={viewFor(plateEntry, draftOf(plateEntry)).totalLoadKg}
           unit={unit}
           equipment={equipMap[plateEntry.exercise_id] ?? null}
-          onTypeTarget={() =>
-            openPad("load", true, roundInputEntry?.key ?? null)
-          }
-          onTypeBase={() =>
-            openPad("base", true, roundInputEntry?.key ?? null)
-          }
+          onTypeTarget={() => openPad("load", true, roundInputEntry?.key ?? null)}
+          onTypeBase={() => openPad("base", true, roundInputEntry?.key ?? null)}
           onClose={() => {
             setSheet(null);
             setRoundInputKey(null);
           }}
         />
       )}
+
+      {rpeSheet}
+      {noteSheet}
+      {correctionSheet}
 
       {moreOpen && focusEntry && (
         <FocusMoreSheet
@@ -4379,12 +4127,8 @@ export function Session() {
         >
           {(active.plan_note || active.coach_note) && (
             <div className="session-notes">
-              {active.plan_note && (
-                <Note label="PLAN NOTE" text={active.plan_note} />
-              )}
-              {active.coach_note && (
-                <Note label="COACH" text={active.coach_note} />
-              )}
+              {active.plan_note && <Note label="PLAN NOTE" text={active.plan_note} />}
+              {active.coach_note && <Note label="COACH" text={active.coach_note} />}
             </div>
           )}
           <button
@@ -4401,6 +4145,7 @@ export function Session() {
             <div
               key={target.key}
               className="focus-more-section"
+              role="group"
               aria-label={
                 focusSupersetPair
                   ? `${supersetInfo.get(target.key)?.tag ?? (i === 0 ? "A1" : "A2")} ${target.name} · more`
@@ -4413,7 +4158,19 @@ export function Session() {
                   · {target.name}
                 </div>
               )}
-              {renderEditor(target, false, "detail")}
+              {contextBlock(target)}
+              {renderLoggedRows(target) && (
+                <section className="rule-section">
+                  <div className="section-head">
+                    <span className="field-label">LOGGED</span>
+                    <span className="section-meta">
+                      {entryProgress(target)}
+                      {target.brackets.length > 0 ? ` OF ${targetSets(target)}` : ""}
+                    </span>
+                  </div>
+                  {renderLoggedRows(target)}
+                </section>
+              )}
               {moreExtrasFor(target)}
             </div>
           ))}

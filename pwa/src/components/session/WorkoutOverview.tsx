@@ -1,240 +1,69 @@
-import { Fragment, type ReactNode, useEffect, useRef } from "react";
+// List: the whole workout as a ledger. One card is open (the exercise you are
+// on): its logged sets with their receipts, then the dock to log the next.
+// Everything else is one quiet row — done ones collapsed, the rest dim — and a
+// tap on any row makes it the open card. Corrections and skips stay one tap
+// away, inside the open card.
+//
+// It is a presentation of the same entries, states and logged rows the Focus
+// deck and Today's workout read: it owns no draft and no write.
+
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { targetSets, type ExerciseEntry, type SupersetTag } from "../../lib/entries";
 import { StateGlyph, type ProgressState } from "./StateGlyph";
-import { FocusListSwitch } from "./FocusListSwitch";
-import type { SessionPresentation } from "../../lib/sessionFocus";
 
 export interface WorkoutOverviewProps {
-  variant?: "accordion" | "list";
-  renderLoggedRows?: (entry: ExerciseEntry) => ReactNode;
-  onChangePresentation?(next: SessionPresentation): void;
-  editingEntryKey?: string | null;
   entries: readonly ExerciseEntry[];
-  selectedEntryKey: string | null;
-  expandedEntryKey: string | null;
-  onSelectEntry(key: string): void;
-  onToggleEntry(key: string): void;
-  canReorder?: boolean;
-  moveIndex?(key: string, direction: "up" | "down"): number | null;
-  onMoveEntry?(key: string, toIndex: number): void;
-  onEnterFocus(): void;
-  focusModeAvailable?: boolean;
-  renderEditor(entry: ExerciseEntry, mode?: "focus" | "details" | "correction"): ReactNode;
-  entryProgress?(entry: ExerciseEntry): number;
-  isSkipped?(entry: ExerciseEntry): boolean;
+  /** the open card's entry */
+  currentKey: string | null;
+  entryState(entry: ExerciseEntry): ProgressState;
+  entryProgress(entry: ExerciseEntry): number;
+  isSkipped(entry: ExerciseEntry): boolean;
   hasSections?: boolean;
   supersetInfo?: ReadonlyMap<string, SupersetTag>;
-  formatScheme?(entry: ExerciseEntry): string;
-  renderRowAction?(entry: ExerciseEntry): ReactNode;
-  onOpenDemo?(entry: ExerciseEntry): void;
-  /** Same shared vocabulary the focus rail uses (StateGlyph.tsx /
-   *  lib/sessionFocus.ts's `railState`). Optional so a caller that has no
-   *  notion of "current" (there is no live focus session, e.g. read-only
-   *  contexts) can omit it; no glyph renders and the row is exactly as it
-   *  was before this task. */
-  entryState?(entry: ExerciseEntry): ProgressState;
+  formatScheme(entry: ExerciseEntry): string;
+  /** a row was tapped: make it the open card */
+  onJump(entry: ExerciseEntry): void;
+  /** the rest strip, above the rows while resting */
+  restSlot?: ReactNode;
+  /** the open card's body: logged rows and the dock */
+  renderCurrent(entry: ExerciseEntry): ReactNode;
 }
 
-/**
- * The normal session view. Selecting an exercise chooses a future focus
- * destination; expanding its details is deliberately a separate action.
- */
 export function WorkoutOverview({
-  variant = "accordion",
-  renderLoggedRows,
-  onChangePresentation,
-  editingEntryKey = null,
   entries,
-  selectedEntryKey,
-  expandedEntryKey,
-  onSelectEntry,
-  onToggleEntry,
-  canReorder = true,
-  moveIndex,
-  onMoveEntry,
-  onEnterFocus,
-  focusModeAvailable = true,
-  renderEditor,
-  entryProgress = () => 0,
-  isSkipped = () => false,
+  currentKey,
+  entryState,
+  entryProgress,
+  isSkipped,
   hasSections = false,
   supersetInfo = new Map(),
-  formatScheme = () => "",
-  renderRowAction,
-  onOpenDemo,
-  entryState,
+  formatScheme,
+  onJump,
+  restSlot,
+  renderCurrent,
 }: WorkoutOverviewProps) {
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
 
+  // A jump brings its card into view: the list can be longer than the screen.
   useEffect(() => {
-    if (expandedEntryKey === null) return;
-    const item = itemRefs.current.get(expandedEntryKey);
+    if (currentKey === null) return;
+    const item = itemRefs.current.get(currentKey);
     if (!item || typeof item.scrollIntoView !== "function") return;
     item.scrollIntoView({
       behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
         ? "auto"
         : "smooth",
-      block: "start",
+      block: "nearest",
     });
-  }, [expandedEntryKey]);
+  }, [currentKey]);
 
-  if (variant === "list") {
-    return (
-      <div className="wk-overview wk-overview-list">
-        <header className="wk-list-header">
-          <FocusListSwitch
-            value="overview"
-            onChange={onChangePresentation ?? ((next) => {
-              if (next === "focus") onEnterFocus();
-            })}
-          />
-        </header>
-        {entries.map((entry, entryIndex) => {
-          const sectionOf = (candidate: ExerciseEntry | undefined) =>
-            candidate?.brackets[0]?.section ?? null;
-          const section = sectionOf(entry);
-          const previousSection = sectionOf(entries[entryIndex - 1]);
-          const showSection = section !== null && section !== previousSection;
-          const showMain =
-            section === null &&
-            hasSections &&
-            (entryIndex === 0 || previousSection !== null);
-          const state = entryState?.(entry);
-          const current = state === "current";
-          const completed = state === "done" || isSkipped(entry);
-          const expanded = !current && entry.key === expandedEntryKey;
-          const done = entryProgress(entry);
-          const total = entry.brackets.length > 0 ? targetSets(entry) : null;
-          const superset = supersetInfo.get(entry.key);
-          const showCurrentEditor = current && editingEntryKey === null;
-          const showCorrection = editingEntryKey === entry.key;
-          const body = (
-            <>
-              {current && !showCorrection && renderLoggedRows?.(entry)}
-              {showCurrentEditor && renderEditor(entry, "focus")}
-              {showCorrection && renderEditor(entry, "correction")}
-              {!current && expanded && !showCorrection && renderEditor(entry, "details")}
-            </>
-          );
-
-          return (
-            <Fragment key={entry.key}>
-              {showSection && (
-                <div className="section-head wk-section-head">
-                  <span className="field-label">{section.toUpperCase()}</span>
-                </div>
-              )}
-              {showMain && (
-                <div className="section-head wk-section-head wk-main-head">
-                  <span className="field-label">MAIN WORK</span>
-                </div>
-              )}
-              <article
-                ref={(element) => {
-                  if (element) itemRefs.current.set(entry.key, element);
-                  else itemRefs.current.delete(entry.key);
-                }}
-                className={`wk-list-item ${current ? "wk-list-item-current" : ""} ${completed ? "wk-list-item-completed" : ""}`}
-              >
-                <div className="wk-list-row">
-                  {superset && (
-                    <span
-                      className={`wk-superset-rail ${superset.first ? "wk-superset-rail-start" : ""} ${superset.last ? "wk-superset-rail-end" : ""}`}
-                      aria-label={`Superset ${superset.tag}`}
-                    >
-                      <span className="wk-superset-tag">{superset.tag}</span>
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    className="wk-list-main"
-                    aria-label={`${entry.name}${entry.key === selectedEntryKey ? ", selected" : ""}${state ? ` — ${state}` : ""}`}
-                    aria-pressed={entry.key === selectedEntryKey}
-                    onClick={() => onSelectEntry(entry.key)}
-                  >
-                    {entryState && (
-                      <StateGlyph
-                        state={state ?? "upcoming"}
-                        label={`${entry.name} — ${state}`}
-                      />
-                    )}
-                    <span className="wk-list-name">{entry.name}</span>
-                    <span className="wk-list-summary">
-                      {completed
-                        ? isSkipped(entry)
-                          ? "SKIPPED"
-                          : `${done} done`
-                        : entry.substitutedFor
-                          ? `INSTEAD OF ${entry.substitutedFor.name.toUpperCase()}`
-                          : formatScheme(entry).toUpperCase() || "BY FEEL"}
-                    </span>
-                    {!completed && total !== null && (
-                      <span className="wk-list-count">{done}/{total}</span>
-                    )}
-                    {current && <span className="wk-list-next">NEXT</span>}
-                  </button>
-                </div>
-                {(moveIndex && onMoveEntry || !current || renderRowAction) && (
-                  <div className="wk-list-actions">
-                    {moveIndex && onMoveEntry && (["up", "down"] as const).map((direction) => {
-                      const destination = moveIndex(entry.key, direction);
-                      return (
-                        <button
-                          key={direction}
-                          type="button"
-                          className="wk-list-move"
-                          aria-label={`Move ${entry.name} ${direction}`}
-                          disabled={!canReorder || destination === null}
-                          onClick={() => {
-                            const nextIndex = moveIndex(entry.key, direction);
-                            if (canReorder && nextIndex !== null)
-                              onMoveEntry(entry.key, nextIndex);
-                          }}
-                        >
-                          <span aria-hidden="true">{direction === "up" ? "↑" : "↓"}</span>
-                        </button>
-                      );
-                    })}
-                    {!current && (
-                      <button
-                        type="button"
-                        className="wk-list-details"
-                        aria-expanded={expanded}
-                        aria-label={`${expanded ? "Hide" : "Show"} details for ${entry.name}`}
-                        onClick={() => onToggleEntry(entry.key)}
-                      >
-                        {expanded ? "▾" : "▸"}
-                      </button>
-                    )}
-                    {renderRowAction?.(entry)}
-                  </div>
-                )}
-                {(current || expanded) && (
-                  <div className="wk-list-body">{body}</div>
-                )}
-              </article>
-            </Fragment>
-          );
-        })}
-      </div>
-    );
-  }
+  const sectionOf = (candidate: ExerciseEntry | undefined) =>
+    candidate?.brackets[0]?.section ?? null;
 
   return (
-    <div className="wk-overview">
-      {focusModeAvailable && (
-        <button
-          type="button"
-          className="btn btn-outline-ink btn-block wk-focus-mode"
-          onClick={onEnterFocus}
-        >
-          Go to current exercise
-        </button>
-      )}
-
+    <div className="wk-overview wk-overview-list">
+      {restSlot}
       {entries.map((entry, entryIndex) => {
-        const sectionOf = (candidate: ExerciseEntry | undefined) =>
-          candidate?.brackets[0]?.section ?? null;
         const section = sectionOf(entry);
         const previousSection = sectionOf(entries[entryIndex - 1]);
         const showSection = section !== null && section !== previousSection;
@@ -242,115 +71,81 @@ export function WorkoutOverview({
           section === null &&
           hasSections &&
           (entryIndex === 0 || previousSection !== null);
-        const isExpanded = entry.key === expandedEntryKey;
-        const isSelected = entry.key === selectedEntryKey;
-        const prescribed = entry.brackets.length > 0;
-        const done = entryProgress(entry);
-        const total = prescribed ? targetSets(entry) : null;
+        const state = entryState(entry);
+        const current = entry.key === currentKey;
         const skipped = isSkipped(entry);
+        const done = entryProgress(entry);
+        const total = entry.brackets.length > 0 ? targetSets(entry) : null;
         const superset = supersetInfo.get(entry.key);
-        const selectedName = isSelected ? `${entry.name}, selected` : entry.name;
+        const label = `${entry.name} — ${state}`;
 
         return (
           <Fragment key={entry.key}>
             {showSection && (
-              <div className="section-head wk-section-head">
-                <span className="field-label">{section.toUpperCase()}</span>
-              </div>
+              <div className="wk-section-head">{section.toUpperCase()}</div>
             )}
-            {showMain && (
-              <div className="section-head wk-section-head wk-main-head">
-                <span className="field-label">MAIN WORK</span>
-              </div>
-            )}
-            <div
+            {showMain && <div className="wk-section-head">MAIN WORK</div>}
+            <article
               ref={(element) => {
                 if (element) itemRefs.current.set(entry.key, element);
                 else itemRefs.current.delete(entry.key);
               }}
-              className={`wk-item ${isExpanded ? "wk-item-on" : ""} ${isSelected ? "wk-item-selected" : ""}`}
+              className={`wk-list-item${current ? " wk-list-item-current" : ""}${state === "done" || skipped ? " wk-list-item-completed" : ""}${state === "upcoming" || state === "next" ? " wk-list-item-ahead" : ""}`}
+              data-state={state}
             >
-              <div className="wk-row">
-                {superset && (
-                  <span
-                    className={`wk-superset-rail ${superset.first ? "wk-superset-rail-start" : ""} ${superset.last ? "wk-superset-rail-end" : ""}`}
-                  >
-                    <span className="wk-superset-tag">{superset.tag}</span>
-                  </span>
-                )}
+              {current ? (
+                <>
+                  <div className="wk-list-card-head">
+                    {superset && (
+                      <span className="wk-superset-tag" aria-label={`Superset ${superset.tag}`}>
+                        {superset.tag}
+                      </span>
+                    )}
+                    <h2 className="wk-list-card-name">{entry.name}</h2>
+                    <span className="wk-list-count">
+                      {done}
+                      {total !== null ? `/${total}` : ""}
+                    </span>
+                  </div>
+                  {entry.substitutedFor && (
+                    <div className="wk-list-instead">
+                      INSTEAD OF {entry.substitutedFor.name.toUpperCase()}
+                    </div>
+                  )}
+                  <div className="wk-list-body">{renderCurrent(entry)}</div>
+                </>
+              ) : (
                 <button
                   type="button"
-                  className="wk-main"
-                  // Selecting a future focus destination only means something
-                  // when Focus mode is on offer. Without it, tapping the name
-                  // used to just highlight a row with no visible next step —
-                  // main's behaviour (the whole row toggles open/closed) is
-                  // restored here so the tap keeps doing something.
-                  aria-label={
-                    entryState
-                      ? `${focusModeAvailable ? selectedName : entry.name} — ${entryState(entry)}`
-                      : focusModeAvailable
-                        ? selectedName
-                        : entry.name
-                  }
-                  aria-pressed={focusModeAvailable ? isSelected : undefined}
-                  onClick={() =>
-                    focusModeAvailable
-                      ? onSelectEntry(entry.key)
-                      : onToggleEntry(entry.key)
-                  }
+                  className="wk-list-row"
+                  aria-label={label}
+                  onClick={() => onJump(entry)}
                 >
-                  {entryState && (
-                    <StateGlyph
-                      state={entryState(entry)}
-                      label={`${entry.name} — ${entryState(entry)}`}
-                    />
+                  <StateGlyph state={state} label={label} />
+                  {superset && (
+                    <span className="wk-superset-tag" aria-hidden="true">
+                      {superset.tag}
+                    </span>
                   )}
-                  <span
-                    className={`wk-name ${skipped ? "wk-name-skipped" : ""}`}
-                  >
+                  <span className={`wk-list-name${skipped ? " wk-list-name-skipped" : ""}`}>
                     {entry.name}
+                    <span className="wk-list-summary">
+                      {skipped
+                        ? "SKIPPED"
+                        : state === "done"
+                          ? `${done} done`
+                          : entry.substitutedFor
+                            ? `INSTEAD OF ${entry.substitutedFor.name.toUpperCase()}`
+                            : formatScheme(entry).toUpperCase() || "BY FEEL"}
+                    </span>
                   </span>
-                  <span className="wk-target">
-                    {entry.substitutedFor && !skipped
-                      ? `INSTEAD OF ${entry.substitutedFor.name.toUpperCase()} · `
-                      : ""}
-                    {skipped
-                      ? "SKIPPED"
-                      : prescribed
-                        ? formatScheme(entry).toUpperCase()
-                        : "NO TARGET · BY FEEL"}
-                  </span>
-                  <span
-                    className={`wk-count ${total !== null && done >= total ? "wk-count-done" : ""}`}
-                  >
+                  <span className="wk-list-count">
                     {done}
                     {total !== null ? `/${total}` : ""}
                   </span>
                 </button>
-                <button
-                  type="button"
-                  className="wk-expand"
-                  aria-expanded={isExpanded}
-                  aria-label={isExpanded ? "collapse details" : "expand details"}
-                  onClick={() => onToggleEntry(entry.key)}
-                >
-                  <span aria-hidden="true">{isExpanded ? "▾" : "▸"}</span>
-                </button>
-                {isExpanded && onOpenDemo && (
-                  <button
-                    type="button"
-                    className="wk-demo"
-                    aria-label={`how to do ${entry.name}`}
-                    onClick={() => onOpenDemo(entry)}
-                  >
-                    HOW TO
-                  </button>
-                )}
-                {!isExpanded && renderRowAction?.(entry)}
-              </div>
-              {isExpanded && <div className="wk-open">{renderEditor(entry)}</div>}
-            </div>
+              )}
+            </article>
           </Fragment>
         );
       })}

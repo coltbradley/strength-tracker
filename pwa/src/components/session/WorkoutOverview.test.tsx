@@ -1,345 +1,114 @@
 // @vitest-environment jsdom
-
-import { afterEach, describe, expect, it, vi } from "vitest";
+//
+// List is the whole workout as a ledger: one open card (the exercise you are
+// on), every other exercise one quiet row. It owns no draft and no write.
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { useState } from "react";
 import { WorkoutOverview, type WorkoutOverviewProps } from "./WorkoutOverview";
 import type { ExerciseEntry } from "../../lib/entries";
-import { pinnedOverviewEntryKey } from "../../lib/sessionFocus";
 
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
 afterEach(cleanup);
 
-const entries: ExerciseEntry[] = [
-  {
-    key: "bench",
-    exercise_id: "bench",
-    name: "Bench Press",
-    brackets: [],
-  },
-];
+const entry = (key: string, name: string, extra: Partial<ExerciseEntry> = {}): ExerciseEntry =>
+  ({
+    key,
+    name,
+    exercise_id: key,
+    brackets: [{ kind: "working", sets: 3 }],
+    ...extra,
+  }) as unknown as ExerciseEntry;
 
-const correctionEntries: ExerciseEntry[] = [
-  ...entries,
-  {
-    key: "squat",
-    exercise_id: "squat",
-    name: "Squat",
-    brackets: [],
-  },
-];
+const entries = [entry("a", "Bench Press"), entry("b", "Back Squat"), entry("c", "Row")];
 
-function CorrectionHarness() {
-  const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(null);
-  const [expandedEntryKey, setExpandedEntryKey] = useState<string | null>("bench");
-  const [correctedEntryKey, setCorrectedEntryKey] = useState<string | null>(null);
-  const [saves, setSaves] = useState(0);
-  const [logs, setLogs] = useState(0);
-  const stagedDraft = "45 kg × 8";
-
-  return (
-    <>
-      <button type="button" onClick={() => setCorrectedEntryKey("bench")}>
-        Correct Bench Press
-      </button>
-      <WorkoutOverview
-        {...props({
-          entries: correctionEntries,
-          selectedEntryKey,
-          expandedEntryKey,
-          onSelectEntry: setSelectedEntryKey,
-          onToggleEntry: (key) =>
-            setExpandedEntryKey((previous) =>
-              pinnedOverviewEntryKey(
-                previous === key ? null : key,
-                correctedEntryKey,
-              ),
-            ),
-          renderEditor: (entry) => (
-            <section>
-              <output>Editor: {entry.name}</output>
-              <output>Draft: {stagedDraft}</output>
-              {correctedEntryKey === entry.key ? (
-                <button type="button" onClick={() => setSaves((count) => count + 1)}>
-                  Save correction
-                </button>
-              ) : (
-                <button type="button" onClick={() => setLogs((count) => count + 1)}>
-                  Log set
-                </button>
-              )}
-            </section>
-          ),
-        })}
-      />
-      <output>Saved: {saves}</output>
-      <output>Logged: {logs}</output>
-      <output>Selected: {selectedEntryKey ?? "none"}</output>
-    </>
-  );
-}
-
-function props(
-  overrides: Partial<WorkoutOverviewProps> = {},
-): WorkoutOverviewProps {
-  return {
+function setup(over: Partial<WorkoutOverviewProps> = {}) {
+  const props: WorkoutOverviewProps = {
     entries,
-    selectedEntryKey: null,
-    expandedEntryKey: null,
-    onSelectEntry: () => undefined,
-    onToggleEntry: () => undefined,
-    onEnterFocus: () => undefined,
-    renderEditor: () => <button type="button">Log set</button>,
-    ...overrides,
+    currentKey: "b",
+    entryState: (e) => (e.key === "a" ? "done" : e.key === "b" ? "current" : "upcoming"),
+    entryProgress: (e) => (e.key === "a" ? 3 : e.key === "b" ? 1 : 0),
+    isSkipped: () => false,
+    formatScheme: () => "3 x 5",
+    onJump: vi.fn(),
+    renderCurrent: (e) => <div data-testid="current-body">{e.name} editor</div>,
+    ...over,
   };
+  return { props, ...render(<WorkoutOverview {...props} />) };
 }
 
 describe("WorkoutOverview", () => {
-  it("renders a current List entry with logged rows, correction access, and the staged next set", () => {
-    const onCorrect = vi.fn();
-    render(
-      <WorkoutOverview
-        {...props({
-          variant: "list",
-          entries: correctionEntries,
-          selectedEntryKey: "bench",
-          entryState: (entry) => entry.key === "bench" ? "current" : "upcoming",
-          entryProgress: (entry) => entry.key === "bench" ? 1 : 0,
-          renderLoggedRows: (entry) => entry.key === "bench" ? (
-            <div>
-              <span>Logged 45 kg × 8</span>
-              <button type="button" onClick={onCorrect}>Correct logged set 1</button>
-            </div>
-          ) : null,
-          renderEditor: (entry) => entry.key === "bench" ? <output>Next set: 50 kg × 8</output> : null,
-        })}
-      />,
-    );
-
-    expect(screen.getByText("Logged 45 kg × 8")).toBeTruthy();
-    expect(screen.getByText("Next set: 50 kg × 8")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Correct logged set 1" }));
-    expect(onCorrect).toHaveBeenCalledTimes(1);
+  it("opens one card with its body and shows every other exercise as a row", () => {
+    setup();
+    expect(screen.getByRole("heading", { name: "Back Squat" })).toBeTruthy();
+    expect(screen.getByTestId("current-body").textContent).toBe("Back Squat editor");
+    expect(screen.getByRole("button", { name: "Bench Press — done" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Row — upcoming" })).toBeTruthy();
+    // only the open card has a body: no per-row accordion
+    expect(screen.getAllByTestId("current-body")).toHaveLength(1);
   });
 
-  it("shows completed entries as summaries without reopening their editors", () => {
-    const onToggleEntry = vi.fn();
-    render(
-      <WorkoutOverview
-        {...props({
-          variant: "list",
-          onToggleEntry,
-          entryState: () => "done",
-          entryProgress: () => 3,
-          renderLoggedRows: () => <span>expanded logged history</span>,
-          renderEditor: () => <span>staged editor</span>,
-        })}
-      />,
-    );
+  it("jumps on a tap of any other row", () => {
+    const { props } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Row — upcoming" }));
+    expect(props.onJump).toHaveBeenCalledWith(entries[2]);
+  });
 
+  it("shows counts, a scheme for upcoming rows and a done count for finished ones", () => {
+    setup();
     expect(screen.getByText("3 done")).toBeTruthy();
-    expect(screen.queryByText("expanded logged history")).toBeNull();
-    expect(screen.queryByText("staged editor")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Show details for Bench Press" }));
-    expect(onToggleEntry).toHaveBeenCalledWith("bench");
-  });
-
-  it("keeps every member of a longer superset circuit available in List", () => {
-    const circuit: ExerciseEntry[] = ["Press", "Row", "Fly"].map((name, index) => ({
-      key: `circuit-${index}`,
-      exercise_id: `exercise-${index}`,
-      name,
-      brackets: [],
-    }));
-    render(
-      <WorkoutOverview
-        {...props({
-          variant: "list",
-          entries: circuit,
-          focusModeAvailable: false,
-          supersetInfo: new Map(circuit.map((entry, index) => [entry.key, {
-            tag: `A${index + 1}`,
-            first: index === 0,
-            last: index === circuit.length - 1,
-          }])),
-        })}
-      />,
-    );
-
-    for (const name of ["Press", "Row", "Fly"]) {
-      expect(screen.getByRole("button", { name: new RegExp(`^${name}$`) })).toBeTruthy();
-    }
-    expect(screen.getAllByText(/^A[1-3]$/)).toHaveLength(3);
-  });
-
-  it("shows each paired member's own target and progress when A1 and A2 differ", () => {
-    const pair: ExerciseEntry[] = [
-      { key: "a1", exercise_id: "a1", name: "A1 Press", brackets: [{ sets: 2, set_type: "working" } as never] },
-      { key: "a2", exercise_id: "a2", name: "A2 Row", brackets: [{ sets: 3, set_type: "working" } as never] },
-    ];
-    render(
-      <WorkoutOverview
-        {...props({
-          variant: "list",
-          entries: pair,
-          entryState: (entry) => entry.key === "a1" ? "current" : "upcoming",
-          entryProgress: (entry) => entry.key === "a1" ? 2 : 1,
-          supersetInfo: new Map([
-            ["a1", { tag: "A1", first: true, last: false }],
-            ["a2", { tag: "A2", first: false, last: true }],
-          ]),
-          formatScheme: (entry) => entry.key === "a1" ? "2×8" : "3×10",
-        })}
-      />,
-    );
-
-    expect(screen.getByText("2×8")).toBeTruthy();
-    expect(screen.getByText("3×10")).toBeTruthy();
-    expect(screen.getByText("2/2")).toBeTruthy();
+    expect(screen.getByText("3 X 5")).toBeTruthy();
     expect(screen.getByText("1/3")).toBeTruthy();
+    expect(screen.getByText("3/3")).toBeTruthy();
   });
 
-  it("marks an overview entry selected without writing a set", () => {
-    const onSelectEntry = vi.fn();
-    const onLog = vi.fn();
+  it("marks a skipped exercise as skipped, and a substituted one as INSTEAD OF", () => {
+    setup({
+      isSkipped: (e) => e.key === "c",
+      entries: [
+        entries[0]!,
+        entry("b", "Goblet Squat", {
+          substitutedFor: { name: "Back Squat", exercise_id: "x" },
+        } as Partial<ExerciseEntry>),
+        entries[2]!,
+      ],
+      entryState: (e) => (e.key === "c" ? "skipped" : e.key === "b" ? "current" : "done"),
+    });
+    expect(screen.getByText("SKIPPED")).toBeTruthy();
+    expect(screen.getByText("INSTEAD OF BACK SQUAT")).toBeTruthy();
+  });
 
-    render(
-      <WorkoutOverview
-        {...props({
-          onSelectEntry,
-          renderEditor: () => <button type="button" onClick={onLog}>Log set</button>,
-        })}
-      />,
+  it("puts the rest strip above the rows", () => {
+    const { container } = setup({ restSlot: <div data-testid="rest">REST</div> });
+    expect(container.querySelector(".wk-overview")!.firstElementChild).toBe(
+      screen.getByTestId("rest"),
     );
-
-    fireEvent.click(screen.getByRole("button", { name: /bench press/i }));
-
-    expect(onSelectEntry).toHaveBeenCalledWith("bench");
-    expect(onLog).not.toHaveBeenCalled();
   });
 
-  it("announces the selected exercise and exposes a return to current work", () => {
-    render(<WorkoutOverview {...props({ selectedEntryKey: "bench" })} />);
-
-    expect(screen.getByRole("button", { name: "Go to current exercise" })).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Bench Press, selected" }),
-    ).toBeTruthy();
+  it("shows a superset tag on both the open card and a row", () => {
+    setup({
+      supersetInfo: new Map([
+        ["b", { tag: "A1" }],
+        ["c", { tag: "A2" }],
+      ]) as never,
+    });
+    expect(screen.getByLabelText("Superset A1")).toBeTruthy();
+    expect(screen.getByText("A2")).toBeTruthy();
   });
 
-  it("labels the return action for the current focused exercise", () => {
-    render(<WorkoutOverview {...props({ selectedEntryKey: "bench" })} />);
-    expect(
-      screen.getByRole("button", { name: "Go to current exercise" }),
-    ).toBeTruthy();
+  it("heads each named section, and the unnamed run after one as MAIN WORK", () => {
+    const sectioned = [
+      entry("a", "Cat Cow", { brackets: [{ kind: "working", sets: 1, section: "Warm-up" }] } as never),
+      entry("b", "Back Squat"),
+    ];
+    setup({ entries: sectioned, hasSections: true, currentKey: "b" });
+    expect(screen.getByText("WARM-UP")).toBeTruthy();
+    expect(screen.getByText("MAIN WORK")).toBeTruthy();
   });
 
-  it("toggles expansion on the row name when focus mode is unavailable, like main", () => {
-    const onToggleEntry = vi.fn();
-    const onSelectEntry = vi.fn();
-    render(
-      <WorkoutOverview
-        {...props({
-          focusModeAvailable: false,
-          onToggleEntry,
-          onSelectEntry,
-        })}
-      />,
-    );
-
-    expect(screen.queryByRole("button", { name: "Focus mode" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /bench press/i }));
-
-    expect(onToggleEntry).toHaveBeenCalledWith("bench");
-    expect(onSelectEntry).not.toHaveBeenCalled();
-  });
-
-  it("collapses an open row by tapping its name again when focus mode is unavailable", () => {
-    const onToggleEntry = vi.fn();
-    render(
-      <WorkoutOverview
-        {...props({
-          focusModeAvailable: false,
-          expandedEntryKey: "bench",
-          onToggleEntry,
-        })}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /bench press/i }));
-
-    expect(onToggleEntry).toHaveBeenCalledWith("bench");
-  });
-
-  it("pins Details to a correction while still allowing later focus selection", () => {
-    render(<CorrectionHarness />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Correct Bench Press" }));
-    fireEvent.click(screen.getByRole("button", { name: "expand details" }));
-    fireEvent.click(screen.getByRole("button", { name: "Squat" }));
-
-    expect(screen.getByText("Editor: Bench Press")).toBeTruthy();
-    expect(screen.getByText("Draft: 45 kg × 8")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save correction" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Log set" })).toBeNull();
-    expect(screen.getByText("Saved: 0")).toBeTruthy();
-    expect(screen.getByText("Logged: 0")).toBeTruthy();
-    expect(screen.getByText("Selected: squat")).toBeTruthy();
-  });
-
-  it("shows a state glyph and folds the state into the row's own accessible name, when given one", () => {
-    render(
-      <WorkoutOverview
-        {...props({
-          entries,
-          selectedEntryKey: null,
-          expandedEntryKey: null,
-          entryState: () => "done",
-        })}
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: /Bench Press — done/ }),
-    ).toBeTruthy();
-  });
-
-  it("omits the glyph and leaves the row's name unchanged when no entryState is given", () => {
-    render(
-      <WorkoutOverview
-        {...props({ entries, selectedEntryKey: null, expandedEntryKey: null })}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "Bench Press" })).toBeTruthy();
-  });
-
-  it("exposes accessible move arrows with the same legal destination used by dispatch", () => {
-    const onMoveEntry = vi.fn();
-    const moveIndex = vi.fn((key: string, direction: "up" | "down") =>
-      key === "bench" && direction === "down" ? 1 : null,
-    );
-    const view = render(
-      <WorkoutOverview
-        {...props({ variant: "list", entries: correctionEntries, onMoveEntry, moveIndex })}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "Move Bench Press up" }).hasAttribute("disabled")).toBe(true);
-    const listItem = screen.getByRole("button", { name: "Bench Press" }).closest(".wk-list-item");
-    expect(listItem?.querySelector(".wk-list-row .wk-list-main")).toBeTruthy();
-    expect(listItem?.querySelector(".wk-list-actions .wk-list-move")).toBeTruthy();
-    expect(listItem?.querySelector(".wk-list-row .wk-list-move")).toBeNull();
-    const down = screen.getByRole("button", { name: "Move Bench Press down" });
-    expect(down.hasAttribute("disabled")).toBe(false);
-    fireEvent.click(down);
-    expect(moveIndex).toHaveBeenCalledWith("bench", "down");
-    expect(onMoveEntry).toHaveBeenCalledWith("bench", 1);
-
-    view.rerender(
-      <WorkoutOverview
-        {...props({ variant: "list", entries: correctionEntries, onMoveEntry, moveIndex, canReorder: false })}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "Move Bench Press down" }).hasAttribute("disabled")).toBe(true);
+  it("writes nothing by itself", () => {
+    const { props } = setup();
+    expect(props.onJump).not.toHaveBeenCalled();
   });
 });

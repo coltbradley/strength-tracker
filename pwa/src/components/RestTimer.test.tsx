@@ -1,29 +1,33 @@
 // @vitest-environment jsdom
 //
-// The rest strip announces itself ONCE per rest, and only from an effect.
-//
-// Two bugs sat here. The notification was raised from the render body, so a
-// render React went on to discard could still fire a system notification —
-// the ref guard is no protection against that, because the ref is set by the
-// same discarded render. And the tick effect was keyed on the whole `rest`
-// object, which −30/+30 rebuilds by spread; every adjustment therefore reset
-// the already-told-them flag, and a rest that had gone over announced itself
-// again on the next tap. Both are invisible in normal use and both are
-// exactly the sort of thing that goes off in a quiet gym.
+// The rest clock has ONE API with two presentations (panel, strip). The tone
+// and notification are not the component's job: useRestCue is mounted once by
+// Session and remembers announced rests in module scope, so a rest is told
+// once however often a sheet, the Focus/List switch or a remount rebuilds the
+// clock (H2). "End rest now" is the lifter's own act and stays silent (L1).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { RestTimer, type ActiveRest } from "./RestTimer";
+
+const played = vi.hoisted(() => vi.fn());
+vi.mock("../lib/restCue", () => ({ playRestCue: played }));
+vi.mock("../lib/settings", async (orig) => ({
+  ...(await orig<typeof import("../lib/settings")>()),
+  getRestSound: () => true,
+}));
+
+import {
+  RestDockTag,
+  RestTimer,
+  resetRestCuesForTests,
+  restAnnounced,
+  silenceRestCue,
+  useRestCue,
+  type ActiveRest,
+} from "./RestTimer";
 
 const noop = () => {};
 
-/** A rest that started far enough back to already be over.
- *
- *  `startedAt` IS the rest's identity, so every call must produce a distinct
- *  one. The separation is a whole minute per call rather than a millisecond
- *  because it has to be bigger than any time that can pass BETWEEN two calls:
- *  at `- nth` a single millisecond of real elapsed time cancelled the offset
- *  exactly, both rests got the same startedAt, the second announcement was
- *  correctly suppressed, and this file failed about one run in three. */
+/** `startedAt` IS the rest's identity: every call must be distinct. */
 let nth = 0;
 function overdue(targetSeconds = 60): ActiveRest {
   nth += 1;
@@ -33,11 +37,18 @@ function overdue(targetSeconds = 60): ActiveRest {
     forLabel: "Barbell Row set 2",
   };
 }
+const running = (targetSeconds = 90): ActiveRest => ({
+  startedAt: Date.now(),
+  targetSeconds,
+  forLabel: "Squat set 2",
+});
 
 let notified: string[];
 
 beforeEach(() => {
   notified = [];
+  played.mockClear();
+  resetRestCuesForTests();
   class FakeNotification {
     static permission = "granted";
     constructor(title: string) {
@@ -53,281 +64,181 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("RestTimer", () => {
-  it("renders nothing when no rest is running", () => {
+function Cue({ rest, body = null }: { rest: ActiveRest | null; body?: string | null }) {
+  useRestCue(rest, body);
+  return null;
+}
+
+describe("RestTimer panel", () => {
+  it("renders nothing without a rest", () => {
     const { container } = render(
-      <RestTimer rest={null} onAdjust={noop} onEdit={noop} onDone={noop} />,
+      <RestTimer rest={null} onAdjust={noop} onEdit={noop} />,
     );
-    expect(container.querySelector(".rest-timer")).toBeNull();
+    expect(container.firstChild).toBeNull();
   });
 
-  it("can present the same active rest as a Focus scene", () => {
+  it("shows the big clock with -30/+30 while resting", () => {
+    const onAdjust = vi.fn();
+    const onEdit = vi.fn();
     const { container } = render(
-      <RestTimer
-        rest={{ startedAt: Date.now(), targetSeconds: 60, forLabel: "Squat set 2" }}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-        variant="scene"
-      />,
+      <RestTimer rest={running()} onAdjust={onAdjust} onEdit={onEdit} />,
     );
-
-    expect(container.querySelector(".rest-timer-scene")).toBeTruthy();
-    expect(screen.getByRole("timer", { name: "rest timer" })).toBeTruthy();
+    expect(container.querySelector(".rest-panel")).not.toBeNull();
+    expect(screen.getByText("◷ RESTING")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "take 30 seconds off the rest target" }));
+    fireEvent.click(screen.getByRole("button", { name: "add 30 seconds to the rest target" }));
+    expect(onAdjust.mock.calls).toEqual([[-30], [30]]);
+    fireEvent.click(screen.getByRole("button", { name: /^rest remaining/ }));
+    expect(onEdit).toHaveBeenCalled();
   });
 
-  it("marks the active and completed rest states for their aubergine treatment", () => {
-    const { container, rerender } = render(
-      <RestTimer
-        rest={{ startedAt: Date.now(), targetSeconds: 60, forLabel: "Squat set 2" }}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-      />,
-    );
-
-    expect(container.querySelector(".rest-timer")?.classList.contains("rest-timer-rest")).toBe(true);
-    rerender(
-      <RestTimer rest={overdue()} onAdjust={noop} onEdit={noop} onDone={noop} />,
-    );
-    const ready = container.querySelector(".rest-timer");
-    expect(ready?.classList.contains("rest-timer-ready")).toBe(true);
-    expect(ready?.classList.contains("rest-timer-rest")).toBe(false);
+  it("turns into a REST OVER card with elapsed and target once the target passes", () => {
+    const onEdit = vi.fn();
+    render(<RestTimer rest={overdue(60)} onAdjust={noop} onEdit={onEdit} />);
+    expect(screen.getByText("■ REST OVER")).toBeTruthy();
+    expect(screen.getByText(/since the last set · target 1:00/)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toMatch(/Rest over/);
+    fireEvent.click(screen.getByRole("button", { name: "rest over — tap to change the target" }));
+    expect(onEdit).toHaveBeenCalled();
   });
 
-  it("re-enters the rest animation for each newly logged rest identity", () => {
-    const firstRest = {
-      startedAt: Date.now(),
-      targetSeconds: 60,
-      forLabel: "Squat set 2",
-    };
-    const { container, rerender } = render(
-      <RestTimer rest={firstRest} onAdjust={noop} onEdit={noop} onDone={noop} />,
-    );
-    const firstNode = container.querySelector(".rest-timer");
-
-    rerender(
-      <RestTimer
-        rest={{ ...firstRest, startedAt: firstRest.startedAt + 1_000 }}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-      />,
-    );
-
-    const nextNode = container.querySelector(".rest-timer");
-    expect(nextNode).not.toBe(firstNode);
-    expect(nextNode?.classList.contains("rest-timer-enter")).toBe(true);
-  });
-
-  it("announces an overdue rest exactly once", () => {
-    const rest = overdue();
+  it("shows a single-line next-set label under the clock, resting and ready", () => {
     const { rerender } = render(
-      <RestTimer rest={rest} onAdjust={noop} onEdit={noop} onDone={noop} />,
+      <RestTimer rest={running()} onAdjust={noop} onEdit={noop} nextSetLabel="Next: Row · set 3 of 4" />,
     );
-    // same rest, re-rendered: the announcement must not repeat
+    expect(screen.getByText("Next: Row · set 3 of 4")).toBeTruthy();
     rerender(
-      <RestTimer rest={rest} onAdjust={noop} onEdit={noop} onDone={noop} />,
+      <RestTimer rest={overdue()} onAdjust={noop} onEdit={noop} nextSetLabel="Next: Row · set 3 of 4" />,
     );
+    expect(screen.getByText("Next: Row · set 3 of 4")).toBeTruthy();
+  });
+
+  it("does not play or notify by itself: announcing is useRestCue's job", () => {
+    render(<RestTimer rest={overdue()} onAdjust={noop} onEdit={noop} />);
+    expect(played).not.toHaveBeenCalled();
+    expect(notified).toEqual([]);
+  });
+});
+
+describe("RestTimer strip", () => {
+  it("marks the active and completed states", () => {
+    const { container, rerender } = render(
+      <RestTimer variant="strip" rest={running(60)} onAdjust={noop} onEdit={noop} onDone={noop} />,
+    );
+    expect(container.querySelector(".rest-timer-rest")).not.toBeNull();
+    rerender(
+      <RestTimer variant="strip" rest={overdue()} onAdjust={noop} onEdit={noop} onDone={noop} />,
+    );
+    expect(container.querySelector(".rest-timer-ready")).not.toBeNull();
+    expect(screen.getByText("■ REST OVER")).toBeTruthy();
+  });
+
+  it("makes hiding explicit and optional", () => {
+    const onDone = vi.fn();
+    const { rerender } = render(
+      <RestTimer variant="strip" rest={running()} onAdjust={noop} onEdit={noop} onDone={onDone} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /hide the rest timer/ }));
+    expect(onDone).toHaveBeenCalledTimes(1);
+    rerender(<RestTimer variant="strip" rest={running()} onAdjust={noop} onEdit={noop} />);
+    expect(screen.queryByRole("button", { name: /hide the rest timer/ })).toBeNull();
+  });
+
+  it("names what the rest is recorded against when there is no next set", () => {
+    render(<RestTimer variant="strip" rest={running()} onAdjust={noop} onEdit={noop} />);
+    expect(screen.getByText(/Recorded against Squat set 2/)).toBeTruthy();
+  });
+});
+
+describe("useRestCue", () => {
+  it("H2: announces an overdue rest once, even across remounts", () => {
+    const rest = overdue();
+    const first = render(<Cue rest={rest} />);
+    expect(played).toHaveBeenCalledTimes(1);
     expect(notified).toEqual(["Rest over"]);
+    first.unmount();
+    render(<Cue rest={rest} />);
+    expect(played).toHaveBeenCalledTimes(1);
+    expect(notified).toEqual(["Rest over"]);
+    expect(restAnnounced(rest.startedAt)).toBe(true);
   });
 
   it("does not announce again when the target is adjusted", () => {
-    const rest = overdue();
-    const { rerender } = render(
-      <RestTimer rest={rest} onAdjust={noop} onEdit={noop} onDone={noop} />,
-    );
-    expect(notified).toHaveLength(1);
-
-    // what onAdjust actually does: a NEW object, same startedAt. This used to
-    // restart the interval effect and clear the flag.
-    for (const delta of [30, 30, -30]) {
-      rerender(
-        <RestTimer
-          rest={{ ...rest, targetSeconds: rest.targetSeconds + delta }}
-          onAdjust={noop}
-          onEdit={noop}
-          onDone={noop}
-        />,
-      );
-    }
-    expect(notified).toEqual(["Rest over"]);
+    const rest = overdue(60);
+    const { rerender } = render(<Cue rest={rest} />);
+    rerender(<Cue rest={{ ...rest, targetSeconds: 90 }} />);
+    rerender(<Cue rest={{ ...rest, targetSeconds: 30 }} />);
+    expect(played).toHaveBeenCalledTimes(1);
   });
 
   it("announces again for a genuinely new rest", () => {
-    const { rerender } = render(
-      <RestTimer
-        rest={overdue()}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-      />,
-    );
-    // a different startedAt is a different rest, and deserves its own
-    rerender(
-      <RestTimer
-        rest={overdue()}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-      />,
-    );
-    expect(notified).toHaveLength(2);
+    const { rerender } = render(<Cue rest={overdue()} />);
+    rerender(<Cue rest={null} />);
+    rerender(<Cue rest={overdue()} />);
+    expect(played).toHaveBeenCalledTimes(2);
   });
 
-  it("stays silent while the rest is still running", () => {
-    const running: ActiveRest = {
-      startedAt: Date.now(),
-      targetSeconds: 120,
-      forLabel: "Back Squat set 1",
-    };
-    render(
-      <RestTimer rest={running} onAdjust={noop} onEdit={noop} onDone={noop} />,
-    );
-    expect(notified).toEqual([]);
+  it("stays silent while the rest is running, then fires at the deadline", () => {
+    vi.useFakeTimers();
+    render(<Cue rest={{ startedAt: Date.now(), targetSeconds: 60, forLabel: "x" }} />);
+    expect(played).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(59_000);
+    });
+    expect(played).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+    expect(played).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the next-set text as the notification body", () => {
+    const bodies: string[] = [];
+    class N {
+      static permission = "granted";
+      constructor(_t: string, o?: { body?: string }) {
+        bodies.push(o?.body ?? "");
+      }
+    }
+    vi.stubGlobal("Notification", N);
+    render(<Cue rest={overdue()} body="Next: Row · set 3 of 4" />);
+    expect(bodies).toEqual(["Next: Row · set 3 of 4"]);
   });
 
   it("never prompts for permission it was not already given", () => {
-    const asked = vi.fn();
-    class Denied {
+    const request = vi.fn();
+    class N {
       static permission = "default";
-      static requestPermission = asked;
-      constructor() {
-        notified.push("should not happen");
-      }
+      static requestPermission = request;
     }
-    vi.stubGlobal("Notification", Denied);
-    render(
-      <RestTimer
-        rest={overdue()}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-      />,
-    );
+    vi.stubGlobal("Notification", N);
+    render(<Cue rest={overdue()} />);
+    expect(request).not.toHaveBeenCalled();
+    expect(played).toHaveBeenCalledTimes(1);
+  });
+
+  it("L1: a silenced rest (End rest now) makes no sound", () => {
+    const rest = overdue();
+    silenceRestCue(rest.startedAt);
+    render(<Cue rest={rest} />);
+    expect(played).not.toHaveBeenCalled();
     expect(notified).toEqual([]);
-    expect(asked).not.toHaveBeenCalled();
+  });
+});
+
+describe("RestDockTag", () => {
+  it("shows the label and End rest now while the rest runs, reporting whole elapsed seconds", () => {
+    const onEndNow = vi.fn();
+    const rest = { startedAt: Date.now() - 12_900, targetSeconds: 90, forLabel: "x" };
+    render(<RestDockTag rest={rest} label="NEXT SET · SET 2 OF 3" onEndNow={onEndNow} />);
+    expect(screen.getByText("NEXT SET · SET 2 OF 3")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "End rest now ›" }));
+    expect(onEndNow).toHaveBeenCalledWith(12);
   });
 
-  it("clears its interval on unmount", () => {
-    vi.useFakeTimers();
-    const clear = vi.spyOn(globalThis, "clearInterval");
-    const { unmount } = render(
-      <RestTimer
-        rest={overdue()}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-      />,
-    );
-    act(() => unmount());
-    expect(clear).toHaveBeenCalled();
-  });
-
-  it("names what the rest was recorded against when there is nothing to look forward to", () => {
-    render(
-      <RestTimer
-        rest={{
-          startedAt: Date.now(),
-          targetSeconds: 90,
-          forLabel: "Squat set 2",
-        }}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-        nextSetLabel={null}
-      />,
-    );
-    expect(screen.getByText(/Recorded against Squat set 2\./)).toBeTruthy();
-  });
-
-  it("looks forward to the next set instead, when one is given", () => {
-    render(
-      <RestTimer
-        rest={{
-          startedAt: Date.now(),
-          targetSeconds: 90,
-          forLabel: "Squat set 2",
-        }}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-        nextSetLabel="Next: Squat 145 × 5, set 3 of 4"
-      />,
-    );
-    expect(screen.getByText("Next: Squat 145 × 5, set 3 of 4")).toBeTruthy();
-    expect(screen.queryByText(/Recorded against/)).toBeNull();
-  });
-
-  it("shows REST OVER and a screen-reader alert once the target has elapsed", () => {
-    render(
-      <RestTimer
-        rest={overdue()}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-        nextSetLabel="Next: Squat 145 × 5, set 3 of 4"
-      />,
-    );
-    expect(screen.getByText("REST OVER")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toBe(
-      "Rest over. Your next set is ready when you are.",
-    );
-    expect(screen.queryByText(/Past the prescribed/)).toBeNull();
-  });
-
-  it("changes RESTING to REST OVER once at expiry and never advances the workout by itself", () => {
-    vi.useFakeTimers();
-    const onDone = vi.fn();
-    const start = Date.now();
-    render(
-      <RestTimer
-        rest={{ startedAt: start, targetSeconds: 2, forLabel: "Squat set 1" }}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={onDone}
-        nextSetLabel="Next: Superset A, round 2 of 3"
-      />,
-    );
-
-    expect(screen.getByText("RESTING")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toBe("");
-    act(() => vi.advanceTimersByTime(2_100));
-
-    expect(screen.getByText("REST OVER")).toBeTruthy();
-    expect(screen.getByText("Next: Superset A, round 2 of 3")).toBeTruthy();
-    expect(onDone).not.toHaveBeenCalled();
-  });
-
-  it("makes hiding the rest strip an explicit optional action", () => {
-    const onDone = vi.fn();
-    render(
-      <RestTimer rest={overdue()} onAdjust={noop} onEdit={noop} onDone={onDone} />,
-    );
-
-    expect(onDone).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: /hide the rest timer/ }));
-    expect(onDone).toHaveBeenCalledTimes(1);
-  });
-
-  it("offers optional RPE and set-note actions in the rest scene", () => {
-    const onRateLastSet = vi.fn();
-    const onNoteLastSet = vi.fn();
-    render(
-      <RestTimer
-        rest={{ startedAt: Date.now(), targetSeconds: 90, forLabel: "Squat set 1" }}
-        onAdjust={noop}
-        onEdit={noop}
-        onDone={noop}
-        lastSetRpe={null}
-        onRateLastSet={onRateLastSet}
-        onNoteLastSet={onNoteLastSet}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Note last set" }));
-    fireEvent.click(screen.getByRole("button", { name: "rpe 8" }));
-    expect(onNoteLastSet).toHaveBeenCalledTimes(1);
-    expect(onRateLastSet).toHaveBeenCalledWith(8);
+  it("keeps the label but hides End rest now once the rest is over", () => {
+    render(<RestDockTag rest={overdue()} label="NEXT SET" onEndNow={noop} />);
+    expect(screen.getByText("NEXT SET")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /End rest now/ })).toBeNull();
   });
 });

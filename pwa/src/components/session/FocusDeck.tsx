@@ -6,62 +6,77 @@ import {
   type ExerciseEntry,
 } from "../../lib/entries";
 import { twoMemberSuperset } from "../../lib/sessionFocus";
-import type { SessionPresentation } from "../../lib/sessionFocus";
 import { StateGlyph, type ProgressState } from "./StateGlyph";
-import { FocusListSwitch } from "./FocusListSwitch";
+
+/** The four small keys between the numbers and LOG. Session decides which
+ *  ones apply; FocusDeck lays them out and owns the inline skip prompt. */
+export interface FocusKeys {
+  /** RPE — opens the focused RPE sheet. `rpeValue` is the staged rating,
+   *  shown on the key ("RPE 8") so a rating is visible without opening
+   *  anything. */
+  onRpe(): void;
+  rpeValue?: number | null;
+  /** Note — opens the note editor for the set it attaches to; null while
+   *  there is no live set to attach to. */
+  onNote: (() => void) | null;
+  /** The fourth key: Swap before anything is logged, Fix last after. */
+  fourth: { label: string; onPress(): void } | null;
+}
 
 export interface FocusDeckProps {
   entries: readonly ExerciseEntry[];
   entry: ExerciseEntry;
   entryProgress(entry: ExerciseEntry): number;
   entryDone(entry: ExerciseEntry): boolean;
-  /** Device display-unit switch, kept beside the other quiet workout controls. */
-  unitSwitch?: ReactNode;
-  /** One state per entry, from the shared vocabulary — see StateGlyph.tsx
-   *  and lib/sessionFocus.ts's `railState`. Drives both the progress rail
-   *  below and, from the identical source, WorkoutOverview's rows. */
-  entryState(entry: ExerciseEntry): ProgressState;
-  onViewFullWorkout(): void;
-  onChangePresentation?(next: SessionPresentation): void;
-  /** Scene-level state (REST/READY) occupies the top slot when active. */
-  topSlot?: ReactNode;
-  /** Movement target, equipment, or authored cue shown in the Focus stage. */
-  stageSlot?: ReactNode;
   workoutComplete?: boolean;
   extraSetArmed?: boolean;
   onFinishWorkout?(): void;
   onAddExtraSet?(): void;
   onChooseNext(entry: ExerciseEntry): void;
   canAdvance: boolean;
-  renderEditor(entry: ExerciseEntry): ReactNode;
-  /**
-   * One quiet control for everything the default screen deliberately does
-   * not show: RPE, a set note, warmup/working, skip, the plate calculator,
-   * correcting or voiding a logged set, last time, and the full logged-set
-   * history. Nothing on the default screen is a second copy of any of it —
-   * this is the only door to all of it. Optional only so a caller mid-render
-   * can omit it; Session always supplies one.
-   */
-  onOpenMore?(): void;
-  /** Same formatter `WorkoutOverview` uses for a TARGET line, reused so the
-   *  quiet "next" line names a scheme in the one convention the app has. */
+  /** The dock's number row(s) and LOG. `keys` is rendered between them. */
+  renderEditor(entry: ExerciseEntry, keys: ReactNode): ReactNode;
   formatScheme?(entry: ExerciseEntry): string;
   /**
    * Replaces the exercise name + set position with a superset round's own
-   * identity ("Superset A" / "round 1 of 3") while a live round is showing
-   * two member blocks below — naming the exercise twice on one screen is
-   * exactly what a superset's compact members already do. Null (the default)
-   * keeps the ordinary single-exercise header.
+   * identity ("Superset A" / "round 1 of 3").
    */
   supersetHeading?: { title: string; subtitle: string } | null;
-  /** Visible only when a swap is offered right now (not mid-correction, not
-   *  frozen by a logged set against it — Session decides and omits both
-   *  props otherwise). Scoped to the canonical first member for a live
-   *  superset round, matching `onOpenMore`'s existing scope. */
-  onSwap?(): void;
-  swapLabel?: string | null;
+  /** The picture of what is in front of the lifter: plates, dumbbells, a
+   *  pin stack, bodyweight — or, for a superset, the A1/A2 cards. */
+  picture?: ReactNode;
+  /** The coach's cue for this exercise (prescription notes). */
+  cue?: string | null;
+  /** "Last time · 185 lb × 5" */
+  lastTime?: string | null;
+  /** While a rest runs, it takes the middle of the screen: the clock, the
+   *  set that was just saved, and what to load next. */
+  restSlot?: ReactNode;
+  /** "NEXT SET · SET 4 OF 6" and End rest now, above the dock's numbers
+   *  while resting — so it is plain the numbers belong to the NEXT set. */
+  dockTag?: ReactNode;
+  /** Set when the set being staged is a WARMUP of an entry that also has
+   *  working sets: the position line then counts the warmups ("SET 1 OF 2 ·
+   *  WARMUP") instead of the working sets. A warmup-only run needs no help:
+   *  its own target already is the warmups. */
+  warmupPosition?: { number: number; of: number } | null;
+  /** "lb this session · Settings says kg", while one is overriding it. */
+  unitNote?: string | null;
+  /** The warmup | working choice, offered only where the plan has a warmup
+   *  for this exercise; and "Already warm" beside it while a warmup is
+   *  staged. */
+  warmupChoice?: {
+    staged: "warmup" | "working";
+    onChange(next: "warmup" | "working"): void;
+    onAlreadyWarm?(): void;
+  } | null;
+  keys: FocusKeys;
+  /** Everything the default screen leaves out — the plan and coach notes,
+   *  warmup/working, how-to, the plate calculator, the logged sets — behind
+   *  one quiet control. */
+  onOpenMore?(): void;
   /** Skip, with an optional reason collected inline. `onSkip` fires once,
-   *  with the chosen chip text or free-typed reason (or null for none). */
+   *  with the chosen chip text (or null for none). */
   onSkip?(reason: string | null): void;
   skipped?: boolean;
   onUnskip?(): void;
@@ -73,6 +88,52 @@ const SKIP_REASON_CHIPS = [
   "Out of time",
   "Didn't feel right",
 ];
+
+/**
+ * The four small keys: RPE, Note, Skip, and Swap-or-Fix-last. One component,
+ * because the Focus dock and List's open card show the same keys with the
+ * same states — a key that cannot do anything right now is DISABLED, never
+ * hidden, so the row does not rearrange itself under a thumb.
+ */
+export function DockKeys({
+  keys,
+  skip,
+}: {
+  keys: FocusKeys;
+  skip: { label: string; onPress(): void } | null;
+}) {
+  return (
+    <div className="focus-keys">
+      <button type="button" className="focus-key" onClick={keys.onRpe}>
+        {keys.rpeValue != null ? `RPE ${keys.rpeValue}` : "RPE"}
+      </button>
+      <button
+        type="button"
+        className="focus-key"
+        disabled={keys.onNote === null}
+        onClick={keys.onNote ?? undefined}
+      >
+        Note
+      </button>
+      <button
+        type="button"
+        className="focus-key"
+        disabled={skip === null}
+        onClick={skip?.onPress}
+      >
+        {skip?.label ?? "Skip"}
+      </button>
+      <button
+        type="button"
+        className="focus-key"
+        disabled={keys.fourth === null}
+        onClick={keys.fourth?.onPress}
+      >
+        {keys.fourth?.label ?? "Fix last"}
+      </button>
+    </div>
+  );
+}
 
 function focusSetPosition(
   entry: ExerciseEntry,
@@ -116,14 +177,13 @@ function FocusSetProgress({
 }: {
   progress: number;
   target: number;
-  /** Every dot in THIS run is a warmup — the run itself is always one kind
-   *  or the other (see lib/entries.ts's `targetSets`), never mixed, so one
-   *  flag for the whole strip is enough. */
+  /** Every segment in THIS run is a warmup — the run itself is always one
+   *  kind or the other (see lib/entries.ts's `targetSets`). */
   warmup?: boolean;
 }) {
   // The previous render's completed count, so a log (progress going up) can
-  // be told apart from a fresh mount (previous is null) or an unrelated
-  // re-render (previous equals current) — only the first plays a motion.
+  // be told apart from a fresh mount or an unrelated re-render — only the
+  // first plays a motion.
   const previousCompletedRef = useRef<number | null>(null);
   const previousCompleted = previousCompletedRef.current;
   useEffect(() => {
@@ -174,26 +234,40 @@ function FocusSetProgress({
   );
 }
 
+/** The speech-bubble mark for coach notes: ink, never the current-set ochre,
+ *  so a cue never reads like a status. */
+function CoachIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" className="focus-cue-icon">
+      <g fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4.5 6.5h15v10h-8l-4.5 3.5v-3.5h-2.5z" />
+        <path d="M9 10.5h6M9 13h4" />
+      </g>
+    </svg>
+  );
+}
+
 /**
- * A narrow presentation of the same session state that powers the overview.
- * It owns no draft or persistence state: Session supplies the controlled
- * editor and receives all navigation intent.
+ * One exercise at a time, in three bands: what it is and where you are
+ * (name, set position, segments); what is in front of you (the load picture,
+ * the coach's cue, last time — or, while resting, the rest clock and what to
+ * load next); and the dock, which holds the numbers being staged, four small
+ * keys and LOG. It owns no draft or persistence state: Session supplies the
+ * controlled editor and receives all navigation intent.
  *
- * Deliberately spare: the load (or reps, for bodyweight) and LOG are the only
- * things on screen with visual weight. Everything else the accordion shows
- * inline lives one tap away, behind `onOpenMore` — see its own doc comment.
+ * The middle band is the one that scrolls. The status band and the dock keep
+ * their height, so at 320 px wide or with large text the middle gives way and
+ * scrolls ABOVE the dock — nothing in it can end up under the Log button.
+ *
+ * Session mounts this with `key={entry.key}`: the skip prompt and the segment
+ * animation belong to ONE exercise, so a prompt opened on exercise A must not
+ * still be open, with its chips bound to the new `entry`, on exercise B (M6).
  */
 export function FocusDeck({
   entries,
   entry,
   entryProgress,
   entryDone,
-  unitSwitch,
-  entryState,
-  onViewFullWorkout,
-  onChangePresentation,
-  topSlot,
-  stageSlot,
   workoutComplete = false,
   extraSetArmed = false,
   onFinishWorkout,
@@ -201,17 +275,23 @@ export function FocusDeck({
   onChooseNext,
   canAdvance,
   renderEditor,
-  onOpenMore,
   formatScheme,
   supersetHeading = null,
-  onSwap,
-  swapLabel = null,
+  picture,
+  cue = null,
+  lastTime = null,
+  restSlot,
+  dockTag,
+  unitNote = null,
+  warmupPosition = null,
+  warmupChoice = null,
+  keys,
+  onOpenMore,
   onSkip,
   skipped = false,
   onUnskip,
 }: FocusDeckProps) {
   const [skipPromptOpen, setSkipPromptOpen] = useState(false);
-  const [skipReasonDraft, setSkipReasonDraft] = useState("");
   const entryIndex = entries.findIndex(
     (candidate) => candidate.key === entry.key,
   );
@@ -221,90 +301,37 @@ export function FocusDeck({
     entryProgress,
     supersetHeading,
   );
-  const complete = entryDone(entry);
+  const complete = entryDone(entry) && !skipped;
   const next = complete
     ? (entries
         .slice(entryIndex + 1)
         .find((candidate) => !entryDone(candidate)) ?? null)
     : null;
-  const setPosition =
-    target === 0
+  const setPosition = warmupPosition
+    ? `SET ${warmupPosition.number} OF ${warmupPosition.of}`
+    : target === 0
       ? "SET BY FEEL"
       : `SET ${Math.min(progress + 1, target)} OF ${target}`;
+  const warmupRun = warmupSets(entry) > 0 && workingSets(entry) === 0;
+  const resting = restSlot !== undefined && restSlot !== null && restSlot !== false;
+  const showNext =
+    next !== null && canAdvance && !workoutComplete && !extraSetArmed;
+  // A finished exercise (or the finished workout) keeps its editor out of the
+  // way until the lifter asks for an extra set: the dock then leads with the
+  // next exercise or Finish.
+  const showEditor =
+    !skipped && (!complete || extraSetArmed) && (!workoutComplete || extraSetArmed);
+
+  const skipKey = skipped && onUnskip
+    ? { label: "Unskip", onPress: onUnskip }
+    : onSkip
+      ? { label: "Skip", onPress: () => setSkipPromptOpen((open) => !open) }
+      : null;
+
+  const keyRow = <DockKeys keys={keys} skip={skipKey} />;
 
   return (
     <section className="focus-deck">
-      <div className="focus-deck-top">
-        <button
-          type="button"
-          className="focus-workout-menu"
-          aria-label="Open workout"
-          onClick={onViewFullWorkout}
-        >
-          <span className="focus-hamburger" aria-hidden="true">☰</span>
-          Workout
-        </button>
-        <FocusListSwitch
-          value="focus"
-          onChange={onChangePresentation ?? (() => onViewFullWorkout())}
-        />
-        {/* A real <ul>, not a <div role="list">: the dots inside stay real
-         * <button>s (role="listitem" on the button itself would REPLACE its
-         * native button role, not add to it, so a screen reader would
-         * announce a plain list item with no indication it is activatable —
-         * that was shipped once and is exactly the regression this markup
-         * avoids). role="list" is still explicit here because this list's
-         * `list-style: none` strips the <ul>'s implicit list role in
-         * Safari/VoiceOver (a known WebKit quirk) — do not remove it as
-         * "redundant". */}
-        <ul
-          className="focus-progress-rail"
-          role="list"
-          aria-label="workout progress"
-        >
-          {entries.map((candidate) => {
-            const state = entryState(candidate);
-            const label = `${candidate.name} — ${state}`;
-            return (
-              <li key={candidate.key} className="focus-progress-dot-item">
-                <button
-                  type="button"
-                  className="focus-progress-dot"
-                  aria-label={
-                    state === "current"
-                      ? `${label} — view full workout`
-                      : `${label} — jump here`
-                  }
-                  onClick={() =>
-                    state === "current"
-                      ? onViewFullWorkout()
-                      : onChooseNext(candidate)
-                  }
-                >
-                  <StateGlyph
-                    state={state}
-                    warmup={
-                      warmupSets(candidate) > 0 && workingSets(candidate) === 0
-                    }
-                    label={label}
-                  />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        {onOpenMore && (
-          <button
-            type="button"
-            className="focus-deck-more"
-            aria-label={`more options for ${entry.name}`}
-            onClick={onOpenMore}
-          >
-            •••
-          </button>
-        )}
-      </div>
-
       <div className="focus-deck-status" aria-live="polite">
         <h1 className="focus-deck-name">
           {supersetHeading ? supersetHeading.title : entry.name}
@@ -312,52 +339,44 @@ export function FocusDeck({
         <div className="focus-deck-position-row">
           <div className="focus-deck-position">
             {supersetHeading ? supersetHeading.subtitle : setPosition}
+            {(warmupRun || warmupPosition) && !supersetHeading ? " · WARMUP" : ""}
           </div>
-          {unitSwitch}
+          {unitNote && <span className="focus-unit-note">{unitNote}</span>}
+          {onOpenMore && (
+            <button
+              type="button"
+              className="focus-deck-more"
+              aria-label={`more options for ${entry.name}`}
+              onClick={onOpenMore}
+            >
+              <span aria-hidden="true">•••</span>
+            </button>
+          )}
         </div>
+        <FocusSetProgress progress={progress} target={target} warmup={warmupRun} />
       </div>
 
-      {(topSlot || stageSlot) && (
-        <div className={`focus-stage ${topSlot ? "focus-stage-scroll" : ""}`}>
-          {topSlot ?? stageSlot}
-        </div>
-      )}
-
-      {(swapLabel !== null || onSkip || (skipped && onUnskip)) && (
-        <div className="focus-deck-secondary-row">
-          {onSwap && swapLabel !== null && (
-            <button
-              type="button"
-              className="focus-deck-secondary"
-              onClick={onSwap}
-            >
-              {swapLabel}
-            </button>
-          )}
-          {onSkip && !skipped && !skipPromptOpen && (
-            <button
-              type="button"
-              className="focus-deck-secondary"
-              onClick={() => setSkipPromptOpen(true)}
-            >
-              Skip
-            </button>
-          )}
-          {skipped && onUnskip && (
-            <button
-              type="button"
-              className="focus-deck-secondary"
-              onClick={onUnskip}
-            >
-              Unskip
-            </button>
-          )}
-        </div>
-      )}
-
-      {onSkip && !skipped && skipPromptOpen && (
-        <div className="skip-reason-prompt">
-          <div className="chip-row">
+      <div className="focus-middle">
+        {resting ? restSlot : !workoutComplete && !complete && picture}
+        {/* Outside the rest branch: a rest often runs after the final set,
+            and "+ Extra set" must stay reachable while it does. */}
+        {(workoutComplete || complete) && !extraSetArmed && (
+          <div className="focus-complete">
+            <div className="focus-complete-title">
+              {workoutComplete
+                ? "All planned sets logged."
+                : `${entry.name}: all planned sets logged.`}
+            </div>
+            {onAddExtraSet && (
+              <button type="button" className="focus-chip-btn" onClick={onAddExtraSet}>
+                + Extra set
+              </button>
+            )}
+          </div>
+        )}
+        {!resting && skipped && <p className="focus-skipped">Skipped. Unskip to log it.</p>}
+        {onSkip && !skipped && skipPromptOpen && (
+          <div className="skip-reason-prompt chip-row" role="group" aria-label="Skip reason">
             {SKIP_REASON_CHIPS.map((chip) => (
               <button
                 key={chip}
@@ -366,82 +385,125 @@ export function FocusDeck({
                 onClick={() => {
                   onSkip(chip);
                   setSkipPromptOpen(false);
-                  setSkipReasonDraft("");
                 }}
               >
                 {chip}
               </button>
             ))}
-          </div>
-          <input
-            className="input skip-reason-input"
-            placeholder="Reason (optional)"
-            value={skipReasonDraft}
-            onChange={(e) => setSkipReasonDraft(e.target.value)}
-          />
-          <div className="skip-reason-actions">
             <button
               type="button"
-              className="btn btn-ghost"
+              className="chip"
               onClick={() => {
+                onSkip(null);
                 setSkipPromptOpen(false);
-                setSkipReasonDraft("");
               }}
+            >
+              No reason
+            </button>
+            <button
+              type="button"
+              className="chip chip-quiet"
+              onClick={() => setSkipPromptOpen(false)}
             >
               Cancel
             </button>
+          </div>
+        )}
+        {warmupChoice && !skipped && !complete && (
+          <div className="focus-type-row">
+            <div className="seg seg-types" role="group" aria-label="Set type">
+              {(["warmup", "working"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`seg-btn ${warmupChoice.staged === t ? "seg-on" : ""}`}
+                  aria-pressed={warmupChoice.staged === t}
+                  onClick={() => warmupChoice.onChange(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            {warmupChoice.staged === "warmup" && warmupChoice.onAlreadyWarm && (
+              <button
+                type="button"
+                className="text-link focus-already-warm"
+                onClick={warmupChoice.onAlreadyWarm}
+              >
+                Already warm
+              </button>
+            )}
+          </div>
+        )}
+        {!resting && cue && !skipped && !complete && (
+          <div className="focus-cue">
+            <CoachIcon />
+            <span>
+              <b>Coach</b> · {cue}
+            </span>
+          </div>
+        )}
+        {!resting && !workoutComplete && !complete && !skipped && lastTime && (
+          <p className="focus-last-performance">{lastTime}</p>
+        )}
+      </div>
+
+      <div className="focus-dock">
+        {dockTag}
+        {showNext && next && (
+          <button
+            type="button"
+            className="focus-next"
+            aria-label={`Next exercise: ${next.name}`}
+            onClick={() => onChooseNext(next)}
+          >
+            <span className="focus-next-eyebrow">NEXT EXERCISE →</span>
+            <span className="focus-next-name">{next.name}</span>
+            {formatScheme && (
+              <span className="focus-next-scheme">{formatScheme(next)}</span>
+            )}
+          </button>
+        )}
+        {workoutComplete && !extraSetArmed && onFinishWorkout && (
+          <button
+            type="button"
+            className="btn btn-primary btn-block focus-finish"
+            onClick={onFinishWorkout}
+          >
+            Finish session
+          </button>
+        )}
+        {skipped && onUnskip && (
+          // A skipped entry counts as done, so the editor is not rendered —
+          // the "Unskip to log it" line in the middle band needs something to
+          // press.
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block focus-unskip"
+            onClick={onUnskip}
+          >
+            Unskip
+          </button>
+        )}
+        {!showEditor && !skipped && keys.fourth !== null && (
+          // A finished exercise has no next set to stage, but its last set is
+          // still the one to annotate or fix: those two keys stay reachable.
+          <div className="focus-keys focus-keys-done">
             <button
               type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                onSkip(
-                  skipReasonDraft.trim() === "" ? null : skipReasonDraft.trim(),
-                );
-                setSkipPromptOpen(false);
-                setSkipReasonDraft("");
-              }}
+              className="focus-key"
+              disabled={keys.onNote === null}
+              onClick={keys.onNote ?? undefined}
             >
-              Skip exercise
+              Note
+            </button>
+            <button type="button" className="focus-key" onClick={keys.fourth.onPress}>
+              {keys.fourth.label}
             </button>
           </div>
-        </div>
-      )}
-
-      {workoutComplete && onFinishWorkout && onAddExtraSet && (
-        <div className="focus-complete-actions">
-          <button type="button" className="btn btn-primary btn-block" onClick={onFinishWorkout}>
-            Finish workout
-          </button>
-          {!extraSetArmed && (
-            <button type="button" className="focus-deck-secondary" onClick={onAddExtraSet}>
-              Add extra set
-            </button>
-          )}
-        </div>
-      )}
-
-      {(!workoutComplete || extraSetArmed) && (
-        <div className="focus-deck-editor">
-          <FocusSetProgress
-            progress={progress}
-            target={target}
-            warmup={warmupSets(entry) > 0 && workingSets(entry) === 0}
-          />
-          {renderEditor(entry)}
-        </div>
-      )}
-
-      {next && canAdvance && (
-        <button
-          type="button"
-          className="focus-next"
-          aria-label="Next exercise"
-          onClick={() => onChooseNext(next)}
-        >
-          next · {next.name}
-          {formatScheme ? ` · ${formatScheme(next)}` : ""}
-        </button>
-      )}
+        )}
+        {showEditor && renderEditor(entry, keyRow)}
+      </div>
     </section>
   );
 }

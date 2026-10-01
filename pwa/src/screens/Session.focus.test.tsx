@@ -97,6 +97,7 @@ vi.mock("../lib/sync", () => ({
       return () => receiptIdentity.syncedListeners.delete(fn);
     }),
     getStatus: vi.fn(() => ({ pending: 0, dead: 0, held: 0, state: "idle", lastError: null })),
+    isStatusKnown: vi.fn(() => true),
   },
 }));
 
@@ -164,6 +165,88 @@ function expectAcceptedAuthoredLoad(payload: SetInsert) {
       (payload.load_entry === "per_side" ? 2 : 1) * 100,
   ) / 100;
   expect(payload.load_kg).toBe(expectedTotal);
+}
+
+/** The big number on a dock card, without its caption ("8" of "8 reps"). */
+function dockValue(card: "reps" | "load" | "duration"): string {
+  const button = screen.getByRole("button", { name: `${card} value — tap to type` });
+  return button.querySelector(".dock-num-value")?.textContent ?? "";
+}
+
+const NOTE_PLACEHOLDER = "Anything worth remembering about this set…";
+const TODAY = /^Today's workout,/;
+
+/** The ☰ count in the header opens Today's workout, where the unit lives. */
+async function openToday() {
+  if (!screen.queryByRole("dialog", { name: "Today's workout" })) {
+    fireEvent.click(await screen.findByRole("button", { name: TODAY }));
+  }
+  return screen.findByRole("dialog", { name: "Today's workout" });
+}
+
+function closeToday() {
+  const dialog = screen.queryByRole("dialog", { name: "Today's workout" });
+  if (dialog) fireEvent.click(within(dialog).getByRole("button", { name: "CLOSE" }));
+}
+
+/** Today's workout, unit toggle: opens the sheet if it is not already open. */
+async function unitToggle(name: "Show weights in pounds" | "Show weights in kilograms") {
+  const dialog = await openToday();
+  return within(dialog).findByRole("button", { name });
+}
+
+/** The unit toggle, once Today's workout is open. */
+function unitButton(name: "Show weights in pounds" | "Show weights in kilograms") {
+  return within(screen.getByRole("dialog", { name: "Today's workout" })).getByRole("button", { name });
+}
+
+const todayOpen = () => screen.queryByRole("dialog", { name: "Today's workout" }) !== null;
+
+/** aria-pressed of a unit key, opening and closing the sheet around the read. */
+function unitPressed(name: "Show weights in pounds" | "Show weights in kilograms") {
+  const wasOpen = todayOpen();
+  if (!wasOpen) fireEvent.click(screen.getByRole("button", { name: TODAY }));
+  const pressed = unitButton(name).getAttribute("aria-pressed");
+  if (!wasOpen) closeToday();
+  return pressed;
+}
+
+/** Press a unit key from the ☰ sheet and close it again. */
+function switchUnit(name: "Show weights in pounds" | "Show weights in kilograms") {
+  if (!todayOpen()) fireEvent.click(screen.getByRole("button", { name: TODAY }));
+  fireEvent.click(unitButton(name));
+  closeToday();
+}
+
+/** Back to Train, wherever the current view keeps it. */
+async function pressHome() {
+  const dialog = await openToday();
+  fireEvent.click(within(dialog).getByRole("button", { name: /^Back to Train/ }));
+}
+
+async function showList() {
+  fireEvent.click(await screen.findByRole("button", { name: "List" }));
+}
+
+/** Today's order as the ☰ sheet lists it (one entry per movable unit line). */
+async function todayOrder(): Promise<(string | null)[]> {
+  const dialog = await openToday();
+  const names = within(dialog)
+    .getAllByRole("listitem")
+    .flatMap((li) => [...li.querySelectorAll(".reorder-line")])
+    .map((line) => line.getAttribute("aria-label")?.split(" — ")[0] ?? null);
+  closeToday();
+  return names;
+}
+
+/** The correction sheet, its own dialog with its own numbers. */
+const fixSheet = () => within(screen.getByRole("dialog", { name: /^Fix / }));
+
+/** RPE key, then a chip in the RPE sheet. */
+async function pressRpe(value: number) {
+  fireEvent.click(await screen.findByRole("button", { name: /^RPE/ }));
+  const sheet = await screen.findByRole("dialog", { name: /RPE|Rate / });
+  fireEvent.click(within(sheet).getByRole("button", { name: `rpe ${value}` }));
 }
 
 function firstQueuedSet(): SetInsert {
@@ -268,11 +351,9 @@ describe("Session focus presentation", () => {
       </MemoryRouter>,
     );
 
-    expect(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
-    ).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Focus" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByText(/target 8/i)).toBeNull();
-    expect(document.body.classList.contains("focus-chrome-hidden")).toBe(true);
   });
 
   it("shows one compact latest-set line for the substituted movement", async () => {
@@ -318,7 +399,7 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
+      await screen.findByRole("button", { name: "List" }),
     );
     expect(screen.getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
@@ -327,8 +408,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      dockValue("reps"),
     ).toBe("9");
   });
 
@@ -344,11 +424,7 @@ describe("Session focus presentation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "back to Today — session keeps running",
-      }),
-    );
+    await pressHome();
 
     const dialog = await screen.findByRole("dialog", {
       name: "Unlogged set changes",
@@ -360,8 +436,7 @@ describe("Session focus presentation", () => {
 
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      dockValue("reps"),
     ).toBe("9");
   });
 
@@ -391,7 +466,7 @@ describe("Session focus presentation", () => {
     expect(
       await screen.findByRole("heading", { name: "Back Squat" }),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     expect(
@@ -399,12 +474,10 @@ describe("Session focus presentation", () => {
     ).toBeTruthy();
 
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      dockValue("reps"),
     ).toBe("9");
     expect(
-      screen.getByRole("button", { name: "load value — tap to type" })
-        .textContent,
+      dockValue("load"),
     ).toBe("22.5");
   });
 
@@ -418,7 +491,7 @@ describe("Session focus presentation", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "duration value — tap to type" }).textContent).toBe("60");
+    expect(dockValue("duration")).toBe("60");
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       payload: { exercise_id: "bench-press", reps: 0, duration_seconds: 60 },
@@ -475,13 +548,13 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    await screen.findByRole("button", { name: "Finish workout" });
+    await screen.findByRole("button", { name: "Finish session" });
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add extra set" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Extra set" }));
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
     await new Promise((resolve) => window.setTimeout(resolve, 250));
-    fireEvent.click(screen.getByRole("button", { name: "Log extra set" }));
+    fireEvent.click(screen.getByRole("button", { name: /^log extra set$/i }));
 
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
@@ -502,7 +575,7 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     await vi.waitFor(() =>
-      expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25"),
+      expect(dockValue("load")).toBe("225.25"),
     );
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
@@ -519,7 +592,7 @@ describe("Session focus presentation", () => {
     await seed("reps", [bench]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("220.5"));
+    await vi.waitFor(() => expect(dockValue("load")).toBe("220.5"));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
@@ -536,7 +609,7 @@ describe("Session focus presentation", () => {
     await seed("reps", [pair]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("110.2"));
+    await vi.waitFor(() => expect(dockValue("load")).toBe("110.2"));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
@@ -575,14 +648,14 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
-    expect(screen.getByRole("button", { name: "Show weights in pounds" }).getAttribute("aria-pressed")).toBe("true");
+    expect(unitPressed("Show weights in pounds")).toBe("true");
 
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in kilograms" }));
-    expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("102.06");
+    switchUnit("Show weights in kilograms");
+    expect(unitPressed("Show weights in kilograms")).toBe("true");
+    expect(dockValue("load")).toBe("102.06");
 
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
-    expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(unitPressed("Show weights in kilograms")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Focus" }));
 
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
@@ -597,14 +670,14 @@ describe("Session focus presentation", () => {
     setSetting("unit", "kg");
     await seed();
     const first = render(<MemoryRouter><Session /></MemoryRouter>);
-    await screen.findByRole("button", { name: "Show weights in pounds" });
+    await unitToggle("Show weights in pounds");
     await vi.waitFor(() => {
-      const toggle = screen.getByRole("button", { name: "Show weights in pounds" });
+      const toggle = unitButton("Show weights in pounds");
       expect(toggle.isConnected).toBe(true);
       expect(toggle.hasAttribute("disabled")).toBe(false);
     });
     // Reacquire the ready button after async preference hydration.
-    const readyShowPounds = screen.getByRole("button", { name: "Show weights in pounds" });
+    const readyShowPounds = unitButton("Show weights in pounds");
     expect(readyShowPounds.isConnected).toBe(true);
     expect(readyShowPounds.getAttribute("aria-pressed")).toBe("false");
     const writesBeforeSwitch = sessionPrefsMock.write.mock.calls.length;
@@ -618,7 +691,7 @@ describe("Session focus presentation", () => {
     first.unmount();
 
     render(<MemoryRouter><Session /></MemoryRouter>);
-    expect((await screen.findByRole("button", { name: "Show weights in pounds" })).getAttribute("aria-pressed")).toBe("true");
+    expect((await unitToggle("Show weights in pounds")).getAttribute("aria-pressed")).toBe("true");
     expect(getUnit()).toBe("kg");
   });
 
@@ -629,10 +702,10 @@ describe("Session focus presentation", () => {
     await cacheSet(cacheKeys.sessionPrefs(receiptOwner, active.id), { unit: "lb" });
 
     render(<MemoryRouter><Session /></MemoryRouter>);
-    expect((await screen.findByRole("button", { name: "Show weights in pounds" })).getAttribute("aria-pressed")).toBe("true");
+    expect((await unitToggle("Show weights in pounds")).getAttribute("aria-pressed")).toBe("true");
     receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
     act(() => { for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId); });
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true"));
+    await vi.waitFor(() => expect(unitButton("Show weights in kilograms").getAttribute("aria-pressed")).toBe("true"));
     expect(await cacheGet(cacheKeys.sessionPrefs(receiptIdentity.userId, active.id))).toBeUndefined();
     receiptIdentity.userId = receiptOwner;
     const readsBeforeOwnerA = sessionPrefsMock.read.mock.calls.length;
@@ -640,7 +713,7 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() => expect(sessionPrefsMock.read.mock.calls.length).toBeGreaterThan(readsBeforeOwnerA));
     const ownerARead = sessionPrefsMock.read.mock.results.at(-1)?.value as Promise<sessionPrefs.SessionPrefs> | undefined;
     await act(async () => { await ownerARead; });
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: "Show weights in pounds" }).getAttribute("aria-pressed")).toBe("true"));
+    await vi.waitFor(() => expect(unitButton("Show weights in pounds").getAttribute("aria-pressed")).toBe("true"));
     cleanup();
 
     const nextSession = { ...active, id: "session-focus-next" };
@@ -648,7 +721,7 @@ describe("Session focus presentation", () => {
     await cacheSet(cacheKeys.sessionRx(nextSession.id), [prescription()]);
     await cacheSet(cacheKeys.sessionSets(nextSession.id), []);
     render(<MemoryRouter><Session /></MemoryRouter>);
-    expect((await screen.findByRole("button", { name: "Show weights in kilograms" })).getAttribute("aria-pressed")).toBe("true");
+    expect((await unitToggle("Show weights in kilograms")).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("reconciles identity changed just before the listener subscribes", async () => {
@@ -662,7 +735,7 @@ describe("Session focus presentation", () => {
     await seed();
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    expect((await screen.findByRole("button", { name: "Show weights in kilograms" })).getAttribute("aria-pressed")).toBe("true");
+    expect((await unitToggle("Show weights in kilograms")).getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByText("Loading workout choices…")).toBeNull();
   });
 
@@ -689,13 +762,11 @@ describe("Session focus presentation", () => {
 
     receiptIdentity.userId = ownerB;
     act(() => { for (const listener of receiptIdentity.listeners) listener(ownerB); });
-    expect((await screen.findByRole("button", { name: "Show weights in kilograms" })).getAttribute("aria-pressed")).toBe("true");
+    expect((await unitToggle("Show weights in kilograms")).getAttribute("aria-pressed")).toBe("true");
     releaseOwnerA?.({ unit: "lb", entryOrder: ["squat", "bench"] });
     await act(async () => { await Promise.resolve(); });
-    expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "List" }));
-    expect([...document.querySelectorAll(".wk-list-main .wk-list-name")]
-      .map((node) => node.textContent)).toEqual(["Bench Press", "Back Squat"]);
+    expect(unitButton("Show weights in kilograms").getAttribute("aria-pressed")).toBe("true");
+    expect((await todayOrder())).toEqual(["Bench Press", "Back Squat"]);
   });
 
   it("keeps a typed draft and logs its authored unit when session preference saving fails", async () => {
@@ -711,9 +782,9 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    switchUnit("Show weights in pounds");
     await vi.waitFor(() => expect(messages).toContain("Unit choice may reset after reload"));
-    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("55.12");
+    expect(dockValue("load")).toBe("55.12");
     expect(getUnit()).toBe("kg");
 
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
@@ -737,7 +808,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "reps value — tap to type" }));
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
-    fireEvent.click(await screen.findByRole("button", { name: /— current — view full workout$/ }));
+    await openToday();
 
     fireEvent.click(screen.getByRole("button", { name: "Move Bench Press down" }));
     await vi.waitFor(async () =>
@@ -745,15 +816,13 @@ describe("Session focus presentation", () => {
         unit: "lb", entryOrder: ["squat", "bench"],
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
+    closeToday();
     expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "reps value — tap to type" }).textContent).toBe("9");
+    expect(dockValue("reps")).toBe("9");
 
     cleanup();
     render(<MemoryRouter><Session /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: /— current — view full workout$/ }));
-    const names = [...document.querySelectorAll(".wk-list-main .wk-list-name")]
-      .map((node) => node.textContent);
+    const names = await todayOrder();
     expect(names).toEqual(["Back Squat", "Bench Press"]);
     expect(await cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).toMatchObject({
       unit: "lb", entryOrder: ["squat", "bench"],
@@ -777,7 +846,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "reps value — tap to type" }));
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    await openToday();
     fireEvent.click(screen.getByRole("button", { name: "Move Bench Press down" }));
 
     const moveUp = await screen.findByRole("button", { name: "Move Bench Press up" });
@@ -785,13 +854,11 @@ describe("Session focus presentation", () => {
     await act(async () => { rejectWrite(new Error("disk full")); });
     await vi.waitFor(() => expect(messages).toContain("Workout order may reset after reload"));
     expect(moveUp.hasAttribute("disabled")).toBe(false);
-    const names = [...document.querySelectorAll(".wk-list-main .wk-list-name")]
-      .map((node) => node.textContent);
+    const names = await todayOrder();
     expect(names).toEqual(["Back Squat", "Bench Press"]);
     expect(await cacheGet(cacheKeys.sessionPrefs(receiptOwner, active.id))).toBeUndefined();
-    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
     expect(await screen.findByRole("heading", { name: "Bench Press" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "reps value — tap to type" }).textContent).toBe("9");
+    expect(dockValue("reps")).toBe("9");
     stopToastListener();
   });
 
@@ -803,15 +870,15 @@ describe("Session focus presentation", () => {
       prescription("next", "pressdown", "Pressdown", "reps", null, 2),
     ]);
     let resolveBatch!: () => void;
-    vi.mocked(outbox.enqueueBatch).mockImplementationOnce(
+    vi.mocked(outbox.enqueue).mockImplementationOnce(
       () => new Promise<void>((resolve) => { resolveBatch = resolve; }),
     );
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Log round" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Log A1" }));
     await vi.waitFor(() => expect(resolveBatch).toBeTypeOf("function"));
-    fireEvent.click(screen.getByRole("button", { name: "List" }));
-    const moveDown = screen.getByRole("button", { name: "Move Bench Press down" });
+    await openToday();
+    const moveDown = screen.getByRole("button", { name: /^Move .*Bench Press.* down$/ });
     expect(moveDown.hasAttribute("disabled")).toBe(true);
 
     await act(async () => { resolveBatch(); });
@@ -837,12 +904,15 @@ describe("Session focus presentation", () => {
     );
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: /— current — view full workout$/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Show details for Bench Press" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Correct logged set 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+    await showList();
+    fireEvent.click(screen.getByRole("button", { name: "Bench Press — done" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Correct logged set 1/ }));
+    const sheet = await screen.findByRole("dialog", { name: /Fix set 1/ });
+    fireEvent.click(within(sheet).getByRole("button", { name: "increase reps by 1" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Save correction" }));
     await vi.waitFor(() => expect(resolveCorrection).toBeTypeOf("function"));
+    // a modal sheet is over the screen, but the lock itself is what is tested
+    fireEvent.click(screen.getByRole("button", { name: TODAY }));
     const moveDown = screen.getByRole("button", { name: "Move Bench Press down" });
     expect(moveDown.hasAttribute("disabled")).toBe(true);
 
@@ -868,9 +938,9 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in kilograms" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
-    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25");
+    switchUnit("Show weights in kilograms");
+    switchUnit("Show weights in pounds");
+    expect(dockValue("load")).toBe("225.25");
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
@@ -894,17 +964,12 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "0" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
-    fireEvent.click(screen.getByRole("button", { name: "Last: 30 kg × 8 working" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
-    fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
-    fireEvent.click(screen.getByRole("button", { name: "6" }));
-    fireEvent.click(screen.getByRole("button", { name: "6" }));
-    fireEvent.click(screen.getByRole("button", { name: "." }));
-    fireEvent.click(screen.getByRole("button", { name: "1" }));
-    fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fix last" }));
+    fireEvent.click(fixSheet().getByRole("button", { name: "increase load by 2.5 kg" }));
+    fireEvent.click(fixSheet().getByRole("button", { name: "Cancel" }));
+    switchUnit("Show weights in pounds");
 
-    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("110.23");
+    expect(dockValue("load")).toBe("110.23");
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
@@ -924,13 +989,14 @@ describe("Session focus presentation", () => {
     vi.mocked(getServerSessionSets).mockResolvedValue([old]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
-    fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
+    await screen.findByRole("button", { name: "Fix last" });
+    switchUnit("Show weights in pounds");
+    fireEvent.click(screen.getByRole("button", { name: "Fix last" }));
+    fireEvent.click(fixSheet().getByRole("button", { name: "load value — tap to type" }));
     fireEvent.click(screen.getByRole("button", { name: "7" }));
     fireEvent.click(screen.getByRole("button", { name: "0" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
-    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+    fireEvent.click(fixSheet().getByRole("button", { name: "Save correction" }));
 
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
     const [sessionId, payload, originalId] = vi.mocked(outbox.enqueueCorrection).mock.calls[0]!;
@@ -954,9 +1020,9 @@ describe("Session focus presentation", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       render(<MemoryRouter><Session /></MemoryRouter>);
-      fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
-      fireEvent.click(screen.getByRole("button", { name: "increase load by 2.5 kg" }));
-      fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Fix last" }));
+      fireEvent.click(fixSheet().getByRole("button", { name: "increase load by 2.5 kg" }));
+      fireEvent.click(fixSheet().getByRole("button", { name: "Save correction" }));
 
       await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith("[correct set]", expect.any(Error)));
       expect(await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id))).toEqual([old]);
@@ -969,10 +1035,10 @@ describe("Session focus presentation", () => {
         old.id,
         "Grip felt uneven",
       );
-      expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
-      fireEvent.click(screen.getByRole("button", { name: "Cancel correction" }));
+      await vi.waitFor(() => expect(fixSheet().getByRole("button", { name: "Save correction" })).toBeTruthy());
+      fireEvent.click(fixSheet().getByRole("button", { name: "Cancel" }));
       fireEvent.click(screen.getByRole("button", { name: "List" }));
-      expect(screen.getByRole("button", { name: "Correct logged set 1" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: /^Correct logged set 1/ })).toBeTruthy();
       expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
@@ -985,20 +1051,18 @@ describe("Session focus presentation", () => {
     try {
       render(<MemoryRouter><Session /></MemoryRouter>);
       fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-      await screen.findByRole("button", { name: "rpe 6.5" });
-      fireEvent.click(screen.getByRole("button", { name: "Note last set" }));
-      const note = await screen.findByPlaceholderText("Note on this set…");
+      fireEvent.click(await screen.findByRole("button", { name: "Note" }));
+      const note = await screen.findByPlaceholderText(NOTE_PLACEHOLDER);
       fireEvent.change(note, { target: { value: "Grip felt uneven" } });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save note" }));
       await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
-      await vi.waitFor(() => expect(screen.queryByPlaceholderText("Note on this set…")).toBeNull());
-      fireEvent.click(screen.getByRole("button", { name: "CLOSE" }));
+      await vi.waitFor(() => expect(screen.queryByPlaceholderText(NOTE_PLACEHOLDER)).toBeNull());
       const before = await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id));
       const restBefore = await cacheGet(cacheKeys.sessionRest(active.id));
       expect(before).toHaveLength(1);
       const noteBefore = await cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(active.id));
 
-      fireEvent.click(screen.getByRole("button", { name: "rpe 6.5" }));
+      await pressRpe(6.5);
       await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith("[rate set]", expect.any(Error)));
 
       expect(await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id))).toEqual(before);
@@ -1025,16 +1089,15 @@ describe("Session focus presentation", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       render(<MemoryRouter><Session /></MemoryRouter>);
-      await screen.findByRole("button", { name: /— current — view full workout$/ });
       fireEvent.click(await screen.findByRole("button", { name: "List" }));
       await vi.waitFor(() => expect(screen.getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe("true"));
-      fireEvent.click(await screen.findByRole("button", { name: "Void logged set 1" }));
-      fireEvent.click(screen.getByRole("button", { name: "Confirm void logged set 1" }));
+      fireEvent.click(await screen.findByRole("button", { name: /^Void logged set 1/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Confirm void logged set 1/ }));
       await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith("[remove set]", expect.any(Error)));
 
       expect(await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id))).toEqual([old]);
       expect(await cacheGet<string[]>(cacheKeys.sessionVoids(active.id))).toBeUndefined();
-      expect(screen.getByRole("button", { name: "Correct logged set 1" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: /^Correct logged set 1/ })).toBeTruthy();
     } finally {
       consoleError.mockRestore();
     }
@@ -1052,10 +1115,11 @@ describe("Session focus presentation", () => {
     vi.mocked(getServerSessionSets).mockResolvedValue([old]);
     render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
-    fireEvent.click(screen.getByRole("button", { name: "increase load by 5 lb" }));
-    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+    await screen.findByRole("button", { name: "Fix last" });
+    switchUnit("Show weights in pounds");
+    fireEvent.click(screen.getByRole("button", { name: "Fix last" }));
+    fireEvent.click(fixSheet().getByRole("button", { name: "increase load by 5 lb" }));
+    fireEvent.click(fixSheet().getByRole("button", { name: "Save correction" }));
 
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
     const payload = vi.mocked(outbox.enqueueCorrection).mock.calls[0]?.[1];
@@ -1072,20 +1136,18 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    await screen.findByRole("button", { name: "Note last set" });
-    fireEvent.click(screen.getByRole("button", { name: "Note last set" }));
-    const note = await screen.findByPlaceholderText("Note on this set…");
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }));
+    const note = await screen.findByPlaceholderText(NOTE_PLACEHOLDER);
     fireEvent.change(note, { target: { value: "Grip felt uneven" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save note" }));
 
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(screen.queryByPlaceholderText("Note on this set…")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "CLOSE" }));
+    await vi.waitFor(() => expect(screen.queryByPlaceholderText(NOTE_PLACEHOLDER)).toBeNull());
     expect(vi.mocked(outbox.enqueue).mock.calls[1]?.[0]).toMatchObject({
       table: "set_notes",
       payload: { note: "Grip felt uneven" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "rpe 6.5" }));
+    await pressRpe(6.5);
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
     expect(vi.mocked(outbox.enqueueCorrection).mock.calls[0]).toMatchObject([
       active.id,
@@ -1135,8 +1197,7 @@ describe("Session focus presentation", () => {
       expect(screen.getByRole("button", { name: "LOG SET" })).toBeTruthy();
       expect(screen.queryByText("LOGGED")).toBeNull();
       expect(
-        screen.getByRole("button", { name: "reps value — tap to type" })
-          .textContent,
+        dockValue("reps"),
       ).toBe("8");
     } finally {
       consoleError.mockRestore();
@@ -1156,9 +1217,7 @@ describe("Session focus presentation", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
 
-    expect(
-      await screen.findByText("Last: 20 kg × 8 working"),
-    ).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Fix last" })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
     expect(await (await getDb()).getAll("outbox")).toHaveLength(1);
@@ -1293,178 +1352,6 @@ describe("Session focus presentation", () => {
     expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
   });
 
-  it("shows one compact historical line for each superset member", async () => {
-    resetDbForTests();
-    vi.mocked(getLastActuals).mockResolvedValue({
-      data: {
-        "bench-press": { load_kg: 20, reps: 8 },
-        "barbell-row": { load_kg: 50, reps: 10 },
-      },
-      fromCache: false,
-      stale: null,
-    });
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText("Last time · 20 kg × 8")).toBeTruthy();
-    expect(screen.getByText("Last time · 50 kg × 10")).toBeTruthy();
-  });
-
-  it("keeps each member's authored load and unit in its round draft", async () => {
-    resetDbForTests();
-    setSetting("unit", "lb");
-    const authoredBench = {
-      ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      load_kg: 102.17,
-      resolved_load_kg: 102.17,
-      entered_load: 225.25,
-      entered_unit: "lb" as const,
-    };
-    await seed("reps", [
-      authoredBench,
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 2");
-    const a1 = await screen.findByLabelText("A1 Bench Press");
-    await vi.waitFor(() =>
-      expect(within(a1).getByRole("button", { name: /load value/ }).textContent)
-        .toBe("225.25"),
-    );
-    expect(a1.textContent).toContain("lb");
-  });
-
-  it("logs both members of a superset round through one ordered local batch", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
-    );
-    const ops = vi.mocked(outbox.enqueueBatch).mock.calls[0]?.[0] ?? [];
-    expect(ops).toHaveLength(2);
-    expect(ops).toMatchObject([
-      {
-        kind: "insert",
-        table: "sets",
-        payload: {
-          exercise_id: "bench-press",
-          prescription_id: "bench",
-          set_index: 0,
-        },
-      },
-      {
-        kind: "insert",
-        table: "sets",
-        payload: {
-          exercise_id: "barbell-row",
-          prescription_id: "row",
-          set_index: 0,
-        },
-      },
-    ]);
-    const [first, second] = ops.filter(
-      (op): op is Extract<typeof op, { kind: "insert"; table: "sets" }> =>
-        op.kind === "insert" && op.table === "sets",
-    );
-    expect(first?.payload.id).not.toBe(second?.payload.id);
-    expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
-  });
-
-  it("keeps both staged superset loads stable on the first unit switch", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(<MemoryRouter><Session /></MemoryRouter>);
-
-    await screen.findByText("round 1 of 2");
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
-    const a1 = screen.getByLabelText("A1 Bench Press");
-    const a2 = screen.getByLabelText("A2 Barbell Row");
-    expect(within(a1).getByRole("button", { name: /load value/ }).textContent).toBe("44.09");
-    expect(within(a2).getByRole("button", { name: /load value/ }).textContent).toBe("44.09");
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-
-    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1));
-    const ops = vi.mocked(outbox.enqueueBatch).mock.calls[0]?.[0] ?? [];
-    for (const op of ops) {
-      if (op.kind !== "insert" || op.table !== "sets") continue;
-      expect(op.payload).toMatchObject({
-        load_kg: 20,
-        entered_load: 20,
-        entered_unit: "kg",
-      });
-      expectAcceptedAuthoredLoad(op.payload);
-    }
-  });
-
-  it("rests only after full non-final rounds and names the next A1 round", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 3),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 3),
-      { ...prescription("curl", "cable-curl", "Cable Curl"), position: 2 },
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 3");
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
-    );
-    const rest = await screen.findByRole("timer", { name: "rest timer" });
-    expect(rest.textContent).toContain("Next: Superset A, round 2 of 3");
-
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(2),
-    );
-    await vi.waitFor(() =>
-      expect(screen.getByRole("timer", { name: "rest timer" }).textContent)
-        .toContain("Next: Superset A, round 3 of 3"),
-    );
-
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(3),
-    );
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull(),
-    );
-    expect(await screen.findByRole("heading", { name: "Cable Curl" })).toBeTruthy();
-  });
-
   it("keeps three-member circuits in overview and explains why paired Focus is unavailable", async () => {
     resetDbForTests();
     await seed("reps", [
@@ -1484,440 +1371,6 @@ describe("Session focus presentation", () => {
     expect(screen.queryByRole("heading", { name: "Superset A" })).toBeNull();
   });
 
-  it("keeps both drafts visible when the local round batch fails", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    await cacheSet(cacheKeys.sessionSkips(active.id), ["row"]);
-    vi.mocked(outbox.enqueueBatch).mockRejectedValueOnce(
-      new Error("disk full"),
-    );
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    try {
-      render(
-        <MemoryRouter>
-          <Session />
-        </MemoryRouter>,
-      );
-
-      await screen.findByText("round 1 of 2");
-      fireEvent.click(
-        screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[0],
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-
-      expect((await screen.findByRole("alert")).textContent).toMatch(
-        /could not be saved locally.*retry/i,
-      );
-      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
-        "22.5",
-      );
-      expect(
-        await cacheGet<string[] | Record<string, unknown>>(
-          cacheKeys.sessionSkips(active.id),
-        ),
-      ).toEqual(["row"]);
-      expect(screen.queryByText("LOGGED")).toBeNull();
-    } finally {
-      consoleError.mockRestore();
-    }
-  });
-
-  it("keeps both member drafts when saving a single-member set fails", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    let rejectQueue!: (reason?: unknown) => void;
-    vi.mocked(outbox.enqueue).mockImplementationOnce(
-      () =>
-        new Promise<void>((_resolve, reject) => {
-          rejectQueue = reject;
-        }),
-    );
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    try {
-      render(
-        <MemoryRouter>
-          <Session />
-        </MemoryRouter>,
-      );
-
-      expect(await screen.findByText("round 1 of 2")).toBeTruthy();
-      const increaseLoad = screen.getAllByRole("button", {
-        name: "increase load by 2.5 kg",
-      });
-      fireEvent.click(increaseLoad[0]!);
-      fireEvent.click(increaseLoad[1]!);
-      fireEvent.click(increaseLoad[1]!);
-      fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
-      await vi.waitFor(() =>
-        expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
-      );
-      expect(screen.queryByRole("alert")).toBeNull();
-      expect(screen.queryByText("LOGGED")).toBeNull();
-      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
-      expect(screen.getByRole("button", { name: "Log Bench Press only" })).toBeTruthy();
-      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
-        "22.5",
-      );
-      expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
-        "25",
-      );
-      expect(
-        await cacheGet<SetInsert[]>(cacheKeys.sessionSets(active.id)),
-      ).toEqual([]);
-
-      await act(async () => {
-        rejectQueue(new Error("IndexedDB unavailable"));
-        await Promise.resolve();
-      });
-
-      expect((await screen.findByRole("alert")).textContent).toMatch(
-        /could not be saved locally.*retry/i,
-      );
-      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
-        "22.5",
-      );
-      expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
-        "25",
-      );
-      expect(screen.getByText("round 1 of 2")).toBeTruthy();
-      expect(screen.queryByText("LOGGED")).toBeNull();
-    } finally {
-      consoleError.mockRestore();
-    }
-  });
-
-  it("does not offer a duplicate retry for an A1-only write with a count refresh failure", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    const durableOutbox = await outboxWithFailedCountRefresh();
-    vi.mocked(outbox.enqueue).mockImplementationOnce((op) =>
-      durableOutbox.enqueue(op),
-    );
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
-    const loadButtons = screen.getAllByRole("button", {
-      name: "increase load by 2.5 kg",
-    });
-    fireEvent.click(loadButtons[0]!);
-    fireEvent.click(loadButtons[1]!);
-    fireEvent.click(loadButtons[1]!);
-    fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
-
-    await vi.waitFor(async () => {
-      expect(await (await getDb()).getAll("outbox")).toHaveLength(1);
-      expect(screen.queryByRole("alert")).toBeNull();
-    });
-    await vi.waitFor(() =>
-      expect(
-        screen.getByLabelText("A1 Bench Press").textContent,
-      ).not.toContain("22.5"),
-    );
-    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
-      "25",
-    );
-    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
-    const [queued] = await (await getDb()).getAll("outbox");
-    expect(queued?.op).toMatchObject({
-      kind: "insert",
-      table: "sets",
-      payload: { exercise_id: "bench-press", load_kg: 22.5 },
-    });
-  });
-
-  it("clears the old rest strip when auto-rest is turned off before a round", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", null, 3),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 3),
-      prescription("db-row", "dumbbell-row", "Dumbbell Row", "reps", 1, 3),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
-    );
-    expect(await screen.findByRole("timer", { name: /^rest timer/ })).toBeTruthy();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /— current — view full workout$/ }),
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-    expect(await screen.findByText("round 1 of 3")).toBeTruthy();
-
-    act(() => setSetting("autoStartRest", false));
-    await vi.waitFor(() =>
-      expect(
-        screen.queryByRole("timer", { name: /^rest timer/ }),
-      ).toBeNull(),
-    );
-    // The first ordinary log holds the duplicate-tap lock briefly. The rest
-    // assertion above is the behavior under test; wait for the independent
-    // lock before starting the next round.
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
-    );
-
-    await vi.waitFor(() =>
-      expect(
-        screen.queryByRole("timer", { name: /^rest timer/ }),
-      ).toBeNull(),
-    );
-  });
-
-  it("keeps paired drafts when switching through overview and back to Focus", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
-    fireEvent.click(
-      screen.getAllByRole("button", {
-        name: "increase load by 2.5 kg",
-      })[0]!,
-    );
-    fireEvent.click(
-      screen.getAllByRole("button", {
-        name: "increase load by 2.5 kg",
-      })[1]!,
-    );
-    fireEvent.click(
-      screen.getAllByRole("button", {
-        name: /— current — view full workout$/,
-      })[0]!,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-
-    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
-      "22.5",
-    );
-    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
-      "22.5",
-    );
-  });
-
-  it("warns before Home can discard paired member drafts", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
-    const loadButtons = screen.getAllByRole("button", {
-      name: "increase load by 2.5 kg",
-    });
-    fireEvent.click(loadButtons[0]!);
-    fireEvent.click(loadButtons[1]!);
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "back to Today — session keeps running",
-      }),
-    );
-
-    const dialog = await screen.findByRole("dialog", {
-      name: "Unlogged set changes",
-    });
-    expect(dialog.textContent).toMatch(/held only on this screen/i);
-    expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
-      "22.5",
-    );
-    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
-      "22.5",
-    );
-    expect(
-      within(dialog).getByRole("button", { name: "Leave and discard drafts" }),
-    ).toBeTruthy();
-  });
-
-  it("does not advance either member when the local round batch cannot be saved", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    vi.mocked(outbox.enqueueBatch).mockRejectedValueOnce(
-      new Error("IndexedDB unavailable"),
-    );
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    try {
-      render(
-        <MemoryRouter>
-          <Session />
-        </MemoryRouter>,
-      );
-
-      expect(await screen.findByText("round 1 of 2")).toBeTruthy();
-      fireEvent.click(
-        screen.getAllByRole("button", { name: "increase load by 2.5 kg" })[0]!,
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-
-      expect((await screen.findByRole("alert")).textContent).toMatch(
-        /could not be saved locally.*retry/i,
-      );
-      expect(screen.getByLabelText("A1 Bench Press").textContent).toContain(
-        "22.5",
-      );
-      expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain(
-        "20",
-      );
-      expect(screen.getByText("round 1 of 2")).toBeTruthy();
-      expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
-    } finally {
-      consoleError.mockRestore();
-    }
-  });
-
-  it("logs an edited A1 alone without discarding A2's draft", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 2");
-    const increaseLoad = screen.getAllByRole("button", {
-      name: "increase load by 2.5 kg",
-    });
-    fireEvent.click(increaseLoad[0]);
-    fireEvent.click(increaseLoad[1]);
-    fireEvent.click(increaseLoad[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
-
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
-    );
-    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
-      payload: { exercise_id: "bench-press", load_kg: 22.5 },
-    });
-    expect(vi.mocked(outbox.enqueueBatch)).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("A2 Barbell Row").textContent).toContain("25");
-  });
-
-  it("finishes the active partial round with A2 only instead of logging A1 twice", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 2");
-    fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
-    );
-    expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-
-    expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Log Barbell Row only" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(2),
-    );
-    expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
-
-    expect(
-      vi.mocked(outbox.enqueue).mock.calls.map((call) => call[0]),
-    ).toMatchObject([
-      {
-        payload: {
-          exercise_id: "bench-press",
-          prescription_id: "bench",
-          set_index: 0,
-        },
-      },
-      {
-        payload: {
-          exercise_id: "barbell-row",
-          prescription_id: "row",
-          set_index: 0,
-        },
-      },
-    ]);
-    expect(vi.mocked(outbox.enqueueBatch)).not.toHaveBeenCalled();
-  });
-
-  it("returns to the canonical round editor when focus starts from A2", async () => {
-    resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    // Both round members are "current" while the round is live, so either
-    // dot opens overview (see FocusDeck's rail: onViewFullWorkout fires for
-    // any dot whose state is "current", not one particular member).
-    fireEvent.click(
-      (
-        await screen.findAllByRole("button", {
-          name: /— current — view full workout$/,
-        })
-      )[0]!,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-
-    expect(await screen.findByText("round 1 of 2")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Log round" })).toBeTruthy();
-  });
-
   it("keeps rest timing through focus and overview changes", async () => {
     render(
       <MemoryRouter>
@@ -1934,93 +1387,68 @@ describe("Session focus presentation", () => {
     });
     expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
     const activeRestScene = screen.getByRole("timer", { name: /^rest timer/ });
-    expect(activeRestScene.parentElement?.className).toContain("focus-stage-scroll");
-    expect(screen.getByRole("button", { name: "Note last set" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "rpe 6.5" })).toBeTruthy();
+    expect(activeRestScene.closest(".focus-middle")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Note" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "RPE" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "reps value — tap to type" }));
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
     fireEvent.click(screen.getByRole("button", { name: "add 30 seconds to the rest target" }));
     expect(screen.getByRole("timer", { name: /^rest timer/ }).textContent).toContain("1:30");
     fireEvent.click(screen.getByRole("button", { name: "List" }));
-    expect(screen.getByRole("button", { name: "reps value — tap to type" }).textContent).toBe("9");
+    expect(dockValue("reps")).toBe("9");
     expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
     act(() => vi.advanceTimersByTime(91_000));
 
     expect(screen.getByRole("timer", { name: "rest timer complete" })).toBeTruthy();
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-    const repsAfterReturn = screen.getByRole("button", {
-      name: "reps value — tap to type",
-    });
-    expect(repsAfterReturn.textContent).toBe("9");
+    expect(dockValue("reps")).toBe("9");
     expect(screen.getByRole("timer", { name: "rest timer complete" })).toBeTruthy();
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
 
-  it("routes a round member's number pad and plate sheet back to that draft", async () => {
+  it("Fix last on a completed entry corrects that entry, not the next exercise", async () => {
+    const completedBench: SetInsert = {
+      id: "bench-set-1", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working", load_kg: 20,
+      reps: 8, performed_at: "2026-09-12T12:05:00.000Z", rest_seconds_actual: null,
+      load_entry: "total", rpe: null,
+    };
     resetDbForTests();
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    vi.mocked(getExercises).mockResolvedValue({
-      data: [
-        { id: "bench-press", name: "Bench Press", equipment: "barbell" },
-        { id: "barbell-row", name: "Barbell Row", equipment: "barbell" },
+    await seed(
+      "reps",
+      [
+        prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
+        prescription("squat", "back-squat", "Back Squat", "reps", null, 1),
       ],
-      fromCache: false,
-      stale: null,
+      [completedBench],
+    );
+    vi.mocked(getServerSessionSets).mockResolvedValue([completedBench]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    // Bench is done, so the session opens on Squat. Jump back to Bench.
+    await openToday();
+    fireEvent.click(screen.getByRole("button", { name: /^Bench Press — done/ }));
+    expect(await screen.findByRole("button", { name: "Next exercise: Back Squat" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Fix last" }));
+    const sheet = await screen.findByRole("dialog", { name: /^Fix / });
+    expect(sheet.textContent).toContain("Bench Press");
+    fireEvent.click(within(sheet).getByRole("button", { name: "increase reps by 1" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Save correction" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(outbox.enqueueCorrection).mock.calls[0]?.[1]).toMatchObject({
+      exercise_id: "bench-press", reps: 9, set_index: 0,
     });
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 2");
-    const a1 = screen.getByLabelText("A1 Bench Press");
-    const a2 = screen.getByLabelText("A2 Barbell Row");
-    fireEvent.click(
-      within(a2).getByRole("button", { name: "reps value — tap to type" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "9" }));
-    fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
-
-    expect(a1.textContent).toContain("8");
-    expect(a2.textContent).toContain("9");
-    fireEvent.click(
-      screen.getByRole("button", { name: "more options for Bench Press" }),
-    );
-    const a2More = screen.getByLabelText("A2 Barbell Row · more");
-    fireEvent.click(
-      within(a2More).getByRole("button", { name: "Plate calculator" }),
-    );
-    expect(await screen.findByText("BARBELL ROW · PLATES")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "type a target load" }));
-    fireEvent.click(screen.getByRole("button", { name: "2" }));
-    fireEvent.click(screen.getByRole("button", { name: "5" }));
-    fireEvent.click(screen.getByRole("button", { name: "BACK TO PLATES" }));
-
-    expect(a1.textContent).toContain("20");
-    expect(a2.textContent).toContain("25");
   });
-
-  it("removes focus next while correcting a completed entry", async () => {
+  it("pins Today's workout to the exercise being corrected, and its edit stays in the sheet", async () => {
     const completedBench: SetInsert = {
-      id: "bench-set-1",
-      session_id: active.id,
-      exercise_id: "bench-press",
-      prescription_id: "bench",
-      set_index: 0,
-      set_type: "working",
-      load_kg: 20,
-      reps: 8,
-      performed_at: "2026-09-12T12:05:00.000Z",
-      rest_seconds_actual: null,
-      load_entry: "total",
-      rpe: null,
+      id: "bench-set-1", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working", load_kg: 20,
+      reps: 8, performed_at: "2026-09-12T12:05:00.000Z", rest_seconds_actual: null,
+      load_entry: "total", rpe: null,
     };
     resetDbForTests();
     await seed(
@@ -2032,374 +1460,70 @@ describe("Session focus presentation", () => {
       [completedBench],
     );
     vi.mocked(getServerSessionSets).mockResolvedValue([completedBench]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
+    render(<MemoryRouter><Session /></MemoryRouter>);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-    expect(
-      await screen.findByRole("button", { name: "Next exercise" }),
-    ).toBeTruthy();
+    // Bench is done, so the session opens on Squat; open Bench in List and
+    // start correcting its logged set.
+    await showList();
+    fireEvent.click(await screen.findByRole("button", { name: /^Bench Press — done/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Correct logged set 1/ }));
+    const sheet = await screen.findByRole("dialog", { name: /^Fix / });
+    fireEvent.click(within(sheet).getByRole("button", { name: "increase reps by 1" }));
+    expect(within(sheet).getByRole("button", { name: "reps value — tap to type" }).textContent).toContain("9");
+    // the correction is a draft of its own: nothing is queued until Save
+    expect(vi.mocked(outbox.enqueueCorrection)).not.toHaveBeenCalled();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "more options for Bench Press" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Correct logged set 1" }));
+    // a jump elsewhere is locked while the correction is open
+    fireEvent.click(screen.getByRole("button", { name: TODAY }));
+    const today = within(screen.getByRole("dialog", { name: "Today's workout" }));
+    expect((today.getByRole("button", { name: /^Back Squat/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(today.getByRole("button", { name: "CLOSE" }));
 
-    expect(screen.queryByRole("button", { name: "Next exercise" })).toBeNull();
-  });
-
-  it("keeps a correction on its source entry through select + Focus mode, not the newly selected one", async () => {
-    const completedBench: SetInsert = {
-      id: "bench-set-1",
-      session_id: active.id,
-      exercise_id: "bench-press",
-      prescription_id: "bench",
-      set_index: 0,
-      set_type: "working",
-      load_kg: 20,
-      reps: 8,
-      performed_at: "2026-09-12T12:05:00.000Z",
-      rest_seconds_actual: null,
-      load_entry: "total",
-      rpe: null,
-    };
-    resetDbForTests();
-    await seed(
-      "reps",
-      [
-        prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
-        prescription("squat", "back-squat", "Back Squat", "reps", null, 1),
-      ],
-      [completedBench],
-    );
-    vi.mocked(getServerSessionSets).mockResolvedValue([completedBench]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    // Bench is already done, so the session opens in focus on Squat. Switch
-    // to overview, open Bench, and start correcting its logged set.
-    fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Show details for Bench Press" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Correct logged set 1" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
-    expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
-    ).toBe("9");
-
-    // Select Squat (a future focus destination, not a navigation) and enter
-    // Focus mode. The correction in progress must win: Bench stays open with
-    // its staged edit, not Squat with a fresh prefill.
-    fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
-    fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-
-    expect(
-      await screen.findByRole("heading", { name: "Bench Press" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
-    ).toBe("9");
-    expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: /^Fix / })).getByRole("button", { name: "Save correction" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
     expect(vi.mocked(outbox.enqueueCorrection).mock.calls[0]?.[1]).toMatchObject({
       exercise_id: "bench-press", reps: 9, load_kg: 20,
     });
   });
-
-  it("keeps a correction staged through focus Next + View full workout (reverse route)", async () => {
+  it("keeps a correction staged through a Focus/List switch", async () => {
     resetDbForTests();
-    // The previous test's `mockResolvedValue` (no "Once") outlives
-    // `vi.clearAllMocks()` in `beforeEach`, which only clears call history —
-    // pin this test's own server response so it isn't run against a
-    // completed Bench Press left over from an earlier test.
     vi.mocked(getServerSessionSets).mockResolvedValue([]);
     await seed("reps", [
       prescription("bench", "bench-press", "Bench Press", "reps", null, 1),
       prescription("squat", "back-squat", "Back Squat", "reps", null, 1),
     ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
+    render(<MemoryRouter><Session /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
     expect(await screen.findByRole("heading", { name: "Back Squat" })).toBeTruthy();
     await new Promise((resolve) => window.setTimeout(resolve, 450));
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
-    // past LOG_LOCK_MS, or the correction's own Save below is a no-op tap on
-    // a still-locked button.
     await new Promise((resolve) => window.setTimeout(resolve, 450));
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "more options for Back Squat" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Correct logged set 1" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
-    expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
-    ).toBe("9");
+    fireEvent.click(await screen.findByRole("button", { name: "Fix last" }));
+    fireEvent.click(fixSheet().getByRole("button", { name: "increase reps by 1" }));
+    expect(fixSheet().getByRole("button", { name: "reps value — tap to type" }).textContent).toContain("9");
 
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    // the correction on Back Squat is still the one on screen, staged
+    expect(fixSheet().getByRole("button", { name: "reps value — tap to type" }).textContent).toContain("9");
 
-    // The correction on Back Squat must still be the one on screen, staged.
-    expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
-    ).toBe("9");
-
-    fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
+    fireEvent.click(fixSheet().getByRole("button", { name: "Save correction" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
     expect(vi.mocked(outbox.enqueueCorrection).mock.calls[0]?.[1]).toMatchObject({
       exercise_id: "back-squat", reps: 9,
     });
   });
-
-  it("splits round rest across members: the first is measured, the second stays unknown", async () => {
-    resetDbForTests();
-    vi.mocked(getServerSessionSets).mockResolvedValue([]);
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 2");
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
-    );
-    await screen.findByText("round 2 of 2");
-    // past LOG_LOCK_MS, or round 2's tap lands on a still-disabled button.
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-
-    // Round 1 started the rest clock in real time; freeze 45s past it and log
-    // round 2, then restore real timers before the next await.
-    const startedAt = Date.now();
-    vi.useFakeTimers();
-    vi.setSystemTime(startedAt + 45_000);
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-    vi.useRealTimers();
-
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(2),
-    );
-    const ops = (
-      vi.mocked(outbox.enqueueBatch).mock.calls[1]?.[0] ?? []
-    ).filter(
-      (op): op is Extract<typeof op, { kind: "insert"; table: "sets" }> =>
-        op.kind === "insert" && op.table === "sets",
-    );
-    // A1 (bench) just finished resting from round 1 — that elapsed time is
-    // real, measured data. A2 (row) did not rest at all; it was logged in
-    // the same tap, so its rest is unknown, never a copy of A1's.
-    expect(ops[0]?.payload).toMatchObject({
-      exercise_id: "bench-press",
-      rest_seconds_actual: 45,
-    });
-    expect(ops[1]?.payload).toMatchObject({
-      exercise_id: "barbell-row",
-      rest_seconds_actual: null,
-    });
-  });
-
-  it("stages the rest strip from the round's own second member, not whichever entry happens to be open", async () => {
-    resetDbForTests();
-    vi.mocked(getServerSessionSets).mockResolvedValue([]);
-    const benchRx: ResolvedPrescriptionRow = {
-      ...prescription("bench", "bench-press", "Bench Press", "reps", 1, 2),
-      rest_seconds: 90,
-    };
-    const rowRx: ResolvedPrescriptionRow = {
-      ...prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-      rest_seconds: 45,
-    };
-    await seed("reps", [benchRx, rowRx]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    // Focus opens on Bench (the round's first, canonical member), so the
-    // top-level `restSeconds` hook value reflects Bench's own 90s bracket.
-    // The round's inter-round rest belongs to the next A1 and uses the
-    // current round's A2 prescription, 45 seconds.
-    await screen.findByText("round 1 of 2");
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-
-    expect(await screen.findByText("0:45")).toBeTruthy();
-    expect(screen.queryByText("1:30")).toBeNull();
-    expect(screen.getByText("Next: Superset A, round 2 of 2")).toBeTruthy();
-  });
-
-  it("flips a superset member's staged type from warmup to working after logging it, like logSet does", async () => {
-    resetDbForTests();
-    vi.mocked(getServerSessionSets).mockResolvedValue([]);
-    const benchWarmup: ResolvedPrescriptionRow = {
-      ...prescription(
-        "bench-warmup",
-        "bench-press",
-        "Bench Press",
-        "reps",
-        1,
-        1,
-      ),
-      set_type: "warmup",
-      position: 0,
-    };
-    const benchWorking: ResolvedPrescriptionRow = {
-      ...prescription(
-        "bench-working",
-        "bench-press",
-        "Bench Press",
-        "reps",
-        1,
-        1,
-      ),
-      set_type: "working",
-      position: 1,
-    };
-    const row: ResolvedPrescriptionRow = {
-      ...prescription("row", "barbell-row", "Barbell Row", "reps", 1, 1),
-      position: 2,
-    };
-    await seed("reps", [benchWarmup, benchWorking, row]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 1");
-    // The fresh-open prefill that stages Bench on its outstanding warmup
-    // lands a render after mount; force it explicitly rather than race it,
-    // since this test is about what happens to the toggle AFTER logging, not
-    // about that prefill's own timing.
-    fireEvent.click(
-      screen.getByRole("button", { name: "more options for Bench Press" }),
-    );
-    const a1More = await screen.findByLabelText("A1 Bench Press · more");
-    fireEvent.click(within(a1More).getByRole("button", { name: "warmup" }));
-    fireEvent.click(screen.getByRole("button", { name: "CLOSE" }));
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
-    );
-
-    // Bench's warmup is done and Row already met its target — only Bench's
-    // real working set remains.
-    await screen.findByRole("button", { name: "Log Bench Press only" });
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "Log Bench Press only" }));
-
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
-    );
-    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
-      payload: { exercise_id: "bench-press", set_type: "working" },
-    });
-  });
-
-  it("un-skips a superset member logged mid-round, like logging a single set does", async () => {
-    resetDbForTests();
-    vi.mocked(getServerSessionSets).mockResolvedValue([]);
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 1),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 1),
-    ]);
-    await cacheSet(cacheKeys.sessionSkips(active.id), ["row"]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 1");
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
-    );
-    // `skips` is a SkipRecord map as of Task 8 (was a plain key array); the
-    // legacy array this test seeds is read back through `readSkipsCache`,
-    // and what gets WRITTEN once nothing is skipped is the (now empty) map.
-    expect(
-      await cacheGet<Record<string, unknown>>(cacheKeys.sessionSkips(active.id)),
-    ).toEqual({});
-  });
-
-  it("labels the tail of an unequal superset correctly and offers only the remaining member", async () => {
-    resetDbForTests();
-    vi.mocked(getServerSessionSets).mockResolvedValue([]);
-    await seed("reps", [
-      prescription("bench", "bench-press", "Bench Press", "reps", 1, 1),
-      prescription("row", "barbell-row", "Barbell Row", "reps", 1, 2),
-    ]);
-    render(
-      <MemoryRouter>
-        <Session />
-      </MemoryRouter>,
-    );
-
-    await screen.findByText("round 1 of 1");
-    fireEvent.click(screen.getByRole("button", { name: "Log round" }));
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueueBatch)).toHaveBeenCalledTimes(1),
-    );
-
-    // Bench (A1, target 1) is done; Row (A2, target 2) still owes a set. This
-    // is the last set of a two-round day, not "round 2 of 1", and only Row
-    // has anything left to log — Bench must not be offered another set.
-    expect(await screen.findByText("round 2 of 2")).toBeTruthy();
-    expect(screen.queryByText(/round 2 of 1/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Log round" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Log Bench Press only" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Log Barbell Row only" })).toBeTruthy();
-
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-    fireEvent.click(screen.getByRole("button", { name: "Log Barbell Row only" }));
-
-    await vi.waitFor(() =>
-      expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1),
-    );
-    expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
-      payload: { exercise_id: "barbell-row", set_index: 1 },
-    });
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull(),
-    );
-  });
 });
 
-
+const R = {
+  local: "Set status: On this phone, waiting to send",
+  synced: "Set status: Saved to the server",
+  review: "Set status: Needs review",
+};
+async function inList() {
+  fireEvent.click(await screen.findByRole("button", { name: "List" }));
+}
 const receiptOwner = "aaaaaaaa-1111-4111-8111-111111111111";
 const receiptOriginalId = "original-set-0001";
 const receiptSet = (id = "receipt-set-0001"): SetInsert => ({
@@ -2430,13 +1554,15 @@ describe("Session per-set receipts", () => {
     await seedReceiptSets(set);
     vi.mocked(outbox.inspect).mockResolvedValue([receiptEntry(set)] as any);
     const first = render(<MemoryRouter><Session /></MemoryRouter>);
-    expect(await screen.findByRole("status", { name: "Set status: On this phone" })).toBeTruthy();
+    await inList();
+    expect(await screen.findByRole("note", { name: R.local })).toBeTruthy();
 
     first.unmount();
     vi.mocked(outbox.inspect).mockResolvedValue([]);
     render(<MemoryRouter><Session /></MemoryRouter>);
-    expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    await inList();
+    expect(await screen.findByRole("note", { name: R.review })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
   });
 
   it("shows Synced only when the exact set UUID is returned by the server read", async () => {
@@ -2444,7 +1570,8 @@ describe("Session per-set receipts", () => {
     await seedReceiptSets(set);
     vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([set.id]), voidIds: new Set() });
     render(<MemoryRouter><Session /></MemoryRouter>);
-    expect(await screen.findByRole("status", { name: "Set status: Synced" })).toBeTruthy();
+    await inList();
+    expect(await screen.findByRole("note", { name: R.synced })).toBeTruthy();
   });
 
   it("keeps a partially acknowledged correction local until its linked void is read back", async () => {
@@ -2459,8 +1586,9 @@ describe("Session per-set receipts", () => {
     }] as any);
     vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([replacement.id]), voidIds: new Set() });
     render(<MemoryRouter><Session /></MemoryRouter>);
-    expect(await screen.findByRole("status", { name: "Set status: On this phone" })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    await inList();
+    expect(await screen.findByRole("note", { name: R.local })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
   });
 
   it("opens OutboxSheet with the Review reason and leaves correction available", async () => {
@@ -2468,10 +1596,9 @@ describe("Session per-set receipts", () => {
     await seedReceiptSets(set);
     vi.mocked(getExactSetReceiptIds).mockRejectedValue(new Error("read timed out"));
     render(<MemoryRouter><Session /></MemoryRouter>);
-    await screen.findByRole("button", { name: /Last: 20 kg × 8 working/ });
-    fireEvent.click(await screen.findByRole("button", { name: "Open workout" }));
+    await inList();
     const review = await screen.findByRole("button", { name: /Review sync status: Could not verify exact server receipt: read timed out/i });
-    expect(screen.getByRole("button", { name: "Correct logged set 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Correct logged set 1/ })).toBeTruthy();
     fireEvent.click(review);
     expect(await screen.findByText(/Could not verify exact server receipt: read timed out/)).toBeTruthy();
   });
@@ -2482,6 +1609,7 @@ describe("Session per-set receipts", () => {
     vi.mocked(outbox.inspect).mockResolvedValue([receiptEntry(set, "dead")] as any);
     vi.mocked(getExactSetReceiptIds).mockRejectedValue(new Error("read timed out"));
     render(<MemoryRouter><Session /></MemoryRouter>);
+    await inList();
     expect(await screen.findByRole("button", { name: /Review sync status: the server rejected this set/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Could not verify exact server receipt: read timed out/i })).toBeNull();
   });
@@ -2492,18 +1620,19 @@ describe("Session per-set receipts", () => {
     await seedReceiptSets(first, second);
     vi.mocked(getExactSetReceiptIds).mockRejectedValue(new Error("read unavailable"));
     render(<MemoryRouter><Session /></MemoryRouter>);
+    await inList();
     await vi.waitFor(() => expect(getExactSetReceiptIds).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: "List" }));
-    const details = screen.queryByRole("button", { name: "Show details for Bench Press" });
-    if (details) fireEvent.click(details);
-    await screen.findByRole("button", { name: "Correct logged set 1" });
+    // both planned sets are logged, so Bench is a closed row until opened
+    const row = screen.queryByRole("button", { name: /^Bench Press — / });
+    if (row) fireEvent.click(row);
+    await screen.findByRole("button", { name: /^Correct logged set 1/ });
     await vi.waitFor(() => expect(receiptIdentity.syncedListeners.size).toBeGreaterThan(0));
     const listener = [...receiptIdentity.syncedListeners][0]!;
     await act(async () => {
       listener({ kind: "insert", table: "sets", payload: first }, receiptOwner);
     });
-    expect(await screen.findByRole("note", { name: "Set status: Synced" })).toBeTruthy();
-    expect(screen.getByRole("note", { name: "Set status: Review" })).toBeTruthy();
+    expect(await screen.findByRole("note", { name: R.synced })).toBeTruthy();
+    expect(screen.getByRole("note", { name: R.review })).toBeTruthy();
   });
 
   it("does not report a replacement Synced while its durable link snapshot is delayed", async () => {
@@ -2523,9 +1652,8 @@ describe("Session per-set receipts", () => {
     }] as any);
     vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([replacement.id]), voidIds: new Set() });
     render(<MemoryRouter><Session /></MemoryRouter>);
-    await screen.findByRole("button", { name: /Last: 20 kg × 8 working/ });
-    fireEvent.click(screen.getByRole("button", { name: "Open workout" }));
-    await screen.findByRole("button", { name: "Correct logged set 1" });
+    await inList();
+    await screen.findByRole("button", { name: /^Correct logged set 1/ });
     await vi.waitFor(() => {
       expect(receiptIdentity.syncedListeners.size).toBeGreaterThan(0);
       expect(waitingReads.length).toBeGreaterThan(0);
@@ -2536,26 +1664,26 @@ describe("Session per-set receipts", () => {
     await act(async () => {
       listener({ kind: "insert", table: "sets", payload: replacement }, receiptOwner, link);
     });
-    expect(await screen.findByRole("note", { name: "Set status: Review" })).toBeTruthy();
-    expect(screen.queryByRole("note", { name: "Set status: Synced" })).toBeNull();
+    expect(await screen.findByRole("note", { name: R.review })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
 
     await vi.waitFor(() => expect(waitingReads.length).toBeGreaterThan(0));
     await act(async () => {
       for (const resolve of olderReads) resolve({});
     });
-    expect(screen.queryByRole("note", { name: "Set status: Synced" })).toBeNull();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
     linksReleased = true;
     await act(async () => {
       const currentReads = waitingReads.splice(0);
       for (const resolve of currentReads) resolve({ [replacement.id]: receiptOriginalId });
     });
-    expect(await screen.findByRole("note", { name: "Set status: On this phone" })).toBeTruthy();
-    expect(screen.queryByRole("note", { name: "Set status: Synced" })).toBeNull();
+    expect(await screen.findByRole("note", { name: R.local })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
 
     await act(async () => {
       listener({ kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } }, receiptOwner, link);
     });
-    expect(await screen.findByRole("note", { name: "Set status: Synced" })).toBeTruthy();
+    expect(await screen.findByRole("note", { name: R.synced })).toBeTruthy();
   });
 
   it("keeps a correction in Review when its linked void is dead", async () => {
@@ -2570,8 +1698,9 @@ describe("Session per-set receipts", () => {
     }] as any);
     vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([replacement.id]), voidIds: new Set() });
     render(<MemoryRouter><Session /></MemoryRouter>);
+    await inList();
     expect(await screen.findByRole("button", { name: /Review sync status: original set void was refused/i })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
   });
 
   it("requires both captured correction ACKs when readback is unavailable", async () => {
@@ -2586,24 +1715,25 @@ describe("Session per-set receipts", () => {
     }] as any);
     vi.mocked(getExactSetReceiptIds).mockRejectedValue(new Error("read unavailable"));
     render(<MemoryRouter><Session /></MemoryRouter>);
+    await inList();
     await vi.waitFor(() => expect(getExactSetReceiptIds).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: "List" }));
-    const details = screen.queryByRole("button", { name: "Show details for Bench Press" });
-    if (details) fireEvent.click(details);
-    await screen.findByRole("button", { name: "Correct logged set 1" });
+    // both planned sets are logged, so Bench is a closed row until opened
+    const row = screen.queryByRole("button", { name: /^Bench Press — / });
+    if (row) fireEvent.click(row);
+    await screen.findByRole("button", { name: /^Correct logged set 1/ });
     await vi.waitFor(() => expect(receiptIdentity.syncedListeners.size).toBeGreaterThan(0));
     const listener = [...receiptIdentity.syncedListeners][0]!;
 
     await act(async () => {
       listener({ kind: "insert", table: "sets", payload: replacement }, receiptOwner);
     });
-    expect(await screen.findByRole("note", { name: "Set status: On this phone" })).toBeTruthy();
-    expect(screen.queryByRole("note", { name: "Set status: Synced" })).toBeNull();
+    expect(await screen.findByRole("note", { name: R.local })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
 
     await act(async () => {
       listener({ kind: "insert", table: "set_voids", payload: { set_id: receiptOriginalId } }, receiptOwner, link);
     });
-    expect(await screen.findByRole("note", { name: "Set status: Synced" })).toBeTruthy();
+    expect(await screen.findByRole("note", { name: R.synced })).toBeTruthy();
   });
 
   it("does not promote a late exact read from the prior account", async () => {
@@ -2614,14 +1744,15 @@ describe("Session per-set receipts", () => {
       .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
       .mockResolvedValue({ setIds: new Set(), voidIds: new Set() });
     render(<MemoryRouter><Session /></MemoryRouter>);
+    await inList();
     await vi.waitFor(() => expect(resolveOld).toBeTypeOf("function"));
     receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
     await act(async () => {
       for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId);
       resolveOld({ setIds: new Set([set.id]), voidIds: new Set() });
     });
-    expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    expect(await screen.findByRole("note", { name: R.review })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
   });
 
   it("does not let a late failed read overwrite the new account snapshot", async () => {
@@ -2632,14 +1763,15 @@ describe("Session per-set receipts", () => {
       .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject; }))
       .mockResolvedValue({ setIds: new Set(), voidIds: new Set() });
     render(<MemoryRouter><Session /></MemoryRouter>);
+    await inList();
     await vi.waitFor(() => expect(rejectOld).toBeTypeOf("function"));
     receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
     await act(async () => {
       for (const listener of receiptIdentity.listeners) listener(receiptIdentity.userId);
       rejectOld(new Error("late account A read failure"));
     });
-    expect(await screen.findByRole("status", { name: "Set status: Review" })).toBeTruthy();
-    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    expect(await screen.findByRole("note", { name: R.review })).toBeTruthy();
+    expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
   });
 });
 
@@ -2670,25 +1802,25 @@ describe("Focus movement scene integration", () => {
       notes: "Working bracket cue.",
     };
     await seed("reps", [first, current, working]);
+    // no rest scene: the next set's own cue is what this test follows
+    setSetting("autoStartRest", false);
     render(<MemoryRouter><Session /></MemoryRouter>);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "LOG SET" }).hasAttribute("disabled")).toBe(false);
+      expect(screen.getByRole("button", { name: /^LOG (SET|WARMUP)$/ }).hasAttribute("disabled")).toBe(false);
     });
-    fireEvent.click(screen.getByText("warmup", { selector: "button", exact: true }));
-    expect(screen.getByText("Earlier bracket cue.")).toBeTruthy();
+    expect(await screen.findByText(/Earlier bracket cue\./)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "increase load by 2.5 kg" }));
-    expect(screen.getByText("22.5 kg total")).toBeTruthy();
+    expect(dockValue("load")).toBe("22.5");
     expect(outbox.enqueue).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "List" }));
-    expect(screen.getByText(/22\.5/)).toBeTruthy();
+    expect(dockValue("load")).toBe("22.5");
     fireEvent.click(screen.getByRole("button", { name: "Focus" }));
-    expect(screen.getByText("22.5 kg total")).toBeTruthy();
+    expect(dockValue("load")).toBe("22.5");
 
-    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    fireEvent.click(screen.getByRole("button", { name: /^LOG (SET|WARMUP)$/ }));
     await waitFor(() => expect(outbox.enqueue).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: /hide the rest timer/ }));
-    expect(await screen.findByText("Current bracket cue.")).toBeTruthy();
-    expect(screen.getByText("40 kg total")).toBeTruthy();
+    expect(await screen.findByText(/Current bracket cue\./)).toBeTruthy();
+    await waitFor(() => expect(dockValue("load")).toBe("40"));
   });
 });

@@ -36,6 +36,9 @@ export type LoadPictureModel =
       kind: "dumbbell";
       /** the weight of ONE implement, kg */
       implementKg: number;
+      /** the number as the lifter reads/typed it, in the unit shown; used for
+       *  the words so an authored value is never re-derived from kg */
+      displayLoad?: number;
       pair: boolean;
       word: "dumbbell" | "kettlebell";
       onToggle?(): void;
@@ -52,6 +55,8 @@ export type LoadPictureModel =
   | {
       kind: "bodyweight";
       addedOn: boolean;
+      /** a timed hold rather than counted reps */
+      timed?: boolean;
       onAddLoad?(): void;
     };
 
@@ -167,7 +172,13 @@ export function LoadPicture({ model, unit }: { model: LoadPictureModel; unit: Un
     }
     case "dumbbell": {
       const look = dumbbellLook(model.implementKg);
-      const text = dumbbellText(model.implementKg, model.pair, unit, model.word);
+      const text = dumbbellText(
+        model.implementKg,
+        model.pair,
+        unit,
+        model.word,
+        model.displayLoad,
+      );
       const body = (
         <>
           <span className="lp-dbs" aria-hidden="true">
@@ -221,8 +232,12 @@ export function LoadPicture({ model, unit }: { model: LoadPictureModel; unit: Un
           <span className="lp-bw-title">Bodyweight</span>
           <span className="lp-caption">
             {model.addedOn
-              ? "Reps count most. The added load is logged with each set."
-              : "Reps only. Your bodyweight isn’t added to the load."}
+              ? model.timed
+                ? "Timed hold. The added load is logged with each set."
+                : "Reps count most. The added load is logged with each set."
+              : model.timed
+                ? "Timed hold. Your bodyweight isn’t added to the load."
+                : "Reps only. Your bodyweight isn’t added to the load."}
           </span>
           {!model.addedOn && model.onAddLoad && (
             <button type="button" className="text-link" onClick={model.onAddLoad}>

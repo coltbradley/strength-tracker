@@ -10,6 +10,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { cacheGet, cacheKeys, cacheSet, resetDbForTests } from "../lib/db";
@@ -32,6 +33,10 @@ vi.mock("../lib/data", async () => {
   };
 });
 
+// getStatus() is a useSyncExternalStore snapshot: it must return the SAME
+// object until the status changes, exactly like the real outbox.
+const idleStatus = vi.hoisted(() => ({ pending: 0, dead: 0, held: 0, state: "idle", lastError: null }));
+
 vi.mock("../lib/sync", () => ({
   outbox: {
     pendingSets: vi.fn(async () => []),
@@ -41,7 +46,8 @@ vi.mock("../lib/sync", () => ({
     correctionLinks: vi.fn(async () => ({})),
     subscribe: vi.fn(() => () => undefined),
     subscribeSynced: vi.fn(() => () => undefined),
-    getStatus: vi.fn(() => ({ pending: 0, dead: 0, held: 0, state: "idle", lastError: null })),
+    getStatus: vi.fn(() => idleStatus),
+    isStatusKnown: vi.fn(() => true),
   },
 }));
 
@@ -126,31 +132,24 @@ describe("Session corrections", () => {
       </MemoryRouter>,
     );
 
-    // This scenario is eligible for Focus; List is the session's workout map.
-    fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Show details for Bench Press" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Correct logged set 1" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
-
+    // Bench is done, so the session opens on Squat. Open Bench in List and
+    // start correcting its logged set.
+    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Bench Press — done/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Correct logged set 1/ }));
+    const sheet = within(await screen.findByRole("dialog", { name: /^Fix / }));
+    fireEvent.click(sheet.getByRole("button", { name: "increase reps by 1" }));
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
-    ).toBe("9");
+      sheet.getByRole("button", { name: "reps value — tap to type" }).textContent,
+    ).toContain("9");
 
-    fireEvent.click(screen.getByRole("button", { name: "Back Squat, selected — current" }));
-
-    expect(screen.getByText("TARGET 1×8 @ 20 KG · REST 1:00")).toBeTruthy();
+    // Another entry cannot be selected while the correction is open: the
+    // sheet's own draft stays with its source entry.
+    fireEvent.click(screen.getByRole("button", { name: /^Today's workout,/ }));
+    const today = within(screen.getByRole("dialog", { name: "Today's workout" }));
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
-    ).toBe("9");
-    expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
+      (today.getByRole("button", { name: /^Back Squat/ }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(outbox.enqueue).not.toHaveBeenCalled();
   });
 });
@@ -182,8 +181,16 @@ describe("Session log lock", () => {
       await new Promise((r) => setTimeout(r, 50));
     });
     fireEvent.click(log);
-    fireEvent.click(log);
-
+    // while the write is in flight the key reads Saving… and is disabled, so
+    // a second tap cannot even reach the handler
+    fireEvent.click(screen.getByRole("button", { name: /log set|saving/i }));
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
+    // once the write settles, the 200 ms lock still refuses a second tap and
+    // flashes the key
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /log set/i }));
     expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1);
     expect(
       screen.getByRole("button", { name: /log set/i }).className,
@@ -223,19 +230,15 @@ describe("Session log lock", () => {
 
     // No wait here — the 200 ms log lock from the tap above is still
     // engaged. A correction must go through anyway (Decision 6).
-    fireEvent.click(
-      screen.getByRole("button", { name: "more options for Back Squat" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Correct logged set 1" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Fix last" }));
+    const sheet = within(await screen.findByRole("dialog", { name: /^Fix / }));
     // No jest-dom in this project (see CheckInSheet.render.test.tsx) -- read
     // the DOM state toBeDisabled() would, without adding a dependency.
-    const saveButton = screen.getByRole("button", {
-      name: "SAVE SET 1",
+    const saveButton = sheet.getByRole("button", {
+      name: "Save correction",
     }) as HTMLButtonElement;
     expect(saveButton.disabled).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
+    fireEvent.click(sheet.getByRole("button", { name: "increase reps by 1" }));
     fireEvent.click(saveButton);
 
     await vi.waitFor(() =>
@@ -276,8 +279,9 @@ describe("Session log lock", () => {
       screen.getByRole("button", { name: "increase load by 2.5 kg" }),
     );
     expect(
-      screen.getByRole("button", { name: "load value — tap to type" })
-        .textContent,
+      screen
+        .getByRole("button", { name: "load value — tap to type" })
+        .querySelector(".dock-num-value")?.textContent,
     ).toBe("102.5");
 
     fireEvent.click(
@@ -286,8 +290,9 @@ describe("Session log lock", () => {
     fireEvent.click(screen.getByRole("button", { name: "9" }));
     fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
     expect(
-      screen.getByRole("button", { name: "reps value — tap to type" })
-        .textContent,
+      screen
+        .getByRole("button", { name: "reps value — tap to type" })
+        .querySelector(".dock-num-value")?.textContent,
     ).toBe("9");
 
     // Neither edit was a LOG tap, so the lock never engaged twice.
@@ -375,7 +380,7 @@ describe("Session hero capture", () => {
     );
   });
 
-  it("shows the last logged set as a tappable line that opens its correction", async () => {
+  it("offers Fix last for the newest logged set, which opens its correction sheet", async () => {
     resetDbForTests();
     const loggedSquat: SetInsert = {
       id: "squat-set-1",
@@ -406,12 +411,11 @@ describe("Session hero capture", () => {
       </MemoryRouter>,
     );
 
-    const lastSet = await screen.findByRole("button", {
-      name: "Last: 145 kg × 5 working",
-    });
-    fireEvent.click(lastSet);
+    fireEvent.click(await screen.findByRole("button", { name: "Fix last" }));
 
-    expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();
+    const sheet = await screen.findByRole("dialog", { name: /^Fix / });
+    expect(within(sheet).getByRole("button", { name: "Save correction" })).toBeTruthy();
+    expect(sheet.textContent).toContain("145");
   });
 
   it("offers Swap exercise as a visible hero action", async () => {
@@ -431,7 +435,7 @@ describe("Session hero capture", () => {
     );
 
     await screen.findByRole("heading", { name: "Bench Press" });
-    fireEvent.click(screen.getByRole("button", { name: "Swap exercise" }));
+    fireEvent.click(screen.getByRole("button", { name: "Swap" }));
 
     // The swap sheet is the same ExercisePicker every other picker in this
     // screen uses (title "SWAP EXERCISE"); its search field is what confirms
@@ -480,9 +484,10 @@ describe("Session hero capture", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
-    );
-    expect(screen.getByRole("button", { name: "UNSKIP" })).toBeTruthy();
+    // the session opens on Squat (Bench counts as done); jump back to Bench
+    fireEvent.click(await screen.findByRole("button", { name: /^Today's workout,/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Bench Press — skipped/ }));
+    expect(await screen.findByRole("button", { name: "Unskip" })).toBeTruthy();
+    expect(screen.getByText(/Skipped\. Unskip to log it\./)).toBeTruthy();
   });
 });

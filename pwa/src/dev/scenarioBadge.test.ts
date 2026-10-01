@@ -46,8 +46,12 @@ describe("DEV preview emulations", () => {
     expect(emulation?.[0]).toContain("scroll-behavior: auto !important");
   });
 
-  it("keeps a useful Focus stage in short viewports while allowing the page to scroll", () => {
-    expect(styles).toMatch(/\.focus-deck \.focus-stage\s*\{\s*min-height:\s*100px;/);
-    expect(styles).toContain("overflow-y: auto;");
+  it("lets the Focus middle band scroll above the dock in short viewports", () => {
+    // the middle takes the height left over and scrolls inside itself; it
+    // never slides under the dock, at 320px or at 130% text
+    expect(styles).toMatch(
+      /\.focus-middle\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/,
+    );
+    expect(styles).toMatch(/\.focus-dock\s*\{[^}]*flex:\s*none;/);
   });
 });

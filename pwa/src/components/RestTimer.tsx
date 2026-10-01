@@ -1,18 +1,29 @@
-// Rest strip — docked above the session footer (in-flow, not floating).
-// Counts down to the target, then holds at 0:00 with a clear REST OVER state.
-// Rest is recorded either way when the next set is logged. Hiding this strip
-// never ends the measured rest or advances the workout.
+// The rest clock, one component with two presentations of the same facts:
+//
+//  - "panel": the Focus screen's middle band — a big tappable clock with
+//    −30/+30, then a REST OVER card once the target is reached.
+//  - "strip": the compact bar List shows above its rows — the same clock, the
+//    same adjustments, and a way to hide it.
+//
+// Counting down and announcing are two different jobs, and only the first
+// belongs to a component that mounts and unmounts with sheets and with the
+// Focus/List switch. The tone + notification are `useRestCue` (below), which
+// Session mounts ONCE for the life of the screen, and which remembers which
+// rest it already announced in module scope: a rest is announced once, not
+// once per remount (H2). Rest is recorded either way when the next set is
+// logged. Hiding the strip never ends the measured rest or advances the
+// workout.
+//
 // Notification API is used only if permission was already granted — never
 // prompts. It is also not enough on its own: an installed iOS web app has no
 // `new Notification(...)` constructor at all, so the tone from lib/restCue.ts
 // is the announcement that actually reaches the lifter there. Both are
 // attempted; both are silent when they cannot happen.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatClock } from "../lib/format";
 import { playRestCue } from "../lib/restCue";
 import { getRestSound } from "../lib/settings";
-import { RpeChips } from "./RpeChips";
 
 /** "2 min 30 sec" — "2:30" is read as a ratio or a date by most screen
  *  readers, and this string is the only way the remaining time is spoken. */
@@ -33,40 +44,121 @@ export interface ActiveRest {
   forLabel: string;
 }
 
-interface RestTimerProps {
-  variant?: "strip" | "scene";
-  rest: ActiveRest | null;
-  onAdjust: (deltaSeconds: number) => void;
-  /** tap the clock: type the remaining seconds */
-  onEdit: () => void;
-  onDone: () => void;
-  /** "Next: Squat 145 x 5, set 3 of 4" -- computed by Session from the same
-   *  nextEntry/partnerEntry/advanceTo logic the focus hero's own "next dot"
-   *  line uses, so the two never name a different next set. Null (or
-   *  omitted) when there is nothing left to look forward to (last set of
-   *  the workout, or a by-feel entry with no scheme to quote) -- the rest
-   *  strip falls back to naming what it was recorded against, as before. */
-  nextSetLabel?: string | null;
-  lastSetRpe?: number | null;
-  lastSetLabel?: string | null;
-  lastSetReceipt?: ReactNode;
-  onRateLastSet?(rpe: number | null): void;
-  onNoteLastSet?(): void;
+// ---- announce once per rest ------------------------------------------------
+
+/** Rests whose end has already been announced, by `startedAt`. Module scope on
+ *  purpose: a component's ref dies with every unmount (a sheet closing, the
+ *  Focus/List switch), and the next mount saw an over rest it had never
+ *  announced and played the tone again. Bounded, so a long session cannot
+ *  grow it without end. */
+const announcedRests: number[] = [];
+
+export function restAnnounced(startedAt: number): boolean {
+  return announcedRests.includes(startedAt);
 }
 
-export function RestTimer({
-  variant = "strip",
-  rest,
-  onAdjust,
-  onEdit,
-  onDone,
-  nextSetLabel = null,
-  lastSetRpe = null,
-  lastSetLabel = null,
-  lastSetReceipt,
-  onRateLastSet,
-  onNoteLastSet,
-}: RestTimerProps) {
+/** Mark a rest as announced without announcing it: a deliberate "End rest
+ *  now" is the lifter's own act and must not be followed by a buzz for it. */
+export function silenceRestCue(startedAt: number): void {
+  if (announcedRests.includes(startedAt)) return;
+  announcedRests.push(startedAt);
+  if (announcedRests.length > 50) announcedRests.shift();
+}
+
+/** Test seam: forget every announcement. */
+export function resetRestCuesForTests(): void {
+  announcedRests.length = 0;
+}
+
+/**
+ * Fire the rest-over tone and notification exactly once per rest, at the
+ * moment the target is reached — whatever is or is not on screen then.
+ * Re-armed whenever the target moves (−30/+30, the pad), cleared when the rest
+ * ends. Uses one timeout to the deadline rather than a ticking clock, so it
+ * costs the screen that mounts it no re-renders.
+ */
+export function useRestCue(
+  rest: ActiveRest | null,
+  body: string | null,
+): void {
+  const startedAt = rest?.startedAt ?? null;
+  const targetSeconds = rest?.targetSeconds ?? null;
+  const bodyRef = useRef(body);
+  bodyRef.current = body;
+
+  useEffect(() => {
+    if (startedAt === null || targetSeconds === null) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const announce = () => {
+      if (restAnnounced(startedAt)) return;
+      // Marked announced BEFORE either cue is attempted, and for the rest as a
+      // whole rather than per channel: a browser that grants no notification
+      // permission must not be asked again on every re-arm.
+      silenceRestCue(startedAt);
+      // The tone first: it is the only cue an installed iOS web app can make,
+      // and it is the one the lifter hears with the phone face-down. The
+      // preference is read here rather than subscribed to — see getRestSound.
+      if (getRestSound()) playRestCue();
+      if (
+        typeof Notification === "undefined" ||
+        Notification.permission !== "granted"
+      )
+        return;
+      try {
+        // Desktop browsers only, in practice. iOS home-screen apps expose
+        // `Notification` and will happily grant permission, then throw here
+        // because only ServiceWorkerRegistration.showNotification is real —
+        // which is why the catch is not decoration and why the tone above is
+        // not a nicety.
+        new Notification("Rest over", {
+          body: bodyRef.current ?? "Next set is ready.",
+        });
+      } catch {
+        // cosmetic
+      }
+    };
+
+    const arm = () => {
+      if (restAnnounced(startedAt)) return;
+      const remainingMs = startedAt + targetSeconds * 1000 - Date.now();
+      if (remainingMs <= 0) {
+        announce();
+        return;
+      }
+      timer = setTimeout(arm, Math.min(remainingMs, 2_147_000_000));
+    };
+    arm();
+
+    // A phone locked mid-rest suspends timers; on return the deadline has
+    // passed and this is the moment to catch up.
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+        arm();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [startedAt, targetSeconds]);
+}
+
+// ---- the clock -------------------------------------------------------------
+
+/**
+ * The ticking clock of one rest: seconds elapsed, seconds remaining, and
+ * whether it is over. Exported so the focus deck's "End rest now" link can
+ * disappear the moment the rest is over without a second copy of the maths.
+ */
+export function useRestClock(rest: ActiveRest | null): {
+  elapsed: number;
+  remaining: number;
+  ready: boolean;
+} {
   const [now, setNow] = useState(() => Date.now());
 
   // One rest is one `startedAt`. Keying the tick on the whole `rest` object
@@ -76,58 +168,41 @@ export function RestTimer({
 
   useEffect(() => {
     if (startedAt === null) return;
+    setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 400);
     return () => clearInterval(t);
   }, [startedAt]);
 
   const elapsed = rest ? Math.max(0, (now - rest.startedAt) / 1000) : 0;
   const remaining = rest ? rest.targetSeconds - elapsed : 0;
-  const ready = rest !== null && remaining <= 0;
+  return { elapsed, remaining, ready: rest !== null && remaining <= 0 };
+}
 
-  // Notifying is a side effect, so it belongs in an effect. Raised from the
-  // render body, React could fire a system notification for a render it went
-  // on to discard — and a boolean ref set by that same render is no guard.
-  //
-  // What we remember is WHICH rest was announced, not merely that one was.
-  // A boolean has to be cleared by somebody, and whoever clears it is a
-  // second effect whose ordering you then have to reason about: with the
-  // reset living in the tick effect above, a rest that was over the moment it
-  // started (a zero-second target) never flipped `over` and so never got its
-  // announcement. Keyed on the rest's own identity, ordering stops mattering.
-  const announcedFor = useRef<number | null>(null);
+interface RestTimerProps {
+  /** "panel" (Focus's middle band) or "strip" (List's compact bar) */
+  variant?: "strip" | "panel";
+  rest: ActiveRest | null;
+  onAdjust: (deltaSeconds: number) => void;
+  /** tap the clock: type the remaining seconds */
+  onEdit: () => void;
+  /** strip only: hide it (the clock keeps measuring) */
+  onDone?: () => void;
+  /** "Next: Barbell Row · set 3 of 4" — one line, computed by Session from
+   *  the same logic the focus deck's own next-set label uses, so the two never
+   *  name a different next set. Null when there is nothing left to look
+   *  forward to. */
+  nextSetLabel?: string | null;
+}
 
-  useEffect(() => {
-    if (!ready || startedAt === null) return;
-    if (announcedFor.current === startedAt) return;
-    // Marked announced BEFORE either cue is attempted, and for the rest as a
-    // whole rather than per channel. Previously this line sat after the
-    // notification guard, so on a browser that grants no permission the rest
-    // was never recorded as announced — harmless while nothing else happened
-    // here, and a tone on every 400 ms tick now that something does.
-    announcedFor.current = startedAt;
-
-    // The tone first: it is the only cue an installed iOS web app can make,
-    // and it is the one the lifter hears with the phone face-down. The
-    // preference is read here rather than subscribed to — see getRestSound.
-    if (getRestSound()) playRestCue();
-
-    if (
-      typeof Notification === "undefined" ||
-      Notification.permission !== "granted"
-    )
-      return;
-    try {
-      // Desktop browsers only, in practice. iOS home-screen apps expose
-      // `Notification` and will happily grant permission, then throw here
-      // because only ServiceWorkerRegistration.showNotification is real —
-      // which is why the catch is not decoration and why the tone above is
-      // not a nicety.
-      new Notification("Rest over", { body: nextSetLabel ?? "Next set is ready." });
-    } catch {
-      // cosmetic
-    }
-  }, [ready, startedAt, nextSetLabel]);
-
+export function RestTimer({
+  variant = "panel",
+  rest,
+  onAdjust,
+  onEdit,
+  onDone,
+  nextSetLabel = null,
+}: RestTimerProps) {
+  const { elapsed, remaining, ready } = useRestClock(rest);
   if (!rest) return null;
 
   const pct = ready
@@ -136,32 +211,110 @@ export function RestTimer({
         Math.max(0, remaining / Math.max(1, rest.targetSeconds)) * 100,
       );
 
+  const status = (
+    <span className="sr-only" role="status" aria-live="assertive">
+      {ready ? "Rest over. Your next set is ready when you are." : ""}
+    </span>
+  );
+
+  if (variant === "panel") {
+    return (
+      <div
+        key={rest.startedAt}
+        className={`rest-panel ${ready ? "rest-panel-ready" : "rest-timer-enter"}`}
+        role="timer"
+        aria-label={ready ? "rest timer complete" : "rest timer"}
+      >
+        {status}
+        {ready ? (
+          <>
+            <div className="rest-panel-label">■ REST OVER</div>
+            <div className="rest-panel-ready-title">Ready when you are.</div>
+            <div className="rest-panel-sub">
+              {formatClock(elapsed)} since the last set · target{" "}
+              {formatClock(rest.targetSeconds)}
+            </div>
+            <button
+              type="button"
+              className="text-link rest-panel-retarget"
+              onClick={onEdit}
+              aria-label="rest over — tap to change the target"
+            >
+              Change target ›
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="rest-panel-head">
+              <span className="rest-panel-label">◷ RESTING</span>
+              <span className="rest-panel-adjust">
+                <button
+                  type="button"
+                  className="rest-panel-btn"
+                  aria-label="take 30 seconds off the rest target"
+                  onClick={() => onAdjust(-30)}
+                >
+                  −30
+                </button>
+                <button
+                  type="button"
+                  className="rest-panel-btn"
+                  aria-label="add 30 seconds to the rest target"
+                  onClick={() => onAdjust(30)}
+                >
+                  +30
+                </button>
+              </span>
+            </div>
+            <button
+              type="button"
+              className="rest-panel-clock"
+              onClick={onEdit}
+              aria-label={`rest remaining ${spokenClock(remaining)} — tap to change`}
+            >
+              {formatClock(remaining)}
+            </button>
+            <span className="rest-panel-track">
+              <span
+                className="rest-panel-fill"
+                style={{ transform: `scaleX(${pct / 100})` }}
+              />
+            </span>
+          </>
+        )}
+        {nextSetLabel && (
+          <div className="rest-panel-next" title={nextSetLabel}>
+            {nextSetLabel}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     /* role="timer" names the strip for a screen reader and carries an
        implicit aria-live="off": the value is reachable on demand, and a
        four-times-a-second countdown never interrupts anyone mid-set. */
     <div
       key={rest.startedAt}
-      className={`rest-timer rest-timer-${variant} ${ready ? "rest-timer-ready" : "rest-timer-rest rest-timer-enter"}`}
+      className={`rest-timer ${ready ? "rest-timer-ready" : "rest-timer-rest rest-timer-enter"}`}
       role="timer"
       aria-label={ready ? "rest timer complete" : "rest timer"}
     >
-      {/* Announce the transition once, without reading a changing countdown
-          aloud every 400 ms. The visible state remains when sound is off. */}
-      <span className="sr-only" role="status" aria-live="assertive">
-        {ready ? "Rest over. Your next set is ready when you are." : ""}
-      </span>
+      {status}
       <div className="rest-row">
-        <span className="rest-label">{ready ? "REST OVER" : "RESTING"}</span>
+        <span className="rest-label">{ready ? "■ REST OVER" : "◷ RESTING"}</span>
         <button
           type="button"
           className="rest-timer-time"
           onClick={onEdit}
           /* the label ADDS to the visible time rather than replacing it —
              "edit remaining rest" alone left the clock unreadable */
-          aria-label={ready
-            ? "rest over — tap to change the target"
-            : `rest remaining ${spokenClock(remaining)} — tap to change`}
+          aria-label={
+            ready
+              ? "rest over — tap to change the target"
+              : `rest remaining ${spokenClock(remaining)} — tap to change`
+          }
         >
           {ready ? "0:00" : formatClock(remaining)}
         </button>
@@ -187,42 +340,54 @@ export function RestTimer({
         >
           +30
         </button>
-        <button
-          type="button"
-          className="rest-timer-dismiss"
-          aria-label="hide the rest timer — rest is still recorded"
-          onClick={onDone}
-        >
-          HIDE
-        </button>
+        {onDone && (
+          <button
+            type="button"
+            className="rest-timer-dismiss"
+            aria-label="hide the rest timer — rest is still recorded"
+            onClick={onDone}
+          >
+            HIDE
+          </button>
+        )}
       </div>
       <div className="rest-foot">
-          {ready
-          ? nextSetLabel ?? "Next set when you are ready."
-          : nextSetLabel
-            ? nextSetLabel
-            : `Tap to change. Recorded against ${rest.forLabel}.`}
+        {nextSetLabel ??
+          (ready
+            ? "Next set when you are ready."
+            : `Tap to change. Recorded against ${rest.forLabel}.`)}
       </div>
-      {variant === "scene" && lastSetLabel && (
-        <div className="rest-last-set">
-          <span>LAST SET</span>
-          <strong>{lastSetLabel}</strong>
-          {lastSetReceipt}
-        </div>
-      )}
-      {(onRateLastSet || onNoteLastSet) && (
-        <div className="rest-actions">
-          {onRateLastSet && (
-            <div className="rest-rate">
-              <RpeChips shown value={lastSetRpe} onChange={onRateLastSet} />
-            </div>
-          )}
-          {onNoteLastSet && (
-            <button type="button" className="rest-note-action" onClick={onNoteLastSet}>
-              Note last set
-            </button>
-          )}
-        </div>
+    </div>
+  );
+}
+
+/**
+ * The line above the dock's numbers while a rest runs: "NEXT SET · SET 4 OF
+ * 6", so it is plain the numbers being edited belong to the NEXT set and not
+ * the one just saved — and, until the rest is over, a quiet link to end it
+ * early. Not a button-shaped button: starting early is allowed, never urged.
+ */
+export function RestDockTag({
+  rest,
+  label,
+  onEndNow,
+}: {
+  rest: ActiveRest;
+  label: string;
+  onEndNow(elapsedSeconds: number): void;
+}) {
+  const { elapsed, ready } = useRestClock(rest);
+  return (
+    <div className="rest-dock-tag">
+      <span className="rest-dock-tag-label">{label}</span>
+      {!ready && (
+        <button
+          type="button"
+          className="text-link"
+          onClick={() => onEndNow(Math.floor(elapsed))}
+        >
+          End rest now ›
+        </button>
       )}
     </div>
   );
