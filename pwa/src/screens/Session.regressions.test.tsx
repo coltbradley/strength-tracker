@@ -381,7 +381,7 @@ describe("The rest-over cue is announced once (H2)", () => {
   it("H2: sheets and the Focus/List switch do not replay an over rest's tone", async () => {
     await seed([rx("bench", "bench-press", "Bench Press", 60, 3)]);
     await cacheSet(cacheKeys.sessionRest(active.id), {
-      startedAt: Date.now() - 400_000,
+      startedAt: Date.now() - 61_000,
       targetSeconds: 60,
       forLabel: "Bench Press set 1",
     });

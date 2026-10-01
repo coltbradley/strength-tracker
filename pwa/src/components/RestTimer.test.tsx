@@ -32,7 +32,7 @@ let nth = 0;
 function overdue(targetSeconds = 60): ActiveRest {
   nth += 1;
   return {
-    startedAt: Date.now() - (targetSeconds + 30) * 1000 - nth * 60_000,
+    startedAt: Date.now() - (targetSeconds + 2) * 1000 - nth,
     targetSeconds,
     forLabel: "Barbell Row set 2",
   };
@@ -203,6 +203,33 @@ describe("useRestCue", () => {
     vi.stubGlobal("Notification", N);
     render(<Cue rest={overdue()} body="Next: Row · set 3 of 4" />);
     expect(bodies).toEqual(["Next: Row · set 3 of 4"]);
+  });
+
+  it("N7: a rest that ended long ago says nothing on a cold open", () => {
+    const stale: ActiveRest = {
+      startedAt: Date.now() - 20 * 60_000,
+      targetSeconds: 90,
+      forLabel: "x",
+    };
+    render(<Cue rest={stale} />);
+    expect(played).not.toHaveBeenCalled();
+    expect(notified).toEqual([]);
+  });
+
+  it("N8: +30 after the rest is over re-arms the announcement for the new deadline", () => {
+    vi.useFakeTimers();
+    const rest = overdue(60);
+    const { rerender } = render(<Cue rest={rest} />);
+    expect(played).toHaveBeenCalledTimes(1);
+    rerender(<Cue rest={{ ...rest, targetSeconds: 90 }} />);
+    expect(played).toHaveBeenCalledTimes(1);
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(played).toHaveBeenCalledTimes(2);
+    // shortening it again is not a new announcement
+    rerender(<Cue rest={{ ...rest, targetSeconds: 30 }} />);
+    expect(played).toHaveBeenCalledTimes(2);
   });
 
   it("never prompts for permission it was not already given", () => {
