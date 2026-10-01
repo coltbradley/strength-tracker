@@ -3736,6 +3736,39 @@
     }
   }
 
+  /* The session controls plus the support cluster do not fit one row of a
+   * phone-width topbar (the sync chip used to land on top of the Focus | List
+   * toggle). On /session the coach and report actions go icon-only (they keep
+   * their accessible names and 44px targets), and if the row is still too
+   * narrow it wraps instead of overlapping. */
+  .topbar:has(.topbar-session) {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .topbar:has(.topbar-session) .topbar-session {
+    flex: 0 1 auto;
+  }
+
+  .topbar:has(.topbar-session) .topbar-right {
+    margin-left: auto;
+    gap: 0;
+  }
+
+  .topbar:has(.topbar-session) .header-action span:not(.fab-off-dot, .fab-queue) {
+    display: none;
+  }
+
+  @media (max-width: 430px) {
+    .topbar:has(.topbar-session) .session-hd-count {
+      padding: 0 10px;
+    }
+
+    .topbar:has(.topbar-session) .session-hd-seg {
+      padding: 0 9px;
+    }
+  }
+
   /* Today's workout sheet */
 
   .tw-units {
