@@ -166,6 +166,13 @@ describe("TrainHome", () => {
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
   });
 
+  it("does not guess a first-up cue for a loaded ordinary day with no prescriptions", () => {
+    renderHome({ prescriptions: [], prescriptionLoadState: "loaded" });
+
+    expect(screen.queryByText("First up")).toBeNull();
+    expect(screen.getByText("0 movements · 0 sets")).toBeTruthy();
+  });
+
   it("names an empty drafted day as a draft, never a rest day", () => {
     renderHome({ workout: { workout, state: "DRAFT" }, prescriptions: [] });
 

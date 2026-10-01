@@ -9,11 +9,12 @@ const LABEL: Record<SetReceipt["state"], string> = {
 export function SetReceiptStatus({
   receipt,
   onReview,
-}: { receipt: SetReceipt; onReview?: () => void }) {
+  announce = true,
+}: { receipt: SetReceipt; onReview?: () => void; announce?: boolean }) {
   const label = LABEL[receipt.state];
   return (
     <span className={`set-receipt set-receipt-${receipt.state}`}>
-      <span className="set-receipt-label" role="status" aria-label={`Set status: ${label}`}>
+      <span className="set-receipt-label" role={announce ? "status" : "note"} aria-label={`Set status: ${label}`}>
         {label}
       </span>
       {receipt.state === "review" && onReview && (

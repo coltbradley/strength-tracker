@@ -3593,7 +3593,7 @@ export function Session() {
             />
             {(() => {
               const receipt = receiptForSet(set.id);
-              return <SetReceiptStatus receipt={receipt} onReview={() => openReceiptReview(receipt)} />;
+              return <SetReceiptStatus receipt={receipt} announce={false} onReview={() => openReceiptReview(receipt)} />;
             })()}
           </div>
         ))}

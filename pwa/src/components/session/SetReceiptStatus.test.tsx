@@ -11,10 +11,18 @@ describe("SetReceiptStatus", () => {
   it.each([
     [{ state: "local" as const }, "On this phone"],
     [{ state: "synced" as const }, "Synced"],
-  ])("announces healthy receipt state as %s", (receipt, label) => {
+  ])("announces the current receipt state as %s", (receipt, label) => {
     render(<SetReceiptStatus receipt={receipt} />);
     expect(screen.getByRole("status", { name: `Set status: ${label}` })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /review sync status/i })).toBeNull();
+  });
+
+  it("can expose a historical receipt label without a live status announcement", () => {
+    render(<SetReceiptStatus receipt={{ state: "synced" }} announce={false} />);
+
+    expect(screen.getByRole("note", { name: "Set status: Synced" })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Set status: Synced" })).toBeNull();
+    expect(screen.getByText("Synced")).toBeTruthy();
   });
 
   it("opens receipt details from Review without wrapping another action", () => {
