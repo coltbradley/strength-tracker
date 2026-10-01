@@ -42,6 +42,10 @@ export interface ActiveRest {
   targetSeconds: number;
   /** "Barbell Row set 2" — what the rest will be recorded against */
   forLabel: string;
+  /** whole seconds into the rest when the lifter pressed "End rest now".
+   *  The target is NOT touched: "Ended early at 0:42 · target 2:30" needs
+   *  both, and a target rewritten to the elapsed time read as "target 0:03". */
+  endedEarlyAt?: number;
 }
 
 // ---- announce once per rest ------------------------------------------------
@@ -194,7 +198,12 @@ export function useRestClock(rest: ActiveRest | null): {
 
   const elapsed = rest ? Math.max(0, (now - rest.startedAt) / 1000) : 0;
   const remaining = rest ? rest.targetSeconds - elapsed : 0;
-  return { elapsed, remaining, ready: rest !== null && remaining <= 0 };
+  return {
+    elapsed,
+    remaining,
+    ready:
+      rest !== null && (rest.endedEarlyAt !== undefined || remaining <= 0),
+  };
 }
 
 interface RestTimerProps {
@@ -250,8 +259,9 @@ export function RestTimer({
             <div className="rest-panel-label">■ REST OVER</div>
             <div className="rest-panel-ready-title">Ready when you are.</div>
             <div className="rest-panel-sub">
-              {formatClock(elapsed)} since the last set · target{" "}
-              {formatClock(rest.targetSeconds)}
+              {rest.endedEarlyAt !== undefined
+                ? `Ended early at ${formatClock(rest.endedEarlyAt)} · target ${formatClock(rest.targetSeconds)}`
+                : `${formatClock(elapsed)} since the last set · target ${formatClock(rest.targetSeconds)}`}
             </div>
             <button
               type="button"

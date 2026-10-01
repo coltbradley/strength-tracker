@@ -229,6 +229,8 @@ interface RestCache {
   startedAt: number;
   targetSeconds: number | null;
   forLabel: string | null;
+  /** seconds into the rest when it was ended early; the target is kept */
+  endedEarlyAt?: number;
 }
 
 type PadKind = "load" | "reps" | "duration" | "rest" | "base";
@@ -960,6 +962,9 @@ export function Session() {
               startedAt: restCached.startedAt,
               targetSeconds: restCached.targetSeconds,
               forLabel: restCached.forLabel ?? "",
+              ...(restCached.endedEarlyAt === undefined
+                ? {}
+                : { endedEarlyAt: restCached.endedEarlyAt }),
             });
           }
         }
@@ -1050,10 +1055,19 @@ export function Session() {
   // shown while the clock keeps running — that is what targetSeconds null
   // means, and rehydrate reads it back the same way.
   const mirrorRest = useCallback(
-    (targetSeconds: number | null, forLabel: string | null) => {
+    (
+      targetSeconds: number | null,
+      forLabel: string | null,
+      endedEarlyAt?: number,
+    ) => {
       const startedAt = restRef.current?.startedAt;
       if (!sessionId || startedAt === undefined) return;
-      const snapshot: RestCache = { startedAt, targetSeconds, forLabel };
+      const snapshot: RestCache = {
+        startedAt,
+        targetSeconds,
+        forLabel,
+        ...(endedEarlyAt === undefined ? {} : { endedEarlyAt }),
+      };
       cacheSet(cacheKeys.sessionRest(sessionId), snapshot).catch((e: unknown) =>
         reportError(e, "cache rest clock"),
       );
@@ -2966,7 +2980,8 @@ export function Session() {
         // elapsed re-read at commit time so typing delay doesn't skew it
         const nowEl = Math.round(restElapsedSeconds() ?? 0);
         if (rest) {
-          setRest({ ...rest, targetSeconds: nowEl + want });
+          // a new target puts the rest back on: it is no longer "ended early"
+          setRest({ startedAt: rest.startedAt, targetSeconds: nowEl + want, forLabel: rest.forLabel });
           mirrorRest(nowEl + want, rest.forLabel);
           armRestAlert(rest.startedAt + (nowEl + want) * 1000, rest.forLabel);
         }
@@ -3562,7 +3577,8 @@ export function Session() {
   const adjustRest = (d: number) => {
     if (!rest) return;
     const targetSeconds = Math.max(0, rest.targetSeconds + d);
-    setRest({ ...rest, targetSeconds });
+    // moving the target puts the rest back on: it is no longer "ended early"
+    setRest({ startedAt: rest.startedAt, targetSeconds, forLabel: rest.forLabel });
     mirrorRest(targetSeconds, rest.forLabel);
     // the closed-app alert follows the target
     armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
@@ -3634,9 +3650,10 @@ export function Session() {
         onEndNow={(elapsed) => {
           // a deliberate end is the lifter's own act: no tone, no buzz for it
           silenceRestCue(rest.startedAt);
-          const targetSeconds = Math.max(0, elapsed);
-          setRest({ ...rest, targetSeconds });
-          mirrorRest(targetSeconds, rest.forLabel);
+          // the target stays the target; the early end is its own fact (D8)
+          const endedEarlyAt = Math.max(0, elapsed);
+          setRest({ ...rest, endedEarlyAt });
+          mirrorRest(rest.targetSeconds, rest.forLabel, endedEarlyAt);
           disarmRestAlert();
         }}
       />

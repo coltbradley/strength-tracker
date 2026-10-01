@@ -267,6 +267,8 @@ describe("Session focus rest panel", () => {
       { timeout: 3000 },
     );
     expect(screen.getByText("■ REST OVER")).toBeTruthy();
+    // D8: the target is kept, never overwritten with the elapsed seconds
+    expect(screen.getByText(/^Ended early at 0:0\d · target [1-9]:\d\d$/)).toBeTruthy();
   });
 });
 

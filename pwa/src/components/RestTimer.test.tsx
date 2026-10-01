@@ -102,6 +102,13 @@ describe("RestTimer panel", () => {
     expect(onEdit).toHaveBeenCalled();
   });
 
+  it("D8: a rest ended early is over at once, and keeps its target in the copy", () => {
+    const rest = { startedAt: Date.now() - 42_000, targetSeconds: 150, forLabel: "x", endedEarlyAt: 42 };
+    render(<RestTimer rest={rest} onAdjust={noop} onEdit={noop} />);
+    expect(screen.getByText("■ REST OVER")).toBeTruthy();
+    expect(screen.getByText("Ended early at 0:42 · target 2:30")).toBeTruthy();
+  });
+
   it("shows a single-line next-set label under the clock, resting and ready", () => {
     const { rerender } = render(
       <RestTimer rest={running()} onAdjust={noop} onEdit={noop} nextSetLabel="Next: Row · set 3 of 4" />,
@@ -261,6 +268,12 @@ describe("RestDockTag", () => {
     expect(screen.getByText("NEXT SET · SET 2 OF 3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "End rest now ›" }));
     expect(onEndNow).toHaveBeenCalledWith(12);
+  });
+
+  it("D8: hides End rest now once the rest was ended early", () => {
+    const rest = { startedAt: Date.now() - 5_000, targetSeconds: 150, forLabel: "x", endedEarlyAt: 5 };
+    render(<RestDockTag rest={rest} label="NEXT SET" onEndNow={noop} />);
+    expect(screen.queryByRole("button", { name: /End rest now/ })).toBeNull();
   });
 
   it("keeps the label but hides End rest now once the rest is over", () => {
