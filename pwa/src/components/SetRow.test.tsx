@@ -38,6 +38,20 @@ describe("SetRow", () => {
     expect(screen.queryByText(/60/)).toBeNull();
   });
 
+  it("shows exactly what was typed in the unit it was typed in", () => {
+    // 11.25 kg per side would read 11.3 through a one-decimal conversion
+    render(<SetRow set={{ ...set(22.5, "per_side"), entered_load: 11.25, entered_unit: "kg" }} unit="kg" />);
+    expect(screen.getByText(/11\.25 kg\/side × 8/)).toBeTruthy();
+    cleanup();
+    // typed in lb, viewed in lb: 225, never 224.9 or 225.0
+    render(<SetRow set={{ ...set(102.06, "total"), entered_load: 225, entered_unit: "lb" }} unit="lb" />);
+    expect(screen.getByText(/225 lb × 8/)).toBeTruthy();
+    cleanup();
+    // typed in lb, viewed in kg: the one-decimal conversion of the total
+    render(<SetRow set={{ ...set(102.06, "total"), entered_load: 225, entered_unit: "lb" }} unit="kg" />);
+    expect(screen.getByText(/102\.1 kg × 8/)).toBeTruthy();
+  });
+
   it("shows a total set as the whole system", () => {
     render(<SetRow set={set(100, "total")} unit="kg" />);
     expect(screen.getByText(/100 kg × 8/)).toBeTruthy();

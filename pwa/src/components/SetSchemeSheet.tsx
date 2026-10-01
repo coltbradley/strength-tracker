@@ -13,6 +13,7 @@
 // times and knowing that means something. Consecutive sets that agree on
 // weight AND warmup collapse back into a single row on save, so the common
 // "3x5, all the same" stays one prescription and does not become three.
+import { buildSetLoad } from "../lib/setLoad";
 import { useState } from "react";
 import { Sheet } from "./Sheet";
 import { Stepper } from "./Stepper";
@@ -24,7 +25,6 @@ import {
   enteredKg,
   offersLoadEntry,
   resolveLoadEntry,
-  totalKg,
 } from "../lib/loadEntry";
 import type { LoadEntry, LoadUnit, SetType, TrackingMode } from "../lib/types";
 
@@ -90,7 +90,14 @@ export function groupSets(
     // The steppers hold what the person TYPED. load_kg is always the total
     // system load, so a per-hand number doubles on the way out — the same
     // conversion the session screen does when logging a set.
-    const load = byFeel ? null : totalKg(s.loadKg, loadEntry);
+    // What the person typed (the stepper's value as displayed, in `unit`) is
+    // the source; lib/setLoad.ts derives the total and its provenance from it.
+    const built =
+      byFeel || s.loadKg <= 0
+        ? null
+        : buildSetLoad({ typedValue: toDisplay(s.loadKg, unit), typedUnit: unit, loadEntry });
+    // The database refuses a prescription of 0; no load is stored as none.
+    const load = built?.load_kg ?? null;
     const last = out[out.length - 1];
     if (last !== undefined && last.load_kg === load && last.set_type === type) {
       last.sets += 1;
@@ -112,9 +119,9 @@ export function groupSets(
       section,
       tracking,
       // "by feel" has no side to halve, so it asserts nothing.
-      load_entry: load === null ? null : loadEntry,
-      entered_load: load === null ? null : toDisplay(s.loadKg, unit),
-      entered_unit: load === null ? null : unit,
+      load_entry: built?.load_entry ?? null,
+      entered_load: built?.entered_load ?? null,
+      entered_unit: built?.entered_unit ?? null,
     });
   }
   return out;

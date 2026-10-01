@@ -83,6 +83,7 @@ import { LoggedSetRow } from "../components/session/LoggedSetRow";
 import { RestLastSetCard } from "../components/session/RestLastSetCard";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
 import { plateText } from "../lib/loadPicture";
+import { buildSetLoad, LoadIntegrityError, typedFromDraft } from "../lib/setLoad";
 import { formatSetLine, setPositionLabel } from "../lib/setLine";
 import { ExerciseDemoSheet } from "../components/ExerciseDemoSheet";
 import { ExercisePicker } from "../components/ExercisePicker";
@@ -107,6 +108,7 @@ import {
   getSetNotesByIds,
   mergeSets,
   type LastActuals,
+  type LastActualSet,
 } from "../lib/data";
 import {
   bracketFor,
@@ -186,7 +188,6 @@ import { cancelRestAlert, scheduleRestAlert } from "../lib/push";
 import {
   enteredKg,
   isBodyweightEquipment,
-  loadEntryForSet,
   offersLoadEntry,
   resolveLoadEntry,
   totalKg,
@@ -200,7 +201,6 @@ import {
 import {
   fromDisplay,
   kgToLb,
-  loadToKg,
   stagedDisplayLoad,
   stepKgFor,
   toDisplay,
@@ -1349,18 +1349,28 @@ export function Session() {
   ): string | null => {
     const a = lastActuals[exerciseId];
     if (!a) return null;
-    const shown = (kg: number) =>
-      `${toDisplay(enteredKg(kg, entryMode), unit)} ${unit}${entryMode === "per_side" ? "/side" : ""}`;
+    // What was typed comes back as typed (same unit, same convention);
+    // anything else is the one-decimal conversion of the stored total.
+    const shown = (set: LastActualSet) => {
+      const typedHere =
+        set.entered_load != null &&
+        set.entered_unit === unit &&
+        (set.load_entry ?? null) === entryMode;
+      const value = typedHere
+        ? set.entered_load
+        : toDisplay(enteredKg(set.load_kg, entryMode), unit);
+      return `${value} ${unit}${entryMode === "per_side" ? "/side" : ""}`;
+    };
     if (latestOnly)
       return repsOnly
         ? `Last time · ${a.reps} reps`
-        : `Last time · ${shown(a.load_kg)} × ${a.reps}`;
+        : `Last time · ${shown(a)} × ${a.reps}`;
     // a value cached before runs existed carries only the top set
     const run = a.run && a.run.length > 0 ? a.run : [a];
     const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);
     const body = sameLoad
-      ? `${shown(run[0].load_kg)} × ${run.map((s) => s.reps).join(", ")}`
-      : run.map((s) => `${shown(s.load_kg)} × ${s.reps}`).join(" · ");
+      ? `${shown(run[0])} × ${run.map((s) => s.reps).join(", ")}`
+      : run.map((s) => `${shown(s)} × ${s.reps}`).join(" · ");
     return `Last time · ${body}`;
   };
 
@@ -1698,7 +1708,13 @@ export function Session() {
           }
         : null,
       lastThisSession: lastThis
-        ? { load_kg: lastThis.load_kg, reps: lastThis.reps }
+        ? {
+            load_kg: lastThis.load_kg,
+            reps: lastThis.reps,
+            load_entry: lastThis.load_entry,
+            entered_load: lastThis.entered_load,
+            entered_unit: lastThis.entered_unit,
+          }
         : null,
       lastSession: lastActuals[openEntry.exercise_id] ?? null,
     }, bodyweightFallback(equipment));
@@ -1707,9 +1723,16 @@ export function Session() {
       ? Math.round(fromDisplay(bracket.entered_load, bracket.entered_unit) * 100) / 100
       : Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
     const authoredInDisplayUnit = bracket?.entered_load != null && bracket.entered_unit === unit;
+    // An earlier set typed in this unit and convention comes back as typed.
+    const repeatTyped =
+      p.entered && p.entered.unit === unit && p.entered.entry === loadEntry
+        ? p.entered.load
+        : undefined;
     const prefilledLoad = authoredInDisplayUnit
       ? sourceEntryKg
-      : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100;
+      : repeatTyped !== undefined
+        ? Math.round(fromDisplay(repeatTyped, unit) * 100) / 100
+        : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100;
     setEntryKg(prefilledLoad);
     setReps(p.reps);
     stagedDraftsRef.current[draftKey] = {
@@ -1718,8 +1741,8 @@ export function Session() {
       setType: stagedKind,
       rpe: fresh ? null : rpe,
       durationSeconds,
-      enteredLoad: authoredInDisplayUnit ? bracket?.entered_load ?? undefined : undefined,
-      enteredUnit: authoredInDisplayUnit ? unit : undefined,
+      enteredLoad: authoredInDisplayUnit ? bracket?.entered_load ?? undefined : repeatTyped,
+      enteredUnit: authoredInDisplayUnit || repeatTyped !== undefined ? unit : undefined,
     };
     // Only on a fresh open. After that the toggle belongs to the lifter (and
     // to logSet, which advances it as the plan's warmups are used up):
@@ -1800,16 +1823,13 @@ export function Session() {
     index: number,
     actualRest: number | null,
   ): SetInsert => {
-    // A display-unit switch does not rewrite how this staged number was
-    // entered. An actual edit clears or replaces the authored pair.
-    const authoredUnit = draft.enteredLoad !== undefined && draft.enteredUnit
-      ? draft.enteredUnit
-      : unit;
-    const enteredLoad = draft.enteredLoad !== undefined && draft.enteredUnit
-      ? draft.enteredLoad
-      : toDisplay(draft.entryKg, unit);
-    const storedLoad = loadToKg(enteredLoad, authoredUnit, entryMode);
+    // lib/setLoad.ts is the only place load_kg and its authored pair are
+    // derived: from what was typed, never from kg plus a separate guess.
+    const typed = typedFromDraft(draft, unit);
     const tick = isTick(entry);
+    const load = tick
+      ? { load_kg: 0, load_entry: "total" as const, entered_load: null, entered_unit: null }
+      : buildSetLoad({ typedValue: typed.value, typedUnit: typed.unit, loadEntry: entryMode, maxTotalKg: MAX_LOAD_KG });
     const timed = entry.brackets[0]?.tracking === "time";
     return {
       id: uuid(),
@@ -1820,13 +1840,13 @@ export function Session() {
         : (bracket?.id ?? null),
       set_index: index,
       set_type: draft.setType,
-      load_kg: tick ? 0 : Math.round(storedLoad * 100) / 100,
+      load_kg: load.load_kg,
       reps: tick || timed ? 0 : draft.reps,
       performed_at: new Date().toISOString(),
       rest_seconds_actual: actualRest,
-      load_entry: loadEntryForSet(entryMode, storedLoad),
-      entered_load: tick || storedLoad <= 0 ? null : enteredLoad,
-      entered_unit: tick || storedLoad <= 0 ? null : authoredUnit,
+      load_entry: load.load_entry,
+      entered_load: load.entered_load,
+      entered_unit: load.entered_unit,
       rpe: tick ? null : draft.rpe,
       duration_seconds: timed ? Math.round(draft.durationSeconds ?? 60) : null,
     };
@@ -1913,15 +1933,15 @@ export function Session() {
           : { progress: entryProgress(partner), finished: entryDone(partner) },
     );
 
-    const set = buildSetInsert(
-      entryToLog,
-      loggedDraft,
-      bracket,
-      targetLoadEntry,
-      nextIndex,
-      placement.secondOfRound ? null : recordableRest(),
-    );
     try {
+      const set = buildSetInsert(
+        entryToLog,
+        loggedDraft,
+        bracket,
+        targetLoadEntry,
+        nextIndex,
+        placement.secondOfRound ? null : recordableRest(),
+      );
       // The outbox is the only durable local copy while offline. A regular
       // set used to update React first and fire this write in the background,
       // so a rejected IndexedDB transaction produced a convincing but false
@@ -2026,7 +2046,11 @@ export function Session() {
       return true;
     } catch (error) {
       reportError(error, "queue set");
-      setLogError("This set could not be saved locally. Check storage and retry.");
+      setLogError(
+        error instanceof LoadIntegrityError
+          ? error.message
+          : "This set could not be saved locally. Check storage and retry.",
+      );
       return false;
     } finally {
       setLogSaving(false);
@@ -2263,26 +2287,32 @@ export function Session() {
     if (!editing || !sessionId || editing.saving) return;
     const draft = editing;
     const old = draft.set;
-    const correctedTotalKg = draft.loadEdited
-      ? round2(loadToKg(draft.enteredLoad, draft.enteredUnit, draft.loadEntry))
-      : old.load_kg;
+    // The edited number is what was typed; setLoad derives everything else.
+    // An unedited load keeps the old row's fields verbatim.
+    let built;
+    try {
+      built = draft.loadEdited
+        ? buildSetLoad({
+            typedValue: draft.enteredLoad,
+            typedUnit: draft.enteredUnit,
+            loadEntry: draft.loadEntry,
+            maxTotalKg: MAX_LOAD_KG,
+          })
+        : {
+            load_kg: old.load_kg,
+            load_entry: old.load_entry ?? null,
+            entered_load: old.entered_load ?? null,
+            entered_unit: old.entered_unit ?? null,
+          };
+    } catch (e) {
+      reportError(e, "correct set load");
+      toast(e instanceof LoadIntegrityError ? e.message : "That weight could not be saved");
+      return;
+    }
     const correction = {
-      load_kg: correctedTotalKg,
+      ...built,
       reps: draft.reps,
       set_type: draft.setType,
-      load_entry: loadEntryForSet(draft.loadEntry, correctedTotalKg),
-      entered_load:
-        correctedTotalKg === old.load_kg
-          ? old.entered_load ?? null
-          : correctedTotalKg > 0
-            ? draft.enteredLoad
-            : null,
-      entered_unit:
-        correctedTotalKg === old.load_kg
-          ? old.entered_unit ?? null
-          : correctedTotalKg > 0
-            ? draft.enteredUnit
-            : null,
       rpe: draft.rpe,
     };
     if (isNoopCorrection(old, correction)) {
@@ -2813,7 +2843,15 @@ export function Session() {
             reps_max: bracket.reps_max,
           }
         : null,
-      lastThisSession: last ? { load_kg: last.load_kg, reps: last.reps } : null,
+      lastThisSession: last
+        ? {
+            load_kg: last.load_kg,
+            reps: last.reps,
+            load_entry: last.load_entry,
+            entered_load: last.entered_load,
+            entered_unit: last.entered_unit,
+          }
+        : null,
       lastSession: lastActuals[entry.exercise_id] ?? null,
     }, bodyweightFallback(equipMap[entry.exercise_id] ?? null));
     const authoredLoad = bracket?.entered_load ?? null;
@@ -2822,16 +2860,24 @@ export function Session() {
         ? Math.round(fromDisplay(authoredLoad, authoredUnit) * 100) / 100
         : Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100;
     const authoredInDisplayUnit = authoredLoad !== null && authoredUnit === unit;
+    const repeatTyped =
+      prefill.entered && prefill.entered.unit === unit && prefill.entered.entry === entryMode
+        ? prefill.entered.load
+        : undefined;
     return {
       entryKg: authoredInDisplayUnit
         ? sourceEntryKg
-        : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100,
+        : repeatTyped !== undefined
+          ? Math.round(fromDisplay(repeatTyped, unit) * 100) / 100
+          : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100,
       reps: prefill.reps,
       setType: kind,
       rpe: null,
       ...(authoredInDisplayUnit
         ? { enteredLoad: authoredLoad, enteredUnit: unit }
-        : {}),
+        : repeatTyped !== undefined
+          ? { enteredLoad: repeatTyped, enteredUnit: unit }
+          : {}),
     };
   };
 

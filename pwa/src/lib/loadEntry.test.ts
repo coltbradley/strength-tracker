@@ -8,7 +8,6 @@ import {
   defaultLoadEntry,
   enteredKg,
   getLoadEntryOverride,
-  loadEntryForSet,
   offersLoadEntry,
   resolveLoadEntry,
   totalKg,
@@ -171,17 +170,6 @@ describe("entered <-> total", () => {
       expect(enteredKg(totalKg(kg, "per_side"), "per_side")).toBe(kg);
       expect(enteredKg(totalKg(kg, "total"), "total")).toBe(kg);
     }
-  });
-});
-
-describe("loadEntryForSet", () => {
-  it("never writes null for a new set", () => {
-    expect(loadEntryForSet("total", 60)).toBe("total");
-    expect(loadEntryForSet("per_side", 60)).toBe("per_side");
-  });
-
-  it("refuses per_side on a bodyweight set — the DB check would too", () => {
-    expect(loadEntryForSet("per_side", 0)).toBe("total");
   });
 });
 

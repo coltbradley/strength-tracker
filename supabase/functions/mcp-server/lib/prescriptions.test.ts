@@ -131,6 +131,28 @@ Deno.test("authored load objects become canonical totals and keep provenance", (
   assertEquals(pair.load_entry, "per_side");
 });
 
+Deno.test("authored loads use the database's rounding, not float Math.round", () => {
+  // Math.round(1.005 * 100) is 100 in a float; Postgres numeric rounds the
+  // tie to 1.01, so the old inline arithmetic wrote a total the trigger refused.
+  const [tie] = prescriptionRows(OWNER, DAY, [
+    { ...base, load: { value: 1.005, unit: "kg", entry: "total" } },
+  ]);
+  assertEquals([tie.load_kg, tie.entered_load], [1.01, 1.005]);
+  // entered_load is numeric(9,3): more decimals are rounded before the
+  // trigger sees them, so the total must follow the ROUNDED typed value.
+  const [long] = prescriptionRows(OWNER, DAY, [
+    { ...base, load: { value: 20.0049, unit: "kg", entry: "total" } },
+  ]);
+  assertEquals([long.load_kg, long.entered_load], [20.01, 20.005]);
+  assertThrows(
+    () =>
+      prescriptionRows(OWNER, DAY, [
+        { ...base, load: { value: 99999, unit: "kg", entry: "total" } },
+      ]),
+    ToolError,
+  );
+});
+
 Deno.test("a parsed load number cannot omit its unit or entry convention", () => {
   assertThrows(() => prescriptionSchema.parse({ ...base, load: 225 }));
   assertThrows(() => prescriptionSchema.parse({ ...base, load: { value: 225, unit: "lb" } }));

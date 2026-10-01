@@ -3,6 +3,7 @@
 // exercise list, last actuals) are cached; locally queued sets are merged in
 // by callers so the UI reflects unsynced work.
 
+import { assertAcceptedAuthoredLoad, provenanceForTotal } from "./setLoad";
 import { supabase } from "./supabase";
 import {
   cacheGet,
@@ -16,7 +17,6 @@ import { reportError } from "./errors";
 import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
-import { kgToEnteredLoad } from "./units";
 import type {
   AdherenceRow,
   ExerciseRow,
@@ -524,6 +524,11 @@ export async function applyPlanEdit(
     deleteId?: string;
   } = {},
 ): Promise<void> {
+  const p = edit.patch;
+  // A patch that restates the whole load picture must be one the database
+  // accepts; partial patches merge with the stored row server-side.
+  if (p && "load_kg" in p && "load_entry" in p && "entered_load" in p && "entered_unit" in p)
+    assertAcceptedAuthoredLoad(p, "prescriptions", "prescription");
   const { error } = await supabase.rpc("apply_plan_edit_with_delete", {
     p_planned_workout_id: plannedWorkoutId,
     p_target_id: edit.targetId ?? null,
@@ -791,16 +796,27 @@ export async function applyTemplate(
   // See lib/templateLoads.ts for the rule and what it deliberately skips.
   const next = refreshedLoads(src, lastActuals);
   const refreshed = countRefreshed(next);
-  const rows = src.map((r, i) => ({
-    ...r,
-    id: uuid(),
-    planned_workout_id: workoutId,
-    load_kg: next[i] ?? r.load_kg,
-    entered_load: next[i] != null && r.entered_unit != null && r.load_entry != null
-      ? kgToEnteredLoad(next[i], r.entered_unit, r.load_entry)
-      : r.entered_load ?? null,
-    entered_unit: r.entered_load == null ? null : r.entered_unit ?? null,
-  }));
+  const rows = src.map((r, i) => {
+    const total = next[i] ?? r.load_kg;
+    // A refreshed total keeps its authored unit only when a number the lifter
+    // could have typed reproduces it exactly; otherwise the total stands
+    // alone (null provenance), never a rounded claim beside a different kg.
+    const authored =
+      next[i] != null && r.entered_unit != null && r.load_entry != null
+        ? provenanceForTotal(next[i], r.entered_unit, r.load_entry)
+        : next[i] == null
+          ? { entered_load: r.entered_load ?? null, entered_unit: r.entered_unit ?? null }
+          : { entered_load: null, entered_unit: null };
+    const row = {
+      ...r,
+      id: uuid(),
+      planned_workout_id: workoutId,
+      load_kg: total,
+      ...authored,
+    };
+    assertAcceptedAuthoredLoad(row, "prescriptions", "prescription");
+    return row;
+  });
   if (rows.length > 0) {
     const { error: iErr } = await supabase.from("prescriptions").insert(rows);
     throwIf(iErr);
@@ -861,7 +877,9 @@ function prescriptionGroupRows(
 ): PrescriptionInsert[] {
   let position = existing.reduce((m, r) => Math.max(m, r.position), -1) + 1;
   return additions.flatMap(({ exerciseId, groups }) =>
-    groups.map((g) => ({
+    groups.map((g) => {
+      assertAcceptedAuthoredLoad(g, "prescriptions", "prescription");
+      return {
       id: uuid(),
       planned_workout_id: plannedWorkoutId,
       exercise_id: exerciseId,
@@ -882,7 +900,8 @@ function prescriptionGroupRows(
       load_entry: g.load_entry,
       entered_load: g.entered_load,
       entered_unit: g.entered_unit,
-    })),
+      };
+    }),
   );
 }
 
@@ -1248,6 +1267,12 @@ export async function getExerciseDemo(
 export interface LastActualSet {
   load_kg: number;
   reps: number;
+  /** How the number was typed. Optional: a value cached before these existed,
+   *  and a legacy row, carries only the total. Read back through
+   *  `shownLoadValue` so last time quotes what the lifter typed. */
+  load_entry?: LoadEntry | null;
+  entered_load?: number | null;
+  entered_unit?: "kg" | "lb" | null;
 }
 
 /**
@@ -1278,6 +1303,9 @@ export interface ActualsRow {
   set_type: string;
   performed_at: string;
   session_id: string;
+  load_entry?: LoadEntry | null;
+  entered_load?: number | null;
+  entered_unit?: "kg" | "lb" | null;
 }
 
 /** Rows per request. Also the signal for "there may be more". */
@@ -1324,7 +1352,13 @@ export async function scanLastActuals(
   const anyType: Record<string, RunBuild> = {};
   const add = (into: Record<string, RunBuild>, r: ActualsRow): void => {
     const cur = into[r.exercise_id];
-    const one: LastActualSet = { load_kg: r.load_kg, reps: r.reps };
+    const one: LastActualSet = {
+      load_kg: r.load_kg,
+      reps: r.reps,
+      ...(r.entered_load != null && r.entered_unit != null
+        ? { load_entry: r.load_entry ?? null, entered_load: r.entered_load, entered_unit: r.entered_unit }
+        : {}),
+    };
     if (cur === undefined) {
       into[r.exercise_id] = { ...one, session_id: r.session_id, run: [one] };
       return;
@@ -1354,7 +1388,14 @@ export async function scanLastActuals(
     Object.fromEntries(
       Object.entries(built).map(([id, b]) => [
         id,
-        { load_kg: b.load_kg, reps: b.reps, run: [...b.run].reverse() },
+        {
+          load_kg: b.load_kg,
+          reps: b.reps,
+          ...(b.entered_load != null && b.entered_unit != null
+            ? { load_entry: b.load_entry ?? null, entered_load: b.entered_load, entered_unit: b.entered_unit }
+            : {}),
+          run: [...b.run].reverse(),
+        },
       ]),
     );
   return { ...finish(anyType), ...finish(best) };
@@ -1451,7 +1492,7 @@ export async function getLastActuals(excludeSessionId?: string): Promise<CacheRe
     scanLastActuals(async (cursor) => {
       let q = supabase
         .from("v_live_sets")
-        .select("exercise_id,load_kg,reps,set_type,performed_at,session_id")
+        .select("exercise_id,load_kg,reps,set_type,performed_at,session_id,load_entry,entered_load,entered_unit")
         .order("performed_at", { ascending: false })
         .limit(ACTUALS_PAGE);
       // strict `lt` can skip rows sharing the boundary timestamp to the
@@ -1927,6 +1968,9 @@ export interface RxOutcome {
   repsMax: number;
   prescribedLoadKg: number | null;
   prescribedEntry: LoadEntry | null;
+  /** exactly what the plan's author typed, when recorded */
+  prescribedEnteredLoad: number | null;
+  prescribedEnteredUnit: "kg" | "lb" | null;
   /** what the plan asked for; null when the prescription has since gone */
   plannedSets: number | null;
   loggedSets: number;
@@ -1967,6 +2011,8 @@ export function summariseAdherence(
         repsMax: r.reps_max,
         prescribedLoadKg: r.prescribed_load_kg,
         prescribedEntry: r.prescribed_load_entry,
+        prescribedEnteredLoad: r.prescribed_entered_load ?? null,
+        prescribedEnteredUnit: r.prescribed_entered_unit ?? null,
         plannedSets: bundle.plannedSets[r.prescription_id] ?? null,
         loggedSets: 1,
         firstIndex: r.set_index,

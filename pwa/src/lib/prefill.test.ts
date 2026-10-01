@@ -67,4 +67,19 @@ describe("prefillSet fallback order", () => {
     expect(r.loadKg).toBe(20);
     expect(r.reps).toBe(8);
   });
+
+  it("hands back what an earlier set was typed as, only when that set is the source", () => {
+    const typed = { load_kg: 22.5, reps: 8, load_entry: "per_side" as const, entered_load: 11.25, entered_unit: "kg" as const };
+    expect(prefillSet({ prescription: null, lastThisSession: null, lastSession: typed }).entered)
+      .toEqual({ load: 11.25, unit: "kg", entry: "per_side" });
+    // a prescription's load wins, and then nothing about the old set applies
+    expect(prefillSet({
+      prescription: { resolved_load_kg: 30, plate_load_kg: null, reps_min: 5, reps_max: 5 },
+      lastThisSession: null,
+      lastSession: typed,
+    }).entered).toBeUndefined();
+    // legacy set: no claim
+    expect(prefillSet({ prescription: null, lastThisSession: null, lastSession: { load_kg: 60, reps: 5 } }).entered)
+      .toBeUndefined();
+  });
 });

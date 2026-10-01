@@ -58,7 +58,7 @@ import {
 } from "../lib/sessionHistory";
 import { useLocalToday } from "../hooks/useLocalToday";
 import { reportError, toast } from "../lib/errors";
-import { formatRepRange, formatSessionDate } from "../lib/format";
+import { formatAuthoredLoad, formatRepRange, formatSessionDate } from "../lib/format";
 import { cacheGet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
 import { useUnit } from "../hooks/useUnit";
@@ -88,9 +88,13 @@ function formatPlanned(o: RxOutcome, unit: Unit): string {
   const load =
     o.prescribedLoadKg === null
       ? "by feel"
-      : o.prescribedEntry === "per_side"
-        ? `${toDisplay(o.prescribedLoadKg / 2, unit)} ${unit}/side`
-        : `${toDisplay(o.prescribedLoadKg, unit)} ${unit}`;
+      : formatAuthoredLoad(
+          o.prescribedLoadKg,
+          o.prescribedEntry,
+          o.prescribedEnteredLoad,
+          o.prescribedEnteredUnit,
+          unit,
+        );
   const short =
     o.plannedSets !== null && o.loggedSets !== o.plannedSets
       ? ` (${o.loggedSets} logged)`

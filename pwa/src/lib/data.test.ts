@@ -70,6 +70,19 @@ describe("scanLastActuals", () => {
     expect(out.bench).toMatchObject({ load_kg: 90, reps: 5 });
   });
 
+  it("carries what was typed so last time quotes it back", async () => {
+    const p = pager(
+      series([
+        { exercise_id: "squat", load_kg: 102.06, reps: 5, load_entry: "total", entered_load: 225, entered_unit: "lb" },
+        { exercise_id: "squat", load_kg: 100, reps: 5 },
+      ]),
+    );
+    const out = await scanLastActuals(p.fetchPage);
+    expect(out.squat).toMatchObject({ load_kg: 102.06, entered_load: 225, entered_unit: "lb", load_entry: "total" });
+    expect(out.squat.run?.[1]).toEqual({ load_kg: 102.06, reps: 5, load_entry: "total", entered_load: 225, entered_unit: "lb" });
+    expect(out.squat.run?.[0]).toEqual({ load_kg: 100, reps: 5 });
+  });
+
   it("falls back to any set type when an exercise has no working set", async () => {
     const p = pager(
       series([
@@ -329,6 +342,8 @@ describe("summariseAdherence", () => {
         repsMax: 5,
         prescribedLoadKg: 100,
         prescribedEntry: "total",
+        prescribedEnteredLoad: null,
+        prescribedEnteredUnit: null,
         plannedSets: 3,
         loggedSets: 2,
         firstIndex: 0,

@@ -6,11 +6,12 @@
 // call here.
 
 import { getExerciseStepKg, getLoadStepKg } from "./settings";
-import type { LoadEntry } from "./types";
+import { KG_PER_LB } from "./setLoad";
 
 export type Unit = "kg" | "lb";
 
-export const KG_PER_LB = 0.45359237;
+// One definition: setLoad.ts owns the factor the database rule uses.
+export { KG_PER_LB };
 
 export function kgToLb(kg: number): number {
   return kg / KG_PER_LB;
@@ -43,29 +44,11 @@ export function stagedDisplayLoad(
   return toDisplay(entryKg, unit);
 }
 
-/** value entered/shown in the display unit -> kg (unrounded). */
+/** value entered/shown in the display unit -> kg (unrounded). For DISPLAY
+ *  and steppers only: a stored load is derived by `buildSetLoad`, never by
+ *  converting here and rounding. */
 export function fromDisplay(value: number, unit: Unit): number {
   return unit === "kg" ? value : lbToKg(value);
-}
-
-/** Convert an authored entry into the canonical total-system kg value. */
-export function loadToKg(
-  value: number,
-  unit: Unit,
-  entry: LoadEntry,
-): number {
-  const total = fromDisplay(value, unit);
-  return entry === "per_side" ? total * 2 : total;
-}
-
-/** Convert a canonical total-system kg value into its authored entry value. */
-export function kgToEnteredLoad(
-  totalKg: number,
-  unit: Unit,
-  entry: LoadEntry,
-): number {
-  const value = entry === "per_side" ? totalKg / 2 : totalKg;
-  return unit === "kg" ? value : kgToLb(value);
 }
 
 /**

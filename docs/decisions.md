@@ -3340,3 +3340,59 @@ the other unit; a custom sled is left alone. Residual: a sled that happens to
 weigh exactly a catalogue bar (a 20 kg sled) still follows the unit, because
 the pref carries no equipment. Proof: `plates.property.test.ts` and
 `PlateSheet.addsup.test.tsx`; findings in the audit write-up.
+
+## 2026-10-01 Loads are derived once from what was typed
+
+**Problem.** lb/kg load errors and failed syncs kept returning. The database
+refuses any `sets` or `prescriptions` row whose `load_kg`, `load_entry`,
+`entered_load` and `entered_unit` disagree
+(`validate_entered_load_consistency`, 20260924003054). Every writer held kg and
+the typed number as two separate facts and wrote both, each with its own
+rounding (float `Math.round`, one-decimal `toDisplay`, 3-decimal MCP rounding)
+that did not match Postgres' exact `numeric` rounding. A step, a unit switch,
+a toggle or a display rounding moved one fact and not the other. The rule was
+only enforced remotely, so the offline outbox accepted the row and the refusal
+arrived later as a dead write on the phone. Fixes through 2026-09-30 patched
+one call site at a time (`40676f5` cleared `enteredLoad` in `SetEditor`) and
+left the others.
+
+**Incident timeline.** 2026-09-23 `8b1ff91` authored units arrive; 2026-09-24
+trigger applied; 2026-09-30 `7e97161` (Cursor PR #14, rounding kg prescriptions
+to one-decimal lb) creates new disagreements; 2026-09-30 `40676f5` focus step
+leaves stale provenance, the phone shows 10 failed writes (7 sets refused by
+the trigger, 2 voids and 1 note refused by RLS because their parents never
+landed); `4d320f8`/`2939f91` add reviewed repair; 2026-10-01 `977627d`
+session-only units. Reproduced against the real chain: the pre-fix Plan editor
+writes a refused row on 168 of 216 lb steps over a kg plan, per-side kg on a 1.25
+kg grid fails 80 of 160, the MCP inline rounding 41 of 2998 values with 3-4
+decimals.
+
+**Decision.**
+1. `buildSetLoad({ typedValue, typedUnit, loadEntry })` in
+   `pwa/src/lib/setLoad.ts` is the only derivation of the four fields. It uses
+   exact decimal arithmetic identical to the trigger and throws
+   `LoadIntegrityError` for a value that cannot be stored as typed. The MCP has
+   a byte-identical copy (Edge Functions cannot import from `pwa/`); a test
+   pins equality.
+2. `isAcceptedAuthoredLoad` mirrors the trigger and the table checks. All
+   outbox admission APIs (`enqueue`, `enqueueBatch`, `enqueueCorrection`)
+   assert it before any IndexedDB write; plan writes assert it before the RPC
+   or insert. A violating set raises an error to the lifter and is never queued.
+3. `scripts/load-integrity.test.mjs` boots PGlite with the full migration chain
+   and proves both directions: every `buildSetLoad` output is accepted by the
+   real trigger (sets and prescriptions), and the mirror equals the database's
+   verdict on arbitrary corrupted rows. It runs in the CI node test step.
+4. The old derivations (`loadToKg`, `kgToEnteredLoad`, `loadEntryForSet`) are
+   deleted and a vitest forbids reintroducing them.
+5. A draft's typed number is read by one function (`typedFromDraft`) for both
+   display and write; stored loads are read back by `shownLoadValue` /
+   `formatAuthoredLoad` (typed value in the typed unit, one-decimal conversion
+   otherwise); last time and last set carry `entered_*` so a repeated set is
+   not re-rounded.
+6. A prescription of 0 kg is stored as no load: the database refuses
+   `prescriptions.load_kg = 0` while the plan editor could emit it.
+
+**Not changed.** No migration. Dead items already on phones are still handled
+by the reviewed repair tool; the outbox does not pre-judge items queued by older
+builds. Phone replay and server readback by UUID for the 2026-09-30 failures
+remain NOT RUN.

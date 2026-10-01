@@ -18,6 +18,10 @@ export interface PrefillPrescription {
 export interface PrefillActual {
   load_kg: number;
   reps: number;
+  /** How the earlier set was typed, when recorded. */
+  load_entry?: "total" | "per_side" | null;
+  entered_load?: number | null;
+  entered_unit?: "kg" | "lb" | null;
 }
 
 export interface PrefillInput {
@@ -29,6 +33,9 @@ export interface PrefillInput {
 export interface PrefillResult {
   loadKg: number;
   reps: number;
+  /** Set only when the load came from an EARLIER SET that recorded what was
+   *  typed: the number, unit and convention to hand back unchanged. */
+  entered?: { load: number; unit: "kg" | "lb"; entry: "total" | "per_side" };
 }
 
 /** Last-resort values when a movement has no prescription and no history.
@@ -56,6 +63,19 @@ export function prefillSet(
     lastThisSession?.load_kg ??
     lastSession?.load_kg ??
     fallback.loadKg;
+  const source =
+    rxLoad !== null ? null : (lastThisSession ?? lastSession ?? null);
+  const entered =
+    source !== null &&
+    source.entered_load != null &&
+    source.entered_unit != null &&
+    source.load_entry != null
+      ? {
+          load: source.entered_load,
+          unit: source.entered_unit,
+          entry: source.load_entry,
+        }
+      : undefined;
 
   const reps =
     prescription?.reps_max ??
@@ -63,5 +83,5 @@ export function prefillSet(
     lastSession?.reps ??
     fallback.reps;
 
-  return { loadKg, reps };
+  return entered ? { loadKg, reps, entered } : { loadKg, reps };
 }
