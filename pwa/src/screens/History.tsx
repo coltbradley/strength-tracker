@@ -72,6 +72,7 @@ import { useLocalToday } from "../hooks/useLocalToday";
 import { reportError, toast } from "../lib/errors";
 import { formatAuthoredLoad, formatRepRange, formatSessionDate } from "../lib/format";
 import { cacheGet, cacheKeys } from "../lib/db";
+import { getCurrentUserId } from "../lib/currentUser";
 import { outbox } from "../lib/sync";
 import type { OutboxEntry } from "../lib/outbox";
 import { useUnit } from "../hooks/useUnit";
@@ -551,10 +552,18 @@ export function History({ userId }: { userId: string }) {
     onSaved?: () => void,
   ) => {
     pendingWrites.current += 1;
+    // The write goes out with whatever token is live WHEN IT RUNS, which can be
+    // seconds after the tap (the chain is serial, and an unpin's undo lives
+    // UNDO_MS). The goal belongs to the account that tapped, so the identity is
+    // captured now and the write is skipped if it is different by then (L2).
+    const owner = getCurrentUserId();
     writeChain.current = writeChain.current
       .then(async () => {
         if (chainBroken.current) return;
         try {
+          if (getCurrentUserId() !== owner) {
+            throw new Error("the signed-in account changed before this was sent");
+          }
           await write();
           onSaved?.();
         } catch (e) {

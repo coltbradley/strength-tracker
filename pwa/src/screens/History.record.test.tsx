@@ -12,6 +12,11 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 vi.mock("../hooks/useLocalToday", () => ({ useLocalToday: () => "2026-10-01" }));
 vi.mock("../hooks/useUnit", () => ({ useUnit: () => "kg" }));
 vi.mock("../lib/errors", () => ({ reportError: vi.fn(), toast: vi.fn() }));
+const liveUser = vi.hoisted(() => ({ id: null as string | null }));
+vi.mock("../lib/currentUser", () => ({
+  getCurrentUserId: () => liveUser.id,
+  onUserChange: () => () => undefined,
+}));
 vi.mock("../lib/sync", () => ({
   outbox: {
     pendingDiscardIds: vi.fn().mockResolvedValue(new Set()),
@@ -123,6 +128,7 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
   resetDbForTests();
   vi.clearAllMocks();
+  liveUser.id = "11111111-1111-4111-8111-111111111111";
   vi.mocked(outboxMock.inspect).mockResolvedValue([]);
   setGoal.mockReset();
   removeGoal.mockReset();
@@ -189,6 +195,26 @@ describe("Record list", () => {
     await waitFor(() => expect(removeGoal).toHaveBeenCalledWith("sq"));
     expect(screen.queryByRole("region", { name: "Pinned goals" })).toBeNull();
     expect(names(screen.getByRole("region", { name: "Recent" }))).toContain("Back Squat");
+  });
+
+  it("L2: a goal write queued by one account is skipped if the identity changed before it runs", async () => {
+    goalsNow.rows = [goalRow("sq", "Back Squat", 160, 87.5)];
+    // the first write is in flight and holds the serial chain
+    let release: () => void = () => undefined;
+    setGoal.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    render_();
+    const pinned = await screen.findByRole("region", { name: "Pinned goals" });
+    fireEvent.click(within(pinned).getAllByRole("button", { name: /Back Squat/ })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /^Raise goal by 2.5 kg/ }));
+    await waitFor(() => expect(setGoal).toHaveBeenCalledTimes(1));
+    // a second tap queues behind it, still as the first account
+    fireEvent.click(screen.getByRole("button", { name: /^Raise goal by 2.5 kg/ }));
+    // the account changes before the second write gets its turn
+    liveUser.id = "22222222-2222-4222-8222-222222222222";
+    release();
+    await waitFor(() => expect(reportErrorMock).toHaveBeenCalled());
+    expect(setGoal).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(reportErrorMock).mock.calls.at(-1)?.[1])).toContain("not saved");
   });
 
   it("cannot pin an exercise with no e1RM yet", async () => {
