@@ -23,14 +23,22 @@ import {
 } from "../lib/db";
 import { createOutbox, type OutboxTransport } from "../lib/outbox";
 import { getUnit, resetAllSettings, setSetting } from "../lib/settings";
+import { onToast } from "../lib/errors";
 const receiptIdentity = vi.hoisted(() => ({
   userId: "aaaaaaaa-1111-4111-8111-111111111111" as string | null,
+  beforeNextSubscription: null as (() => void) | null,
   listeners: new Set<(id: string | null) => void>(),
   syncedListeners: new Set<(
     op: any,
     ownerId: string | null | undefined,
     correctionLink?: { session_id: string; replacement_id: string; original_id: string },
   ) => void>(),
+}));
+const sessionPrefsMock = vi.hoisted(() => ({
+  read: vi.fn(),
+  write: vi.fn(),
+  actualRead: null as ((ownerId: string, sessionId: string) => Promise<any>) | null,
+  actualWrite: null as ((ownerId: string, sessionId: string, patch: any, isCurrent?: () => boolean) => Promise<void>) | null,
 }));
 
 import type {
@@ -55,10 +63,24 @@ vi.mock("../lib/data", async () => {
 vi.mock("../lib/currentUser", () => ({
   getCurrentUserId: () => receiptIdentity.userId,
   onUserChange: (fn: (id: string | null) => void) => {
+    const beforeSubscribe = receiptIdentity.beforeNextSubscription;
+    receiptIdentity.beforeNextSubscription = null;
+    beforeSubscribe?.();
     receiptIdentity.listeners.add(fn);
     return () => receiptIdentity.listeners.delete(fn);
   },
 }));
+
+vi.mock("../lib/sessionPrefs", async () => {
+  const actual = await vi.importActual<typeof import("../lib/sessionPrefs")>("../lib/sessionPrefs");
+  sessionPrefsMock.actualRead = actual.readSessionPrefs;
+  sessionPrefsMock.actualWrite = actual.writeSessionPrefs;
+  return {
+    ...actual,
+    readSessionPrefs: sessionPrefsMock.read,
+    writeSessionPrefs: sessionPrefsMock.write,
+  };
+});
 
 vi.mock("../lib/sync", () => ({
   outbox: {
@@ -78,6 +100,7 @@ vi.mock("../lib/sync", () => ({
 }));
 
 import { Session } from "./Session";
+import * as sessionPrefs from "../lib/sessionPrefs";
 import { outbox } from "../lib/sync";
 import { getExercises, getExactSetReceiptIds, getLastActuals, getServerSessionSets } from "../lib/data";
 
@@ -175,6 +198,14 @@ beforeEach(async () => {
   resetDbForTests();
   resetAllSettings();
   vi.clearAllMocks();
+  sessionPrefsMock.read.mockReset().mockImplementation((ownerId: string, sessionId: string) =>
+    sessionPrefsMock.actualRead!(ownerId, sessionId));
+  sessionPrefsMock.write.mockReset().mockImplementation((
+    ownerId: string,
+    sessionId: string,
+    patch: Partial<sessionPrefs.SessionPrefs>,
+    isCurrent?: () => boolean,
+  ) => sessionPrefsMock.actualWrite!(ownerId, sessionId, patch, isCurrent));
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.mocked(getExercises).mockReset();
@@ -183,6 +214,7 @@ beforeEach(async () => {
   vi.mocked(getExactSetReceiptIds).mockReset();
   vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set(), voidIds: new Set() });
   receiptIdentity.userId = "aaaaaaaa-1111-4111-8111-111111111111";
+  receiptIdentity.beforeNextSubscription = null;
   receiptIdentity.listeners.clear();
   receiptIdentity.syncedListeners.clear();
   vi.mocked(outbox.inspect).mockReset();
@@ -222,6 +254,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   cleanup();
   resetAllSettings();
 });
@@ -599,6 +632,71 @@ describe("Session focus presentation", () => {
     await cacheSet(cacheKeys.sessionSets(nextSession.id), []);
     render(<MemoryRouter><Session /></MemoryRouter>);
     expect((await screen.findByRole("button", { name: "Show weights in kilograms" })).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("reconciles identity changed just before the listener subscribes", async () => {
+    resetDbForTests();
+    receiptIdentity.userId = receiptOwner;
+    receiptIdentity.beforeNextSubscription = () => {
+      // Simulate auth changing after render read its snapshot, before this
+      // effect registers, with no event replay from currentUser.
+      receiptIdentity.userId = "bbbbbbbb-2222-4222-8222-222222222222";
+    };
+    await seed();
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    expect((await screen.findByRole("button", { name: "Show weights in kilograms" })).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText("Loading workout choices…")).toBeNull();
+  });
+
+  it("discards a delayed preference read after A changes to B", async () => {
+    resetDbForTests();
+    const ownerA = receiptOwner;
+    const ownerB = "bbbbbbbb-2222-4222-8222-222222222222";
+    await seed();
+    await cacheSet(cacheKeys.sessionPrefs(ownerA, active.id), { unit: "lb" });
+    let releaseOwnerA: ((prefs: sessionPrefs.SessionPrefs) => void) | undefined;
+    sessionPrefsMock.read.mockImplementation((ownerId: string, sessionId: string) => {
+      if (ownerId === ownerA) {
+        return new Promise((resolve) => { releaseOwnerA = resolve; });
+      }
+      return sessionPrefsMock.actualRead!(ownerId, sessionId);
+    });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await vi.waitFor(() => expect(releaseOwnerA).toBeDefined());
+
+    receiptIdentity.userId = ownerB;
+    act(() => { for (const listener of receiptIdentity.listeners) listener(ownerB); });
+    expect((await screen.findByRole("button", { name: "Show weights in kilograms" })).getAttribute("aria-pressed")).toBe("true");
+    releaseOwnerA?.({ unit: "lb" });
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps a typed draft and logs its authored unit when session preference saving fails", async () => {
+    resetDbForTests();
+    setSetting("unit", "kg");
+    await seed();
+    sessionPrefsMock.write.mockRejectedValueOnce(new Error("disk full"));
+    const messages: string[] = [];
+    const stopToastListener = onToast(({ message }) => messages.push(message));
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "load value — tap to type" }));
+    fireEvent.click(screen.getByRole("button", { name: "2" }));
+    fireEvent.click(screen.getByRole("button", { name: "5" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    await vi.waitFor(() => expect(messages).toContain("Unit choice may reset after reload"));
+    expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("55.12");
+    expect(getUnit()).toBe("kg");
+
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 25, entered_load: 25, entered_unit: "kg", load_entry: "total" });
+    expectAcceptedAuthoredLoad(payload);
+    stopToastListener();
   });
 
   it("restores the exact typed pound value when switching back during the same set", async () => {

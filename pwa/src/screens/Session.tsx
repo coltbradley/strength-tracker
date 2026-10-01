@@ -465,14 +465,25 @@ export function Session() {
 
   const sessionId = active?.id ?? null;
   const [identityOwner, setIdentityOwner] = useState(getCurrentUserId);
+  const identityOwnerRef = useRef(identityOwner);
   const identityEpochRef = useRef(0);
   const [identityRevision, setIdentityRevision] = useState(0);
-  useEffect(() => onUserChange((id) => {
+  const applyIdentity = useCallback((id: string | null) => {
+    if (identityOwnerRef.current === id) return;
+    identityOwnerRef.current = id;
     const nextEpoch = identityEpochRef.current + 1;
     identityEpochRef.current = nextEpoch;
     setIdentityRevision(nextEpoch);
     setIdentityOwner(id);
-  }), []);
+  }, []);
+  useEffect(() => {
+    const stop = onUserChange(applyIdentity);
+    // The auth mirror may change after render but before this passive effect
+    // subscribes. Subscribe first, then reconcile its synchronous snapshot so
+    // a missed event cannot strand this session behind prefs hydration.
+    applyIdentity(getCurrentUserId());
+    return stop;
+  }, [applyIdentity]);
   const [sessionUnitState, setSessionUnitState] = useState<{
     ownerId: string; sessionId: string; unit: Unit;
   } | null>(null);
