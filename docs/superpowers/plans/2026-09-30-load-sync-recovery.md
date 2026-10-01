@@ -113,6 +113,20 @@ under the same owner, ended and not discarded, and found none of the seven set
 IDs, their voids, or their note on the server. The phone outbox and saved
 export contain those writes until they successfully replay.
 
+## Typed-weight restoration, 2026-10-01 (`fix/queue-repair-typed`)
+
+The user confirmed they typed pounds. Slice 3's repair marked the contradictory
+authored pair unknown; it now restores the typed weight when it can be solved
+exactly (`solveTypedLoad` / `repairAuthoredLoad` in `lib/setLoad.ts`, rule in
+`docs/decisions.md`). The Outbox review shows "145 lb (was saved as 65.8 kg)"
+per set before anything is sent. The procedure was rehearsed against the real
+schema (`scripts/rehearse-queue-repair.mjs`, PGlite plus the full migration
+chain) on the real export: 10 of 10 accepted, 5 live sets, each restored set
+145/75/100/115 lb with `load_kg` unchanged, second replay a no-op. The old-build
+queue shape (main) was loaded into IndexedDB and repaired end to end through the
+real outbox (`outbox.oldQueue.test.ts`). Still NOT RUN: the repair on the phone
+and the server readback by set UUID.
+
 ## Read-only server confirmation, 2026-09-30
 
 The export SHA-256 is

@@ -3874,3 +3874,32 @@ rule; two decisions need a sentence.
   still shows exactly as typed. Stored values are unchanged. The pre-release
   gate for this class is `pwa/e2e/live-load-sync.mjs` (see AGENTS.md "Tests, by
   area").
+
+## 2026-10-01 Queue repair restores the TYPED weight, not "unknown"
+
+- **Rule.** For a dead authored-load mismatch set, `solveTypedLoad` finds the
+  typed value by solving the trigger exactly: candidates are lb on a 0.5 lb grid
+  within 1 lb of `load_kg / 0.45359237` and kg on a 0.25 kg grid within 0.5 kg
+  (per-side sets: the value divided by 2); a candidate is kept only when
+  `isAcceptedAuthoredLoad` (the mirror of the trigger) reproduces the stored
+  `load_kg` exactly. One matching unit wins. Nothing matching, or an
+  unresolvable tie, falls back to the earlier behaviour: `entered_load` and
+  `entered_unit` null, the total kept. Only those two fields ever change.
+- **Tie-break.** The grids can coincide (70 lb and 31.75 kg are both exactly
+  31.75 kg). When both units match, the unit already recorded in `entered_unit`
+  wins only if its candidate agrees with the recorded number to 0.1; a recorded
+  number nowhere near its own candidate is not evidence and the answer is
+  "unknown". A tie is also shown in the review ("70 lb gives the same total,
+  check which you typed"), so the lifter, who is the only one who knows, decides
+  before anything is sent. The incident's four totals (65.77, 34.02, 45.36,
+  52.16 kg) have no kg match, so they are not ties.
+- **Why a solve, not a conversion.** `provenanceForTotal` rounds a total back to
+  a plausible number; the repair must not invent provenance. A typed weight is
+  claimed only when the exact decimal rule proves it, and the lifter reviews it
+  against the saved export first. Everything still goes through the outbox
+  admission gate; the repair stays all-or-nothing and export-gated.
+- **Old builds.** An item whose recorded code is missing (a 400 or nothing) is
+  still eligible when it carries the trigger's exact sentence; any other code is
+  not. Items from `main` (no `correction_link`, owner in `user_id`) read and
+  repair unchanged, and their voids and notes stay parked behind their parents.
+

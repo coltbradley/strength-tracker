@@ -144,7 +144,10 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   shorten that window. `repairDeadLoadSets` (23514 load mismatch only, owner,
   fresh export, all-or-nothing) is the one export-gated exception to "a
   constraint violation is not retryable" (`docs/decisions.md`, 2026-10-01
-  "Integrating the seven branches").
+  "Integrating the seven branches"). It restores the TYPED
+  weight only when `solveTypedLoad` proves it exactly (else null/null, total
+  kept) and changes nothing but `entered_load`/`entered_unit`; the proof for a
+  real queue is `scripts/rehearse-queue-repair.mjs`.
 - `session_skips` (20260917000000) is the record of an exercise the
   lifter skipped mid-session, WHY they skipped it (an optional
   200-character reason), and whether the whole slot was skipped or only

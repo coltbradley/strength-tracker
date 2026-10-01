@@ -739,24 +739,53 @@ A read-only server check (export SHA-256 `2dcec370efabc5530a82cc39890e65496c30b5
 found none of the 7 set UUIDs, 2 voids or the note on the server. Post-replay
 queue count and server readback by UUID are NOT RUN.
 
-Batch-repair procedure (commit `2939f91`, Outbox sheet), on the phone, before or
-right after the new build installs:
+Batch-repair procedure (commit `2939f91`, typed-weight restoration on
+`fix/queue-repair-typed`; Outbox sheet), on the phone, before or right after the
+new build installs. The lifter confirmed they typed pounds, and the repair now
+restores those typed weights instead of marking them unknown:
 
 1. Open Unsynced Writes. Do not clear storage, sign out or reinstall.
 2. Export the queue and save the file (the repair stays locked until a current
    export is saved and the review box is ticked; the file does not need to be
    sent to anyone).
-3. Review the totals, tick the saved-export box, and choose "Repair all N
-   sets and retry". It validates every row and the owner against the export and
-   changes all or none. It keeps each set's UUID, owner, time, index and load
-   total, and marks the original entered number unknown. (On this branch the
-   repair also re-runs the admission gate on each rewritten payload; a row the
-   database would refuse again leaves the whole batch untouched.)
-4. Wait for the sets to sync. Only then retry the linked voids and the note
-   (they replay after their parents land; retrying them earlier gets the same
-   refusal).
-5. Read all 7 set UUIDs, the 2 voids and the note back from the server and
-   record the phone's queue count here.
+3. Review the list. Each set now reads like "Barbell Squat · set 6: 145 lb (was
+   saved as 65.8 kg) · 65.77 kg total". Check each weight is what you typed
+   (expected: 145, 75 twice, 100, 115 three times lb), tick the saved-export
+   box, and choose "Repair all N sets and retry". It validates every row and
+   the owner against the export and changes all or none. The typed weight is
+   solved from the kept total (a number on the 0.5 lb or 0.25 kg grid whose
+   trigger formula gives exactly that total); `load_kg`, UUID, owner, time,
+   index, reps, RPE and rest never change. If no typed weight reproduces a
+   total, that set falls back to "weight unknown" with the total kept. Each
+   rewritten payload also passes the admission gate; a row the database would
+   refuse again leaves the whole batch untouched.
+4. Wait for the sets to sync. Only then use Retry failed for the linked voids
+   and the note (they stay parked while their parent set is in the queue;
+   retrying them earlier gets the same refusal).
+5. Expected outcome: 5 live sets (squat set 6; split squat set 3 at RPE 8; leg
+   curl set 5; calf set 2 with its note; calf set 3 at RPE 9) and an empty
+   queue. Then read all 7 set UUIDs, the 2 voids and the note back from the
+   server by UUID and record the phone's queue count here.
+
+Rehearsal (run it before touching the phone; needs `npm --prefix scripts ci`
+and `node scripts/build-exercise-seed.mjs`). It boots the full migration chain
+in PGlite, recreates the owner, exercises, prescriptions and the ended session,
+runs the same repair function the app uses on the export, replays it as the
+owner in outbox order (sets, then voids and notes behind their parents) and
+asserts: all 10 accepted, exactly 5 live sets, each restored set `lb` with
+145/75/100/115 and `load_kg` unchanged, voided originals hidden, and a second
+full replay a no-op. The real export is never committed; give the script its
+path and keep the report outside the repo:
+
+```bash
+node scripts/rehearse-queue-repair.mjs /path/to/phone-export.json | tee /tmp/rehearsal-report.txt
+```
+
+CI runs the same script on the anonymized fixture
+`scripts/fixtures/phone-queue-anonymized.json` (`scripts/rehearse-queue-repair.test.mjs`).
+Run against the real export on 2026-10-01: PASS, 7 of 7 assertions. That proves
+the procedure on the schema, not the phone: the phone repair and the production
+readback remain NOT RUN.
 
 ## Rollback
 
