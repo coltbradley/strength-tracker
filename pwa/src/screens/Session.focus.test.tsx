@@ -737,6 +737,25 @@ describe("Session focus presentation", () => {
     expect(screen.queryByText("Loading workout choices…")).toBeNull();
   });
 
+  it("does not block logging while identity is unknown (F4); the outbox stamps or holds", async () => {
+    resetDbForTests();
+    localStorage.clear(); // no persisted session either: identity is genuinely unknown
+    receiptIdentity.userId = null;
+    await seed();
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    // the screen opens on the device unit and canonical order, not a spinner
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalled());
+    expect(screen.queryByText("Loading workout choices…")).toBeNull();
+
+    // the owner arriving later does not put the screen back behind the read
+    receiptIdentity.userId = receiptOwner;
+    act(() => { for (const listener of receiptIdentity.listeners) listener(receiptOwner); });
+    expect(screen.queryByText("Loading workout choices…")).toBeNull();
+    receiptIdentity.userId = receiptOwner;
+  });
+
   it("discards a delayed preference read after A changes to B", async () => {
     resetDbForTests();
     const ownerA = receiptOwner;

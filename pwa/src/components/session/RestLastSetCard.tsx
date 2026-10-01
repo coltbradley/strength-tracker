@@ -9,12 +9,15 @@ import type { ReactNode } from "react";
 export function RestLastSetCard({
   line,
   receipt,
+  pairNote,
   onFix,
 }: {
   /** "Bench Press · set 3 · 135 lb × 8" */
   line: string;
   /** the SetReceiptStatus for that exact set */
   receipt: ReactNode;
+  /** "Correction waiting to send": the original is still live on the server */
+  pairNote?: string;
   onFix: () => void;
 }) {
   return (
@@ -23,6 +26,7 @@ export function RestLastSetCard({
         <span className="focus-card-eyebrow">LAST SET</span>
         <span className="focus-saved-line">{line}</span>
         <span className="focus-saved-receipt">{receipt}</span>
+        {pairNote && <span className="focus-saved-pair">{pairNote}</span>}
       </span>
       <button type="button" className="focus-card-action" onClick={onFix}>
         Fix

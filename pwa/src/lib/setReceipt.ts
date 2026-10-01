@@ -64,7 +64,15 @@ export function projectSetReceipt(input: SetReceiptInput): SetReceipt {
 
   if (correctionOf !== undefined) {
     if (replacementOnServer && voidOnServer) return { state: "synced" };
-    if (rejected) return review(rejected.last_error ?? "A correction write was rejected.");
+    if (rejected) {
+      // The replacement is on the server but the void of the original was
+      // refused: both rows are live there until somebody retries it.
+      if (replacementOnServer && opMatchesVoid(rejected, correctionOf))
+        return review(
+          "The corrected set is saved, but the void of the original was rejected. Both are live on the server until it is retried.",
+        );
+      return review(rejected.last_error ?? "A correction write was rejected.");
+    }
     if (setOps.length > 0 || voidOps.length > 0) return { state: "local" };
     return review("Exact replacement and original void evidence is incomplete.");
   }
@@ -98,4 +106,23 @@ export function setQueueHeld(
         opMatchesVoid(entry, correctionOf ?? setId) ||
         entry.correction_link?.replacement_id === setId),
   );
+}
+
+/**
+ * A correction is TWO rows on the server until its void lands: the original
+ * stays live (and counted in volume and e1RM) while the void is held behind the
+ * replacement, which is the right order (insert before void) but an unbounded
+ * window. While the replacement's receipt is still "local" (queued, sending or
+ * held), this names the pair so the phone never looks finished when the server
+ * still holds both. Null when the set is not a correction or the pair has
+ * resolved. `review` shows its own state; `synced` is done.
+ */
+export function correctionWaiting(
+  receipt: SetReceipt,
+  correctionLinks: Readonly<Record<string, string>>,
+  setId: string,
+): { originalId: string } | null {
+  const originalId = correctionLinks[setId];
+  if (originalId === undefined || receipt.state !== "local") return null;
+  return { originalId };
 }

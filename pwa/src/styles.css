@@ -2924,6 +2924,29 @@
     color: var(--danger);
   }
 
+  /* a correction whose void has not landed: the pair is marked, dashed, in the
+     current-row tint, so it reads as unfinished rather than as a second note */
+  .ledger-set-pair,
+  .focus-saved-pair {
+    grid-column: 1 / -1;
+    padding: var(--s-2) var(--s-4);
+    border: var(--bw-hair) dashed var(--control-border-color);
+    border-radius: var(--radius-card);
+    background: var(--surface-current);
+    color: var(--text);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
+    line-height: 1.4;
+  }
+
+  .ledger-set-pair {
+    margin: 0 0 var(--s-3) calc(34px + var(--s-3));
+  }
+
+  .focus-saved-pair {
+    display: block;
+    margin-top: var(--s-3);
+  }
+
   .ledger-set-note {
     grid-column: 1 / -1;
     padding: 0 0 var(--s-3) calc(34px + var(--s-3));

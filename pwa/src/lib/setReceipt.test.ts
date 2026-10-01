@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OutboxEntry } from "./outbox";
-import { projectSetReceipt, setQueueHeld } from "./setReceipt";
+import { correctionWaiting, projectSetReceipt, setQueueHeld } from "./setReceipt";
 
 const ownerId = "alice";
 const originalId = "set-original";
@@ -154,5 +154,27 @@ describe("setQueueHeld", () => {
     const voidHeld = entry("set_voids", originalId, "held");
     expect(setQueueHeld([voidHeld], replacementId, originalId)).toBe(true);
     expect(setQueueHeld([voidHeld], replacementId)).toBe(false);
+  });
+});
+
+describe("F1: a held void leaves both rows live on the server", () => {
+  const links = { [replacementId]: originalId };
+
+  it("names the pair while the correction is still local, and only then", () => {
+    expect(correctionWaiting({ state: "local" }, links, replacementId)).toEqual({ originalId });
+    expect(correctionWaiting({ state: "synced" }, links, replacementId)).toBeNull();
+    expect(correctionWaiting({ state: "review", reason: "x" }, links, replacementId)).toBeNull();
+    // an ordinary set is not a correction
+    expect(correctionWaiting({ state: "local" }, links, "plain-set")).toBeNull();
+  });
+
+  it("says plainly when the replacement landed but its void was refused", () => {
+    const receipt = project({
+      correctionOf: originalId,
+      serverSetIds: new Set([replacementId]),
+      entries: [entry("set_voids", originalId, "dead")],
+    });
+    expect(receipt.state).toBe("review");
+    expect(receipt.reason).toContain("Both are live on the server");
   });
 });

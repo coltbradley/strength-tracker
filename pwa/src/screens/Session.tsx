@@ -132,7 +132,9 @@ import {
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
 import { getCurrentUserId, onUserChange } from "../lib/currentUser";
+import { readPersistedUserId } from "../lib/persistedSession";
 import {
+  correctionWaiting,
   projectSetReceipt,
   setQueueHeld,
   type SetReceipt,
@@ -235,6 +237,16 @@ const LOG_LOCK_MS = 200;
 // DB checks: reps between 0 and 100; rest_seconds_actual <= 3600
 const MAX_REPS = 100;
 const MAX_LOAD_KG = 999;
+
+/** Whose data this device is holding, as far as it can tell right now: the live
+ *  identity, else the owner the persisted session names while the live refresh
+ *  is still a network call away (the same fallback the outbox stamps with).
+ *  It is IDENTITY, NEVER AUTHORIZATION (AGENTS.md): a write is stamped with this
+ *  owner and HELD by the flusher if the live owner is different or unknown, and
+ *  every request still carries the real token. Null = genuinely unknown. */
+function knownOwner(): string | null {
+  return getCurrentUserId() ?? readPersistedUserId();
+}
 const MAX_REST_SECONDS = 3600;
 
 /** A movement with no implement starts at zero load, never at the empty-bar
@@ -506,7 +518,7 @@ export function Session() {
   }, [sheet]);
 
   const sessionId = active?.id ?? null;
-  const [identityOwner, setIdentityOwner] = useState(getCurrentUserId);
+  const [identityOwner, setIdentityOwner] = useState(knownOwner);
   const identityOwnerRef = useRef(identityOwner);
   const identityEpochRef = useRef(0);
   const [identityRevision, setIdentityRevision] = useState(0);
@@ -519,11 +531,11 @@ export function Session() {
     setIdentityOwner(id);
   }, []);
   useEffect(() => {
-    const stop = onUserChange(applyIdentity);
+    const stop = onUserChange((id) => applyIdentity(id ?? readPersistedUserId()));
     // The auth mirror may change after render but before this passive effect
     // subscribes. Subscribe first, then reconcile its synchronous snapshot so
     // a missed event cannot strand this session behind prefs hydration.
-    applyIdentity(getCurrentUserId());
+    applyIdentity(knownOwner());
     return stop;
   }, [applyIdentity]);
   const [sessionUnitState, setSessionUnitState] = useState<{
@@ -536,14 +548,22 @@ export function Session() {
   const orderWritePendingRef = useRef(false);
   const [pendingEntryWrites, setPendingEntryWrites] = useState(0);
   const [prefsReadyScope, setPrefsReadyScope] = useState<string | null>(null);
-  const prefsScope =
-    identityOwner && sessionId ? `${identityOwner}:${sessionId}` : null;
-  const unit = prefsScope &&
+  // An unknown owner (no live identity and nothing persisted) does NOT block
+  // logging: the session opens on the device unit and the canonical order, and
+  // the outbox stamps or holds each write. The scope below is what "ready"
+  // means for that state; when the owner arrives the saved choices are read in
+  // the background rather than putting the whole screen back behind a spinner.
+  const prefsScope = sessionId ? `${identityOwner ?? "unknown"}:${sessionId}` : null;
+  const unknownOwnerScope = sessionId ? `unknown:${sessionId}` : null;
+  const unit = identityOwner && sessionId &&
       sessionUnitState?.ownerId === identityOwner &&
       sessionUnitState.sessionId === sessionId
     ? sessionUnitState.unit
     : deviceUnit;
-  const prefsReady = !sessionId || (!!identityOwner && prefsReadyScope === prefsScope);
+  const prefsReady =
+    !sessionId ||
+    prefsReadyScope === prefsScope ||
+    (prefsReadyScope !== null && prefsReadyScope === unknownOwnerScope);
   const inventory = usePlatesOnHand(unit);
 
   useEffect(() => {
@@ -551,8 +571,13 @@ export function Session() {
     const ownerId = identityOwner;
     const requestedSession = sessionId;
     const identityEpoch = identityEpochRef.current;
-    const scope = ownerId && requestedSession ? `${ownerId}:${requestedSession}` : null;
-    setPrefsReadyScope(null);
+    const scope = requestedSession ? `${ownerId ?? "unknown"}:${requestedSession}` : null;
+    // Keep an already-ready unknown-owner session ready while the owner's saved
+    // choices load; any other change of scope (another session, another
+    // account) goes back behind the read.
+    setPrefsReadyScope((prev) =>
+      requestedSession && prev === `unknown:${requestedSession}` ? prev : null,
+    );
     if (!ownerId || !requestedSession) {
       setSessionUnitState(null);
       setSessionEntryOrderState(null);
@@ -562,7 +587,7 @@ export function Session() {
     void readSessionPrefs(ownerId, requestedSession).then((prefs) => {
       if (
         cancelled || identityEpochRef.current !== identityEpoch ||
-        getCurrentUserId() !== ownerId || sessionIdRef.current !== requestedSession
+        knownOwner() !== ownerId || sessionIdRef.current !== requestedSession
       ) return;
       setSessionUnitState(prefs.unit ? { ownerId, sessionId: requestedSession, unit: prefs.unit } : null);
       setSessionEntryOrderState(prefs.entryOrder
@@ -572,7 +597,7 @@ export function Session() {
     }).catch((error: unknown) => {
       if (
         cancelled || identityEpochRef.current !== identityEpoch ||
-        getCurrentUserId() !== ownerId || sessionIdRef.current !== requestedSession
+        knownOwner() !== ownerId || sessionIdRef.current !== requestedSession
       ) return;
       reportError(error, "read session preferences");
       setSessionUnitState(null);
@@ -602,12 +627,12 @@ export function Session() {
 
   const refreshReceiptSnapshot = useCallback(async () => {
     const requestedSession = sessionId;
-    const ownerId = getCurrentUserId();
+    const ownerId = knownOwner();
     const version = ++receiptReadVersion.current;
     const isCurrent = () =>
       version === receiptReadVersion.current &&
       receiptSessionRef.current === requestedSession &&
-      getCurrentUserId() === ownerId;
+      knownOwner() === ownerId;
     if (!requestedSession) return;
 
     try {
@@ -680,7 +705,7 @@ export function Session() {
   }, [sessionId]);
 
   const receiptForSet = useCallback((setId: string): SetReceipt => {
-    const ownerId = getCurrentUserId();
+    const ownerId = knownOwner();
     if (!ownerId || receiptSnapshot.ownerId !== ownerId || receiptSnapshot.sessionId !== sessionId) {
       return { state: "review", reason: "The set owner or session is not confirmed on this device." };
     }
@@ -710,7 +735,7 @@ export function Session() {
     const refresh = () => { void refreshReceiptSnapshot(); };
     const stopQueue = outbox.subscribe(refresh);
     const stopSynced = outbox.subscribeSynced((op: OutboxOp, ownerId, correctionLink) => {
-      if (!ownerId || ownerId !== getCurrentUserId() || receiptSessionRef.current !== sessionId) return;
+      if (!ownerId || ownerId !== knownOwner() || receiptSessionRef.current !== sessionId) return;
       let setId: string | null = null;
       let isVoid = false;
       if (op.kind === "insert" && op.table === "sets" && op.payload.session_id === sessionId) {
@@ -1423,6 +1448,8 @@ export function Session() {
   );
   const reorderLocked =
     !prefsReady ||
+    // the order is saved per owner, so it waits for one
+    !identityOwner ||
     editing !== null ||
     logLocked ||
     logSaving ||
@@ -1441,13 +1468,13 @@ export function Session() {
     );
   };
   const persistEntryOrder = async (keys: string[]) => {
-    const ownerId = getCurrentUserId();
+    const ownerId = knownOwner();
     const requestedSession = sessionId;
     if (!ownerId || !requestedSession) return;
     const identityEpoch = identityEpochRef.current;
     const isCurrent = () =>
       identityEpochRef.current === identityEpoch &&
-      getCurrentUserId() === ownerId &&
+      knownOwner() === ownerId &&
       sessionIdRef.current === requestedSession;
     setSessionEntryOrderState({ ownerId, sessionId: requestedSession, keys });
     orderWritePendingRef.current = true;
@@ -1468,7 +1495,7 @@ export function Session() {
   const moveBlock = (fromBlock: number, toBlock: number): boolean => {
     if (reorderLocked || orderWritePendingRef.current) return false;
     const key = blocks[fromBlock]?.[0]?.key;
-    if (key === undefined || !getCurrentUserId() || !sessionId) return false;
+    if (key === undefined || !knownOwner() || !sessionId) return false;
     const currentKeys = orderedEntries.map((entry) => entry.key);
     const next = moveSessionEntry(
       entries,
@@ -2913,7 +2940,7 @@ export function Session() {
    *  device default (Settings) or a logged row. */
   const switchWorkoutUnit = (next: Unit) => {
     if (next === unit || !prefsReady) return;
-    const ownerId = getCurrentUserId();
+    const ownerId = knownOwner();
     const requestedSession = sessionId;
     const identityEpoch = identityEpochRef.current;
     // Stamp a prefilled draft's displayed value before changing units. An
@@ -2947,7 +2974,7 @@ export function Session() {
     if (ownerId && requestedSession) {
       const isCurrent = () =>
         identityEpochRef.current === identityEpoch &&
-        getCurrentUserId() === ownerId &&
+        knownOwner() === ownerId &&
         sessionIdRef.current === requestedSession;
       void writeSessionPrefs(
         ownerId,
@@ -3039,6 +3066,30 @@ export function Session() {
       receipt.state === "local" && !held && outboxStatus.state === "syncing";
     return { receipt, kind: receiptKind(receipt, { sending, held }) };
   };
+  /** "Correction waiting to send": while a correction's void is held behind its
+   *  replacement the server holds BOTH rows live, so the pair is named on the
+   *  replacement (the original is hidden here, voided locally). */
+  const pairNoteFor = (setId: string): string | undefined => {
+    const waiting = correctionWaiting(
+      receiptForSet(setId),
+      receiptSnapshot.correctionLinks,
+      setId,
+    );
+    if (!waiting) return undefined;
+    const original = receiptSnapshot.entries
+      .map((entry) => entry.op)
+      .find(
+        (op) =>
+          op.kind === "insert" &&
+          op.table === "sets" &&
+          op.payload.id === waiting.originalId,
+      );
+    const was =
+      original && original.kind === "insert" && original.table === "sets"
+        ? ` It replaces ${lineForSet(original.payload)}.`
+        : "";
+    return `Correction waiting to send.${was} The original stays live on the server until it lands.`;
+  };
   const receiptFor = (setId: string, announce = true, mark = false) => {
     const { receipt, kind } = receiptKindOf(setId);
     return (
@@ -3120,6 +3171,7 @@ export function Session() {
               meta={meta || undefined}
               note={setNotes[set.id] || undefined}
               receipt={receiptFor(set.id, false, true)}
+              pairNote={pairNoteFor(set.id)}
               // a tick has no numbers to correct
               onFix={isTick(entry) ? undefined : () => startCorrection(set)}
               onVoid={() => void voidSet(set)}
@@ -3372,6 +3424,7 @@ export function Session() {
         <RestLastSetCard
           line={lastSetLine(lastSet)}
           receipt={receiptFor(lastSet.id, true)}
+          pairNote={pairNoteFor(lastSet.id)}
           onFix={() => startCorrection(lastSet)}
         />
       )}
@@ -3914,7 +3967,7 @@ export function Session() {
           unit={unit}
           deviceUnit={deviceUnit}
           onUnitChange={switchWorkoutUnit}
-          unitDisabled={!prefsReady}
+          unitDisabled={!prefsReady || !identityOwner}
           entryProgress={entryProgress}
           entryState={entryState}
           formatScheme={scheme}

@@ -19,6 +19,9 @@ export interface LoggedSetRowProps {
   meta?: string;
   note?: string;
   receipt?: ReactNode;
+  /** "Correction waiting to send": this row replaces another that the server
+   *  still holds live until the void lands */
+  pairNote?: string;
   /** absent for a tick, which has no numbers to correct */
   onFix?: () => void;
   onVoid?: () => void;
@@ -34,6 +37,7 @@ export function LoggedSetRow({
   meta,
   note,
   receipt,
+  pairNote,
   onFix,
   onVoid,
   voidArmed = false,
@@ -77,6 +81,7 @@ export function LoggedSetRow({
           {voidArmed ? "VOID?" : "✕"}
         </button>
       )}
+      {pairNote && <span className="ledger-set-pair">{pairNote}</span>}
       {note && <span className="ledger-set-note">{note}</span>}
     </div>
   );
