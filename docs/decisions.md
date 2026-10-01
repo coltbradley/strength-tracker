@@ -3176,3 +3176,15 @@ on every visibility change and every minute. A session left open for days
 delays the update that long unless the app is closed, which activates the
 waiting worker on the next launch; the overnight sweep closes stale sessions.
 
+## 2026-10-01 Train confirms a finished session before it talks about rest
+
+Train used to answer "Rest day" the moment today's session ended and show the
+next workout, which read as the app not knowing the session was done. It now
+leads with `✓ {label} finished` plus whether the outbox is empty (so "all sets
+on the server" is only said when `pending - held` and `dead` are both zero),
+then REST DAY / Recover. and the next workout. Train also gained the week strip
+with a short state word under each glyph (DONE, SKIP, TODAY, NEXT, REST, DRAFT;
+MISSED is kept for a past, non-empty, unfinished day), derived from the same
+`workoutStates` as Program, so DONE still requires `ended_at` and a DRAFT never
+reads as missed. The duration the design mocked ("about 65 min") is not shown
+because nothing here can compute one honestly.

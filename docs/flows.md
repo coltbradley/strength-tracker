@@ -27,6 +27,32 @@ link the email had stopped containing.
 Custom templates need custom SMTP (`scripts/push-auth-config.sh`). Without it
 Supabase sends the stock link email and the paste path is the working one.
 
+## Train
+
+- **Train tab** (default). Top to bottom, with no empty gap under the strip:
+  the date and a 44px Check in button; this week's seven days, each a glyph
+  with a short state word under it (DONE, SKIP, TODAY, NEXT, REST, DRAFT, and
+  MISSED for a dated, non-empty day that passed); then the day.
+  The words come from the same state Program's strip uses, so DONE still means
+  the session has `ended_at` and an empty day is DRAFT, never MISSED. Tapping a
+  day opens Program.
+- **A workout day**: `TODAY · {program}`, the workout label, "{n} movements ·
+  {m} sets" (no duration: nothing in the plan or log yields an honest one),
+  a FIRST UP card (first movement and its scheme, "then …" for the second), the
+  coach note with an ink speech-bubble icon (ochre is reserved for the current
+  set), and a big **Go**. Go opens the workout preview sheet; Start lives there.
+- **Session open**: `IN PROGRESS · N MIN`, the label, `n/m sets` (logged on the
+  server plus queued on this phone, over the sets the plan prescribes) and
+  **Resume**. An unrecovered open session still gets the orphan card instead.
+- **After finishing today**: a `✓ {label} finished` card comes first, with
+  whether every set is on the server (it reads the outbox: "waiting to send
+  from this phone" or "need review" when not), then REST DAY / Recover. and the
+  next workout. It no longer calls the day a rest day without saying the
+  session is done.
+- **Draft today**: the label and a dashed "Draft — nothing planned in it yet.
+  Not a missed day." with Fill in this day. Offline or failed refresh shows a
+  dashed one-line note over the cached plan.
+
 ## Weekly planning
 
 - **View week** — Today tab (default). A Mon–Sun strip: each cell shows the
