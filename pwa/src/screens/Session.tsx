@@ -3938,7 +3938,6 @@ export function Session() {
           formatScheme={scheme}
           receiptMark={receiptMark}
           onSelect={jumpToEntry}
-          isLocked={() => editing !== null}
           onMoveBlock={moveBlock}
           canMoveBlock={canMoveBlock}
           reorderLocked={reorderLocked}
