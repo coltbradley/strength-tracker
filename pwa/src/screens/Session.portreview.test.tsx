@@ -326,3 +326,45 @@ describe("N4 swap in a superset targets the member the key names", () => {
     expect(labels.find((l) => l.startsWith("A1 "))).toMatch(/Bench Press/);
   });
 });
+
+describe("N3 Add exercise in Focus moves the dock to the new exercise", () => {
+  it("picking an exercise already in the day edits and logs THAT exercise", async () => {
+    exList();
+    await seed([
+      rx("bench", "bench-press", "Bench Press", 60, 3),
+      { ...rx("squat", "back-squat", "Back Squat", 100, 3), position: 1 },
+    ]);
+    renderSession();
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await pause(80);
+    today();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add exercise" }));
+    const dialog = await screen.findByRole("dialog", { name: /ADD EXERCISE/i });
+    fireEvent.click(within(dialog).getAllByText(/Back Squat/)[0]);
+    await pause(120);
+    expect(screen.getByRole("heading", { name: "Back Squat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "increase load by 2.5 kg" }));
+    await pause(50);
+    fireEvent.click(screen.getByRole("button", { name: /^LOG SET/ }));
+    await vi.waitFor(() => expect(queuedSets()).toHaveLength(1));
+    expect(queuedSets()[0]).toMatchObject({ exercise_id: "back-squat", load_kg: 102.5 });
+  });
+
+  it("declaring a brand-new extra moves the dock to it", async () => {
+    exList();
+    await seed([rx("bench", "bench-press", "Bench Press", 60, 3)]);
+    renderSession();
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await pause(80);
+    today();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add exercise" }));
+    const dialog = await screen.findByRole("dialog", { name: /ADD EXERCISE/i });
+    fireEvent.click(within(dialog).getAllByText(/Dumbbell Fly/)[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /^Add \d+ sets?$/ }));
+    expect(await screen.findByRole("heading", { name: "Dumbbell Fly" })).toBeTruthy();
+    await pause(120);
+    fireEvent.click(screen.getByRole("button", { name: /^LOG SET/ }));
+    await vi.waitFor(() => expect(queuedSets()).toHaveLength(1));
+    expect(queuedSets()[0]).toMatchObject({ exercise_id: "fly" });
+  });
+});

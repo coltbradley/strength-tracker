@@ -2110,7 +2110,7 @@ export function Session() {
     if (!sessionId) return;
     const existing = entries.find((e) => e.exercise_id === ex.id);
     if (existing) {
-      setOpenKey(existing.key);
+      jumpToEntry(existing);
       setSheet(null);
       return;
     }
@@ -2127,7 +2127,10 @@ export function Session() {
     setExtras(nextExtras);
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
     setDeclaring(null);
+    // the dock and Log follow the new exercise, in Focus as well as List
+    setFocusKey(`extra:${ex.id}`);
     setOpenKey(`extra:${ex.id}`);
+    setSelectedEntryKey(`extra:${ex.id}`);
   };
 
   // ---- corrections ---------------------------------------------------------
