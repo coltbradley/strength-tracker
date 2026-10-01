@@ -106,6 +106,8 @@ export interface Outbox {
   inspect(): Promise<OutboxEntry[]>;
   getStatus(): OutboxStatus;
   subscribe(fn: () => void): () => void;
+  /** Exact server ACKs with the owner captured immediately before transport. */
+  subscribeSynced(fn: (op: OutboxOp, ownerId: string | null | undefined) => void): () => void;
   /** Queued (unsynced) set inserts for a session — dead ones included, the
    *  user logged them and the UI must reflect them. */
   pendingSets(sessionId: string): Promise<SetInsert[]>;
@@ -360,6 +362,9 @@ export function createOutbox({
   // after I asked"), and two runs can never interleave.
   let chain: Promise<void> = Promise.resolve();
   const listeners = new Set<() => void>();
+  const syncedListeners = new Set<
+    (op: OutboxOp, ownerId: string | null | undefined) => void
+  >();
 
   const online = isOnline ?? (() => navigator.onLine);
   const whoAmI = currentUserId ?? (() => null);
@@ -579,6 +584,12 @@ export function createOutbox({
         }
 
         attempt: for (;;) {
+          // Capture the identity used for this request before awaiting transport.
+          // For old unstamped rows this is the only owner evidence the ACK can
+          // carry; never look up a possibly switched account after the await.
+          const requestOwner = whoAmI();
+          if (item.user_id !== undefined && item.user_id !== requestOwner) break attempt;
+          const operationOwner = item.user_id ?? requestOwner;
           const err = await applyOp(item.op);
           if (err === null) {
             if (item.correction_link && typeof item.user_id === "string") {
@@ -594,6 +605,13 @@ export function createOutbox({
               onSynced?.(item.op);
             } catch {
               // A listener's own bug must never look like a sync failure.
+            }
+            for (const listener of syncedListeners) {
+              try {
+                listener(item.op, operationOwner);
+              } catch {
+                // Receipt listeners cannot turn an ACK into a transport failure.
+              }
             }
             break attempt;
           }
@@ -921,6 +939,11 @@ export function createOutbox({
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
+    },
+
+    subscribeSynced(fn) {
+      syncedListeners.add(fn);
+      return () => syncedListeners.delete(fn);
     },
 
     async pendingSets(sessionId) {

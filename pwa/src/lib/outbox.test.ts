@@ -1796,3 +1796,64 @@ describe("outbox visibility", () => {
     });
   });
 });
+
+
+describe("successful operation subscribers", () => {
+  const ALICE = "aaaaaaaa-1111-4111-8111-111111111111";
+  const BOB = "bbbbbbbb-2222-4222-8222-222222222222";
+
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory();
+    resetDbForTests();
+  });
+
+  it("reports the owner captured for the request if identity changes before its ACK", async () => {
+    let who: string | null = ALICE;
+    let finishRequest: ((error: TransportError | null) => void) | undefined;
+    const calls: Call[] = [];
+    const transport: OutboxTransport = {
+      async insert(table, payload) {
+        calls.push({ kind: "insert", table, payload });
+        return await new Promise((resolve) => { finishRequest = resolve; });
+      },
+      async update() { return null; },
+    };
+    const legacyCallback = vi.fn();
+    const box = createOutbox({
+      getDb, transport, isOnline: () => true,
+      currentUserId: () => who, stampUserId: () => who,
+      onSynced: legacyCallback,
+    });
+    const op: OutboxOp = { kind: "insert", table: "sets", payload: makeSet("44444444-4444-4444-8444-444444444444", 0) };
+    await box.enqueue(op);
+    const events: Array<{ op: OutboxOp; ownerId: string | null | undefined }> = [];
+    const unsubscribe = box.subscribeSynced((syncedOp, ownerId) => events.push({ op: syncedOp, ownerId }));
+    const flush = box.flush();
+    await vi.waitFor(() => expect(finishRequest).toBeTypeOf("function"));
+    who = BOB;
+    finishRequest?.(null);
+    await flush;
+    unsubscribe();
+
+    expect(events).toEqual([{ op, ownerId: ALICE }]);
+    expect(legacyCallback).toHaveBeenCalledWith(op);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("stops retrying an owner's item if auth changes during refresh", async () => {
+    let who: string | null = ALICE;
+    const { calls, transport } = makeTransport([authErr]);
+    const box = createOutbox({
+      getDb, transport, isOnline: () => true,
+      currentUserId: () => who, stampUserId: () => who,
+      onIdentityChange: () => () => undefined,
+    });
+    transport.refreshAuth = async () => { who = BOB; return true; };
+    await box.enqueue({ kind: "insert", table: "sets", payload: makeSet("55555555-5555-4555-8555-555555555555", 0) });
+    await box.flush();
+
+    expect(calls).toHaveLength(1);
+    expect(await box.inspect()).toMatchObject([{ user_id: ALICE, state: "held" }]);
+  });
+
+});

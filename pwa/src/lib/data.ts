@@ -231,6 +231,39 @@ export function throwIf(
     );
 }
 
+
+/** Exact authenticated server evidence used only for per-set receipts. This
+ *  intentionally bypasses the session cache and throws on either query error.
+ *  RLS authenticates the caller; explicit owner/session filters keep the
+ *  evidence tied to the identity and session that requested it. */
+export async function getExactSetReceiptIds(
+  sessionId: string,
+  ownerId: string,
+  setIds: readonly string[],
+): Promise<{ setIds: Set<string>; voidIds: Set<string> }> {
+  if (setIds.length === 0) return { setIds: new Set(), voidIds: new Set() };
+
+  const [setsResult, voidsResult] = await Promise.all([
+    supabase
+      .from("sets")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", ownerId)
+      .in("id", [...setIds]),
+    supabase
+      .from("set_voids")
+      .select("set_id")
+      .eq("user_id", ownerId)
+      .in("set_id", [...setIds]),
+  ]);
+  throwIf(setsResult.error);
+  throwIf(voidsResult.error);
+  return {
+    setIds: new Set((setsResult.data ?? []).map((row) => row.id as string)),
+    voidIds: new Set((voidsResult.data ?? []).map((row) => row.set_id as string)),
+  };
+}
+
 // ---- programs / planned workouts ------------------------------------------
 
 export interface WorkoutList {
