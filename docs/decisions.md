@@ -3231,3 +3231,30 @@ the note cache. Composite owner foreign keys would refuse the wrong-owner
 rows, so the fixed risk was stranded writes, not demonstrated server-side
 misattribution. This is a local PWA change at `125d203`; phone/server acceptance
 and deployment remain separate checks.
+
+## 2026-10-01 Plate math is integer arithmetic on the display unit's grid
+
+"The plate math doesn't always add up" was not one bug. `split()` did float kg
+arithmetic against a tolerance (EPS = 0.01 kg, itself a patch for the 135 lb ->
+130 lb postmortem), and a tolerance is a bet that every error is smaller than
+the smallest real difference. 0.01 kg is 0.022 lb, so the exact flag could
+disagree with the total on screen (40.02 kg shown as "40" was "can't make 40
+exactly, closest is 40"; 97.51 kg was called exact for 97.5), a 35 lb bar
+stored as 15.88 kg was labelled "35.01", and a custom set where greedy fails
+(25/20/15, 30 a side) gave up where 15 + 15 builds it. Separately, switching
+unit snapped every per-exercise base weight to the nearest bar of the other
+catalogue, turning a 34 kg / 75 lb sled into a 45 lb bar.
+
+Decision: `lib/plates.ts` converts kg ONCE into centi-units of the display unit
+and works in integers from there. Exact means integer equality with the total
+the lifter sees (`toDisplay`, 1 decimal); the achieved total is the integer
+sum; labels (`formatPlate`, via `plateDisplayValue`) snap a stored 2-decimal-kg
+lb value back to the real quarter-pound plate (within 0.012 lb). The stack is a
+small coin-change DP (fewest plates, heaviest on ties), identical to greedy on
+every standard set. `split()` takes an optional `unit`; omitted, it infers lb
+from the values. Storage is still kg and `load_kg` is untouched. Per-exercise
+base weights are remapped on a unit switch only when they ARE a catalogue bar of
+the other unit; a custom sled is left alone. Residual: a sled that happens to
+weigh exactly a catalogue bar (a 20 kg sled) still follows the unit, because
+the pref carries no equipment. Proof: `plates.property.test.ts` and
+`PlateSheet.addsup.test.tsx`; findings in the audit write-up.

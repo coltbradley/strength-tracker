@@ -251,3 +251,19 @@ describe("stability across unit switches", () => {
     }
   });
 });
+
+// (f) A dumbbell is never loaded with plates: no equipment that is not a
+// barbell/machine/cable resolves to a plates style, so Session never calls
+// split() for it, and the dumbbell text states the implement, not a stack.
+import { offersLoadStyle } from "./loadStyle";
+import { dumbbellText } from "./loadPicture";
+describe("per-side dumbbell loads never go through plates", () => {
+  it("dumbbell/kettlebell/bodyweight are not plate-eligible", () => {
+    for (const eq of ["dumbbell", "kettlebell", "body only", "bands", null])
+      expect(offersLoadStyle(eq, "Dumbbell Bench Press")).toBe(false);
+  });
+  it("the dumbbell text is the implement weight, in the display unit", () => {
+    expect(dumbbellText(lbToKg(50), true, "lb")).toBe("50 + 50 = 100 lb total");
+    expect(dumbbellText(22.5, true, "kg")).toBe("22.5 + 22.5 = 45 kg total");
+  });
+});

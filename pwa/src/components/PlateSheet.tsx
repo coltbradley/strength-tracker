@@ -72,7 +72,7 @@ export function PlateSheet({
   const baseName = isBarbell ? "Bar" : "Sled";
   const baseKnown = useExerciseBaseKnown(exerciseId, equipment);
 
-  const result = split(targetKg, barKg, inventory);
+  const result = split(targetKg, barKg, inventory, unit);
   const disp = (kg: number) => toDisplay(kg, unit);
   const total = disp(targetKg);
 
@@ -148,7 +148,7 @@ export function PlateSheet({
           {baseKnown && !result.exact && (
             <div className="plate-warn" role="alert">
               Can’t make {total} {unit} exactly with your plates. Closest is{" "}
-              {disp(result.achievedKg)} {unit}.
+              {formatPlate(result.achievedKg, unit)} {unit}.
             </div>
           )}
           <div className={`plate-base${baseKnown ? "" : " plate-base-unset"}`}>

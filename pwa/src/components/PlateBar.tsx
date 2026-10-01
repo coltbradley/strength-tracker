@@ -23,6 +23,7 @@
 
 import type { PlateSplit } from "../lib/plates";
 import { formatPlate } from "../lib/format";
+import { plateClass } from "../lib/loadPicture";
 import type { Unit } from "../lib/units";
 
 interface PlateBarProps {
@@ -32,30 +33,19 @@ interface PlateBarProps {
   unit: Unit;
 }
 
-/** Rendered width in px for one plate, by kg. Ordered heaviest first so the
- *  stack reads big-to-small outward, and so a 1.25 never draws wider than a
- *  20. Anything unlisted (an lb-equivalent inventory) falls to the smallest. */
-function plateClass(kg: number): string {
-  if (kg >= 25) return "pb-25";
-  if (kg >= 20) return "pb-20";
-  if (kg >= 15) return "pb-15";
-  if (kg >= 10) return "pb-10";
-  if (kg >= 5) return "pb-5";
-  if (kg >= 2.5) return "pb-2h";
-  return "pb-1h";
-}
-
 export function PlateBar({ split, barKg, unit }: PlateBarProps) {
   // Heaviest first = innermost, against the collar.
   const side = split.plates.flatMap((p) =>
     Array.from({ length: p.count }, () => p.plate),
   );
+  // One colour classifier for every drawing (lib/loadPicture.ts, per unit):
+  // the kg thresholds that lived here filed a 10 lb plate with the 2.5s.
   if (side.length === 0) return null;
 
   const stack = (reversed: boolean) => {
     const order = reversed ? [...side].reverse() : side;
     return order.map((kg, i) => (
-      <i key={i} className={`pb-plate ${plateClass(kg)}`} />
+      <i key={i} className={`pb-plate pb-${plateClass(kg, unit)}`} />
     ));
   };
 

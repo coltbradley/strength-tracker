@@ -3474,7 +3474,7 @@ export function Session() {
 
   // plate maths is always about the whole loaded implement
   const plateSplit = plateable
-    ? split(totalLoadKg, exerciseBarKg, inventory)
+    ? split(totalLoadKg, exerciseBarKg, inventory, unit)
     : null;
   const hint = plateSplit
     ? (() => {
@@ -3772,7 +3772,7 @@ export function Session() {
         )
       : null;
     const plateSplit =
-      roundLoadStyle === "plates" ? split(storedLoad, barKg, inventory) : null;
+      roundLoadStyle === "plates" ? split(storedLoad, barKg, inventory, roundUnit) : null;
     const styleIcon: SetEditorProps["loadPresentation"]["styleIcon"] =
       !roundLoadStyleEligible
         ? null
