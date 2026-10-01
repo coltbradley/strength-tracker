@@ -43,9 +43,11 @@ export function toTypedDisplay(kg: number, unit: Unit): number {
     : Math.round(kgToLb(kg) * 10) / 10;
 }
 
-/** Keep an already staged weight legible when the display unit changes.
- * Two decimals on the converted view preserve the hundredth-kg value held
- * by the draft; ordinary unstaged suggestions keep the usual one decimal. */
+/** The number a staged draft shows in `unit`. What the lifter typed, when it
+ * was typed in this unit; otherwise the converted value at the unit's own
+ * precision (`toTypedDisplay`): lb one decimal, kg two only when the stored
+ * kg has them. A converted lb figure never carries hundredths (225.97 lb is
+ * noise; the stored kg is untouched either way). */
 export function stagedDisplayLoad(
   entryKg: number,
   enteredLoad: number | undefined,
@@ -53,10 +55,6 @@ export function stagedDisplayLoad(
   unit: Unit,
 ): number {
   if (enteredLoad !== undefined && enteredUnit === unit) return enteredLoad;
-  if (enteredUnit !== undefined && enteredUnit !== unit) {
-    const converted = unit === "kg" ? entryKg : kgToLb(entryKg);
-    return Math.round(converted * 100) / 100;
-  }
   return toTypedDisplay(entryKg, unit);
 }
 

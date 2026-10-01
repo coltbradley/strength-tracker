@@ -35,6 +35,7 @@ import {
   MAX_BODYWEIGHT_KG,
   stepKg,
   toDisplay,
+  toStoredKg,
 } from "../lib/units";
 import { formatStoredTwin } from "../lib/format";
 import { readSkipsCache, sessionSkipRows, type SkipRecord } from "../lib/skips";
@@ -444,7 +445,7 @@ export function End() {
           // already clamps for exactly this reason; so does this now.
           ended_at: new Date(endedAtMs).toISOString(),
           session_rpe: rpe,
-          bodyweight_kg: bwOpen ? Math.round(bwKg * 10) / 10 : null,
+          bodyweight_kg: bwOpen ? toStoredKg(bwKg) : null,
           notes: note.trim() === "" ? null : note.trim(),
         },
       });
@@ -635,7 +636,7 @@ export function End() {
         allowDecimal: true,
         onCommit: (v) => {
           const kg = Math.min(MAX_BODYWEIGHT_KG, Math.max(1, fromDisplay(v, unit)));
-          setBwKg(Math.round(kg * 10) / 10);
+          setBwKg(toStoredKg(kg));
           setBwPad(false);
         },
         onCancel: () => setBwPad(false),

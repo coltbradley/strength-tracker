@@ -874,7 +874,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
     switchUnit("Show weights in pounds");
     await vi.waitFor(() => expect(messages).toContain("Unit choice may reset after reload"));
-    expect(dockValue("load")).toBe("55.12");
+    expect(dockValue("load")).toBe("55.1");
     expect(getUnit()).toBe("kg");
 
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
@@ -1059,7 +1059,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(fixSheet().getByRole("button", { name: "Cancel" }));
     switchUnit("Show weights in pounds");
 
-    expect(dockValue("load")).toBe("110.23");
+    expect(dockValue("load")).toBe("110.2");
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
     const payload = firstQueuedSet();
