@@ -345,3 +345,124 @@ export function shownLoadValue(row: DisplayableLoad, unit: LoadUnit): number {
   const v = unit === "kg" ? side : side / KG_PER_LB;
   return Math.round(v * 10) / 10;
 }
+
+// ---- repair: restore what the lifter TYPED ----------------------------------
+//
+// A dead set whose authored pair contradicts its total (the 2026-09-30
+// incident: a lb value typed, the total kept in kg, entered_load a rounded kg
+// number tagged 'kg') still carries the one fact the database accepted as
+// truth: load_kg. The typed number can be recovered by SOLVING the trigger
+// for it, never by guessing:
+//
+//   candidates  lb: every 0.5 lb step within +-1 lb of load_kg / 0.45359237
+//                   (per side when load_entry is 'per_side', i.e. that value
+//                   divided by 2)
+//               kg: every 0.25 kg step within +-0.5 kg of load_kg
+//                   (per side: divided by 2)
+//   keep        a candidate only when the exact decimal rule reproduces the
+//               stored load_kg EXACTLY (isAcceptedAuthoredLoad, the mirror of
+//               the trigger, on the row with that pair)
+//
+// Those grids are the steps a lifter's steppers and plates land on; a total
+// that only an off-grid number could produce is not "typed", it is unknown.
+//
+// Tie rule. At most one candidate per unit can match (steps are wider than
+// the 0.01 kg rounding), so there are three outcomes:
+//   - exactly one unit matches        -> that pair;
+//   - both units match (a coincidence of the two grids) -> the unit already
+//     recorded in entered_unit wins, but ONLY when the recorded number agrees
+//     with its candidate to the precision the old build stored (|diff| <= 0.1);
+//     a recorded number nowhere near its own candidate is not evidence, so
+//     the answer is ambiguous;
+//   - no unit matches, or ambiguous   -> null: provenance unknown, which is
+//     the pre-existing repair (the total is kept, entered_* become null).
+
+export interface TypedLoadSolution {
+  entered_load: number;
+  entered_unit: LoadUnit;
+}
+
+/** The step a typed number is assumed to sit on, per unit. */
+export const REPAIR_GRID: Record<LoadUnit, number> = { lb: 0.5, kg: 0.25 };
+/** How far from the centre a candidate may sit (typed units). */
+const REPAIR_WINDOW: Record<LoadUnit, number> = { lb: 1, kg: 0.5 };
+/** Tolerance for "the recorded number agrees with its candidate". */
+const RECORDED_AGREES = 0.1;
+
+function matchesInUnit(row: AuthoredLoadFields, unit: LoadUnit): number | null {
+  if (row.load_kg === null || row.load_kg === undefined) return null;
+  const entry = row.load_entry;
+  if (entry !== "total" && entry !== "per_side") return null;
+  const kg = Number(row.load_kg);
+  if (!Number.isFinite(kg) || kg <= 0) return null;
+  const centre = (unit === "lb" ? kg / KG_PER_LB : kg) / (entry === "per_side" ? 2 : 1);
+  const step = REPAIR_GRID[unit];
+  const lo = Math.ceil((centre - REPAIR_WINDOW[unit]) / step);
+  const hi = Math.floor((centre + REPAIR_WINDOW[unit]) / step);
+  for (let k = Math.max(lo, 1); k <= hi; k++) {
+    const typed = k * step; // exact: multiples of 0.5 / 0.25 are binary-exact
+    const verdict = isAcceptedAuthoredLoad(
+      { load_kg: row.load_kg, load_entry: entry, entered_load: typed, entered_unit: unit, load_pct_tm: row.load_pct_tm },
+      "sets",
+    );
+    if (verdict.ok) return typed;
+  }
+  return null;
+}
+
+/** Every on-grid typed value that reproduces the total, per unit (null = none). */
+export function typedLoadCandidates(row: AuthoredLoadFields): { lb: number | null; kg: number | null } {
+  return { lb: matchesInUnit(row, "lb"), kg: matchesInUnit(row, "kg") };
+}
+
+/**
+ * The typed value + unit whose trigger-exact total is this row's load_kg, or
+ * null when none exists (or two units tie unresolvably). Pure; never throws.
+ */
+export function solveTypedLoad(row: AuthoredLoadFields): TypedLoadSolution | null {
+  const { lb, kg } = typedLoadCandidates(row);
+  if (lb !== null && kg === null) return { entered_load: lb, entered_unit: "lb" };
+  if (kg !== null && lb === null) return { entered_load: kg, entered_unit: "kg" };
+  if (lb === null || kg === null) return null;
+  const recordedUnit = row.entered_unit;
+  const recorded = row.entered_load == null ? NaN : Number(row.entered_load);
+  if ((recordedUnit === "lb" || recordedUnit === "kg") && Number.isFinite(recorded)) {
+    const candidate = recordedUnit === "lb" ? lb : kg;
+    if (Math.abs(candidate - recorded) <= RECORDED_AGREES)
+      return { entered_load: candidate, entered_unit: recordedUnit };
+  }
+  return null;
+}
+
+export interface RepairedLoad<T> {
+  row: T;
+  /** true when the lifter's typed number was recovered; false = unknown. */
+  restored: boolean;
+  /** what the dead row said, for "145 lb (was saved as 65.8 kg)". */
+  was: { entered_load: number | null; entered_unit: LoadUnit | null };
+  /** The other unit's value when BOTH reproduce the total (a tie), so the
+   *  review can say "also fits 31.75 kg" instead of hiding the coincidence. */
+  alternative: TypedLoadSolution | null;
+}
+
+/**
+ * The row the repair writes: only entered_load and entered_unit change. The
+ * typed pair when it can be solved, otherwise null/null (provenance unknown,
+ * the total stays). Every other field, load_kg above all, is returned as is.
+ */
+export function repairAuthoredLoad<T extends AuthoredLoadFields>(row: T): RepairedLoad<T> {
+  const was = {
+    entered_load: row.entered_load == null ? null : Number(row.entered_load),
+    entered_unit: (row.entered_unit ?? null) as LoadUnit | null,
+  };
+  const solved = solveTypedLoad(row);
+  const { lb, kg } = typedLoadCandidates(row);
+  const other: TypedLoadSolution | null = !solved || lb === null || kg === null
+    ? null
+    : solved.entered_unit === "lb"
+      ? { entered_load: kg, entered_unit: "kg" }
+      : { entered_load: lb, entered_unit: "lb" };
+  return solved
+    ? { row: { ...row, ...solved }, restored: true, was, alternative: other }
+    : { row: { ...row, entered_load: null, entered_unit: null }, restored: false, was, alternative: null };
+}

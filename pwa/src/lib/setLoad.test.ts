@@ -7,6 +7,8 @@ import {
   isAcceptedAuthoredLoad,
   LoadIntegrityError,
   provenanceForTotal,
+  repairAuthoredLoad,
+  solveTypedLoad,
   shownLoadValue,
   typedFromDraft,
 } from "./setLoad";
@@ -244,5 +246,79 @@ describe("structural guard", () => {
       return forbidden.some((re) => re.test(src));
     });
     expect(hits).toEqual([]);
+  });
+});
+
+describe("solveTypedLoad: restore what the lifter typed", () => {
+  const dead = (load_kg: number, entered_load: number, load_entry: "total" | "per_side" = "total") =>
+    ({ load_kg, load_entry, entered_load, entered_unit: "kg" as const });
+
+  it("solves the four incident totals as the pounds that were typed", () => {
+    expect(solveTypedLoad(dead(65.77, 65.8))).toEqual({ entered_load: 145, entered_unit: "lb" });
+    expect(solveTypedLoad(dead(34.02, 34))).toEqual({ entered_load: 75, entered_unit: "lb" });
+    expect(solveTypedLoad(dead(45.36, 45.4))).toEqual({ entered_load: 100, entered_unit: "lb" });
+    expect(solveTypedLoad(dead(52.16, 52.2))).toEqual({ entered_load: 115, entered_unit: "lb" });
+  });
+
+  it("solves per-side lb and picks kg when only kg reproduces the total", () => {
+    expect(solveTypedLoad(dead(65.77, 65.8, "per_side"))).toEqual({ entered_load: 72.5, entered_unit: "lb" });
+    expect(solveTypedLoad(dead(100, 99.9))).toEqual({ entered_load: 100, entered_unit: "kg" });
+    expect(solveTypedLoad(dead(42.5, 21.3, "per_side"))).toEqual({ entered_load: 21.25, entered_unit: "kg" });
+  });
+
+  it("returns null when no grid value gives exactly that total (provenance unknown)", () => {
+    expect(solveTypedLoad(dead(60.01, 60))).toBeNull();
+    expect(solveTypedLoad(dead(0, 1))).toBeNull();
+    expect(solveTypedLoad({ load_kg: 100, load_entry: null, entered_load: 1, entered_unit: "kg" })).toBeNull();
+  });
+
+  it("every solution is exactly what the trigger mirror accepts, over a lb and kg sweep", () => {
+    for (let lb = 5; lb <= 700; lb += 0.5) {
+      for (const entry of ["total", "per_side"] as const) {
+        const built = buildSetLoad({ typedValue: lb, typedUnit: "lb", loadEntry: entry });
+        const solved = solveTypedLoad({ ...built, entered_load: lb, entered_unit: "lb" });
+        expect(solved).not.toBeNull();
+        const row = { load_kg: built.load_kg, load_entry: entry, ...solved! };
+        expect(isAcceptedAuthoredLoad(row)).toEqual({ ok: true });
+      }
+    }
+    for (let kg = 1; kg <= 300; kg += 0.25) {
+      const built = buildSetLoad({ typedValue: kg, typedUnit: "kg", loadEntry: "total" });
+      const solved = solveTypedLoad({ ...built, entered_load: kg, entered_unit: "kg" });
+      expect(solved).not.toBeNull();
+      expect(isAcceptedAuthoredLoad({ load_kg: built.load_kg, load_entry: "total", ...solved! })).toEqual({ ok: true });
+    }
+  });
+
+  it("tie rule: when both units reproduce the total, the recorded unit wins only if its number agrees", () => {
+    // find a real coincidence of the two grids
+    let found: { kg: number; lb: number; total: number } | null = null;
+    for (let lb = 1; lb <= 400 && !found; lb += 0.5) {
+      const total = buildSetLoad({ typedValue: lb, typedUnit: "lb", loadEntry: "total" }).load_kg;
+      const kg = Math.round(total / 0.25) * 0.25;
+      if (Math.abs(kg - total) < 1e-9) found = { kg, lb, total };
+    }
+    if (!found) return; // the grids never coincide in range: nothing to resolve
+    const base = { load_kg: found.total, load_entry: "total" as const };
+    expect(solveTypedLoad({ ...base, entered_load: found.lb, entered_unit: "lb" }))
+      .toEqual({ entered_load: found.lb, entered_unit: "lb" });
+    expect(solveTypedLoad({ ...base, entered_load: found.kg, entered_unit: "kg" }))
+      .toEqual({ entered_load: found.kg, entered_unit: "kg" });
+    expect(repairAuthoredLoad({ ...base, entered_load: found.kg, entered_unit: "kg" }).alternative)
+      .toEqual({ entered_load: found.lb, entered_unit: "lb" });
+    // a recorded number nowhere near either candidate is not evidence: ambiguous -> unknown
+    expect(solveTypedLoad({ ...base, entered_load: 3, entered_unit: "kg" })).toBeNull();
+  });
+
+  it("repairAuthoredLoad changes only entered_load/entered_unit and reports what was saved", () => {
+    const row = { id: "x", reps: 5, rpe: 8, load_kg: 65.77, load_entry: "total" as const, entered_load: 65.8, entered_unit: "kg" as const };
+    const out = repairAuthoredLoad(row);
+    expect(out.restored).toBe(true);
+    expect(out.was).toEqual({ entered_load: 65.8, entered_unit: "kg" });
+    expect(out.alternative).toBeNull();
+    expect(out.row).toEqual({ ...row, entered_load: 145, entered_unit: "lb" });
+    const unknown = repairAuthoredLoad({ ...row, load_kg: 60.01 });
+    expect(unknown.restored).toBe(false);
+    expect(unknown.row).toEqual({ ...row, load_kg: 60.01, entered_load: null, entered_unit: null });
   });
 });
