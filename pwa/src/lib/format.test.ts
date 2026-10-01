@@ -83,7 +83,7 @@ describe("formatRxSetLine is one planned set of the ledger", () => {
 
   it("falls back to the percentage, then to bare reps", () => {
     expect(formatRxSetLine(rx({ load_pct_tm: 80 }), "kg")).toBe("80% TM × 5");
-    expect(formatRxSetLine(rx(), "kg")).toBe("5 reps");
+    expect(formatRxSetLine(rx({}), "kg")).toBe("5 reps");
   });
 
   it("says Done and Timed for tracking without numbers", () => {

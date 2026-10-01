@@ -4474,16 +4474,6 @@ export function Session() {
               {active.coach_note && <Note label="COACH" text={active.coach_note} />}
             </div>
           )}
-          <button
-            type="button"
-            className="btn btn-outline-ink btn-block"
-            onClick={() => {
-              setMoreOpen(false);
-              finishWorkout();
-            }}
-          >
-            Finish workout
-          </button>
           {(focusSupersetPair ?? [focusEntry]).map((target, i) => (
             <div
               key={target.key}
@@ -4517,6 +4507,18 @@ export function Session() {
               {moreExtrasFor(target)}
             </div>
           ))}
+          {/* last, not first: ending the workout is not what a per-exercise
+              menu is for, and it should not be the first thing under a thumb */}
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => {
+              setMoreOpen(false);
+              finishWorkout();
+            }}
+          >
+            Finish workout
+          </button>
         </FocusMoreSheet>
       )}
 

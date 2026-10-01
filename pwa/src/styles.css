@@ -7574,6 +7574,9 @@
   }
 
   .workout-preview-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex: 0 0 var(--tap-md);
     width: var(--tap-md);
     height: var(--tap-md);
@@ -7637,7 +7640,10 @@
     font-weight: 800;
   }
 
+  /* the scheme on its own line, the rest times on the next, so a wrapped
+     line never begins with a separator */
   .workout-preview-target {
+    flex: 0 0 100%;
     font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
   }
 
@@ -7645,14 +7651,16 @@
     font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
   }
 
-  .workout-preview-rest::before {
+  .workout-preview-rest + .workout-preview-rest::before {
     content: "\00b7";
     margin: 0 var(--s-3);
   }
 
   /* Start stays under the thumb while the list scrolls */
   .workout-preview-actions {
-    bottom: 0;
+    /* sticky respects the sheet's own bottom padding, so it is cancelled here
+       to pin Start to the very bottom of the sheet */
+    bottom: calc(-1 * (var(--s-10) + env(safe-area-inset-bottom)));
     margin: auto calc(-1 * var(--gutter)) calc(-1 * (var(--s-10) + env(safe-area-inset-bottom)));
     padding: var(--s-4) var(--gutter) calc(env(safe-area-inset-bottom) + var(--s-7));
     background: var(--bg-raised);
@@ -8286,7 +8294,7 @@
     text-transform: uppercase;
   }
 
-  .detail-note-label::after {
+  .detail-note:not(.detail-note-toggle) .detail-note-label::after {
     content: " \00b7";
   }
 
@@ -8501,6 +8509,25 @@
 
   .wk-list-dock {
     margin-top: var(--s-2);
+  }
+
+  /* a label and its control share a row while they fit and stack when they do
+     not (a three-key Appearance switch on a 320px phone) */
+  .sheet-row {
+    flex-wrap: wrap;
+    row-gap: var(--s-3);
+  }
+
+  .sheet-row > span:first-child {
+    min-width: 0;
+  }
+
+  /* a row inside a stacked row is the same row, not a card in a card */
+  .sheet-row .sheet-row {
+    min-height: 0;
+    padding-inline: 0;
+    background: none;
+    box-shadow: none;
   }
 }
 
