@@ -40,6 +40,37 @@ import { useUnit } from "../hooks/useUnit";
 import { toDisplay } from "../lib/units";
 import type { DeadKind, OutboxEntry } from "../lib/outbox";
 import type { OutboxOp } from "../lib/db";
+import { repairAuthoredLoad } from "../lib/setLoad";
+import type { SetInsert } from "../lib/types";
+
+const num = (n: number) => String(Math.round(n * 1000) / 1000);
+
+/**
+ * What the load repair would write for this dead set, in words the lifter can
+ * check against what they remember typing: "145 lb (was saved as 65.8 kg)".
+ * Uses the same solver the outbox repair uses, so the review line cannot
+ * promise a weight the repair then writes differently.
+ */
+export function describeRepairedLoad(set: SetInsert): { restored: boolean; text: string; short: string } {
+  const { row, restored, was, alternative } = repairAuthoredLoad(set);
+  const wasText = was.entered_load != null && was.entered_unit
+    ? ` (was saved as ${num(was.entered_load)} ${was.entered_unit})`
+    : "";
+  if (!restored || row.entered_load == null || !row.entered_unit) {
+    return {
+      restored: false,
+      text: `weight unknown, only the ${num(set.load_kg)} kg total is kept${wasText}`,
+      short: `${num(set.load_kg)} kg total`,
+    };
+  }
+  const typed = `${num(row.entered_load)} ${row.entered_unit}${set.load_entry === "per_side" ? " per side" : ""}`;
+  // Both units reproduce this total (the grids coincide). Say so: the lifter
+  // is the only one who knows which they typed.
+  const also = alternative
+    ? `; ${num(alternative.entered_load)} ${alternative.entered_unit}${set.load_entry === "per_side" ? " per side" : ""} gives the same total, check which you typed`
+    : "";
+  return { restored: true, text: `${typed}${wasText}${also}`, short: typed };
+}
 
 /** Rows shown per group. The export carries every one of them, so a long
  *  offline session is not a reason to make this sheet unscrollable. */
@@ -199,6 +230,9 @@ export function OutboxSheet({
   const review = repairable.find((e) => e.key === reviewKey);
   const reviewTotal = review?.op.kind === "insert" && review.op.table === "sets"
     ? `${unit === "kg" ? review.op.payload.load_kg : toDisplay(review.op.payload.load_kg, unit)} ${unit}`
+    : null;
+  const reviewRepair = review?.op.kind === "insert" && review.op.table === "sets"
+    ? describeRepairedLoad(review.op.payload)
     : null;
   // A saved export can cover more than one repaired set. The queue changes
   // after the first retry, but an untouched row is still the exact row the
@@ -493,23 +527,24 @@ export function OutboxSheet({
           <div className="field-label">LOAD REPAIR ({repairable.length})</div>
           <div className="microcopy">
             These sets were refused because the saved total and stored entered fields
-            disagree. Export the queue, then review every total before retrying.
-            Repair keeps the logged total in kg and marks the
-            stored entered number and unit as unknown. The export keeps the
-            original queued row.
+            disagree. Export the queue, then check the weight shown for every set
+            against what you typed. Repair keeps the logged total in kg and
+            restores the weight that produces exactly that total; if no typed
+            weight does, the entered number and unit are marked unknown instead.
+            The export keeps the original queued row.
           </div>
           {repairable.length > 1 && (
             <div className="queue-repair-review">
               <div className="field-label">REVIEW ALL {repairable.length} SETS</div>
               {repairable.map((row) => row.op.kind === "insert" && row.op.table === "sets" && (
                 <div key={row.key}>
-                  {names[row.op.payload.exercise_id] ?? "Set logged"} · set {row.op.payload.set_index + 1}: {row.op.payload.load_kg} kg total
+                  {names[row.op.payload.exercise_id] ?? "Set logged"} · set {row.op.payload.set_index + 1}: {describeRepairedLoad(row.op.payload).text} · {row.op.payload.load_kg} kg total
                   {unit !== "kg" ? ` (${toDisplay(row.op.payload.load_kg, unit)} ${unit} total)` : ""}
                   {row.op.payload.load_entry === "per_side" ? `, ${toDisplay(row.op.payload.load_kg / 2, unit)} ${unit}/side` : ""}
                   {` · ID ${row.op.payload.id}`}
                 </div>
               ))}
-              <div className="microcopy">The original entered numbers and units remain in the saved export. All {repairable.length} sets keep their IDs, owners, times, indexes, totals and other training values. Linked removals and notes need a separate retry after these sets sync.</div>
+              <div className="microcopy">The original entered numbers and units remain in the saved export. Check each weight above is what you typed. All {repairable.length} sets keep their IDs, owners, times, indexes, totals and other training values. Linked removals and notes need a separate retry after these sets sync.</div>
               <label>
                 <input type="checkbox" checked={savedExport} onChange={(event) => setSavedExport(event.target.checked)} disabled={!batchMatches || busy} />
                 I saved the queue export and checked all {repairable.length} totals
@@ -542,6 +577,7 @@ export function OutboxSheet({
               <div>{describeOp(review.op, names)} · set {review.op.payload.set_index + 1}</div>
               <div>Logged total: {review.op.payload.load_kg} kg</div>
               {unit !== "kg" && <div>In your unit: {reviewTotal} total</div>}
+              {reviewRepair && <div>{reviewRepair.restored ? "Typed weight restored" : "Typed weight"}: {reviewRepair.text}</div>}
               {review.op.payload.load_entry === "per_side" && (
                 <div>Per side: {toDisplay(review.op.payload.load_kg / 2, unit)} {unit}/side</div>
               )}
@@ -550,8 +586,10 @@ export function OutboxSheet({
               <div>Logged at: {review.op.payload.performed_at}</div>
               <div className="microcopy">
                 The server keeps the exact {review.op.payload.load_kg} kg total.
-                The inconsistent entered fields become unknown in the server row;
-                the original remains in your queue export.
+                {reviewRepair?.restored
+                  ? " The entered number and unit are rewritten to the typed weight above, which gives exactly that total."
+                  : " No typed weight gives exactly that total, so the entered fields become unknown in the server row."}
+                {" "}The original remains in your queue export.
               </div>
               <label>
                 <input
@@ -568,7 +606,7 @@ export function OutboxSheet({
                 onClick={repairReviewed}
                 disabled={busy || !exportMatches || !savedExport}
               >
-                Keep {reviewTotal} total and retry
+                {reviewRepair?.restored ? `Restore ${reviewRepair.short} and retry` : `Keep ${reviewTotal} total and retry`}
               </button>
             </div>
           )}

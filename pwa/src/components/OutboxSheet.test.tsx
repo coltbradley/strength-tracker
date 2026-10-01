@@ -257,7 +257,8 @@ describe("OutboxSheet", () => {
     expect(screen.getByText("In your unit: 145 lb total")).toBeTruthy();
     expect(screen.getByText(/Rejected row's entered fields: 65.8 kg/)).toBeTruthy();
     expect(screen.getByText(/may be stale/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Keep 145 lb total and retry" })).toHaveProperty("disabled", true);
+    expect(screen.getByText("Typed weight restored: 145 lb (was saved as 65.8 kg)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Restore 145 lb and retry" })).toHaveProperty("disabled", true);
   });
 
   it("shows the per-side equivalent while the repair button names the stored total", async () => {
@@ -279,8 +280,40 @@ describe("OutboxSheet", () => {
     fireEvent.click(screen.getByRole("button", { name: /Review 1 of 1/ }));
     expect(screen.getByText("In your unit: 145 lb total")).toBeTruthy();
     expect(screen.getByText("Per side: 72.5 lb/side")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Keep 145 lb total and retry" })).toBeTruthy();
+    expect(screen.getByText("Typed weight restored: 72.5 lb per side (was saved as 65.8 kg)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Restore 72.5 lb per side and retry" })).toBeTruthy();
   });
+  it("says plainly when no typed weight reproduces the total, and keeps the total", async () => {
+    h.unit = "kg";
+    const original = {
+      ...(entry({ key: 9 }).op as Extract<OutboxEntry["op"], { kind: "insert"; table: "sets" }>).payload,
+      load_kg: 60.01,
+      load_entry: "total" as const,
+      entered_load: 60,
+      entered_unit: "kg" as const,
+    };
+    await show([entry({ key: 9, op: { kind: "insert", table: "sets", payload: original },
+      state: "dead", cause: "rejected", loadRepairable: true })]);
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 of 1/ }));
+    expect(screen.getByText(/Typed weight: weight unknown, only the 60.01 kg total is kept \(was saved as 60 kg\)/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep 60.01 kg total and retry" })).toBeTruthy();
+  });
+
+  it("flags a total that two units both reproduce so the lifter can choose", async () => {
+    h.unit = "lb";
+    const original = {
+      ...(entry({ key: 10 }).op as Extract<OutboxEntry["op"], { kind: "insert"; table: "sets" }>).payload,
+      load_kg: 31.75, // 70 lb and 31.75 kg both give exactly this
+      load_entry: "total" as const,
+      entered_load: 31.8,
+      entered_unit: "kg" as const,
+    };
+    await show([entry({ key: 10, op: { kind: "insert", table: "sets", payload: original },
+      state: "dead", cause: "rejected", loadRepairable: true })]);
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 of 1/ }));
+    expect(screen.getByText(/31.75 kg \(was saved as 31.8 kg\); 70 lb gives the same total, check which you typed/)).toBeTruthy();
+  });
+
   it("requires a saved export and review before retrying an authored-load failure", async () => {
     const original = {
       ...(entry({ key: 1 }).op as Extract<OutboxEntry["op"], { kind: "insert"; table: "sets" }>).payload,
@@ -300,9 +333,9 @@ describe("OutboxSheet", () => {
     })]);
 
     fireEvent.click(screen.getByRole("button", { name: /Review 1 of 1/ }));
-    expect(screen.getByText(/220.5 lb/)).toBeTruthy();
+    expect(screen.getAllByText(/220.5 lb/).length).toBeGreaterThan(0);
     expect(screen.getByText("Logged total: 100 kg")).toBeTruthy();
-    const repair = screen.getByRole("button", { name: /Keep 100 kg total and retry/ });
+    const repair = screen.getByRole("button", { name: "Restore 100 kg and retry" });
     expect(repair).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
     await waitFor(() => expect(h.downloadText).toHaveBeenCalledTimes(1));
@@ -326,8 +359,10 @@ describe("OutboxSheet", () => {
       }));
     await show(rows);
     expect(screen.getByText("REVIEW ALL 7 SETS")).toBeTruthy();
-    expect(screen.getByText(/set 1: 65.77 kg total/)).toBeTruthy();
-    expect(screen.getByText(/set 7: 45.36 kg total/)).toBeTruthy();
+    expect(screen.getByText(/set 1: 145 lb \(was saved as 65.8 kg\) · 65.77 kg total/)).toBeTruthy();
+    expect(screen.getByText(/set 2: 75 lb \(was saved as 34 kg\) · 34.02 kg total/)).toBeTruthy();
+    expect(screen.getByText(/set 3: 100 lb \(was saved as 45.4 kg\) · 45.36 kg total/)).toBeTruthy();
+    expect(screen.getByText(/set 4: 115 lb \(was saved as 52.2 kg\) · 52.16 kg total/)).toBeTruthy();
     const action = screen.getByRole("button", { name: "Repair all 7 sets and retry" });
     expect(action).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: /Export queue/ }));
