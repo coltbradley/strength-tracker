@@ -360,7 +360,8 @@ Sections:
   itself, so every setting carries its own validation, migration and
   control: unit; plate and bar inventories and the default bar; coarse and
   fine load steps; per-exercise overrides (bar, rest, increment; synced); fallback
-  load and reps; default rest; auto-start-rest; week start day. Rest alerts
+  load and reps; default rest; auto-start-rest; week start day; Appearance
+  (Light / Dark / System, default Light, applied by `lib/theme.ts`). Rest alerts
   sit alongside them as a bespoke row, because the value is a browser
   notification permission rather than a stored preference — and the rest
   strip itself never prompts.

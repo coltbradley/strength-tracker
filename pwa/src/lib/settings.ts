@@ -64,6 +64,9 @@ export const GROUP_LABEL: Record<Group, string> = {
   display: "DISPLAY",
 };
 
+/** Colour theme choice. "system" follows prefers-color-scheme (lib/theme.ts). */
+export type Appearance = "light" | "dark" | "system";
+
 export type PerUnit<T> = Record<Unit, T>;
 
 /** Per-exercise overrides. Every field is optional; absent = use the global. */
@@ -469,6 +472,34 @@ const SETTINGS = {
     control: { kind: "toggle" },
     defaults: () => true,
     parse: (raw) => (typeof raw === "boolean" ? raw : null),
+  }),
+
+  /**
+   * Light / Dark / Follow system. Default LIGHT (owner decision, 2026-10-01):
+   * "system" is opt-in, so nobody's phone-wide dark mode changes the app under
+   * them. Applied by lib/theme.ts. ADDITIVE: an absent key parses to null and
+   * takes the default, so no envelope migration or version bump is needed.
+   *
+   * COUPLING: index.html reads this key out of the stored envelope
+   * (`strength-log.settings` -> values.appearance) in a tiny inline script to
+   * set data-theme before first paint. Renaming the key, the envelope key or
+   * the envelope shape means updating that script too.
+   */
+  appearance: def<Appearance>({
+    group: "display",
+    label: "Appearance",
+    help: "System follows your phone's light/dark setting.",
+    control: {
+      kind: "segment",
+      options: [
+        { value: "light", label: "Light" },
+        { value: "dark", label: "Dark" },
+        { value: "system", label: "System" },
+      ],
+    },
+    defaults: () => "light",
+    parse: (raw) =>
+      raw === "light" || raw === "dark" || raw === "system" ? raw : null,
   }),
 
   /** Moved by long-pressing the button and dragging it; no sheet control. */

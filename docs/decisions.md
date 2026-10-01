@@ -3628,3 +3628,45 @@ order, so only `programs[0]` is shown there and the others are named in a note.
 
 The duration the design mocked ("about 65 min") is not shown because nothing
 here can compute one honestly.
+
+## 2026-10-01 Dark theme, with light as the default
+
+This reverses "there is no dark variant" (the note on `color-scheme` at the top
+of the token block in `pwa/src/styles.css`). The app is used in gyms and at
+night, and the approved Version D design ships a dark palette, so a second
+token set is now part of the system.
+
+- **One more token set, not a second file.** `:root` is still light.
+  `:root[data-theme="dark"]` is a single block in the same layer that overrides
+  palette and role tokens only. Components never mention the theme; the places
+  that assumed light (text on the accent, shadows built from ink, the plate
+  edge, the check-in heat tint) were routed through role tokens first
+  (`--text-inverse`, `--shadow-rgb`, `--plate-edge`, `--heat-scale`). The accent
+  becomes ochre in dark with dark text on it. Branches that add tokens add
+  their dark value in that one block; `styles.contrast.test.ts` fails if a pair
+  falls under AA in either theme.
+- **Appearance is a setting: Light | Dark | System, default Light.** Light is
+  the default because that is the design the owner approved; System is opt-in
+  so a phone-wide dark mode does not change the app unasked. It is an additive
+  key in the settings registry (`appearance`, group display): old envelopes
+  parse, no version bump.
+- **No flash.** Settings live in localStorage and React starts late, so
+  `index.html` has a tiny inline script that reads
+  `strength-log.settings` -> `values.appearance` and sets `data-theme` before
+  CSS paints; `lib/theme.ts` runs before first render, re-asserts it, follows
+  setting changes and the OS `prefers-color-scheme` change event, and rewrites
+  `<meta name="theme-color">` from the resolved `--paper`. The script and
+  `settings.ts` are coupled by key and shape and carry comments saying so.
+  Failure of any piece leaves light.
+- **Review follow-ups.** `startTheme()` falls back to `addListener` where
+  `MediaQueryList` is not an EventTarget (Safari < 14) instead of throwing
+  before first render. The inline script applies the same envelope check as
+  `settings.ts` `load()` (numeric `v`), and a test runs the real script against
+  what `settings.ts` writes. The UA placeholder colour (3.2:1 on the dark input
+  surface) is the `--placeholder` token; its light value is Chromium's default
+  `#757575`, which is 4.4:1 on the input surface, a known light-mode shortfall
+  left untouched so light stays pixel-identical. Until `theme.ts` runs, the
+  `theme-color` meta is the light literal, so a dark launch can show a light
+  status bar for the first moments; the page itself never flashes.
+- **Manifest stays light.** `background_color` / `theme_color` cannot switch at
+  runtime; the installed splash screen is light in either theme. Accepted.

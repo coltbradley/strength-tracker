@@ -874,8 +874,25 @@ done.
   utilities. The theme boundary is the token layer, not a second file: a
   colour must be changeable in exactly one place. Do not re-inline colour
   literals, and do not reintroduce a theme.css.
-- Text colours must clear WCAG AA. The accent (#bd5410) is 4.08:1, which is
-  AA for large text and UI, not for small prose — never set body copy in it.
+- Two themes, one token layer. `:root` holds the light tokens (the default);
+  ONE `:root[data-theme="dark"]` block, in the same layer, overrides only
+  palette/role tokens. No component rule may mention the theme or carry a
+  dark-specific override: if a component needs a colour, route it through a
+  role token (`--text-inverse` for text on accent, `--shadow-rgb` for
+  shadows, never a literal). To add a colour: declare it in `:root`, add its
+  dark value in the dark block, and run `styles.contrast.test.ts` (AA 4.5:1
+  for text pairs, 3:1 for control outlines, in BOTH themes; add the new pair
+  to its `PAIRS` table). A token missing from the dark block silently keeps
+  its light value. `styles.palette.test.ts` pins both palettes.
+- Theme is applied by `pwa/src/lib/theme.ts` from the `appearance` setting
+  (light | dark | system, default light). An inline script in `index.html`
+  reads the stored envelope to set `data-theme` pre-paint; it is coupled to
+  the storage key/shape in `lib/settings.ts` — change both together. The
+  manifest colours stay light (a manifest cannot switch); the runtime
+  `theme-color` meta follows the resolved `--paper`.
+- Text colours must clear WCAG AA in both themes, enforced by the contrast
+  test. Accents used as text (aubergine in light, ochre in dark) are checked
+  there; never set body copy in a colour that is not.
 - Fonts are self-hosted in `pwa/public/fonts` and precached. The service
   worker caches nothing cross-origin, so a webfont `@import` silently breaks
   the offline promise.

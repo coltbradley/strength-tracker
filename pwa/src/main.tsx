@@ -6,9 +6,14 @@ import { cacheGet, cacheKeys } from "./lib/db";
 import { installGlobalHandlers, initSentry } from "./lib/errors";
 import { outbox } from "./lib/sync";
 import { exercisePrefsSync } from "./lib/exercisePrefsSyncApp";
+import { startTheme } from "./lib/theme";
 import { createUpdateGate } from "./lib/swUpdate";
 import "./styles.css";
 
+// Theme first: data-theme must be set before the first render paints (index.html
+// has already set it pre-CSS from localStorage; this re-asserts it and starts
+// following the setting and the OS preference).
+startTheme();
 installGlobalHandlers();
 void initSentry();
 outbox.start(); // flush on app start + 'online' events

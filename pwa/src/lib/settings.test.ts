@@ -608,3 +608,41 @@ describe("hasExerciseBase — a sled weight is a fact only once somebody sets it
     expect(hasExerciseBase("leg-press", "machine")).toBe(false);
   });
 });
+
+describe("appearance", () => {
+  it("defaults to light and accepts the three choices", () => {
+    expect(getSetting("appearance")).toBe("light");
+    for (const v of ["dark", "system", "light"] as const) {
+      expect(setSetting("appearance", v)).toBe(true);
+      expect(getSetting("appearance")).toBe(v);
+    }
+  });
+
+  it("rejects anything else without writing", () => {
+    setSetting("appearance", "dark");
+    expect(setSetting("appearance", "sepia" as never)).toBe(false);
+    expect(getSetting("appearance")).toBe("dark");
+  });
+
+  it("falls back to light on a corrupt stored value", () => {
+    localStorage.setItem(
+      ENVELOPE,
+      JSON.stringify({ v: 2, values: { appearance: 7 } }),
+    );
+    reloadSettings();
+    expect(getSetting("appearance")).toBe("light");
+  });
+
+  it("parses an envelope written before the key existed, without a version bump", () => {
+    localStorage.setItem(
+      ENVELOPE,
+      JSON.stringify({ v: 2, values: { defaultRest: 90 } }),
+    );
+    reloadSettings();
+    expect(getSetting("appearance")).toBe("light");
+    expect(getSetting("defaultRest")).toBe(90);
+    setSetting("appearance", "system");
+    expect(envelope().v).toBe(2);
+    expect(envelope().values.appearance).toBe("system");
+  });
+});
