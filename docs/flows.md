@@ -138,6 +138,16 @@ Supabase sends the stock link email and the paste path is the working one.
 - **Switch exercise** — tap any closed row; it opens (previous closes) and
   scrolls into view, prefilled (prescription → this session → last session →
   configured fallback). Tapping the open header collapses it.
+> **In flight (Version D, 2026-10-01).** The Focus deck, Rest, Log a superset
+> round and Plates bullets below describe what is shipped. Phase 1 of
+> `docs/superpowers/specs/2026-10-01-version-d-design.md` replaces them: a drawn
+> load picture and RPE / Note / Skip / Swap keys on the default screen (not
+> behind `•••`), load and reps side by side, rest in the middle band with
+> "End rest now", superset logged member by member (no "Log round"), a plate
+> sheet with an editable base weight, a `☰ n/m` header with an always-visible
+> sync check, and drag-to-reorder in the workout sheet. Rewrite these bullets in
+> the PR that ships each piece.
+
 - **Focus deck** — the default presentation for an eligible session, from
   Start or restore. The app header and tab bar hide while it is shown, and
   the screen is deliberately spare: a tap-to-jump progress rail across the

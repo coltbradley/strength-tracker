@@ -43,6 +43,13 @@ evidence backlogs like the 2026-09-19 audit.
 (`3cc8159`) and MCP has redeployed since. Close the feedback row once the
 athlete accepts the outcome.
 
+**In flight outside phase order (2026-10-01):** the Version D session redesign
+(live workout, then Train, then Record), as three phased PRs. It changes
+presentation only: no schema change in the first two phases, and it does not
+touch any ledger row. Spec `docs/superpowers/specs/2026-10-01-version-d-design.md`,
+plan `docs/superpowers/plans/2026-10-01-version-d-implementation.md`, decision
+`docs/decisions.md` 2026-10-01. Per-exercise prefs sync is a separate PR.
+
 ## Plan authority
 
 This is the one active product and release roadmap. Follow its phases in

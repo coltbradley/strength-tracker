@@ -1,4 +1,8 @@
 # Training scenes and native units design
+> **Superseded in part (2026-10-01).** Version D changes rest placement (middle band, not the top slot), the superset scene (member by member, no **Log round**), where RPE, note, skip, swap and plates live (dock keys on the default screen), and reordering (drag in the session sheet). Its native lb/kg model is untouched. Where this
+> document disagrees, `docs/superpowers/specs/2026-10-01-version-d-design.md`
+> wins once its phase merges; until then this describes shipped behaviour.
+
 
 ## Product decision
 
