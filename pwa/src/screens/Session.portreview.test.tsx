@@ -231,3 +231,44 @@ describe("N1 staged warmup never leaks into another exercise", () => {
     expect(queuedSets()[0].set_type).toBe("working");
   });
 });
+
+describe("N2 a just-logged set is never 'Needs review' while the exact read is slow", () => {
+  it("LAST SET says On this phone immediately, with a hanging exact-id read", async () => {
+    await seed([rx("bench", "bench-press", "Bench Press", 60, 3)]);
+    const data = await import("../lib/data");
+    vi.mocked(data.getExactSetReceiptIds).mockImplementation(
+      () => new Promise(() => undefined) as never,
+    );
+    let notify: (() => void) | null = null;
+    vi.mocked(outbox.subscribe).mockImplementation((f: () => void) => {
+      notify = f;
+      return () => undefined;
+    });
+    const entries: unknown[] = [];
+    vi.mocked(outbox.inspect).mockImplementation(async () => entries as never);
+    vi.mocked(outbox.enqueue).mockImplementation(async (op) => {
+      entries.push({
+        key: entries.length + 1,
+        op,
+        table: op.table,
+        created_at: null,
+        retries: 0,
+        last_error: null,
+        user_id: "aaaaaaaa-1111-4111-8111-111111111111",
+      });
+      notify?.();
+    });
+    renderSession();
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await pause(80);
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await screen.findByText("LAST SET");
+    await pause(400);
+    const receipts = [...document.querySelectorAll(".set-receipt")].map((e) => e.textContent ?? "");
+    expect(receipts.length).toBeGreaterThan(0);
+    for (const text of receipts) {
+      expect(text).not.toMatch(/review/i);
+      expect(text).toMatch(/On this phone|Sending/);
+    }
+  });
+});

@@ -641,6 +641,23 @@ export function Session() {
         ids.add(originalId);
       }
 
+      // The queue is local and already known: show it NOW, before the network
+      // read returns, so a set that was just enqueued says "On this phone"
+      // rather than "Needs review". Entries the new read no longer lists stay
+      // until the exact read lands, so an ACK cannot flash review either.
+      setReceiptSnapshot((previous) => {
+        const sameScope = previous.sessionId === requestedSession && previous.ownerId === ownerId;
+        const known = new Set(entries.map((entry) => entry.key));
+        return {
+          sessionId: requestedSession, ownerId,
+          entries: sameScope ? [...entries, ...previous.entries.filter((entry) => !known.has(entry.key))] : entries,
+          correctionLinks: sameScope ? { ...previous.correctionLinks, ...correctionLinks } : correctionLinks,
+          readError: sameScope ? previous.readError : null,
+          serverSetIds: sameScope ? previous.serverSetIds : new Set(),
+          serverVoidIds: sameScope ? previous.serverVoidIds : new Set(),
+        };
+      });
+
       try {
         const exact = await getExactSetReceiptIds(requestedSession, ownerId, [...ids]);
         if (!isCurrent()) return;
