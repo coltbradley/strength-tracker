@@ -57,7 +57,11 @@ create table exercise_prefs (
   load_unit    text check (load_unit in ('kg', 'lb')),
   load_entry   text check (load_entry in ('total', 'per_side')),
   load_style   text check (load_style in ('plates', 'stack')),
-  updated_at   timestamptz not null,
+  -- Finite only: 'infinity' would beat every later write and parses to NaN on
+  -- the client. The upper bound (now() + 1 day) is a trigger, below, because a
+  -- CHECK may not be relied on to stay valid as time passes.
+  updated_at   timestamptz not null
+    check (updated_at > '-infinity' and updated_at < 'infinity'),
   primary key (user_id, exercise_id)
 );
 
@@ -70,24 +74,56 @@ comment on table exercise_prefs is
 -- FK lookup for the cascade from exercises (the fk_indexes precedent).
 create index idx_exercise_prefs_exercise on exercise_prefs (exercise_id);
 
--- Last-write-wins: an older write never replaces a newer one. Returning NULL
--- from a BEFORE UPDATE trigger skips the row silently, which is what an
--- idempotent replay wants: no error, so the outbox does not dead-letter a
--- write that simply lost the race.
+-- Two guards on every write, in one trigger function:
+--
+-- 1. updated_at may not be more than a day ahead of the server's clock. With
+--    no bound, one write stamped 9999-12-31 (a phone with a wrong clock, a
+--    client bug) beat every later write for ever, and with no delete policy
+--    nothing could undo it. A day tolerates ordinary skew; anything beyond is
+--    refused with 23514, which the outbox treats as a permanent rejection.
+--
+-- 2. Last-write-wins: an older write never replaces a newer one. Returning
+--    NULL from a BEFORE UPDATE trigger skips the row silently, which is what an
+--    idempotent replay wants: no error, so the outbox does not dead-letter a
+--    write that simply lost the race. EQUAL stamps are broken by VALUE, so two
+--    devices that stamped the same millisecond with different choices settle
+--    on the same one everywhere: absent (null) sorts lowest, then bar_kg,
+--    rest_seconds, load_step_kg numerically, then load_unit, load_entry,
+--    load_style as text. comparePrefValues in
+--    pwa/src/lib/exercisePrefsSync.ts mirrors this order exactly.
+--
+-- search_path is pinned to public, pg_temp like every other function
+-- (docs/security.md): pg_temp is otherwise searched FIRST.
 create function exercise_prefs_lww() returns trigger
   language plpgsql
-  set search_path = public
+  set search_path = public, pg_temp
 as $$
 begin
-  if new.updated_at < old.updated_at then
-    return null;
+  if new.updated_at > now() + interval '1 day' then
+    raise exception 'exercise_prefs.updated_at is more than a day in the future'
+      using errcode = '23514';
+  end if;
+  if tg_op = 'UPDATE' then
+    if new.updated_at < old.updated_at then
+      return null;
+    end if;
+    if new.updated_at = old.updated_at
+       and (coalesce(new.bar_kg, -1), coalesce(new.rest_seconds, -1),
+            coalesce(new.load_step_kg, -1), coalesce(new.load_unit, ''),
+            coalesce(new.load_entry, ''), coalesce(new.load_style, ''))
+        <= (coalesce(old.bar_kg, -1), coalesce(old.rest_seconds, -1),
+            coalesce(old.load_step_kg, -1), coalesce(old.load_unit, ''),
+            coalesce(old.load_entry, ''), coalesce(old.load_style, ''))
+    then
+      return null;
+    end if;
   end if;
   return new;
 end;
 $$;
 
 create trigger exercise_prefs_lww
-  before update on exercise_prefs
+  before insert or update on exercise_prefs
   for each row execute function exercise_prefs_lww();
 
 alter table exercise_prefs enable row level security;
@@ -96,10 +132,26 @@ alter table exercise_prefs enable row level security;
 -- column default (the exercise_notes pattern).
 create policy exercise_prefs_select on exercise_prefs for select to authenticated
   using (user_id = auth.uid());
+--
+-- And the exercise must be VISIBLE to the caller. The FK's own check bypasses
+-- RLS, so without this an insert for a guessable id (ids are name slugs) said
+-- "success" for another user's private custom exercise and "23503" for a
+-- missing one: an existence oracle, and a row of mine pointing at their
+-- exercise. The subquery runs under the caller's RLS, so `exercises_read`
+-- (source <> 'custom' or an exercise_owners row for me) decides, and
+-- another person's private exercise fails EXACTLY like a nonexistent id: the
+-- policy refuses (42501) before the FK is ever consulted.
 create policy exercise_prefs_insert on exercise_prefs for insert to authenticated
-  with check (user_id = auth.uid());
+  with check (
+    user_id = auth.uid()
+    and exists (select 1 from exercises e where e.id = exercise_id)
+  );
 create policy exercise_prefs_update on exercise_prefs for update to authenticated
-  using (user_id = auth.uid()) with check (user_id = auth.uid());
+  using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and exists (select 1 from exercises e where e.id = exercise_id)
+  );
 
 -- NO delete policy, deliberately, although this is the kind of row that would
 -- otherwise qualify (a preference, not the training record, like coach_memory

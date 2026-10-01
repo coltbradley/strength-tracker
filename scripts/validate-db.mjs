@@ -3998,6 +3998,78 @@ console.log("\nexercise prefs (synced presentation, last-write-wins):");
     assertEq(r.rows.length, 0, "no pref column on the shared library");
   });
 
+  await check("a pref for another user's PRIVATE custom exercise fails exactly like a missing id (no oracle)", async () => {
+    await db.exec(
+      `insert into exercises (id, name, primary_muscles, source)
+         values ('Prefs_Private_Lift', 'Prefs Private Lift', array['quadriceps'], 'custom');
+       insert into exercise_owners (exercise_id, user_id) values ('Prefs_Private_Lift', '${PA}');`,
+    );
+    const attempt = async (uid, id) => {
+      try {
+        await asUser(
+          uid,
+          `insert into exercise_prefs (exercise_id, bar_kg, updated_at) values ('${id}', 20, now())`,
+        );
+        return "accepted";
+      } catch (e) {
+        return `${e.code}`;
+      }
+    };
+    const priv = await attempt(PB, "Prefs_Private_Lift");
+    const missing = await attempt(PB, "Prefs_No_Such_Lift");
+    assertEq(priv, missing, "private-to-others answers like a nonexistent id");
+    if (priv === "accepted") throw new Error("insert for an invisible exercise was accepted");
+    // the upsert's UPDATE arm is held to the same rule
+    await asUser(PB, `insert into exercise_prefs (exercise_id, bar_kg, updated_at) values ('Barbell_Deadlift', 20, '2026-10-01T10:00:00Z') on conflict do nothing`);
+    let updated = "accepted";
+    try {
+      await asUser(PB, `update exercise_prefs set exercise_id = 'Prefs_Private_Lift', updated_at = now() where exercise_id = 'Barbell_Deadlift'`);
+    } catch (e) {
+      updated = `${e.code}`;
+    }
+    assertEq(updated, priv, "re-pointing a pref at an invisible exercise is refused the same way");
+    // the owner and a library exercise still work
+    await asUser(PA, `insert into exercise_prefs (exercise_id, bar_kg, updated_at) values ('Prefs_Private_Lift', 34, now())`);
+    const n = await db.query(`select count(*)::int as n from exercise_prefs where exercise_id = 'Prefs_Private_Lift' and user_id = '${PB}'`);
+    assertEq(n.rows[0].n, 0, "no cross-user reference row exists");
+  });
+
+  await check("updated_at is bounded: far future and infinity are refused, a day of skew is not", async () => {
+    const stamp = async (v) => {
+      try {
+        await asUser(PB, `insert into exercise_prefs (exercise_id, bar_kg, updated_at) values ('Pullups', 20, '${v}') on conflict (user_id, exercise_id) do update set updated_at = excluded.updated_at`);
+        return "accepted";
+      } catch (e) {
+        return `${e.code}`;
+      }
+    };
+    assertEq(await stamp("9999-12-31T00:00:00Z"), "23514", "far future refused");
+    assertEq(await stamp("infinity"), "23514", "infinity refused");
+    assertEq(await stamp("-infinity"), "23514", "-infinity refused");
+    assertEq(await stamp(new Date(Date.now() + 3 * 3600_000).toISOString()), "accepted", "ordinary skew accepted");
+  });
+
+  await check("equal stamps converge on a deterministic winner, in either arrival order", async () => {
+    const PC = "00000000-0000-4000-8000-0000000000c3";
+    await db.exec(`insert into auth.users (id, email) values ('${PC}', 'pc@example.test')`);
+    const T = "2026-10-01T15:00:00.000Z";
+    const put = (id, bar, style) =>
+      asUser(PC, `insert into exercise_prefs (exercise_id, bar_kg, load_style, updated_at) values ('${id}', ${bar}, '${style}', '${T}')
+        on conflict (user_id, exercise_id) do update set bar_kg = excluded.bar_kg, load_style = excluded.load_style, updated_at = excluded.updated_at`);
+    const read = async (id) =>
+      (await db.query(`select bar_kg::float as bar from exercise_prefs where user_id = '${PC}' and exercise_id = '${id}'`)).rows[0].bar;
+    await put("Barbell_Squat", 20, "plates");
+    await put("Barbell_Squat", 34, "plates");
+    await put("Barbell_Deadlift", 34, "plates");
+    await put("Barbell_Deadlift", 20, "plates");
+    assertEq([await read("Barbell_Squat"), await read("Barbell_Deadlift")], [34, 34], "larger value wins regardless of order");
+  });
+
+  await check("exercise_prefs_lww pins search_path to public, pg_temp", async () => {
+    const r = await db.query(`select proconfig from pg_proc where proname = 'exercise_prefs_lww'`);
+    assertEq(r.rows[0].proconfig, ["search_path=public, pg_temp"], "search_path");
+  });
+
   await check("deleting a user takes their prefs, not the exercise", async () => {
     await db.exec(`delete from auth.users where id = '${PB}'`);
     const n = await db.query(`select count(*)::int as n from exercise_prefs where user_id = '${PB}'`);
