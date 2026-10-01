@@ -189,7 +189,7 @@ Supabase sends the stock link email and the paste path is the working one.
   targets. Append-only, offline-first, rest clock starts, auto-unskips.
   When the plan is met the log button demotes to LOG EXTRA SET (outline) and
   "Next · [exercise]" becomes the primary — a deliberate tap, never an
-  auto-advance. LOG (and Log round) locks for 200ms after each tap, so a
+  auto-advance. LOG (and Log A1 / Log A2 in a superset) locks for 200ms after each tap, so a
   double-tap or a tap that lands twice through a slow frame inserts one set,
   not two; a correction's Save is never gated, since it is a deliberate,
   one-off edit rather than a rapid repeat.
@@ -212,14 +212,19 @@ Supabase sends the stock link email and the paste path is the working one.
   type, or dismiss the clock; it keeps running for rest stamping either way.
   Survives leaving the screen. Rest alerts opt in via Settings (notification
   permission). The strip hides while a sheet or the number pad is open.
-- **Log a superset round** — "Log round" queues both ordinary set inserts in
-  one IndexedDB transaction. The session marks neither member logged unless
-  that local batch is durable; a local failure leaves both drafts available
-  for retry. Offline rounds appear in Outbox and replay one operation at a
-  time in enqueue order when connectivity returns. That preserves order, but
-  the server does not commit the two rows as one transaction: if replay stops
-  after one row, the Outbox shows the remaining state and the unfinished
-  member can be completed on its own.
+- **Log a superset round** — member by member, A1 then A2. In focus the
+  middle shows one card per member (tag, name, staged "load unit × reps", and
+  ● NOW / ✓ / ○ NEXT), a one-line hint, and the load picture (plates, pin
+  stack, dumbbells) of the NOW member. The dock is the ordinary load | reps
+  row for that member only, captioned "lb · A1", with "Log A1" / "Log A2".
+  NOW is whichever member has fewer sets logged this round (A1 when level);
+  in the tail of unequal supersets, the member that has met its target is
+  finished and the other is NOW. Each tap is one ordinary single-set insert
+  (the same path as any set), so a local failure leaves that member's draft
+  for retry and never touches the partner. Rest starts only after the round's
+  second member is logged, and not after the pair's last round; the rest
+  clock itself always measures (A2's recorded rest is the gap since A1).
+  Offline sets appear in Outbox and replay in enqueue order.
 - **Plates** — per-exercise bar choice in the plate sheet (NO BAR for
   plate-loaded machines like the leg press); persists per exercise.
 - **Read the day's notes** — plan note and coach note render at the top of

@@ -3176,3 +3176,13 @@ on every visibility change and every minute. A session left open for days
 delays the update that long unless the app is closed, which activates the
 waiting worker on the next launch; the overnight sweep closes stale sessions.
 
+## 2026-10-01 A focus superset round is logged member by member
+
+Version D replaces the two-editor "Log round" with one dock that edits and logs
+the NOW member (fewer sets this round, A1 when level), with the load picture of
+that member above it. Each tap is an ordinary single set insert, so the
+all-or-nothing `enqueueBatch` for a round, `logRound` and `SupersetRoundEditor`
+are gone from the session screen. What it costs: A2's `rest_seconds_actual` is
+now the real gap since A1 (it used to be null for the second member of a round).
+What stays: the strip starts only after the round's second member and not after
+the pair's last round, and a failed save blocks only the member being logged.

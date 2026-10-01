@@ -368,7 +368,7 @@ export function Session() {
   const [voids, setVoids] = useState<Set<string>>(new Set());
 
   // The set the rest strip's RPE row rates. Set at the moment of logging
-  // (logSet / logRound below) and updated, never cleared, by `rateLastSet`
+  // (logSet below) and updated, never cleared, by `rateLastSet`
   // itself -- a rating is a correction, and a correction changes the set's
   // id, so this must follow it or the second tap would try to correct a row
   // that `set_voids` already hides. Going stale after the rest strip is
@@ -845,8 +845,8 @@ export function Session() {
   // exercise name: a live round replaces "Romanian Deadlift / SET 1 OF 3"
   // with "Superset A" / "round 1 of 3" so the two member names underneath
   // are never named twice on one screen. Mirrors the exhaustion math
-  // `renderEditor` uses to build `SupersetRoundEditor`'s (now aria-only)
-  // label — kept here too because FocusDeck renders its own header outside
+  // `roundState` uses to pick the NOW member and its hint
+  // — kept here too because FocusDeck renders its own header outside
   // that closure. Null falls back to FocusDeck's default (entry name +
   // set position), which covers correction and the plain single-exercise case.
   const focusRoundHeading =
@@ -1285,7 +1285,7 @@ export function Session() {
 
   // ---- actions -------------------------------------------------------------
 
-  /** A tap on LOG (or Log round / Log A1 only / Log A2 only) that lands on
+  /** A tap on LOG (or Log A1 / Log A2) that lands on
    *  the 200 ms duplicate-tap lock must not read as nothing happening: it
    *  flashes the button once (`.is-held`, `--motion-fast`) and drops the
    *  tap. Never wraps a correction — Decision 6 is that corrections and

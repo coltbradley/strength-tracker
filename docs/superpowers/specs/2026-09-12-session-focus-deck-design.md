@@ -74,6 +74,10 @@ different exercise must not silently apply, discard, or overwrite that draft.
 
 ### Superset rounds
 
+> Superseded 2026-10-01 (Version D): focus logs a round member by member (one
+> dock for the NOW member, "Log A1" / "Log A2"); "Log round", "Log A1 only"
+> and the batch-per-round write below are retired. See `docs/flows.md`.
+
 A consecutive superset is one focus unit, not two deck pages. Focus mode shows
 both members together and makes the round state explicit, for example
 `SUPERSET A · ROUND 2 OF 3`.
