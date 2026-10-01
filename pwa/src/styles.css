@@ -3003,6 +3003,59 @@
     min-height: var(--tap-min);
   }
 
+  /* Record text floor: 11px. The shared micro/label sizes are smaller; inside
+     this screen they are raised rather than changed app-wide. */
+  .rec-screen .field-label,
+  .rec-screen .section-meta,
+  .rec-screen .goal-pct,
+  .rec-screen .history-date,
+  .rec-screen .drawer-action,
+  .rec-screen .detail-note-label,
+  .rec-screen .cache-note {
+    font-size: max(var(--fs-meta), 11px);
+  }
+
+  .rec-screen .drawer-action {
+    min-height: var(--tap-min);
+  }
+
+  .rec-onphone {
+    font-family: var(--font-mono);
+    font-size: max(var(--fs-meta), 11px);
+    color: var(--info);
+  }
+
+  .rec-screen .rec-armed-note,
+  .rec-screen .rec-conn-note {
+    color: var(--warn);
+  }
+
+  .rec-undo {
+    position: sticky;
+    bottom: var(--s-6);
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    padding: 0 var(--s-5) 0 var(--s-7);
+    min-height: var(--tap-min);
+    background: var(--bg-raised);
+    border: var(--bw) solid var(--rule-heavy-color);
+    border-radius: var(--radius);
+    font-size: var(--fs-sm);
+  }
+
+  .rec-undo-btn {
+    min-width: var(--tap-min);
+    min-height: var(--tap-min);
+    padding: 0 var(--s-5);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    color: var(--accent-dim);
+  }
+
   .history-session {
     padding: var(--s-6) 0;
     border-bottom: var(--rule-hair);

@@ -50,7 +50,7 @@ vi.mock("../lib/data", async () => {
     makeFetchWithCache: actual.makeFetchWithCache,
     throwIf: actual.throwIf,
     getExercises: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
-    getRecordIndex: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
+    getRecordIndex: vi.fn().mockResolvedValue({ data: { entries: [], truncated: false }, fromCache: false, stale: null }),
     getGoals: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
     setGoal: vi.fn(),
     removeGoal: vi.fn(),

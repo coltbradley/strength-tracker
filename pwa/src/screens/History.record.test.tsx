@@ -20,6 +20,8 @@ vi.mock("../lib/sync", () => ({
     inspect: vi.fn().mockResolvedValue([]),
   },
 }));
+import { outbox as outboxMock } from "../lib/sync";
+import { reportError as reportErrorMock } from "../lib/errors";
 vi.mock("../components/BodyweightRow", () => ({ BodyweightRow: () => null }));
 vi.mock("../components/CheckinWeek", () => ({ CheckinWeek: () => null }));
 
@@ -27,6 +29,14 @@ const goalsNow = vi.hoisted(() => ({ rows: [] as unknown[] }));
 const setGoal = vi.fn();
 const removeGoal = vi.fn();
 const getRecordIndex = vi.fn();
+const getGoals = vi.fn();
+const restoreGoal = vi.fn();
+const idx = (data: unknown[], extra: Record<string, unknown> = {}) => ({
+  data: { entries: data, truncated: false },
+  fromCache: false,
+  stale: null,
+  ...extra,
+});
 
 vi.mock("../lib/data", async () => {
   const actual = await vi.importActual<typeof import("../lib/data")>("../lib/data");
@@ -44,7 +54,8 @@ vi.mock("../lib/data", async () => {
       fromCache: false,
     }),
     getRecordIndex: () => getRecordIndex(),
-    getGoals: () => Promise.resolve({ data: goalsNow.rows, fromCache: false }),
+    getGoals: () => getGoals(),
+    restoreGoal: (...a: unknown[]) => restoreGoal(...a),
     setGoal: (...a: unknown[]) => setGoal(...a),
     removeGoal: (...a: unknown[]) => removeGoal(...a),
     getAdherence: vi.fn().mockResolvedValue(empty),
@@ -57,7 +68,7 @@ vi.mock("../lib/data", async () => {
     invalidateForSessionClose: vi.fn(),
     invalidateForSetChange: vi.fn(),
     summariseAdherence: vi.fn().mockReturnValue(new Map()),
-    worstStale: vi.fn().mockReturnValue(null),
+    worstStale: actual.worstStale,
     getBodyweight: vi.fn().mockResolvedValue(empty),
     recordBodyweight: vi.fn(),
     getObservations: vi.fn().mockResolvedValue(empty),
@@ -112,8 +123,14 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
   resetDbForTests();
   vi.clearAllMocks();
+  vi.mocked(outboxMock.inspect).mockResolvedValue([]);
+  setGoal.mockReset();
+  removeGoal.mockReset();
+  restoreGoal.mockReset();
   goalsNow.rows = [];
-  getRecordIndex.mockResolvedValue({ data: INDEX, fromCache: false });
+  getRecordIndex.mockResolvedValue(idx(INDEX));
+  getGoals.mockImplementation(() => Promise.resolve({ data: goalsNow.rows, fromCache: false, stale: null }));
+  Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   // the server: writes change what the next getGoals() returns
   setGoal.mockImplementation(async (ex: string, kg: number) => {
     const rows = goalsNow.rows as ReturnType<typeof goalRow>[];
@@ -145,7 +162,7 @@ describe("Record list", () => {
     const pinned = await screen.findByRole("region", { name: "Pinned goals" });
     expect(names(pinned)).toEqual(["Back Squat"]);
     expect(within(pinned).getByText(/160 kg · 88%/)).toBeTruthy();
-    expect(within(pinned).getByRole("button", { name: "Unpin Back Squat" }).textContent).toContain("◆ Pinned");
+    expect(within(pinned).getByRole("button", { name: "Pinned goal: Back Squat" }).textContent).toContain("◆ Pinned");
     const recent = screen.getByRole("region", { name: "Recent" });
     expect(names(recent)).not.toContain("Back Squat");
   });
@@ -158,7 +175,7 @@ describe("Record list", () => {
 
   it("pins with a default target above the current e1RM and moves the row up", async () => {
     render_();
-    fireEvent.click(await screen.findByRole("button", { name: "Pin Back Squat" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pinned goal: Back Squat" }));
     // 140 * 1.05 = 147 -> next 2.5 kg step
     await waitFor(() => expect(setGoal).toHaveBeenCalledWith("sq", 147.5));
     const pinned = await screen.findByRole("region", { name: "Pinned goals" });
@@ -168,7 +185,7 @@ describe("Record list", () => {
   it("unpins by deleting the goal and returns the row to RECENT", async () => {
     goalsNow.rows = [goalRow("sq", "Back Squat", 160, 87.5)];
     render_();
-    fireEvent.click(await screen.findByRole("button", { name: "Unpin Back Squat" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pinned goal: Back Squat" }));
     await waitFor(() => expect(removeGoal).toHaveBeenCalledWith("sq"));
     expect(screen.queryByRole("region", { name: "Pinned goals" })).toBeNull();
     expect(names(screen.getByRole("region", { name: "Recent" }))).toContain("Back Squat");
@@ -176,7 +193,7 @@ describe("Record list", () => {
 
   it("cannot pin an exercise with no e1RM yet", async () => {
     render_();
-    const pin = (await screen.findByRole("button", { name: "Pin Curl" })) as HTMLButtonElement;
+    const pin = (await screen.findByRole("button", { name: "Pinned goal: Curl" })) as HTMLButtonElement;
     expect(pin.disabled).toBe(true);
     fireEvent.click(pin);
     expect(setGoal).not.toHaveBeenCalled();
@@ -196,9 +213,9 @@ describe("Record list", () => {
     render_();
     const pinned = await screen.findByRole("region", { name: "Pinned goals" });
     fireEvent.click(within(pinned).getAllByRole("button", { name: /Back Squat/ })[0]);
-    fireEvent.click(await screen.findByRole("button", { name: "Raise goal" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Raise goal by 2.5 kg/ }));
     await waitFor(() => expect(setGoal).toHaveBeenCalledWith("sq", 162.5));
-    fireEvent.click(screen.getByRole("button", { name: "Lower goal" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Lower goal by 2.5 kg/ }));
     await waitFor(() => expect(setGoal).toHaveBeenLastCalledWith("sq", 160));
 
     fireEvent.click(screen.getByRole("button", { name: "‹ Record" }));
@@ -206,8 +223,133 @@ describe("Record list", () => {
     expect(await screen.findByRole("button", { name: "Pin as goal" })).toBeTruthy();
   });
 
+  it("pin buttons are stable-labelled toggles", async () => {
+    goalsNow.rows = [goalRow("sq", "Back Squat", 160, 87.5)];
+    render_();
+    const on = await screen.findByRole("button", { name: "Pinned goal: Back Squat" });
+    expect(on.getAttribute("aria-pressed")).toBe("true");
+    const off = screen.getByRole("button", { name: "Pinned goal: Deadlift" });
+    expect(off.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("meta reads in plain words, not 'N IN 90D'", async () => {
+    render_();
+    const recent = await screen.findByRole("region", { name: "Recent" });
+    expect(recent.textContent).toMatch(/9 sessions in 90 days/);
+    expect(recent.textContent).not.toMatch(/IN 90D/);
+  });
+
+  it("R1: a failed pin is reverted to the snapshot even when the re-read also fails", async () => {
+    setGoal.mockRejectedValueOnce(new Error("Failed to fetch"));
+    getGoals.mockRejectedValue(new Error("Failed to fetch"));
+    render_();
+    fireEvent.click(await screen.findByRole("button", { name: "Pinned goal: Back Squat" }));
+    await waitFor(() => expect(reportErrorMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Pinned goals" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Pinned goal: Back Squat" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("R1/R6: a failed step reverts to the previous target and skips writes queued behind it", async () => {
+    goalsNow.rows = [goalRow("sq", "Back Squat", 160, 80)];
+    render_();
+    fireEvent.click(within(await screen.findByRole("region", { name: "Pinned goals" })).getAllByRole("button", { name: /Back Squat/ })[0]);
+    setGoal.mockRejectedValueOnce(new Error("Failed to fetch"));
+    const raise = await screen.findByRole("button", { name: /^Raise goal/ });
+    fireEvent.click(raise);
+    fireEvent.click(raise);
+    await waitFor(() => expect(reportErrorMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText("160 kg")).toBeTruthy());
+    expect(setGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it("R3: a step recomputes the percentage against the new target at once", async () => {
+    goalsNow.rows = [goalRow("sq", "Back Squat", 160, 80)]; // recent best 128
+    let release!: () => void;
+    setGoal.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    render_();
+    fireEvent.click(within(await screen.findByRole("region", { name: "Pinned goals" })).getAllByRole("button", { name: /Back Squat/ })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /^Raise goal/ }));
+    // 128 / 162.5 = 78.8%
+    expect(await screen.findByText("78.8% OF GOAL")).toBeTruthy();
+    release();
+  });
+
+  it("R2: unpinning a goal with a target date asks first, then offers Undo that restores the exact row", async () => {
+    const coach = { ...goalRow("sq", "Back Squat", 160, 87.5), target_date: "2026-12-01" };
+    goalsNow.rows = [coach];
+    render_();
+    const btn = await screen.findByRole("button", { name: "Pinned goal: Back Squat" });
+    fireEvent.click(btn);
+    expect(removeGoal).not.toHaveBeenCalled();
+    expect(screen.getByText(/may be your coach’s goal/)).toBeTruthy();
+    fireEvent.click(btn);
+    await waitFor(() => expect(removeGoal).toHaveBeenCalledWith("sq"));
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(restoreGoal).toHaveBeenCalledWith(expect.objectContaining({ exercise_id: "sq", target_e1rm_kg: 160, target_date: "2026-12-01", goal_id: "g-sq" })));
+  });
+
+  it("a plain pinned goal unpins in one tap and still offers Undo", async () => {
+    goalsNow.rows = [goalRow("sq", "Back Squat", 160, 87.5)];
+    render_();
+    fireEvent.click(await screen.findByRole("button", { name: "Pinned goal: Back Squat" }));
+    await waitFor(() => expect(removeGoal).toHaveBeenCalledWith("sq"));
+    expect(await screen.findByRole("button", { name: "Undo" })).toBeTruthy();
+  });
+
+  it("offline: pin and step controls are disabled with a connection note", async () => {
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    render_();
+    expect(await screen.findByText(/Needs a connection/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Pinned goal: Back Squat" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("R4: a failed index read with no cache is an error, not 'Nothing matches'", async () => {
+    getRecordIndex.mockRejectedValue(new Error("down"));
+    render_();
+    expect(await screen.findByText(/Couldn’t load your record/)).toBeTruthy();
+    expect(screen.queryByText(/Nothing matches/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
+  it("R5: shows the stale note and marks unsent sets as on phone", async () => {
+    getRecordIndex.mockResolvedValue(idx(INDEX, { stale: "offline", fromCache: true }));
+    vi.mocked(outboxMock.inspect).mockResolvedValue([
+      {
+        key: 1,
+        table: "sets",
+        state: "waiting",
+        op: {
+          kind: "insert",
+          table: "sets",
+          payload: { id: "u1", exercise_id: "dl", session_id: "s9", performed_at: "2026-10-01T09:00:00" },
+        },
+      },
+    ] as never);
+    render_();
+    expect(await screen.findByText(/offline — showing cached data/)).toBeTruthy();
+    const recent = await screen.findByRole("region", { name: "Recent" });
+    expect(recent.textContent).toMatch(/on phone, not sent yet/);
+    // the unsent set made Deadlift the most recent day
+    expect(names(recent)[0]).toBe("Deadlift");
+  });
+
+  it("R4/R9: 'Nothing matches' only for a real search; words match in any order", async () => {
+    render_();
+    await screen.findByRole("region", { name: "Recent" });
+    fireEvent.change(screen.getByLabelText("Search your exercises"), { target: { value: "press bench" } });
+    expect(names(screen.getByRole("region", { name: "Recent" }))).toEqual(["Bench Press"]);
+    fireEvent.change(screen.getByLabelText("Search your exercises"), { target: { value: "zzz" } });
+    expect(screen.getByText(/Nothing matches “zzz”/)).toBeTruthy();
+  });
+
+  it("R7: says so when the scan hit its cap", async () => {
+    getRecordIndex.mockResolvedValue({ data: { entries: INDEX, truncated: true }, fromCache: false, stale: null });
+    render_();
+    expect(await screen.findByText(/older ones may be missing/)).toBeTruthy();
+  });
+
   it("shows the empty state when nothing has been logged", async () => {
-    getRecordIndex.mockResolvedValue({ data: [], fromCache: false });
+    getRecordIndex.mockResolvedValue(idx([]));
     render_();
     await screen.findByText("Your record starts with your first finished session.");
     expect(screen.queryByRole("region", { name: "Recent" })).toBeNull();

@@ -42,6 +42,7 @@ import {
   getGoals,
   getRecordIndex,
   removeGoal,
+  restoreGoal,
   setGoal,
   getObservations,
   getRecentSets,
@@ -72,13 +73,18 @@ import { reportError, toast } from "../lib/errors";
 import { formatRepRange, formatSessionDate } from "../lib/format";
 import { cacheGet, cacheKeys } from "../lib/db";
 import { outbox } from "../lib/sync";
+import type { OutboxEntry } from "../lib/outbox";
 import { useUnit } from "../hooks/useUnit";
 import { toDisplay, type Unit } from "../lib/units";
 import {
+  applyPendingToIndex,
   buildRecordLists,
   defaultGoalKg,
+  goalStep,
+  optimisticPct,
   stepGoalKg,
   RECENT_WINDOW_DAYS,
+  type PendingSetRef,
   type RecordIndexEntry,
   type RecordRow,
 } from "../lib/record";
@@ -127,10 +133,70 @@ function nameOf(exercises: ExerciseRow[], id: string): string {
   return exercises.find((e) => e.id === id)?.name ?? id;
 }
 
+/** How long an unpin can be taken back. */
+const UNDO_MS = 6000;
+
+/** Tracks navigator.onLine. A true reading is not proof of a connection, so
+ *  every write still reverts on failure; false is trusted. */
+function useOnline(): boolean {
+  const [online, setOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine !== false,
+  );
+  useEffect(() => {
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => {
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+    };
+  }, []);
+  return online;
+}
+
+/** Unsent set inserts this device will actually send (not another account's
+ *  held items). Dead ones count: the lifter logged them. */
+function unsentSetsOf(entries: OutboxEntry[]): (PendingSetRef & SetInsert)[] {
+  const out: (PendingSetRef & SetInsert)[] = [];
+  for (const e of entries) {
+    if (e.state === "held") continue;
+    if (e.op.kind === "insert" && e.op.table === "sets") {
+      out.push(e.op.payload as PendingSetRef & SetInsert);
+    }
+  }
+  return out;
+}
+
 export function History({ userId }: { userId: string }) {
   const unit = useUnit();
   const [exercises, setExercises] = useState<ExerciseRow[]>([]);
+  const [exercisesLoaded, setExercisesLoaded] = useState(false);
   const [index, setIndex] = useState<RecordIndexEntry[]>([]);
+  /** the scan ran out of pages: the oldest exercises may be missing */
+  const [indexTruncated, setIndexTruncated] = useState(false);
+  /** a failed read with nothing cached is an error, never an empty list */
+  const [indexError, setIndexError] = useState(false);
+  const [goalsError, setGoalsError] = useState(false);
+  const [listStale, setListStale] = useState<StaleReason | null>(null);
+  /** what this phone has queued and not yet sent (voids, discards, sets) */
+  const [pendingLayer, setPendingLayer] = useState<{
+    voidedIds: Set<string>;
+    discardedSessions: Set<string>;
+    sets: PendingSetRef[];
+  }>({ voidedIds: new Set(), discardedSessions: new Set(), sets: [] });
+  /** ids of sets in the detail list that are on this phone only */
+  const [unsentIds, setUnsentIds] = useState<Set<string>>(new Set());
+  const online = useOnline();
+  const [unpinArm, setUnpinArm] = useArmed();
+  /** the last unpin, offered back for UNDO_MS */
+  const [undo, setUndo] = useState<GoalProgressRow | null>(null);
+  /** read out by screen readers after a -/+ tap */
+  const [announce, setAnnounce] = useState("");
+  /** bumped on every local goal change; a slower read started before it is
+   *  ignored (R6) */
+  const goalsGen = useRef(0);
+  const pendingWrites = useRef(0);
   /** every goal; an exercise is PINNED exactly when it has one */
   const [goals, setGoals] = useState<GoalProgressRow[]>([]);
   const [search, setSearch] = useState("");
@@ -190,21 +256,64 @@ export function History({ userId }: { userId: string }) {
       .then((r) => {
         if (!cancelled) setExercises(r.data);
       })
-      .catch((e: unknown) => reportError(e, "load exercises"));
+      .catch((e: unknown) => reportError(e, "load exercises"))
+      .finally(() => {
+        if (!cancelled) setExercisesLoaded(true);
+      });
     // per-exercise last date, recent session count and newest e1RM
+    let indexStale: StaleReason | null = null;
+    let goalsStale: StaleReason | null = null;
     getRecordIndex()
       .then((r) => {
-        if (!cancelled) setIndex(r.data);
+        if (cancelled) return;
+        setIndex(r.data.entries);
+        setIndexTruncated(r.data.truncated);
+        setIndexError(false);
+        indexStale = r.stale ?? null;
+        setListStale(worstStale(indexStale, goalsStale));
       })
-      .catch((e: unknown) => reportError(e, "load record index"))
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setIndexError(true);
+        reportError(e, "load record index");
+      })
       .finally(() => {
         if (!cancelled) setIndexLoading(false);
       });
+    // what is queued on this phone but not sent: layered over the index
+    void (async () => {
+      try {
+        const [voidedIds, discardedSessions, entries] = await Promise.all([
+          outbox.pendingVoidIds(),
+          outbox.pendingDiscardIds(),
+          outbox.inspect(),
+        ]);
+        if (cancelled) return;
+        setPendingLayer({
+          voidedIds,
+          discardedSessions,
+          sets: unsentSetsOf(entries),
+        });
+      } catch (e) {
+        if (!cancelled) reportError(e, "read unsent sets");
+      }
+    })();
+    // a goals read that lands after an optimistic edit must not undo it
+    const gen = goalsGen.current;
     getGoals()
       .then((r) => {
-        if (!cancelled) setGoals(r.data);
+        if (cancelled) return;
+        setGoalsError(false);
+        goalsStale = r.stale ?? null;
+        setListStale(worstStale(indexStale, goalsStale));
+        if (goalsGen.current === gen && pendingWrites.current === 0)
+          setGoals(r.data);
       })
-      .catch((e: unknown) => reportError(e, "load goals"));
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setGoalsError(true);
+        reportError(e, "load goals");
+      });
     return () => {
       cancelled = true;
     };
@@ -323,14 +432,30 @@ export function History({ userId }: { userId: string }) {
         // outbox knows what was asked for. Subtracting one from the other is
         // what keeps a removed set from reappearing under its own "Set
         // removed" toast.
-        const [voided, discarded] = await Promise.all([
+        const [voided, discarded, queued] = await Promise.all([
           outbox.pendingVoidIds(),
           outbox.pendingDiscardIds(),
+          outbox.inspect(),
         ]);
         if (cancelled) return;
-        const live = rec.data.filter(
-          (s) => !voided.has(s.id) && !discarded.has(s.session_id),
+        const onServer = new Set(rec.data.map((s) => s.id));
+        // Sets logged on this phone and not yet sent are real sets the
+        // lifter did; show them, marked. Derived numbers (the charts) still
+        // come only from the views and do not include them.
+        const unsent = unsentSetsOf(queued).filter(
+          (s) =>
+            s.exercise_id === selected &&
+            !onServer.has(s.id) &&
+            !voided.has(s.id) &&
+            !discarded.has(s.session_id),
         );
+        setUnsentIds(new Set(unsent.map((s) => s.id)));
+        const live = [
+          ...rec.data.filter(
+            (s) => !voided.has(s.id) && !discarded.has(s.session_id),
+          ),
+          ...unsent,
+        ];
         setSeries(e1.data);
         setVolume(vol.data);
         setRecent(live);
@@ -390,46 +515,82 @@ export function History({ userId }: { userId: string }) {
   const goalsRef = useRef(goals);
   goalsRef.current = goals;
 
+  // The server's index with this phone's unsent sets, voids and discards laid
+  // over it. Dates, counts and "on phone" only: no e1RM is derived here.
+  const layered = useMemo(
+    () => applyPendingToIndex(index, pendingLayer),
+    [index, pendingLayer],
+  );
   const lists = useMemo(
-    () => buildRecordLists(index, goals, (id) => nameOf(exercises, id), search),
-    [index, goals, exercises, search],
+    () =>
+      buildRecordLists(layered, goals, (id) => nameOf(exercises, id), search),
+    [layered, goals, exercises, search],
   );
   const indexById = useMemo(
-    () => new Map(index.map((e) => [e.exerciseId, e])),
-    [index],
+    () => new Map(layered.map((e) => [e.exerciseId, e])),
+    [layered],
   );
 
-  // Goal writes are direct and strictly serial: a -/+ tapped three times in a
-  // row is three upserts that must land in order, and the view is re-read
-  // (never recomputed here) once the last one has.
+  // Goal writes are direct (they need a connection) and strictly serial: a
+  // -/+ tapped three times in a row is three upserts that must land in order.
+  // Each write snapshots the goals it started from. If it fails, that snapshot
+  // is put back (not a re-read, which can itself fail with nothing cached) and
+  // the writes queued behind it, which were built on the failed state, are
+  // skipped. The view is re-read only after success, to replace the
+  // optimistic numbers with the view's own.
   const writeChain = useRef<Promise<void>>(Promise.resolve());
-  const pendingWrites = useRef(0);
-  const queueGoalWrite = (write: () => Promise<void>, what: string) => {
+  const chainBroken = useRef(false);
+  const queueGoalWrite = (
+    write: () => Promise<void>,
+    what: string,
+    snapshot: GoalProgressRow[],
+    onSaved?: () => void,
+  ) => {
     pendingWrites.current += 1;
     writeChain.current = writeChain.current
-      .then(write)
-      .catch((e: unknown) => reportError(e, what))
+      .then(async () => {
+        if (chainBroken.current) return;
+        try {
+          await write();
+          onSaved?.();
+        } catch (e) {
+          chainBroken.current = true;
+          setGoalsNow(snapshot);
+          setUndo(null);
+          reportError(e, `${what}: not saved, goal unchanged`);
+        }
+      })
       .then(async () => {
         pendingWrites.current -= 1;
         if (pendingWrites.current > 0) return;
+        chainBroken.current = false;
+        const gen = goalsGen.current;
         try {
-          setGoals((await getGoals()).data);
+          const r = await getGoals();
+          if (pendingWrites.current === 0 && goalsGen.current === gen)
+            setGoals(r.data);
         } catch (e) {
           reportError(e, "refresh goals");
         }
       });
   };
   const setGoalsNow = (next: GoalProgressRow[]) => {
+    goalsGen.current += 1;
     goalsRef.current = next;
     setGoals(next);
   };
 
   const pinExercise = (exerciseId: string, e1rmKg: number | null) => {
-    if (e1rmKg === null || goalsRef.current.some((g) => g.exercise_id === exerciseId))
+    if (
+      !online ||
+      e1rmKg === null ||
+      goalsRef.current.some((g) => g.exercise_id === exerciseId)
+    )
       return;
+    const snapshot = goalsRef.current;
     const target = defaultGoalKg(e1rmKg, unit);
     setGoalsNow([
-      ...goalsRef.current,
+      ...snapshot,
       {
         goal_id: "pending",
         exercise_id: exerciseId,
@@ -441,24 +602,69 @@ export function History({ userId }: { userId: string }) {
         pct_of_target: null,
       },
     ]);
-    queueGoalWrite(() => setGoal(exerciseId, target), "pin goal");
+    queueGoalWrite(() => setGoal(exerciseId, target), "pin goal", snapshot);
   };
 
   const unpinExercise = (exerciseId: string) => {
-    setGoalsNow(goalsRef.current.filter((g) => g.exercise_id !== exerciseId));
-    queueGoalWrite(() => removeGoal(exerciseId), "unpin goal");
-  };
-
-  const stepGoal = (exerciseId: string, dir: 1 | -1) => {
+    if (!online) return;
     const cur = goalsRef.current.find((g) => g.exercise_id === exerciseId);
     if (!cur) return;
+    // `goals` has no "set by" column, and the coach's set_goal writes the same
+    // row (with a target_date). A goal with a date may be the coach's, so it
+    // takes a second tap, and says what would be lost.
+    if (cur.target_date && unpinArm !== exerciseId) {
+      setUnpinArm(exerciseId);
+      return;
+    }
+    setUnpinArm(null);
+    const snapshot = goalsRef.current;
+    setGoalsNow(snapshot.filter((g) => g.exercise_id !== exerciseId));
+    queueGoalWrite(
+      () => removeGoal(exerciseId),
+      "unpin goal",
+      snapshot,
+      () => setUndo(cur),
+    );
+  };
+
+  /** Undo of an unpin: put the exact row back, target_date and all. */
+  const undoUnpin = () => {
+    const row = undo;
+    if (!row || !online) return;
+    setUndo(null);
+    if (goalsRef.current.some((g) => g.exercise_id === row.exercise_id)) return;
+    const snapshot = goalsRef.current;
+    setGoalsNow([...snapshot, row]);
+    queueGoalWrite(() => restoreGoal(row), "restore goal", snapshot);
+  };
+
+  useEffect(() => {
+    if (undo === null) return;
+    const t = window.setTimeout(() => setUndo(null), UNDO_MS);
+    return () => window.clearTimeout(t);
+  }, [undo]);
+
+  const stepGoal = (exerciseId: string, dir: 1 | -1) => {
+    if (!online) return;
+    const cur = goalsRef.current.find((g) => g.exercise_id === exerciseId);
+    if (!cur) return;
+    const snapshot = goalsRef.current;
     const target = stepGoalKg(cur.target_e1rm_kg, dir, unit);
     setGoalsNow(
-      goalsRef.current.map((g) =>
-        g.exercise_id === exerciseId ? { ...g, target_e1rm_kg: target } : g,
+      snapshot.map((g) =>
+        g.exercise_id === exerciseId
+          ? {
+              ...g,
+              target_e1rm_kg: target,
+              // the ratio the view will compute, against the new target, so
+              // the old percentage never sits beside a new goal
+              pct_of_target: optimisticPct(g.recent_best_e1rm_kg, target),
+            }
+          : g,
       ),
     );
-    queueGoalWrite(() => setGoal(exerciseId, target), "change goal");
+    setAnnounce(`Goal now ${toDisplay(target, unit)} ${unit}`);
+    queueGoalWrite(() => setGoal(exerciseId, target), "change goal", snapshot);
   };
 
   /** Late correction: void a set noticed after the session ended. Same
@@ -556,16 +762,35 @@ export function History({ userId }: { userId: string }) {
   const bare =
     !indexLoading &&
     !logLoading &&
-    index.length === 0 &&
+    !indexError &&
+    !goalsError &&
+    layered.length === 0 &&
     goals.length === 0 &&
     sessions.length === 0;
 
   const e1Text = (kg: number | null) =>
     kg === null ? "—" : `${toDisplay(kg, unit)} ${unit}`;
-  const metaOf = (r: RecordRow) =>
-    r.lastAt === ""
-      ? "NOT LOGGED YET"
-      : `${formatSessionDate(r.lastAt)} · ${r.recentSessions} IN ${RECENT_WINDOW_DAYS}D`;
+  const metaOf = (r: RecordRow) => {
+    if (r.lastAt === "") return "NOT LOGGED YET";
+    const n = r.recentSessions;
+    const count =
+      n === 0
+        ? `no sessions in ${RECENT_WINDOW_DAYS} days`
+        : `${n} ${n === 1 ? "session" : "sessions"} in ${RECENT_WINDOW_DAYS} days`;
+    return `${formatSessionDate(r.lastAt)} · ${count}${r.onPhone ? " · on phone, not sent yet" : ""}`;
+  };
+  const armedNote = (exerciseId: string) => {
+    const g = goals.find((x) => x.exercise_id === exerciseId);
+    if (!g || unpinArm !== exerciseId) return null;
+    return (
+      <p className="microcopy rec-armed-note" role="status">
+        {e1Text(g.target_e1rm_kg)} by {g.target_date} may be your coach’s goal.
+        Tap again to remove it.
+      </p>
+    );
+  };
+  const pinLabel = (name: string) => `Pinned goal: ${name}`;
+  const needsConn = !online;
 
   const detailE1 =
     series.length > 0
@@ -573,7 +798,7 @@ export function History({ userId }: { userId: string }) {
       : (indexById.get(selected ?? "")?.e1rmKg ?? null);
 
   return (
-    <div className="screen">
+    <div className="screen rec-screen">
       {selected === null ? (
         <>
           <h1 className="screen-title">Record</h1>
@@ -602,17 +827,51 @@ export function History({ userId }: { userId: string }) {
         </>
       )}
 
-      {stale === "offline" && (
-        <div className="cache-note">offline — showing cached data</div>
+      {(selected === null ? listStale : stale) === "offline" && (
+        <div className="cache-note" role="status">
+          offline — showing cached data
+        </div>
       )}
-      {stale === "error" && (
-        <div className="cache-note cache-note-error">
+      {(selected === null ? listStale : stale) === "error" && (
+        <div className="cache-note cache-note-error" role="status">
           couldn’t refresh — showing cached data
         </div>
       )}
+      {needsConn && (
+        <p className="microcopy rec-conn-note" role="status">
+          Needs a connection to pin or change goals.
+        </p>
+      )}
 
-      {selected === null && indexLoading && index.length === 0 && (
-        <p className="muted">Loading…</p>
+      {selected === null &&
+        (indexLoading || !exercisesLoaded) &&
+        layered.length === 0 && <p className="muted">Loading…</p>}
+
+      {selected === null && indexError && layered.length === 0 && (
+        <div className="rec-empty" role="alert">
+          <p>Couldn’t load your record. Your sets are safe.</p>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              setIndexLoading(true);
+              setReloadTick((t) => t + 1);
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {selected === null && goalsError && !indexError && (
+        <div className="cache-note cache-note-error" role="status">
+          couldn’t load your goals
+        </div>
+      )}
+      {selected === null && indexTruncated && !indexError && (
+        <p className="microcopy">
+          Only your most recent exercises are listed; older ones may be
+          missing. Search the full library to find them.
+        </p>
       )}
 
       {selected === null && bare && (
@@ -621,7 +880,11 @@ export function History({ userId }: { userId: string }) {
         </p>
       )}
 
-      {selected === null && !bare && !indexLoading && (
+      {selected === null &&
+        !bare &&
+        !indexLoading &&
+        exercisesLoaded &&
+        !(indexError && layered.length === 0) && (
         <>
           {lists.pinned.length > 0 && (
             <section className="rec-section" aria-label="Pinned goals">
@@ -645,12 +908,14 @@ export function History({ userId }: { userId: string }) {
                         type="button"
                         className="rec-pin rec-pin-on"
                         aria-pressed="true"
-                        aria-label={`Unpin ${r.name}`}
+                        aria-label={pinLabel(r.name)}
+                        disabled={needsConn}
                         onClick={() => unpinExercise(r.exerciseId)}
                       >
-                        ◆ Pinned
+                        {unpinArm === r.exerciseId ? "◆ Remove?" : "◆ Pinned"}
                       </button>
                     </div>
+                    {armedNote(r.exerciseId)}
                     <button
                       type="button"
                       className="rec-open rec-progress"
@@ -695,19 +960,21 @@ export function History({ userId }: { userId: string }) {
                   type="button"
                   className="rec-pin"
                   aria-pressed="false"
-                  aria-label={`Pin ${r.name}`}
-                  disabled={r.e1rmKg === null}
+                  aria-label={pinLabel(r.name)}
+                  disabled={r.e1rmKg === null || needsConn}
                   onClick={() => pinExercise(r.exerciseId, r.e1rmKg)}
                 >
                   ◇ Pin
                 </button>
               </div>
             ))}
-            {lists.recent.length === 0 && lists.pinned.length === 0 && (
-              <p className="muted">
-                Nothing matches “{search.trim()}”. Try the full library.
-              </p>
-            )}
+            {lists.recent.length === 0 &&
+              lists.pinned.length === 0 &&
+              search.trim() !== "" && (
+                <p className="muted">
+                  Nothing matches “{search.trim()}”. Try the full library.
+                </p>
+              )}
           </section>
 
           <button
@@ -728,6 +995,9 @@ export function History({ userId }: { userId: string }) {
               <b className="rec-goal-val">
                 {goal ? e1Text(goal.target_e1rm_kg) : "No goal yet"}
               </b>
+              <span className="sr-only" role="status" aria-live="polite">
+                {announce}
+              </span>
               {goal?.pct_of_target != null && (
                 <span className="goal-pct">{goal.pct_of_target}% OF GOAL</span>
               )}
@@ -737,7 +1007,8 @@ export function History({ userId }: { userId: string }) {
                 <button
                   type="button"
                   className="rec-step"
-                  aria-label="Lower goal"
+                  aria-label={`Lower goal by ${goalStep(unit)} ${unit}`}
+                  disabled={needsConn}
                   onClick={() => stepGoal(selected, -1)}
                 >
                   −
@@ -745,7 +1016,8 @@ export function History({ userId }: { userId: string }) {
                 <button
                   type="button"
                   className="rec-step"
-                  aria-label="Raise goal"
+                  aria-label={`Raise goal by ${goalStep(unit)} ${unit}`}
+                  disabled={needsConn}
                   onClick={() => stepGoal(selected, 1)}
                 >
                   +
@@ -754,23 +1026,25 @@ export function History({ userId }: { userId: string }) {
                   type="button"
                   className="rec-pin rec-pin-on"
                   aria-pressed="true"
-                  aria-label={`Unpin ${selectedName}`}
+                  aria-label={pinLabel(selectedName)}
+                  disabled={needsConn}
                   onClick={() => unpinExercise(selected)}
                 >
-                  ◆ Pinned
+                  {unpinArm === selected ? "◆ Remove?" : "◆ Pinned"}
                 </button>
               </div>
             ) : (
               <button
                 type="button"
                 className="btn btn-primary rec-pin-goal"
-                disabled={detailE1 === null}
+                disabled={detailE1 === null || needsConn}
                 onClick={() => pinExercise(selected, detailE1)}
               >
                 Pin as goal
               </button>
             )}
           </section>
+          {armedNote(selected)}
           {!goal && detailE1 === null && !detailLoading && (
             <p className="microcopy">
               A goal needs a working set of 1–8 reps to measure against.
@@ -833,6 +1107,9 @@ export function History({ userId }: { userId: string }) {
                 <div key={sessionId} className="history-session">
                   <div className="history-date">
                     {formatSessionDate(ss[0].performed_at)}
+                    {ss.some((x) => unsentIds.has(x.id)) && (
+                      <span className="rec-onphone">on phone, not sent yet</span>
+                    )}
                     {/* the word, not ✕ — ✕ is reserved for single-set voids;
                       discarding takes the whole day with it */}
                     {sessionId !== activeId && (
@@ -999,6 +1276,19 @@ export function History({ userId }: { userId: string }) {
         </>
       )}
 
+      {undo !== null && (
+        <div className="rec-undo" role="status">
+          <span>Unpinned {nameOf(exercises, undo.exercise_id)}.</span>
+          <button
+            type="button"
+            className="rec-undo-btn"
+            disabled={needsConn}
+            onClick={undoUnpin}
+          >
+            Undo
+          </button>
+        </div>
+      )}
 
       {pickerOpen && (
         <ExercisePicker
