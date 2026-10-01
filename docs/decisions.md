@@ -409,7 +409,8 @@ Hevy / Fitbod / Boostcamp adapted to the index-card idiom.
   affordance; existing notes preview inline and in History under the exact
   set.
 - **The bar is a property of the exercise.** Per-exercise bar choice
-  (NO BAR / catalog) persisted device-locally; defaults barbell→global bar,
+  (base weight stepped with -/+ or typed; the preset chips were removed in
+  the Version D plate sheet) persisted per exercise; defaults barbell→global bar,
   everything else→none. Fixes the leg-press-with-a-45 miscount for any
   plate-loaded machine.
 - Smaller: default rest is typed (number pad) with any 0–3600 s value

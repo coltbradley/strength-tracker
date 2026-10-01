@@ -220,8 +220,14 @@ Supabase sends the stock link email and the paste path is the working one.
   the server does not commit the two rows as one transaction: if replay stops
   after one row, the Outbox shows the remaining state and the unfinished
   member can be completed on its own.
-- **Plates** — per-exercise bar choice in the plate sheet (NO BAR for
-  plate-loaded machines like the leg press); persists per exercise.
+- **Plates** — the plate sheet shows the total, the bar diagram and what goes
+  on each side, with a red note when the target cannot be made exactly. The
+  base weight (bar 45 lb, leg-press sled, calf-raise machine) is a per-exercise
+  card stepped with -/+ (one plate step: 5 lb or 2.5 kg, never below 0) or
+  typed; there are no preset chips. A machine or cable exercise also shows
+  "Which machine?" (Plate sled | Pin stack); a pin stack shows "Pin at X" and
+  hides the base weight. It only changes how plates are worked out; the logged
+  load is still the total.
 - **Read the day's notes** — plan note and coach note render at the top of
   the session screen, clamped with MORE/LESS.
 - **Leave mid-session** — footer Home (the session keeps running). Today and
