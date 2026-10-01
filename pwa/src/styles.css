@@ -3257,19 +3257,25 @@
     border-radius: var(--radius-card);
   }
 
-  @media (max-width: 359px) {
+  @media (max-width: 399px) {
     [data-presentation="program"] .week-page {
       padding-inline: 0;
     }
 
     [data-presentation="program"] .week-track {
-      margin-inline: -23px;
+      margin-inline: -25px;
     }
 
     [data-presentation="program"] .week-page .week-strip {
       grid-template-columns: repeat(7, minmax(44px, 1fr));
       gap: 0;
       margin-inline: 0;
+    }
+  }
+
+  @media (max-width: 359px) {
+    [data-presentation="program"] .week-track {
+      margin-inline: -23px;
     }
 
     .history-screen .checkin-days {
