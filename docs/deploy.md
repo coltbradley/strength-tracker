@@ -31,8 +31,12 @@ Still open:
 
 ## 2026-10-01 per-exercise prefs sync (`feat/exercise-prefs-sync`)
 
-Not yet released. One migration, `20261001000000_exercise_prefs.sql`, no
-function change; the PWA depends on the new table. `deploy.yml` pushes the
+Not yet released; it ships inside Version D (see "Version D release" below).
+One migration, `20261001000000_exercise_prefs.sql`; the PWA depends on the new
+table. `mcp-server` also changed on the integrated branch (a copy of
+`lib/setLoad.ts`, `lib/prescriptions.ts`, `tools/manage_exercises.ts`), so it
+must be redeployed; `deploy.yml` deploys all four functions on any
+`supabase/` change, so that needs no extra step. `deploy.yml` pushes the
 database before Pages, so the order is safe. A PWA served before the migration
 would see every pref upsert fail against a missing table, so never publish
 the PWA without the push. The migration was edited in place before it shipped,
@@ -40,7 +44,8 @@ so it is one file, applied once.
 
 Post-deploy check: sign in on two devices, set a base weight on one and see it
 on the other; `select count(*) from exercise_prefs` is non-zero. Also confirm
-`supabase db push` listed exactly this migration.
+`supabase db push` listed exactly this migration (and, on the integrated
+branch, the goals-policy migration below).
 
 ## 2026-09-17 round — release checklist
 
@@ -616,9 +621,129 @@ update mcp_tokens set revoked_at = now() where label = '<that label>';
 
 ## Version D branch-local evidence
 
-See the [2026-10-01 local verification report](superpowers/plans/2026-10-01-version-d-local-verification.md) before an authorized Version D release. This implementation run has no served SHA or deployment receipt. Follow the normal release runbook and perform new-data phone/update/reconnect/exact UUID readback acceptance. Old failed-record recovery is waived.
+See the [2026-10-01 local verification report](superpowers/plans/2026-10-01-version-d-local-verification.md) for the codex branch's own evidence (`codex/version-d-light-plan` at `125d203`, 1,178 tests). It is not evidence for the integrated branch and says so in its header. This implementation run has no served SHA or deployment receipt.
 
-Version D changes no database schema or IndexedDB version. Keep device storage during rollback. Its correction relationship witness remains in the outbox outside visible counts and replay. Older code can replay the void idempotently then delete the witness; after KV clearing, that can lose the relation and make the replacement look like an ordinary Synced set. The local evidence report records this limit and storage cost.
+The integrated branch (`feat/version-d`) DOES change the database: two new migrations (below). It does not change the IndexedDB version (`openDB(dbName, 1)`, stores `outbox` and `kv`, unchanged); new outbox fields are additive. Keep device storage during rollback. Its correction relationship witness remains in the outbox outside visible counts and replay. Older code can replay the void idempotently then delete the witness; after KV clearing, that can lose the relation and make the replacement look like an ordinary Synced set. The local evidence report records this limit and storage cost.
+
+## Version D release (`feat/version-d`)
+
+Status: NOT RELEASED. Nothing below has been run against production.
+
+**One decision is OPEN and awaits the owner (Colt) before any deploy.** Two
+documents disagree about the phone's old failed writes and neither has been
+overruled in writing:
+
+- "Release waives recovery": `docs/superpowers/plans/2026-09-30-version-d-execution.md`
+  (Authority and rulings) and the Version D spec (scope item 1 and the
+  September 30 authorization) record that Colt waived recovery of the
+  September 30 phone's old failed writes as a release prerequisite.
+- "Do not deploy without reviewing the queue":
+  `docs/superpowers/plans/2026-09-30-load-sync-recovery.md` (Constraints and
+  Verification and release) says not to deploy without reviewing the phone
+  queue and that a passing CI run does not establish recovered phone data.
+  That plan predates the waiver.
+
+Until the owner chooses, do not treat either as settled. If the waiver stands,
+record it here with the date and skip step 6; if the five sets matter, run step
+6 before or right after the new build installs. The choice is Colt's.
+
+### 1. Migrations, in order
+
+`supabase db push` applies, after `20260924200000`:
+
+1. `20261001000000_exercise_prefs.sql`: the `exercise_prefs` table, its
+   last-write-wins trigger and owner RLS (insert and update also require the
+   exercise to be visible to the caller). No function change depends on it.
+2. `20261001010000_goals_visible_exercise.sql`: replaces `goals_insert` and
+   `goals_update` with the same visible-exercise check. A new file; the
+   original goals policies in `20260825120002` are untouched. Existing goal
+   rows are untouched.
+
+Applied migrations are never edited or rolled back. Confirm the push listed
+exactly these two; `node scripts/validate-db.mjs` runs both against the real
+chain locally (including the refused cross-user cases).
+
+### 2. `deploy.yml` order
+
+Unchanged and relied on: `supabase db push` (migrations), then the four
+functions in this order (`mcp-server`, `coach`, `push-alerts`,
+`endurance-sync`), then Pages. The PWA must never ship before the migrations.
+Only `mcp-server` has code changes on this branch (the byte-identical
+`lib/setLoad.ts`, `lib/prescriptions.ts`, `tools/manage_exercises.ts`,
+`tools/repeat_planned_workout.ts`); it must be redeployed. The three deploy
+settings (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`)
+must exist or any `supabase/` push fails at the gate and Pages does not
+publish. Receipt: `served_sha` equals `sha`; `/mcp-server/health` ok.
+
+### 3. Phase 2 browser gate (NOT RUN)
+
+Required by the Version D spec and the active roadmap before a release. It
+needs Docker and a local Supabase stack, neither available in the sessions
+that built this branch, so it has never run; the selectors were updated for
+the new Session screen and are untested. From the repo root: `supabase start`,
+`supabase db reset`; put the local URL and anon key in the ignored
+`pwa/.env.e2e.local` and the local service role key in
+`pwa/.env.e2e.admin.local`; then from `pwa/`: `npm ci`,
+`npx playwright install chromium`, `npm run test:e2e:phase2`. The runner
+prints `NOT RUN` and exits 3 if it cannot run, so a skipped gate cannot look
+like a pass. Hosted URLs are refused. Record the result here.
+
+### 4. Phone verification (NOT RUN)
+
+On the real installed iPhone, new data only, recorded here with the served SHA:
+
+- Offline logging: airplane mode, log sets (and a correction), confirm each
+  says "On this phone", reconnect, confirm they move to Saved.
+- Update and reconnect: the update prompt appears and applies; foreground and
+  background the app mid-workout; the dock, rest clock and queue survive.
+- Exact-UUID readback: after reconnect, read the new sets and any void back
+  from the server by UUID and compare with the phone's queue count. A count
+  alone does not establish identity. A set is Saved only on its exact UUID.
+- Also confirm: a base weight set on one device appears on a second; dark theme
+  without a flash while the manifest stays light; the Train finished-session
+  line says "N sets confirmed on the server" only after readback.
+- Rollback path recorded: revert the `gh-pages` commit; keep the exported queue
+  and the original IndexedDB rows; never clear phone storage.
+
+### 5. Local gate (done before this release, for the record)
+
+Run from a clean checkout, all must pass: `npm run typecheck`, `npm test --
+--run` (twice, to catch flakes) and `npm run build` in `pwa/`;
+`node scripts/build-exercise-seed.mjs && node scripts/validate-db.mjs &&
+node scripts/check-selects.mjs && node scripts/check-release-ledger.mjs`; the
+`node --test` list in `ci.yml`; `npx deno check index.ts && npx deno test
+--allow-env --allow-net` in each function that has tests.
+
+### 6. The phone's 10 failed writes (recovery; subject to the open decision)
+
+The affected iPhone's Unsynced Writes screen shows 10 failed writes, all
+queued by one owner in one session: 7 set inserts refused by the authored-load
+trigger (`load_kg must match entered_load, entered_unit, and load_entry`), plus
+2 voids and 1 note refused by row-level security because their parent sets
+never landed. The split-squat and calf-raise voids each target an earlier copy
+in a correction pair, so a successful recovery leaves 5 of the 7 sets live.
+A read-only server check (export SHA-256 `2dcec370efabc5530a82cc39890e65496c30b5ebbd960a587121bcc309d1d421`)
+found none of the 7 set UUIDs, 2 voids or the note on the server. Post-replay
+queue count and server readback by UUID are NOT RUN.
+
+Batch-repair procedure (commit `2939f91`, Outbox sheet), on the phone, before or
+right after the new build installs:
+
+1. Open Unsynced Writes. Do not clear storage, sign out or reinstall.
+2. Export the queue and save the file (the repair stays locked until a current
+   export is saved and the review box is ticked; the file does not need to be
+   sent to anyone).
+3. Review the totals, tick the saved-export box, and choose "Repair all N
+   sets and retry". It validates every row and the owner against the export and
+   changes all or none. It keeps each set's UUID, owner, time, index and load
+   total, and marks the original entered number unknown. (On this branch the
+   repair also re-runs the admission gate on each rewritten payload; a row the
+   database would refuse again leaves the whole batch untouched.)
+4. Wait for the sets to sync. Only then retry the linked voids and the note
+   (they replay after their parents land; retrying them earlier gets the same
+   refusal).
+5. Read all 7 set UUIDs, the 2 voids and the note back from the server and
+   record the phone's queue count here.
 
 ## Rollback
 

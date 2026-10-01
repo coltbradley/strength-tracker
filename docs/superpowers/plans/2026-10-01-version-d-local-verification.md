@@ -1,12 +1,21 @@
 # Version D local verification, 2026-10-01
 
+> **Scope of this report (added 2026-10-01).** It describes the codex branch
+> only, at `125d203`. The integrated branch `feat/version-d` is different: it
+> adds a migration (`20261001000000_exercise_prefs.sql`), a second migration
+> (`20261001010000_goals_visible_exercise.sql`), `mcp-server` changes, and a
+> `@playwright/test` devDependency in `pwa/`, so the "no schema, dependency or
+> migration" statements below are true of the codex branch and false of the
+> release. Release evidence and the open recovery decision are in
+> `docs/deploy.md`, "Version D release".
+
 Branch: `codex/version-d-light-plan`, managed checkout `/Users/coltbradley/.codex/worktrees/version-d-plan/strength-tracker`. Implementation began at `ed2e7f5`. All nine scoped tasks are locally committed, tested and independently reviewed. Final product source is `125d203`. The whole-branch review found two Important durability issues; both were fixed and accepted by one fresh scoped re-review. No findings remain open within the reviewed scope. No push, merge or deployment was performed.
 
 The specification is [Version D light](../specs/2026-09-30-version-d-light-design.md); the [execution record](2026-09-30-version-d-execution.md) maps all task commits and review findings. GPT-6 Luna implementers and reviewers were used as requested.
 
 ## Implemented scope
 
-Light Focus/List, controlled movement display, stable logging controls, one rest clock, real logged rows and correction access; atomic replacement-before-void corrections including saved annotations, initiating-owner capture and exact owner-scoped receipt evidence; transactional owner/session unit and whole-group order preferences; light Train, preview, Finish, Program/day editor, Record and shared sheets. No schema, dependency, IndexedDB store or database-version change was introduced. Dark mode, pinned Record goals, added bodyweight load and coach Apply remain excluded.
+Light Focus/List, controlled movement display, stable logging controls, one rest clock, real logged rows and correction access; atomic replacement-before-void corrections including saved annotations, initiating-owner capture and exact owner-scoped receipt evidence; transactional owner/session unit and whole-group order preferences; light Train, preview, Finish, Program/day editor, Record and shared sheets. On the codex branch no schema, dependency, IndexedDB store or database-version change was introduced (the integrated branch adds two migrations, `mcp-server` changes and a Playwright devDependency; the IndexedDB version is still unchanged). Dark mode, pinned Record goals, added bodyweight load and coach Apply remain excluded.
 
 The failed authored-load consistency cause was already fixed at `40676f5`. Recovery tooling remains available. Colt waived recovery of the old phone records; their historical NOT RUN evidence remains intact.
 
@@ -57,6 +66,6 @@ Final demo screenshots are in `/Users/coltbradley/.codex/visualizations/2026/10/
 
 New-data phone touch, offline/update/reconnect, authenticated multi-account E2E, exact set/void UUID readback, served SHA/deployment receipt and human design acceptance are NOT RUN. These remain release checks. Existing release-ledger production rows were not closed by local evidence.
 
-Revert the local branch changes or a later authorized PWA release without clearing device storage. No migration rollback is needed. Preserve unsynced data, storage names and stores.
+Revert the local branch changes or a later authorized PWA release without clearing device storage. No migration rollback is needed for the codex branch. On the integrated branch migrations are never rolled back (add a new one); the `exercise_prefs` table and the goals policies can stay, an older app ignores the table. Preserve unsynced data, storage names and stores.
 
 Correction relationship ruling: retain one owner-stamped ACK witness per correction in the existing outbox, outside counts/replay/inspection/export. It preserves relation metadata across legitimate KV cache clearing; only fresh exact set/void evidence proves acceptance. Cost is one local metadata row per correction, with no compaction yet. Older code can replay the void idempotently and delete the witness; after KV clearing, that can lose the relation and make the replacement look like an ordinary Synced set. Rollback must not promise Review detection in that case.

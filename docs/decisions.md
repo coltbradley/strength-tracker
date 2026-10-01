@@ -413,7 +413,9 @@ Hevy / Fitbod / Boostcamp adapted to the index-card idiom.
 - **The bar is a property of the exercise.** Per-exercise bar choice
   (NO BAR / catalog) persisted device-locally; defaults barbell→global bar,
   everything else→none. Fixes the leg-press-with-a-45 miscount for any
-  plate-loaded machine.
+  plate-loaded machine. (Reversed 2026-10-01: the per-exercise record,
+  including this bar choice, now syncs across devices; see "Per-exercise prefs
+  sync across devices". Global settings stay device-local.)
 - Smaller: default rest is typed (number pad) with any 0–3600 s value
   surviving reload (the preset-only init was silently resetting custom
   values); the top-left title navigates home; History renders set notes.
@@ -512,8 +514,7 @@ batch of correctness bugs, and settings. What changed structurally, and why:
   cleared browser storage loses them. (Reversed for the per-exercise record
   only, 2026-10-01 "Per-exercise prefs sync across devices"; every global
   setting is still device-local.) Export exists; training data is never
-  in there. (Reversed for the per-exercise record by 2026-10-01 "Per-exercise
-  prefs sync across devices"; global settings stay device-local.)
+  in there.
 - **Two correctness fixes changed semantics, not just behaviour.** A planned
   day now reads DONE only when its session has `ended_at` — an open session
   used to mark its day done, so mid-workout the same day showed RESUME and
@@ -578,9 +579,10 @@ This was the round's one approved schema change; time-based sets, bodyweight
   rows could never be populated and every re-seed would write the column back
   to null. The UI derives its default from `equipment` and the movement name
   (dumbbell, and not single-/one-arm/alternating → per_side) and persists any
-  override in the device-local per-exercise settings, next to bar and
-  increment. A wrong default costs one tap; `load_entry` on the row is what
-  makes the record honest.
+  override in the per-exercise settings (device-local when this was written;
+  synced across devices since 2026-10-01, see "Per-exercise prefs sync across
+  devices"), next to bar and increment. A wrong default costs one tap;
+  `load_entry` on the row is what makes the record honest.
 * A check constraint refuses `'per_side'` on a 0 kg bodyweight set, and on a
   "by feel" prescription with no load: half of nothing is still nothing.
 * Validated in PGlite (the 2026-08-25 precedent): full migration chain from
@@ -762,6 +764,12 @@ inventory and per-exercise preferences. Making them per-user means a
 `user_settings` table, which CLAUDE.md rules out as a third write-ownership
 class for data no view and no MCP tool reads. Two phones, no overlap, and that
 is the expected setup.
+
+(Reversed in part, 2026-10-01 "Per-exercise prefs sync across devices": the
+per-exercise preferences are now an account-synced record in `exercise_prefs`,
+owner-scoped, and two people sharing one phone NO LONGER share them (the
+previous account's prefs are dropped on an account change). The plate and bar
+inventories and every other global setting remain shared device-local state.)
 
 There is no timezone control in the app. It is a SQL one-liner in setup.md that
 changes about once in a lifetime, and putting it in device-local settings would
@@ -3035,8 +3043,9 @@ those out before enqueueing rather than writing them with an empty
 calculator needs to know what a barbell or a machine starts at before any
 plates go on, but `load_kg` is defined everywhere as the total system
 load, and a `base_kg` column would be a second place that number could
-live and disagree with the first. `ExercisePref.barKg` (device-local,
-`pwa/src/lib/settings.ts`) now means "base weight: bar or sled", resolved
+live and disagree with the first. `ExercisePref.barKg` (device-local when
+this was written; account-synced since 2026-10-01, see "Per-exercise prefs sync
+across devices"; `pwa/src/lib/settings.ts`) now means "base weight: bar or sled", resolved
 by the same three-step order `loadEntry` already uses for everything else
 device-local (override, then prescription, then a guess from `equipment`
 and name). Six presentation MODES (`pwa/src/lib/loadStyle.ts`) sit on top
@@ -3772,3 +3781,66 @@ Not done: the Phase 2 browser gate and real-phone offline logging with exact
 UUID readback are still unrun here (no local Supabase); the mixed-version
 rollback limit of the `receipt` status is unchanged; items already dead on a
 phone are not repaired by this build beyond the existing batch tool.
+
+## 2026-10-01 Final fix pass on the integrated branch
+
+The last audits of `feat/version-d` (code, security, docs and CI) found no
+blocker; this records what each finding became. Nothing here changes a hard
+rule; two decisions need a sentence.
+
+- **A live session is bound to the owner it opened under (F-1).** The Session
+  screen binds to the first known owner for a session id. If the live identity
+  later becomes a different account, LOG, corrections, voids and notes are
+  refused with a message and a Go Home button, and the screen stops writing the
+  kv cache: `claimCacheFor(B)` clears the shared cache and marks it B's, so a
+  still-mounted A session would otherwise have left A's sets and prescriptions
+  under B's marker (verified, not just suspected). Flipping back to A releases
+  the hold. The unit toggle and display still work.
+- **Typed precision (F-2, F-3).** `toDisplay` rounds to one decimal and was
+  feeding writes: a 1.25 kg step logged 21.3, a typed 22.25 kg or 225.25 lb on
+  the scheme sheet was stored as 22.3 or 225.3. The columns are numeric(6,2)
+  (`load_kg`) and numeric(9,3) (`entered_load`). `toTypedDisplay` keeps two
+  decimals of kg and one of lb wherever the shown number becomes the typed
+  value; `toDisplay` stays the one-decimal quote of a converted value (so an
+  lb-authored 225 lb still reads 102.1 kg when viewed in kg). The scheme sheet
+  carries the typed pair per planned set. The write path was never the rounding
+  site and still is not: `buildSetLoad` takes the typed value as typed.
+  `repeat_planned_workout` derived the authored pair by hand (33.001 lb where
+  the lifter's number is 33); it now uses `provenanceForTotal` from the
+  byte-identical mcp-server copy of `setLoad.ts`.
+- **Repair and discard are gated (F-4, L4).** The load repair re-runs the
+  admission gate on each rewritten payload (all-or-nothing for the batch).
+  A refused exercise pref is discarded, and its local pref forgotten, only when
+  the request ran as a confirmed identity (a real owner, still live, with a
+  valid session); a 42501 from an anon request keeps the item (dead if the
+  session is gone, pending if the check cannot be answered) and the pref.
+- **Receipts and proof (F-6, F-7).** The correction note says "Nothing from
+  this set has been sent yet" while the original's insert is still queued. The
+  finished-session proof is per session id, and the empty-queue fallback says
+  "nothing waiting on this phone" rather than "all sets on the server"; "N sets
+  confirmed on the server" still needs exact UUID readback.
+- **The session unit with no known owner works locally (F-8),** and is adopted
+  and saved when the owner arrives (winning over an older saved value, so the
+  unit does not flip under a staged number). Not fixed: a saved unit arriving
+  with NO local choice still flips the unit once, and an unauthored staged draft
+  is re-read in it (a 0.01 kg drift, not an integrity failure).
+- **ExercisePref.loadUnit is reserved (F-9).** The column and the parse and sync
+  round trip stay (the schema is shipped and a value written elsewhere must not
+  be clobbered), but nothing sets or reads it: the displayed unit is the device
+  default or the session's choice, and a set's authored unit is its typed pair.
+  A test pins the files that may mention it. Known and unchanged: a Plan pad
+  commit does not clamp `entered_load` to 999 kg the way `load_kg` is (the
+  column limit applies).
+- **Goals (L1, L2).** `20261001010000_goals_visible_exercise.sql` adds the
+  visible-exercise WITH CHECK to `goals_insert` and `goals_update`, a new file
+  (the original policies shipped in `20260825120002`). Queued goal writes
+  capture the identity when queued and are skipped if it changed.
+- **Docs.** The stale device-local claims in this file carry reversal notes
+  pointing at "Per-exercise prefs sync across devices"; `deploy.md` has a
+  "Version D release" checklist. The choice between "release waives recovery"
+  (version-d-execution.md, spec) and "do not deploy without reviewing the queue"
+  (load-sync-recovery plan) for the phone's 10 failed writes is OPEN and awaits
+  the owner; `deploy.md` says so and carries the batch-repair procedure.
+- **Not done, deliberately.** L3 (client-clock last-write-wins on prefs) is
+  documented behaviour, presentation only. I1-I5 are informational. The
+  Phase 2 browser gate and phone verification are still NOT RUN.

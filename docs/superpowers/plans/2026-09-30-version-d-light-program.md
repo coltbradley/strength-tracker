@@ -1,5 +1,15 @@
 # Version D light implementation map
 
+> **Status 2026-10-01 (feat/version-d):** integrated. Superseded in scope:
+> "Light mode only" and "no dark theme, pinned Record goals" below describe this
+> plan as written for the codex branch; the integrated branch ships dark mode
+> (one token block), Record with pinned goals (goal writes are direct
+> owner-scoped writes, see `docs/security.md`), Train's finished-session line,
+> and per-exercise prefs sync (`exercise_prefs`, a migration). Read this plan
+> for the screen contracts; read `docs/decisions.md` ("Integrating the seven
+> branches", "Dark theme, with light as the default", "Record: pinned means
+> having a goal") for what is true now.
+
 Planning draft for review, 2026-09-30. This is a sequence of independently
 reviewable changes, not a claim that the design is implemented. The source is
 Version D of `Mobile app design review board.zip`; prototype text is design

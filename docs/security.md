@@ -61,6 +61,26 @@ caller, so a private custom exercise of another user fails exactly like a
 nonexistent id and the foreign key cannot be used as an existence oracle.
 `updated_at` must be finite and at most a day ahead of the server clock.
 
+## Goals: direct PWA writes and the visible-exercise policy
+
+`goals` has two writers: the MCP `set_goal` tool (service role, scoped in code)
+and, since the Record screen made pinning a first-class action, the PWA
+directly through PostgREST under owner RLS (`goals_select/insert/update/delete`
+all require `user_id = auth.uid()`). The PWA never sends `user_id`; it comes from
+the column default. A write is queued with the identity that tapped it and is
+skipped if the signed-in account changed before it ran (a goal queued by one
+account must not be written into another account by whichever token is live
+when its turn comes).
+
+Insert and update ALSO require the exercise to be visible to the caller
+(`20261001010000_goals_visible_exercise.sql`, the same rule as `exercise_prefs`).
+The foreign key's own check bypasses RLS, so before this a goal on another
+user's private custom exercise said "success" while a missing id said 23503: an
+existence oracle by slug, and the stranger's row then blocked the owner's
+`delete_exercise` (goals reference exercises without cascade). Now both refuse
+with 42501 before the FK. `scripts/validate-db.mjs` asserts it, along with
+owner-only read, update, delete and insert. Existing rows are untouched.
+
 ## Threats considered
 
 - **Stolen bearer token**: worst realistic case. Attacker reads ONE user's

@@ -194,7 +194,11 @@ new phone logging offline and across an update, and exact set UUID readback.
 Old failed-record recovery is waived. Record the served SHA and rollback path under
 `docs/deploy.md`. Every light UI slice should revert without a data migration
 or clearing IndexedDB. If later slices add a migration, it must be additive
-and have a forward repair path.
+and have a forward repair path. The integrated branch does add two migrations
+(`exercise_prefs` and the goals visible-exercise policy); migrations are
+append-only, so its revert story is code-only: revert the PWA and functions and
+leave the table and policies in place (an older app ignores the table), and
+never clear IndexedDB.
 
 ## September 30 implementation authorization
 
@@ -268,8 +272,9 @@ changes for this spec:
   codex card language (raised paper, hairline, card radius).
 - **Dark mode** is one token block; every dock, current-row, plate and receipt
   token has a dark value and the contrast test covers those pairs. The
-  light-only wording above ("Light only, tokens only") is superseded: tokens only
-  stays, light-only does not.
+  "No dark theme" in the Goal section above, written for the first light-session
+  release, is superseded: all colour still goes through role tokens, but the app
+  is no longer light-only.
 - **Per-exercise prefs sync to the account** (`exercise_prefs`); the session unit
   and the session order are a different thing: session-local, per owner and per
   session, never synced (`sessionPrefs`). The "unit for THIS session" in the ☰

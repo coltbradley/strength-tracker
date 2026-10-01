@@ -380,7 +380,7 @@ Sections:
 - **DANGER** — Reset settings to defaults (two-tap; preferences only, never
   training data), and Sign out (two-tap). Sign out consults the outbox
   first: unsynced sets are the only copy, so it names how many would be lost
-  and points at Sync now, or at the sync pill when items are permanently
+  and points at Sync now, or at the sync chip when items are permanently
   failed.
 
 ## Building a workout in the app

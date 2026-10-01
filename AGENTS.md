@@ -128,7 +128,14 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   the session's own choice, never a per-exercise pref. The session screen does not wait for
   identity: it opens on the known owner (live, else persisted), or on the device
   unit and canonical order with none, and the outbox stamps or holds each write
-  (identity is not authorization).
+  (identity is not authorization). A live session is bound to the first owner
+  it knew; if the live identity becomes a different account, LOG, corrections,
+  voids, notes and every cache write are refused with a message (never stamped
+  as the new user against the old user's session) until it flips back.
+- A shown load that feeds a write is never rounded below what was typed: kg
+  keeps two decimals (`toTypedDisplay`; the column is numeric(6,2), a 1.25 kg
+  step is 21.25), lb one. `toDisplay` is for read-only quotes of a converted
+  value. The write path never rounds: `buildSetLoad` takes the typed value.
 - A correction's void is HELD behind its replacement in the outbox (insert
   before void, never the reverse) and `receipt` is an outbox status: a witness
   row kept after a correction's void is acknowledged, excluded from counts,
@@ -181,7 +188,10 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   `(user_id, exercise_id)` that omits `target_date`, so a coach's date
   survives -/+). Progress is still only `v_goal_progress` over `v_live_sets`;
   the PWA never computes it beyond a display-only optimistic percentage. A
-  goal blocks `delete_exercise` (FK, no cascade).
+  goal blocks `delete_exercise` (FK, no cascade). Goal insert/update also
+  require the exercise to be visible to the caller (20261001010000, same rule
+  as `exercise_prefs`), and a queued goal write is skipped if the signed-in
+  account changed since it was queued.
 - Planned tables (`programs`/`planned_workouts`/`prescriptions`) are written
   by BOTH the MCP server (service role, program parsing) and the PWA (RLS
   owner policies, plan editor). The PWA can now CREATE a day too, not just
@@ -881,7 +891,7 @@ node scripts/work-inventory.mjs --topic "<feature>" --paths <files>
 
 # every column any code SELECTs must exist against that same schema
 node scripts/check-selects.mjs
-node --test scripts/release-ledger.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs scripts/work-inventory.test.mjs
+node --test scripts/release-ledger.test.mjs scripts/strength-mcp-relay.test.mjs scripts/strength-tunnel-config.test.mjs scripts/strength-tunnel-supervisor.test.mjs scripts/check-pwa-env.test.mjs scripts/check-deploy-contract.test.mjs scripts/work-inventory.test.mjs scripts/load-integrity.test.mjs   # same list as ci.yml
 node scripts/check-release-ledger.mjs
 
 # mcp server: serve locally
