@@ -3,6 +3,7 @@
 // exercise list, last actuals) are cached; locally queued sets are merged in
 // by callers so the UI reflects unsynced work.
 
+import { assertAcceptedAuthoredLoad, provenanceForTotal } from "./setLoad";
 import { supabase } from "./supabase";
 import {
   cacheGet,
@@ -16,7 +17,6 @@ import { reportError } from "./errors";
 import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
-import { kgToEnteredLoad } from "./units";
 import type {
   AdherenceRow,
   ExerciseRow,
@@ -524,6 +524,11 @@ export async function applyPlanEdit(
     deleteId?: string;
   } = {},
 ): Promise<void> {
+  const p = edit.patch;
+  // A patch that restates the whole load picture must be one the database
+  // accepts; partial patches merge with the stored row server-side.
+  if (p && "load_kg" in p && "load_entry" in p && "entered_load" in p && "entered_unit" in p)
+    assertAcceptedAuthoredLoad(p, "prescriptions", "prescription");
   const { error } = await supabase.rpc("apply_plan_edit_with_delete", {
     p_planned_workout_id: plannedWorkoutId,
     p_target_id: edit.targetId ?? null,
@@ -791,16 +796,27 @@ export async function applyTemplate(
   // See lib/templateLoads.ts for the rule and what it deliberately skips.
   const next = refreshedLoads(src, lastActuals);
   const refreshed = countRefreshed(next);
-  const rows = src.map((r, i) => ({
-    ...r,
-    id: uuid(),
-    planned_workout_id: workoutId,
-    load_kg: next[i] ?? r.load_kg,
-    entered_load: next[i] != null && r.entered_unit != null && r.load_entry != null
-      ? kgToEnteredLoad(next[i], r.entered_unit, r.load_entry)
-      : r.entered_load ?? null,
-    entered_unit: r.entered_load == null ? null : r.entered_unit ?? null,
-  }));
+  const rows = src.map((r, i) => {
+    const total = next[i] ?? r.load_kg;
+    // A refreshed total keeps its authored unit only when a number the lifter
+    // could have typed reproduces it exactly; otherwise the total stands
+    // alone (null provenance), never a rounded claim beside a different kg.
+    const authored =
+      next[i] != null && r.entered_unit != null && r.load_entry != null
+        ? provenanceForTotal(next[i], r.entered_unit, r.load_entry)
+        : next[i] == null
+          ? { entered_load: r.entered_load ?? null, entered_unit: r.entered_unit ?? null }
+          : { entered_load: null, entered_unit: null };
+    const row = {
+      ...r,
+      id: uuid(),
+      planned_workout_id: workoutId,
+      load_kg: total,
+      ...authored,
+    };
+    assertAcceptedAuthoredLoad(row, "prescriptions", "prescription");
+    return row;
+  });
   if (rows.length > 0) {
     const { error: iErr } = await supabase.from("prescriptions").insert(rows);
     throwIf(iErr);
@@ -861,7 +877,9 @@ function prescriptionGroupRows(
 ): PrescriptionInsert[] {
   let position = existing.reduce((m, r) => Math.max(m, r.position), -1) + 1;
   return additions.flatMap(({ exerciseId, groups }) =>
-    groups.map((g) => ({
+    groups.map((g) => {
+      assertAcceptedAuthoredLoad(g, "prescriptions", "prescription");
+      return {
       id: uuid(),
       planned_workout_id: plannedWorkoutId,
       exercise_id: exerciseId,
@@ -882,7 +900,8 @@ function prescriptionGroupRows(
       load_entry: g.load_entry,
       entered_load: g.entered_load,
       entered_unit: g.entered_unit,
-    })),
+      };
+    }),
   );
 }
 

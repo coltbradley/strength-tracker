@@ -4,6 +4,7 @@
 // (planning happens at home); each action saves immediately and confirms
 // with a toast so there is never an unsaved-state question.
 
+import { buildSetLoad, LoadIntegrityError } from "../lib/setLoad";
 import {
   Fragment, useCallback, useEffect, useMemo, useRef, useState
 } from "react";
@@ -192,26 +193,35 @@ function unchanged(r: ResolvedPrescriptionRow, p: PrescriptionPatch): boolean {
 }
 
 function patchFrom(d: RxDraft): PrescriptionPatch {
-  const hasDirectLoad = d.mode === "kg" && d.load_kg > 0 && d.entered_unit !== null;
+  // The load fields come from lib/setLoad.ts and nowhere else: the typed
+  // number and its unit are the source, load_kg is derived from them.
+  // `draft.load_kg` is only the stepper's working copy, and rounding it back
+  // to one decimal of the typed unit is what used to disagree with the
+  // database (a kg plan stepped in lb wrote 220.5 lb beside 100 kg).
+  const direct =
+    d.mode === "kg" && d.load_kg > 0 && d.entered_unit !== null
+      ? buildSetLoad({
+          typedValue: d.entered_load ?? toDisplay(d.load_kg, d.entered_unit),
+          typedUnit: d.entered_unit,
+          loadEntry: d.load_entry,
+        })
+      : null;
+  // Without an authored unit (a legacy row nobody retyped) the total stands
+  // alone, with no provenance. The database refuses a prescription of 0, so
+  // "no load" is stored as none: bodyweight and by-feel are the same row.
+  const legacyTotal =
+    d.mode === "kg" && direct === null
+      ? Math.round(Math.max(0, totalKg(d.load_kg, d.load_entry)) * 100) / 100
+      : null;
+  const stored = direct ? direct.load_kg : legacyTotal !== null && legacyTotal > 0 ? legacyTotal : null;
   return {
     sets: d.sets,
     reps_min: d.reps_min,
     reps_max: Math.max(d.reps_min, d.reps_max),
-    // 0 is bodyweight, not "unset": the schema says so
-    // (`load_kg >= 0`, 0 = bodyweight) and a chin-up prescribed at 0 is a
-    // real prescription. Clamping it up to 0.5 made bodyweight unexpressible.
-    // Back to a TOTAL on the way out, which is the only thing load_kg ever
-    // holds. The convention is stamped alongside it so the session screen can
-    // hand the same number back rather than halving it again.
-    load_kg:
-      d.mode === "kg"
-        ? Math.round(Math.max(0, totalKg(d.load_kg, d.load_entry)) * 100) / 100
-        : null,
-    load_entry: d.mode === "kg" ? d.load_entry : null,
-    entered_load: hasDirectLoad
-      ? d.entered_load ?? toDisplay(d.load_kg, d.entered_unit!)
-      : null,
-    entered_unit: hasDirectLoad ? d.entered_unit : null,
+    load_kg: stored,
+    load_entry: stored === null ? null : d.load_entry,
+    entered_load: direct?.entered_load ?? null,
+    entered_unit: direct?.entered_unit ?? null,
     load_pct_tm: d.mode === "pct" ? d.load_pct : null,
     rest_seconds: d.hasRest ? d.rest_seconds : null,
     superset_group: d.superset === 0 ? null : d.superset,
@@ -654,7 +664,14 @@ export function Plan() {
    */
   const saveRx = (r: ResolvedPrescriptionRow, keepOpen = false) => {
     if (!draft) return Promise.resolve();
-    const patch = patchFrom(draft);
+    let patch: PrescriptionPatch;
+    try {
+      patch = patchFrom(draft);
+    } catch (e) {
+      if (!(e instanceof LoadIntegrityError)) throw e;
+      toast(e.message, "error");
+      return Promise.resolve();
+    }
     // Nothing changed: skip the write and the toast entirely, or merely opening
     // a row and closing it claims to have updated it.
     if (unchanged(r, patch)) {

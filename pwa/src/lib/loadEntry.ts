@@ -114,18 +114,6 @@ export function enteredKg(totalLoadKg: number, entry: LoadEntry): number {
   return entry === "per_side" ? totalLoadKg / 2 : totalLoadKg;
 }
 
-/**
- * The `load_entry` to WRITE for a set. Never null for a new set, and never
- * 'per_side' on a zero load — the DB check refuses it, and half of nothing is
- * still nothing.
- */
-export function loadEntryForSet(
-  entry: LoadEntry,
-  totalLoadKg: number,
-): LoadEntry {
-  return entry === "per_side" && totalLoadKg > 0 ? "per_side" : "total";
-}
-
 /** The user's stored choice for one exercise, if they have made one. */
 export function getLoadEntryOverride(
   exerciseId: string | null,
