@@ -134,6 +134,13 @@
     --plate-collar: #565b63;
     --teal: #2e6e7e;
 
+    /* Surfaces for the focus dock: white cards and mist keys on a lavender
+     * dock, taken from Version D. Values only; roles are named below. */
+    --white: #ffffff;
+    --mist: #ebe8f0;
+    --haze: #efedf3;
+    --straw: #f6ecd9;
+
     /* -- colour roles: the only names component rules may reference -------- */
     --bg: var(--paper);
     --bg-raised: var(--paper-raised);
@@ -177,6 +184,19 @@
     --focus-set-completed-mark: var(--cream);
     --focus-set-future: var(--control-outline);
 
+    /* Focus-dock surfaces. card = a number or a card sitting on the dock or
+     * the page; key = the small keys and chips on top of either; dock = the
+     * panel itself. A dark theme swaps these three and nothing else. */
+    --surface-card: var(--white);
+    --surface-key: var(--mist);
+    --surface-key-press: color-mix(in srgb, var(--aubergine) 10%, var(--mist));
+    --surface-dock: var(--haze);
+    --surface-current: var(--straw);
+    --text-on-accent: var(--text-inverse);
+    --dock-edge: var(--rule-hair-color);
+    --lp-steel: var(--plate-1h);
+    --lp-edge: rgb(var(--ink-rgb) / 0.2);
+
     /* State vocabulary roles (StateGlyph.tsx) — reuse the same three focus-set
      * roles above wherever the meaning matches (done ~ completed, current ~
      * current, upcoming ~ future) rather than mint parallel tokens for the
@@ -190,7 +210,8 @@
 
     --fs-micro: 9.5px; /* mono eyebrow labels */
     --fs-label: 10.5px; /* mono secondary labels */
-    --fs-meta: 11px; /* mono metadata, button text */
+    --fs-meta: 11px; /* mono metadata, button text — the floor for anything meaningful */
+    --fs-caption: 12px; /* captions under a drawing, small keys */
     --fs-sm: 13px; /* dense body */
     --fs-body: 14px; /* row names, toasts, logged loads */
     --fs-base: 16px; /* body + .input — must stay 16 or iOS zooms on focus */
@@ -262,6 +283,10 @@
     --bw-thick: 2px;
     --radius: 2px; /* index cards do not have rounded corners */
     --radius-pill: 999px;
+    --r-seg: 5px; /* focus set-progress bars */
+    --r-card: 14px; /* keys, info cards, added-load row */
+    --r-panel: 18px; /* number cards, LOG, the next-exercise card */
+    --r-dock: 24px; /* the dock's top corners */
     --shadow-toast: 0 6px 18px rgb(var(--ink-rgb) / 0.14);
     --rail-accent: inset 3px 0 0 var(--accent);
 
@@ -3524,14 +3549,31 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    gap: var(--s-7);
-    padding: var(--s-2) 0 calc(var(--s-8) + env(safe-area-inset-bottom));
+    min-width: 0;
   }
 
+  /* Band one: what this is and where you are. */
   .focus-deck-status {
+    flex: none;
     display: flex;
     flex-direction: column;
-    gap: var(--s-5);
+    gap: var(--s-3);
+  }
+
+  .focus-deck-position-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    column-gap: var(--s-5);
+  }
+
+  /* "Session unit · Settings says lb" — current-set ochre, because it is a
+   * state that is overriding something, not a label. */
+  .focus-unit-note {
+    color: var(--focus-set-current);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
   }
 
   /* Uppercased here, not in the string: a superset's "round 1 of 3" comes
@@ -3540,9 +3582,9 @@
   .focus-deck-position {
     color: var(--text-dim);
     font-family: var(--font-mono);
-    font-size: var(--fs-label);
+    font-size: var(--fs-meta);
     font-variant-numeric: tabular-nums;
-    letter-spacing: var(--track-1);
+    letter-spacing: var(--track-2);
     text-transform: uppercase;
   }
 
@@ -3558,14 +3600,6 @@
     line-height: 1.1;
   }
 
-  .focus-deck-editor {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    gap: var(--s-7);
-  }
-
   /* One shared, non-interactive line sits immediately before the focus
    * controls. FocusDeck keeps the spoken set/round status; these marks are
    * hidden from assistive tech and use shape as well as semantic color roles
@@ -3575,20 +3609,31 @@
     display: flex;
     width: 100%;
     gap: var(--s-2);
+    margin-top: var(--s-4);
     flex: none;
   }
 
+  /* Rounded bars: filled = done, ochre fill = the set you are on, outline =
+   * still to come. The glyph inside stays in the DOM (the wrapper is
+   * aria-hidden anyway) but is not drawn; fill vs outline is the shape cue. */
   .focus-set-segment {
+    position: relative;
     flex: 1 1 0;
     min-width: 0;
-    height: var(--s-6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    height: 10px;
+    border-radius: var(--r-seg);
     border: var(--bw) solid var(--focus-set-future, var(--control-border-color));
     color: var(--focus-set-future, var(--control-border-color));
-    font-size: var(--fs-label);
-    line-height: 1;
+    overflow: hidden;
+    transition: transform var(--motion-fast) ease-out;
+  }
+
+  .focus-set-segment > * {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
 
   .focus-set-segment--completed {
@@ -3599,7 +3644,9 @@
 
   .focus-set-segment--current {
     border-color: var(--focus-set-current, var(--text));
+    background: var(--focus-set-current, var(--text));
     color: var(--focus-set-current, var(--text));
+    transform: scaleY(1.3);
   }
 
   /* ---- state vocabulary (StateGlyph.tsx) ----
@@ -3710,22 +3757,7 @@
     animation: mode-cross-fade var(--motion-med) var(--ease-out);
   }
 
-  /* The plain hero editor stretches to fill .focus-deck-editor so its own
-   * bottom bar (margin-top: auto) can anchor to the true bottom of the
-   * screen rather than to the end of however little content it has. A
-   * superset round (SupersetRoundEditor, not this) is not part of this
-   * chain — each member's own bar still anchors to ITS OWN box, and the
-   * round's shared Log round / Log A1 / Log A2 row sits in normal flow
-   * below both, which is already where it belongs. */
-  .set-editor-focus {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-
-  /* Fills the same space a plain hero editor would (see the flex chain
-   * comment above .set-editor-focus). */
+  /* A superset round fills the middle band's remaining height. */
   .superset-round-editor {
     flex: 1;
     display: flex;
@@ -3903,82 +3935,6 @@
     min-height: 0;
   }
 
-  /* One faint line: a small control to leave for the overview, ••• to open
-   * everything else. Nothing else lives here — the workout name and its
-   * done count moved to the "more" sheet's own title, and DONE counting
-   * moved out entirely (see the design's own case against a percentage). */
-  .focus-deck-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .focus-workout-menu {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s-3);
-    min-height: var(--tap-min);
-    padding: 0 var(--s-3);
-    color: var(--text);
-    font-size: var(--fs-label);
-    font-weight: 650;
-  }
-
-  .focus-hamburger {
-    font-size: 18px;
-    line-height: 1;
-  }
-
-  .focus-top-slot {
-    margin-inline: calc(-1 * var(--gutter));
-  }
-
-  .focus-nearby-loads {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-3);
-    margin-top: var(--s-3);
-  }
-
-  .focus-nearby-loads button {
-    min-height: var(--tap-min);
-    padding: 0 var(--s-4);
-    border: var(--rule-hair);
-    border-radius: var(--radius);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-micro);
-  }
-
-  .focus-complete-actions {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-4);
-    margin-top: auto;
-    padding-bottom: var(--s-6);
-  }
-
-
-  /* Swap and Skip: visible secondary actions on the hero, not buried in
-   * the ••• sheet — the lifter chooses exercise identity and skips at log
-   * time (AGENTS.md), so both live where the tap actually happens. */
-  .focus-deck-secondary-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-5);
-  }
-
-  .focus-deck-secondary {
-    padding: var(--s-3) var(--s-5);
-    min-height: var(--tap-min);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    letter-spacing: var(--track-1);
-    text-transform: uppercase;
-    border: var(--rule-hair);
-    border-radius: var(--radius);
-  }
 
   .skip-reason-prompt {
     display: flex;
@@ -3994,82 +3950,6 @@
     display: flex;
     justify-content: flex-end;
     gap: var(--s-5);
-  }
-
-  /* The hero's own warmup/working toggle — shown only for an entry that
-   * actually prescribes a warmup, so an exercise with none never offers a
-   * choice it doesn't have. */
-  .focus-hero-warmup {
-    display: flex;
-    align-items: center;
-    gap: var(--s-5);
-  }
-
-  .focus-already-warm {
-    padding: var(--s-3) var(--s-5);
-    min-height: var(--tap-min);
-    font-size: var(--fs-label);
-  }
-
-  /* "Last: 145 kg × 5 working" — the newest logged set, tappable onto its
-   * correction, styled like the last-performance line it sits beside. */
-  .focus-last-set {
-    text-align: left;
-    margin: 0;
-    padding: 0;
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: var(--track-1);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-
-  /* One faint line: the progress rail (tap a dot to jump, tap the current
-   * one for the full workout) on the left, ••• on the right. A real <ul> in
-   * the markup, reset here — list-style/margin/padding never carry meaning,
-   * so stripping them costs nothing semantic (role="list" in the markup
-   * keeps the list role explicit for Safari/VoiceOver regardless). */
-  .focus-progress-rail {
-    display: flex;
-    align-items: center;
-    gap: var(--s-3);
-    overflow-x: auto;
-    /* the row can outgrow the screen on a long day; the dots stay a fixed
-     * size (see .state-glyph) so it degrades to a scroll, never a squeeze */
-    flex: 1;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .focus-progress-dot-item {
-    flex: none;
-    display: inline-flex;
-  }
-
-  .focus-progress-dot {
-    flex: none;
-    min-width: var(--tap-min);
-    min-height: var(--tap-min);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-  }
-
-  .focus-deck-more {
-    align-self: flex-start;
-    padding: 0;
-    min-height: var(--tap-min);
-    min-width: var(--tap-min);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-lg);
-    letter-spacing: var(--track-1);
-    text-align: right;
   }
 
   /* The "more" sheet: everything focus mode's default screen leaves out,
@@ -4111,160 +3991,728 @@
     flex-wrap: wrap;
   }
 
-  /* The whole hero (load-then-reps or reps-then-load) as ONE flex item, so
-   * it — not each piece separately — can take equal auto margins above and
-   * below: name/position stay pinned at the top, the bottom bar (its own
-   * margin-top: auto, below) stays pinned at the bottom, and this settles
-   * into the space left over, however much or little that is. */
-  .focus-hero-group {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-7);
-    margin: auto 0;
-  }
-
-  /* No rule above either section, and no accent underline on the hero
-   * value: nothing on this screen competes with the number and LOG for
-   * visual weight. The accordion's own .rule-section and
-   * .stepper-value-accent are untouched — this only reaches the focus
-   * variant's markup. */
-  .set-editor-focus .rule-section {
-    border-top: none;
-    padding-top: 0;
-  }
-
-  .focus-hero-section .stepper-value-row {
-    align-items: baseline;
-  }
-
-  /* Bigger than the accordion's own accent value (--fs-display, 52px): the
-   * focus deck has exactly one number to show at once, so it can have all
-   * the room the accordion's shared editor never could. */
-  .focus-hero-section .stepper-value {
-    font-size: 84px;
-    border-bottom: none;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .focus-hero-section .stepper-sub {
-    font-size: var(--fs-lg);
-    color: var(--text);
-    padding-bottom: 0;
-  }
-
-  .focus-load-detail {
-    margin-top: 0;
-  }
-
   .focus-last-performance {
     margin: 0;
     color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: var(--fs-label);
+    font-size: var(--fs-sm);
     font-variant-numeric: tabular-nums;
-    letter-spacing: var(--track-1);
   }
 
-  /* PlateBar draws only the bar and its plates — no panel behind it. (Its
-   * class name collides with an unrelated element in the plate CALCULATOR
-   * sheet's own diagram, which does want a filled background; scoping this
-   * to the hero section reaches only the one drawn here.) The plate text
-   * stays small and quiet, an answer to check against the bar, not a label. */
-  .focus-hero-section .plate-bar {
-    background: none;
-  }
+  /* ---- focus deck: three bands (2026-10, Version D) ----
+   * status (above) / .focus-middle / .focus-dock. The middle takes whatever
+   * height is left and centres its contents in it; the dock is pinned to the
+   * bottom edge and bleeds past the page gutter like a sheet. Nothing here
+   * is smaller than --fs-meta (11px). Colour only through role tokens. */
 
-  .focus-hero-section .plate-bar-key {
-    font-size: var(--fs-label);
-    font-weight: 500;
-    color: var(--text-dim);
-  }
-
-  /* The bottom action row: the hero's own coarse step flanking the log
-   * button, so the number that matters is always one thumb-width from the
-   * action that commits it. A superset member (no log button of its own —
-   * the round's shared Log round / Log A1 / Log A2 actions live in
-   * .superset-round-actions) gets a spacer in the middle instead, so its
-   * step buttons flank empty space rather than something that reads as
-   * committable on its own. margin-top: auto anchors it to the bottom of
-   * whatever space .set-editor-focus has to give — see the flex chain on
-   * .focus-shell, .focus-deck, .focus-deck-editor and .set-editor-focus. */
-  .focus-bar {
+  /* No min-height: 0 — on a short screen the middle keeps its full height
+   * and the page scrolls (the dock stays stuck to the bottom) instead of the
+   * content overflowing onto the status band and the dock. */
+  .focus-middle {
+    flex: 1;
+    min-width: 0;
     display: flex;
-    align-items: stretch;
-    gap: 0;
-    margin-top: auto;
-    background: var(--accent);
-    border: var(--bw) solid var(--accent);
-    border-radius: 0;
-    color: var(--text-inverse);
-    overflow: hidden;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--s-5);
+    padding: var(--s-4) 0;
   }
 
-  .focus-bar-step {
-    flex: 0 0 var(--tap-log);
-    min-width: var(--tap-log);
-    display: inline-flex;
+  .focus-dock {
+    position: sticky;
+    bottom: calc(-1 * var(--gutter));
+    z-index: var(--z-rail);
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-width: 0;
+    margin: 0 calc(-1 * var(--gutter)) calc(-1 * var(--gutter));
+    padding: var(--s-5) var(--s-6) calc(var(--s-6) + env(safe-area-inset-bottom));
+    background: var(--surface-dock);
+    border-radius: var(--r-dock) var(--r-dock) 0 0;
+    box-shadow: 0 -1px 0 var(--dock-edge);
+  }
+
+  .set-editor-focus {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-width: 0;
+  }
+
+  /* -- the numbers -- */
+
+  .dock-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: var(--s-3);
+  }
+
+  .dock-num {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: 84px;
+    border-radius: var(--r-panel);
+    background: var(--surface-card);
+  }
+
+  .dock-num-step {
+    flex: 0 0 var(--tap-min);
+    align-self: stretch;
+    display: flex;
     align-items: center;
     justify-content: center;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: inherit;
+    min-width: 0;
+    color: var(--text);
+    font-size: 24px;
+    font-weight: 300;
+    line-height: 1;
+    border-radius: var(--r-panel);
+  }
+
+  .dock-num-step:active,
+  .dock-mini-step:active {
+    background: var(--surface-key);
+  }
+
+  .dock-num-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    color: var(--text);
+  }
+
+  .dock-num-value {
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: var(--track-tight);
+    font-variant-numeric: tabular-nums;
+    max-width: 100%;
+  }
+
+  .dock-num-caption {
+    color: var(--text-dim);
     font-family: var(--font-mono);
-    font-weight: 700;
-    font-size: var(--fs-lg);
+    font-size: var(--fs-meta);
+    white-space: nowrap;
   }
 
-  .focus-bar .btn-log,
-  .focus-tick-log {
+  /* Reps (or seconds) as the one big number: bodyweight and timed holds. */
+  .dock-num-big {
+    min-height: 88px;
+  }
+
+  .dock-num-big .dock-num-step {
+    flex-basis: 76px;
+    font-size: 28px;
+  }
+
+  .dock-num-big .dock-num-body {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: center;
+    gap: var(--s-4);
+    align-self: center;
+  }
+
+  .dock-num-big .dock-num-value {
+    font-size: 48px;
+  }
+
+  .dock-num-big .dock-num-caption {
+    font-size: var(--fs-caption);
+  }
+
+  /* Belt or vest load under a bodyweight movement's reps. */
+  .dock-added-load {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-height: 52px;
+    padding-left: var(--s-7);
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+  }
+
+  .dock-added-load-text {
     flex: 1;
-    width: auto;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: inherit;
+    min-width: 0;
+    font-size: var(--fs-body);
   }
 
-  .focus-bar-step + .focus-bar-log,
-  .focus-bar-log + .focus-bar-step {
-    border-left: var(--bw-hair) solid var(--text-inverse);
-  }
-
-  .focus-bar-step:active,
-  .focus-bar .btn-log:active,
-  .focus-tick-log:active {
-    background: var(--accent-press);
-  }
-
-  /* A tick exercise has no bottom bar (bottomBar is false for tracking
-   * "done") — this button is its only flex item after the hero, so it
-   * anchors to the bottom the same way .focus-bar does. */
-  .focus-tick-log {
-    margin-top: auto;
-    min-height: var(--tap-log);
-    padding: 0 var(--s-7);
-    background: var(--accent);
-    border: var(--bw) solid var(--accent);
-    color: var(--text-inverse);
-  }
-
-  .focus-bar-spacer {
-    flex: 1;
-  }
-
-  /* The quiet line naming what comes after the current exercise — text, not
-   * a filled block, so it never competes with LOG. */
-  .focus-next {
-    align-self: flex-start;
+  .dock-mini-step {
+    flex: none;
+    min-width: var(--tap-min);
     min-height: var(--tap-min);
     display: flex;
     align-items: center;
+    justify-content: center;
+    border-radius: var(--r-card);
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  .dock-mini-step:last-child {
+    color: var(--text-dim);
+  }
+
+  /* -- the four keys and LOG -- */
+
+  .focus-keys {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s-3);
+  }
+
+  .focus-key {
+    min-height: var(--tap-md);
+    min-width: 0;
+    padding: 0 var(--s-2);
+    border-radius: var(--r-card);
+    background: var(--surface-key);
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-color);
+    color: var(--text);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .focus-key:active {
+    background: var(--surface-key-press);
+  }
+
+  .focus-key:disabled {
+    color: var(--text-dim);
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-color);
+  }
+
+  .focus-deck .focus-log {
+    min-height: 80px;
+    border-radius: var(--r-panel);
+    background: var(--accent);
+    color: var(--text-on-accent);
+    font-family: var(--font-sans);
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .focus-deck .focus-log:active:not(:disabled) {
+    background: var(--accent-press);
+  }
+
+  .focus-deck .focus-log:disabled {
+    background: var(--accent-press);
+    color: var(--text-on-accent);
+  }
+
+  /* NEXT EXERCISE: once an exercise is done this replaces the editor, and is
+   * the biggest thing in the dock. */
+  .focus-next {
+    min-height: 88px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: var(--s-1);
+    padding: var(--s-5) var(--s-8);
+    border-radius: var(--r-panel);
+    background: var(--accent);
+    color: var(--text-on-accent);
+    text-align: left;
+  }
+
+  .focus-next:active {
+    background: var(--accent-press);
+  }
+
+  .focus-next-eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    letter-spacing: var(--track-2);
+  }
+
+  .focus-next-name {
+    font-size: 20px;
+    font-weight: 800;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+
+  .focus-next-scheme {
+    font-size: var(--fs-sm);
+  }
+
+  .focus-deck .focus-finish {
+    min-height: 80px;
+    border-radius: var(--r-panel);
+    font-family: var(--font-sans);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* -- the middle band -- */
+
+  .focus-cue {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-4);
+    font-size: var(--fs-body);
+    line-height: 1.4;
+  }
+
+  .focus-cue-icon {
+    flex: none;
+    margin-top: var(--s-1);
+    color: var(--text-dim);
+  }
+
+  .focus-complete {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-5);
+  }
+
+  .focus-complete-title {
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: var(--track-tight);
+  }
+
+  .focus-skipped {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: var(--fs-base);
+    line-height: 1.4;
+  }
+
+  .focus-chip-btn,
+  .focus-middle .chip {
+    min-height: var(--tap-md);
+    padding: 0 var(--s-8);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-key);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--fs-body);
+    font-weight: 700;
+  }
+
+  .focus-middle .skip-reason-prompt {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    margin: 0;
+  }
+
+  .focus-middle .chip:active,
+  .focus-chip-btn:active {
+    background: var(--surface-key-press);
+  }
+
+  .chip-quiet,
+  .focus-middle .chip.chip-quiet {
+    background: transparent;
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+
+  .text-link {
+    align-self: flex-start;
+    min-height: var(--tap-min);
     padding: 0;
+    color: var(--accent);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  /* -- the load picture -- */
+
+  .load-picture {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s-3);
+    width: 100%;
+    min-width: 0;
+    padding: var(--s-2) 0;
+    color: var(--text);
+    text-align: center;
+  }
+
+  .load-picture-row {
+    flex-direction: row;
+    justify-content: center;
+    gap: var(--s-7);
+    text-align: left;
+  }
+
+  .load-picture-bw {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-1);
+  }
+
+  .lp-bw-title {
+    font-size: var(--fs-lg);
+    font-weight: 800;
+  }
+
+  .lp-text {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  .lp-caption {
+    color: var(--text-dim);
+    font-size: var(--fs-caption);
+    line-height: 1.35;
+  }
+
+  .lp-stack-words {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+  }
+
+  /* The bar: sleeve end, plates (smallest outermost), shaft, plates, sleeve
+   * end — heavier plates are taller AND thicker. Plates may shrink in width
+   * before the drawing is ever allowed past the column. */
+  .lp-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 60px;
+    min-width: 0;
+  }
+
+  .lp-bar-compact {
+    width: auto;
+    height: 40px;
+    flex: none;
+  }
+
+  .lp-bar-compact .lp-plate {
+    transform: scaleY(0.7);
+  }
+
+  .lp-sleeve-end {
+    flex: none;
+    width: 8px;
+    height: 18px;
+    border-radius: 2px;
+    background: var(--lp-steel);
+  }
+
+  .lp-shaft {
+    flex: 1 1 12px;
+    min-width: 12px;
+    max-width: 150px;
+    height: 7px;
+    border-radius: 3px;
+    background: var(--lp-steel);
+  }
+
+  .lp-shaft-short {
+    flex: none;
+    width: 24px;
+    height: 6px;
+  }
+
+  .lp-plate,
+  .lp-db-head {
+    flex: 0 1 auto;
+    min-width: 3px;
+    margin: 0 1px;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px var(--lp-edge);
+  }
+
+  .lp-c-25 { background: var(--plate-25); }
+  .lp-c-20 { background: var(--plate-20); }
+  .lp-c-15 { background: var(--plate-15); }
+  .lp-c-10 { background: var(--plate-10); }
+  .lp-c-5 { background: var(--plate-5); }
+  .lp-c-2h { background: var(--plate-2h); }
+  .lp-c-1h { background: var(--plate-1h); }
+
+  .lp-dbs {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-7);
+    width: 100%;
+    height: 60px;
+  }
+
+  .lp-db {
+    display: flex;
+    align-items: center;
+  }
+
+  .lp-db-head {
+    flex: none;
+    width: 16px;
+    margin: 0;
+    border-radius: 5px;
+  }
+
+  .lp-db-handle {
+    flex: none;
+    width: 30px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--lp-steel);
+  }
+
+  .lp-db-plus {
     color: var(--text-dim);
     font-family: var(--font-mono);
-    font-size: var(--fs-label);
-    letter-spacing: var(--track-1);
+    font-size: var(--fs-base);
+    font-weight: 700;
+  }
+
+  .lp-stack {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    padding: var(--s-3);
+    border-radius: 8px;
+    background: var(--surface-key);
+  }
+
+  .lp-stack-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+
+  .lp-stack-plate {
+    width: 64px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--rule-color);
+  }
+
+  .lp-stack-plate.is-lifted {
+    background: var(--accent);
+  }
+
+  .lp-stack-pin {
+    width: 18px;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  /* -- the rest panel (replaces the middle while resting) -- */
+
+  .rest-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    min-width: 0;
+  }
+
+  .rest-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+  }
+
+  .rest-panel-label {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    letter-spacing: var(--track-3);
+  }
+
+  .rest-panel-adjust {
+    display: flex;
+    gap: var(--s-3);
+  }
+
+  .rest-panel-btn {
+    min-width: 52px;
+    min-height: var(--tap-min);
+    padding: 0 var(--s-4);
+    border-radius: 22px;
+    background: var(--surface-key);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--fs-caption);
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .rest-panel-btn:active {
+    background: var(--surface-key-press);
+  }
+
+  .rest-panel-clock {
+    align-self: flex-start;
+    padding: 0;
+    color: var(--text);
+    font-size: clamp(56px, 18vw, 72px);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+  }
+
+  .rest-panel-track {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--surface-key);
+    overflow: hidden;
+  }
+
+  .rest-panel-fill {
+    display: block;
+    height: 100%;
+    width: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+    transform-origin: left center;
+    transition: transform 400ms linear;
+  }
+
+  .rest-panel-ready {
+    gap: var(--s-2);
+    padding: var(--s-7);
+    border: var(--bw-thick) solid var(--accent);
+    border-radius: 16px;
+  }
+
+  .rest-panel-ready-title {
+    font-size: 26px;
+    font-weight: 800;
+    line-height: 1.1;
+  }
+
+  .rest-panel-sub {
+    color: var(--text-dim);
+    font-size: var(--fs-sm);
+  }
+
+  /* "NEXT SET · SET 4 OF 6" and End rest now, above the dock's numbers. */
+  .rest-dock-tag {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    padding: 0 var(--s-2);
+  }
+
+  .rest-dock-tag-label {
+    color: var(--focus-set-current);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    font-weight: 700;
+    letter-spacing: var(--track-2);
+  }
+
+  /* -- cards under the rest clock -- */
+
+  .focus-saved-card,
+  .focus-load-next {
+    display: flex;
+    align-items: center;
+    gap: var(--s-5);
+    width: 100%;
+    min-width: 0;
+    padding: var(--s-5) var(--s-6);
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+    color: var(--text);
+    text-align: left;
+  }
+
+  .focus-saved-card {
+    justify-content: space-between;
+  }
+
+  .focus-saved-card > span:first-child {
+    min-width: 0;
+  }
+
+  .focus-card-eyebrow {
+    display: block;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: var(--fs-meta);
+    letter-spacing: var(--track-2);
+  }
+
+  .focus-saved-line,
+  .focus-load-next-text {
+    display: block;
+    font-size: var(--fs-body);
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .focus-card-action {
+    flex: none;
+    color: var(--accent);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+  }
+
+  @media (max-width: 359px) {
+    .focus-dock {
+      padding-inline: var(--s-4);
+    }
+
+    .dock-num-step {
+      flex-basis: 40px;
+    }
+
+    .dock-num-value {
+      font-size: 30px;
+    }
+
+    .dock-num-big .dock-num-step {
+      flex-basis: 56px;
+    }
+
+    .dock-num-big .dock-num-value {
+      font-size: 40px;
+    }
+
+    .focus-deck-name {
+      font-size: 28px;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -4275,11 +4723,6 @@
 
     .focus-deck,
     .focus-deck * {
-      animation: none !important;
-      transition: none !important;
-    }
-
-    .focus-top-slot {
       animation: none !important;
       transition: none !important;
     }
