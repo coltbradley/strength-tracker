@@ -21,7 +21,11 @@ import {
   invalidateForSessionClose,
   invalidateForSetChange,
 } from "../lib/data";
-import type { ActiveSession, ResolvedPrescriptionRow } from "../lib/types";
+import type {
+  ActiveSession,
+  ResolvedPrescriptionRow,
+  SetInsert,
+} from "../lib/types";
 import { formatDuration, End } from "./End";
 
 vi.mock("../lib/data", async () => {
@@ -159,7 +163,19 @@ describe("End: session_skips at Finish", () => {
   });
 
   it("retains the selected session rating and note in the existing Finish payload", async () => {
-    vi.mocked(countServerSessionSets).mockResolvedValueOnce(1);
+    const loggedSet: SetInsert = {
+      id: "end-test-set-1",
+      session_id: active.id,
+      exercise_id: "bench-press",
+      prescription_id: null,
+      set_index: 0,
+      set_type: "working",
+      load_kg: 100,
+      reps: 5,
+      performed_at: active.started_at,
+      rest_seconds_actual: null,
+    };
+    await cacheSet(cacheKeys.sessionSets(active.id), [loggedSet]);
 
     render(
       <MemoryRouter>
@@ -167,7 +183,7 @@ describe("End: session_skips at Finish", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByRole("button", { name: "End session" });
+    await screen.findByText(/1 SET LOGGED/);
     fireEvent.click(screen.getByRole("button", { name: "7" }));
     expect(screen.getByRole("button", { name: "7" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "8" }).getAttribute("aria-pressed")).toBe("false");
@@ -175,9 +191,13 @@ describe("End: session_skips at Finish", () => {
     fireEvent.change(screen.getByPlaceholderText("How did it go?"), {
       target: { value: "Kept the last set smooth." },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "End session" }));
+    const endButton = screen.getByRole("button", { name: "End session" });
+    expect(endButton.isConnected).toBe(true);
+    fireEvent.click(endButton);
 
-    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledOnce());
+    // end() reaches enqueue synchronously before its first await. This asserts
+    // the current ready control dispatched and preserves the exact payload.
+    expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledOnce();
     expect(vi.mocked(outbox.enqueue).mock.calls[0]?.[0]).toMatchObject({
       kind: "update",
       table: "sessions",
