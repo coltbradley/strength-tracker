@@ -368,3 +368,50 @@ describe("N3 Add exercise in Focus moves the dock to the new exercise", () => {
     expect(queuedSets()[0]).toMatchObject({ exercise_id: "fly" });
   });
 });
+
+describe("N5 RPE reaches the A1 set just logged, mid-round", () => {
+  it("after Log A1 the RPE key rates A1's set, not A2's staged one", async () => {
+    exList();
+    await seed(pair(2));
+    renderSession();
+    await screen.findByText("round 1 of 2");
+    await pause(80);
+    await logMember("A1", 1);
+    const originalId = queuedSets()[0]!.id;
+    fireEvent.click(screen.getByRole("button", { name: "RPE" }));
+    const dialog = await screen.findByRole("dialog", { name: /^Rate .*A1|^Rate .*set 1/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: "rpe 8" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));
+    const [, replacement, original] = vi.mocked(outbox.enqueueCorrection).mock.calls[0]!;
+    expect(original).toBe(originalId);
+    expect(replacement).toMatchObject({ rpe: 8, exercise_id: "bench-press" });
+  });
+});
+
+describe("M6 (superset) the skip prompt does not survive the A1 to A2 hand-over", () => {
+  it("an open skip prompt on A1 is gone once A2 is NOW", async () => {
+    exList();
+    await seed(pair(2));
+    renderSession();
+    await screen.findByText("round 1 of 2");
+    await pause(80);
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(screen.getByRole("group", { name: "Skip reason" })).toBeTruthy();
+    await logMember("A1", 1);
+    expect(screen.queryByRole("group", { name: "Skip reason" })).toBeNull();
+  });
+});
+
+describe("N10 a swapped exercise does not show the planned exercise's coach cue", () => {
+  it("shows the cue until swapped, then not", async () => {
+    exList();
+    await seed([{ ...rx("bench", "bench-press", "Bench Press", 60, 3), notes: "Pause on the chest" }]);
+    renderSession();
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await pause(80);
+    expect(document.querySelector(".focus-cue")?.textContent).toMatch(/Pause on the chest/);
+    fireEvent.click(screen.getByRole("button", { name: "Swap" }));
+    await pickFly();
+    expect(document.querySelector(".focus-cue")).toBeNull();
+  });
+});

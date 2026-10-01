@@ -3300,7 +3300,15 @@ export function Session() {
   /** A rest is running for a set that was just saved: RPE, Note and Fix last
    *  then refer to THAT set (the panel above the dock says LAST SET), not to
    *  the next one being staged (M1, M2). */
-  const restedSet = rest !== null ? lastSet : null;
+  const midRoundSet =
+    roundView?.nowIndex === 1 &&
+    roundView.states[0] === "done" &&
+    focusSupersetPair &&
+    scopeNewestSet &&
+    setsForEntry(focusSupersetPair[0]).some((x) => x.id === scopeNewestSet.id)
+      ? scopeNewestSet
+      : null;
+  const restedSet = rest !== null ? lastSet : midRoundSet;
   const keyTargetSet = restedSet ?? scopeNewestSet;
   const stagedRpe = nowEntry ? draftOf(nowEntry).rpe : null;
 
@@ -3955,7 +3963,7 @@ export function Session() {
 
           {inFocusDeck && focusEntry ? (
             <FocusDeck
-              key={focusEntry.key}
+              key={(nowEntry ?? focusEntry).key}
               entries={orderedEntries}
               entry={nowEntry ?? focusEntry}
               entryProgress={entryProgress}
@@ -3970,7 +3978,7 @@ export function Session() {
               onAddExtraSet={() => setExtraSetArmed(true)}
               supersetHeading={focusRoundHeading}
               picture={focusPicture}
-              cue={nowView?.bracket?.notes ?? null}
+              cue={nowEntry?.substitutedFor ? null : (nowView?.bracket?.notes ?? null)}
               lastTime={
                 nowEntry && nowView && !isTick(nowEntry) && !roundMiddle
                   ? lastTime(nowEntry.exercise_id, nowView.mode, true, nowView.noLoad)
