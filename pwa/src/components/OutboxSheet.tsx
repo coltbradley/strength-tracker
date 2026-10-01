@@ -351,6 +351,54 @@ export function OutboxSheet({
         })
       : null;
 
+  const calm = checking
+    ? "Reading the queue on this phone. Nothing is claimed until that is done."
+    : entries.length === 0
+      ? "Nothing is waiting. Everything you have logged is on the server."
+      : dead.length === 0 && held.length === 0
+        ? "Queued on this phone until it can reach the server. This is the normal state offline, and nothing is lost while it waits."
+        : "These writes are on this phone and nowhere else. Nothing below is deleted by leaving this screen, by signing out, or by an app update.";
+
+  // The recovery moves, each one control and the sentence that says what it
+  // does. With something failed they are numbered steps (save a copy, check
+  // what failed, send again); otherwise they are the two plain actions.
+  const exportAction = (
+    <>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={runExport}
+        disabled={busy || entries.length === 0}
+      >
+        {busy ? "Working…" : "Export queue as JSON"}
+      </button>
+      <div className="microcopy">
+        Every queued write with its exercise, load, reps and time, in
+        kilograms. Enough to type a session back in by hand if it comes to
+        that.
+      </div>
+    </>
+  );
+  const retryAction = (
+    <>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={retry}
+        disabled={busy || retryable.length === 0}
+      >
+        {retryable.length === 0
+          ? "Nothing to retry"
+          : `Retry ${retryable.length} failed`}
+      </button>
+      <div className="microcopy">
+        {dead.length > retryable.length
+          ? "Some failed writes are excluded: rejected rows need repair, and linked removals or notes wait for their set to sync."
+          : "Puts the failed writes back in the queue, in the order they were made."}
+      </div>
+    </>
+  );
+
   return (
     <Sheet title={title} onClose={onClose}>
       {nothingWaiting && !receiptReviewReason && (lastSynced !== null || !online) && (
@@ -365,20 +413,21 @@ export function OutboxSheet({
           reconnects.
         </p>
       )}
-      {receiptReviewReason && (
+      {receiptReviewReason ? (
         <p className="microcopy receipt-review-reason" role="alert">
           This set needs review: {receiptReviewReason}
         </p>
+      ) : (
+        <p className="queue-calm">{calm}</p>
       )}
-      <section className="settings-group">
-        <div className="field-label">ON THIS PHONE</div>
 
-        <div className="sheet-row">
+      <div className="queue-stats">
+        <div className="queue-stat">
           <span>Waiting to sync</span>
           <span className="sheet-row-value">{waiting.length}</span>
         </div>
         {held.length > 0 && (
-          <div className="sheet-row">
+          <div className="queue-stat">
             <span>Held for another account</span>
             <span className="sheet-row-value queue-state-held">
               {held.length}
@@ -386,7 +435,7 @@ export function OutboxSheet({
           </div>
         )}
         {dead.length > 0 && (
-          <div className="sheet-row">
+          <div className="queue-stat queue-stat-dead">
             <span>Failed</span>
             <span className="sheet-row-value queue-state-dead">
               {dead.length}
@@ -394,29 +443,31 @@ export function OutboxSheet({
           </div>
         )}
         {oldest !== null && (
-          <div className="sheet-row">
+          <div className="queue-stat">
             <span>Oldest</span>
             <span className="sheet-row-value">
               {formatAge(Math.max(0, now - oldest))}
             </span>
           </div>
         )}
+      </div>
 
-        {!receiptReviewReason && (
-          <div className="microcopy">
-          {checking
-            ? "Reading the queue on this phone. Nothing is claimed until that is done."
-            : entries.length === 0
-            ? "Nothing is waiting. Everything you have logged is on the server."
-            : dead.length === 0 && held.length === 0
-              ? "Queued on this phone until it can reach the server. This is the normal state offline, and nothing is lost while it waits."
-              : "These writes are on this phone and nowhere else. Nothing below is deleted by leaving this screen, by signing out, or by an app update."}
+      {dead.length > 0 ? (
+        <>
+          <h3 className="queue-recover-title">Recover in three steps</h3>
+          <div className="queue-step">
+            <span className="queue-step-n" aria-hidden="true">1</span>
+            <div className="queue-step-body">
+              <b>Save a copy</b>
+              {exportAction}
+            </div>
           </div>
-        )}
-      </section>
-
+          <div className="queue-step">
+            <span className="queue-step-n" aria-hidden="true">2</span>
+            <div className="queue-step-body">
+              <b>Check what failed</b>
       {dead.length > 0 && (
-        <section className="settings-group">
+        <div className="queue-block">
           <div className="field-label">FAILED ({dead.length})</div>
           <QueueList entries={dead} names={names} now={now} />
           {[...new Set(dead.map((e) => e.cause))].map(
@@ -434,11 +485,11 @@ export function OutboxSheet({
               they are still refused, keep the queue export for review.
             </div>
           )}
-        </section>
+        </div>
       )}
 
       {repairable.length > 0 && (
-        <section className="settings-group">
+        <div className="queue-block">
           <div className="field-label">LOAD REPAIR ({repairable.length})</div>
           <div className="microcopy">
             These sets were refused because the saved total and stored entered fields
@@ -522,11 +573,20 @@ export function OutboxSheet({
             </div>
           )}
           </>}
-        </section>
+        </div>
       )}
 
+            </div>
+          </div>
+          <div className="queue-step">
+            <span className="queue-step-n" aria-hidden="true">3</span>
+            <div className="queue-step-body">
+              <b>Send again</b>
+              {retryAction}
+            </div>
+          </div>
       {held.length > 0 && (
-        <section className="settings-group">
+        <div className="queue-block">
           <div className="field-label">HELD ({held.length})</div>
           {/* Count only. On a shared phone these are another person's sets,
               and listing them would show one account another's training
@@ -541,49 +601,51 @@ export function OutboxSheet({
             set cannot be reassigned once it lands. Sign in as that account on
             this phone and they go up on their own.
           </div>
-        </section>
+        </div>
       )}
 
       {waiting.length > 0 && (
-        <section className="settings-group">
+        <div className="queue-block">
           <div className="field-label">WAITING ({waiting.length})</div>
           <QueueList entries={waiting} names={names} now={now} />
-        </section>
+        </div>
       )}
 
-      <section className="settings-group">
-        <div className="field-label">ACTIONS</div>
-
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={retry}
-          disabled={busy || retryable.length === 0}
-        >
-          {retryable.length === 0
-            ? "Nothing to retry"
-            : `Retry ${retryable.length} failed`}
-        </button>
-        <div className="microcopy">
-          {dead.length > retryable.length
-            ? "Some failed writes are excluded: rejected rows need repair, and linked removals or notes wait for their set to sync."
-            : "Puts the failed writes back in the queue, in the order they were made."}
+        </>
+      ) : (
+        <>
+      {held.length > 0 && (
+        <div className="queue-block">
+          <div className="field-label">HELD ({held.length})</div>
+          {/* Count only. On a shared phone these are another person's sets,
+              and listing them would show one account another's training
+              (A-148). Export leaves their contents out for the same reason. */}
+          <div className="microcopy">
+            {/* This is the invariant, said out loud. A logged set takes its
+                owner from whoever is signed in when it lands, and `sets` is
+                append-only, so sending one under the wrong account is a
+                mistake nothing can undo. Waiting is the only safe answer. */}
+            Queued under a different account on this phone, or before it knew
+            who was signed in. This phone will not send them as you: a logged
+            set cannot be reassigned once it lands. Sign in as that account on
+            this phone and they go up on their own.
+          </div>
         </div>
+      )}
 
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={runExport}
-          disabled={busy || entries.length === 0}
-        >
-          {busy ? "Working…" : "Export queue as JSON"}
-        </button>
-        <div className="microcopy">
-          Every queued write with its exercise, load, reps and time, in
-          kilograms. Enough to type a session back in by hand if it comes to
-          that.
+      {waiting.length > 0 && (
+        <div className="queue-block">
+          <div className="field-label">WAITING ({waiting.length})</div>
+          <QueueList entries={waiting} names={names} now={now} />
         </div>
-      </section>
+      )}
+
+          <section className="queue-actions">
+            {exportAction}
+            {retryAction}
+          </section>
+        </>
+      )}
     </Sheet>
   );
 }

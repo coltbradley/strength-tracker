@@ -200,7 +200,8 @@ export function Sheet({
           </h2>
           {headRight === undefined ? (
             <button type="button" className="sheet-close" onClick={onClose}>
-              CLOSE
+              <span aria-hidden="true">×</span>
+              <span className="sr-only">CLOSE</span>
             </button>
           ) : (
             headRight

@@ -98,6 +98,34 @@ export function formatRxTarget(
 }
 
 /**
+ * ONE planned set, the way the List ledger lists the sets still to come:
+ * "185 lb × 5", "8-12 reps", "Done". The same load rules as `formatRxTarget`
+ * (an authored number in the shown unit is quoted as authored, a per-side
+ * prescription per side) with the set count taken off, because each upcoming
+ * set is its own row.
+ */
+export function formatRxSetLine(
+  rx: ResolvedPrescriptionRow,
+  unit: Unit,
+): string {
+  if (rx.tracking === "done") return "Done";
+  if (rx.tracking === "time") return "Timed";
+  const reps = formatRepRange(rx.reps_min, rx.reps_max);
+  const load = rxLoadKg(rx);
+  if (load !== null) {
+    return `${formatAuthoredLoad(
+      load,
+      rx.load_entry,
+      rx.entered_load,
+      rx.entered_unit,
+      unit,
+    )} × ${reps}`;
+  }
+  if (rx.load_pct_tm !== null) return `${rx.load_pct_tm}% TM × ${reps}`;
+  return `${reps} reps`;
+}
+
+/**
  * A plate or bar weight, as it is LABELLED on the iron.
  *
  * `toDisplay` rounds to one decimal, which is correct for a LOAD (a 102.06 kg

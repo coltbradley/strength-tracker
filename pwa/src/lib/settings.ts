@@ -57,7 +57,7 @@ export const GROUP_ORDER: readonly Group[] = [
 ];
 
 export const GROUP_LABEL: Record<Group, string> = {
-  units: "UNITS",
+  units: "UNITS AND LOOK",
   gym: "GYM",
   logging: "LOGGING",
   timing: "TIMING",
@@ -492,7 +492,7 @@ const SETTINGS = {
    * the envelope shape means updating that script too.
    */
   appearance: def<Appearance>({
-    group: "display",
+    group: "units",
     label: "Appearance",
     help: "System follows your phone's light/dark setting.",
     control: {

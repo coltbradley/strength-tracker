@@ -134,6 +134,11 @@ const PAIRS: [string, string[], number, string][] = [
   ["control-border-color", DOCK, 3, "dock: control outlines"],
   ["focus-set-future", DOCK, 3, "dock: upcoming-set outline"],
   ["text-on-accent", ["accent", "accent-press"], 4.5, "Log button and accent fills"],
+  // the Version D skin on sheets: a danger wash behind Remove / the Failed
+  // tile, and the sheet cards that sit on the raised sheet surface
+  ["danger", ["surface-danger"], 4.5, "Remove, Failed count, armed void"],
+  ["text", ["surface-danger"], 4.5, "text on a danger wash"],
+  ["text-dim", ["surface-danger"], 4.5, "secondary text on a danger wash"],
   ["focus-set-completed-mark", ["focus-set-completed"], 4.5, "completed mark"],
 ];
 

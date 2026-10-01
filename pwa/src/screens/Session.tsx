@@ -156,6 +156,7 @@ import { split } from "../lib/plates";
 import {
   formatClock,
   formatRepRange,
+  formatRxSetLine,
   formatRxTarget,
   rxHasNoTm,
 } from "../lib/format";
@@ -3324,12 +3325,13 @@ export function Session() {
    *  its own receipt, tap to fix, ✕ to void. */
   const renderLoggedRows = (entry: ExerciseEntry) => {
     const own = setsForEntry(entry);
+    // oldest first, the way the ledger reads: 1, 2, 3, then what is next
     const logged = own
       .slice()
       .sort(
         (a, b) =>
-          b.set_index - a.set_index ||
-          b.performed_at.localeCompare(a.performed_at),
+          a.set_index - b.set_index ||
+          a.performed_at.localeCompare(b.performed_at),
       );
     if (logged.length === 0) return null;
     return (
@@ -3362,6 +3364,70 @@ export function Session() {
           );
         })}
       </div>
+    );
+  };
+
+  /** The sets an entry still owes, as ledger rows: the next one marked, the
+   *  rest dim. Warmups first (W2, W3), then working sets numbered after what
+   *  is already logged. An unprescribed entry has no plan to list, so it gets
+   *  the one open row. Nothing once the entry is done or skipped. */
+  const renderPlannedRows = (entry: ExerciseEntry) => {
+    if (skips[entry.key] || entryDone(entry)) return null;
+    const warmupsLeft = Math.max(0, warmupSets(entry) - warmupCount(entry));
+    const workingLeft =
+      workingSets(entry) > 0
+        ? Math.max(0, workingSets(entry) - workingCount(entry))
+        : 0;
+    const plannedLine = (kind: BracketKind, already: number) => {
+      const b = bracketFor(entry, already, kind);
+      if (!b) return "by feel";
+      return formatRxSetLine(
+        {
+          ...b,
+          load_entry: resolveLoadEntry({
+            override: prefFor(entry.exercise_id).loadEntry,
+            prescribed: entry.substitutedFor ? null : (b.load_entry ?? null),
+            equipment: equipMap[entry.exercise_id] ?? null,
+            name: entry.name,
+          }),
+        },
+        unit,
+      );
+    };
+    const rows: { label: string; text: string }[] = [];
+    for (let i = 0; i < warmupsLeft; i += 1) {
+      rows.push({
+        label: `W${warmupCount(entry) + i + 1}`,
+        text: plannedLine("warmup", warmupCount(entry) + i),
+      });
+    }
+    for (let i = 0; i < workingLeft; i += 1) {
+      rows.push({
+        label: String(workingCount(entry) + i + 1),
+        text: plannedLine("working", workingCount(entry) + i),
+      });
+    }
+    if (rows.length === 0) {
+      if (entry.brackets.length > 0) return null;
+      rows.push({
+        label: String(setsForEntry(entry).length + 1),
+        text: "by feel",
+      });
+    }
+    return (
+      <ol className="ledger-plan" aria-label={`sets still to do for ${entry.name}`}>
+        {rows.map((row, i) => (
+          <li
+            key={row.label}
+            className={`ledger-plan-row${i === 0 ? " ledger-plan-next" : ""}`}
+            aria-current={i === 0 ? "step" : undefined}
+          >
+            <span className="ledger-set-n">{row.label}</span>
+            <span className="ledger-plan-text">{row.text}</span>
+            {i === 0 && <span className="ledger-plan-tag">NEXT</span>}
+          </li>
+        ))}
+      </ol>
     );
   };
 
@@ -4098,6 +4164,7 @@ export function Session() {
     return (
       <>
         {renderLoggedRows(entry)}
+        {!(roundMiddle && inLiveRound(entry)) && renderPlannedRows(entry)}
         {roundMiddle && inLiveRound(entry) && (
           <SupersetRound
             heading={roundMiddle.heading}
@@ -4439,16 +4506,6 @@ export function Session() {
               {active.coach_note && <Note label="COACH" text={active.coach_note} />}
             </div>
           )}
-          <button
-            type="button"
-            className="btn btn-outline-ink btn-block"
-            onClick={() => {
-              setMoreOpen(false);
-              finishWorkout();
-            }}
-          >
-            Finish workout
-          </button>
           {(focusSupersetPair ?? [focusEntry]).map((target, i) => (
             <div
               key={target.key}
@@ -4482,6 +4539,18 @@ export function Session() {
               {moreExtrasFor(target)}
             </div>
           ))}
+          {/* last, not first: ending the workout is not what a per-exercise
+              menu is for, and it should not be the first thing under a thumb */}
+          <button
+            type="button"
+            className="btn btn-outline-ink btn-block"
+            onClick={() => {
+              setMoreOpen(false);
+              finishWorkout();
+            }}
+          >
+            Finish workout
+          </button>
         </FocusMoreSheet>
       )}
 

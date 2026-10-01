@@ -285,7 +285,7 @@ export function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   };
 
   return (
-    <Sheet title="SETTINGS" onClose={onClose}>
+    <Sheet title="Settings" onClose={onClose}>
       {GROUP_ORDER.map((group) => {
         const keys = settingsInGroup(group);
         if (keys.length === 0) return null;
