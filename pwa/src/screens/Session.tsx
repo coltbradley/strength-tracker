@@ -4173,7 +4173,7 @@ export function Session() {
               {!focusEligible && entries.length > 0 && (
                 <p className="microcopy focus-unavailable">
                   {overviewOnlyCircuit
-                    ? `${overviewOnlyCircuit.length}-member Superset ${supersetLetter(overviewOnlyCircuit[0]?.brackets[0]?.superset_group ?? 1)} is an overview-only circuit. Paired Focus supports exactly two members.`
+                    ? `This workout opens in List because Superset ${supersetLetter(overviewOnlyCircuit[0]?.brackets[0]?.superset_group ?? 1)} has ${overviewOnlyCircuit.length} exercises.`
                     : "Duration tracking is not available in focus mode. This workout stays in the full view."}
                 </p>
               )}

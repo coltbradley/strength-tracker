@@ -18,11 +18,19 @@ export function mountScenarioBadge(scenario: DemoScenario): void {
   badge.id = "demo-scenario-badge";
   badge.type = "button";
   const modes = [
-    ...(textScale ? ["TEXT 1.3× EMULATION"] : []),
-    ...(reducedMotion ? ["REDUCED-MOTION EMULATION"] : []),
+    ...(textScale ? ["TEXT 130%"] : []),
+    ...(reducedMotion ? ["MOTION ↓"] : []),
   ];
-  badge.textContent = `DEMO · ${scenario.toUpperCase()}${modes.length ? ` · ${modes.join(" · ")}` : ""} ✕`;
-  badge.title = `Fake "${scenario}" data${textScale ? "; 1.3× text emulation" : ""}${reducedMotion ? "; reduced-motion emulation" : ""}. Click to return to the default demo data.`;
+  badge.textContent = `DEMO · ${scenario.toUpperCase()}${modes.length ? ` · ${modes.join(" · ")}` : ""}`;
+  const modeDescription = [
+    ...(textScale ? ["1.3 times text scale emulation"] : []),
+    ...(reducedMotion ? ["reduced-motion emulation"] : []),
+  ];
+  badge.setAttribute(
+    "aria-label",
+    `Fake ${scenario} data${modeDescription.length ? `; ${modeDescription.join("; ")}` : ""}. Click to exit the demo.`,
+  );
+  badge.title = `Fake "${scenario}" data${modeDescription.length ? `; ${modeDescription.join("; ")}` : ""}. Click to return to the default demo data.`;
 
   Object.assign(badge.style, {
     position: "fixed",
@@ -30,6 +38,9 @@ export function mountScenarioBadge(scenario: DemoScenario): void {
     left: "0",
     zIndex: "9999",
     maxWidth: "100vw",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     margin: "0",
     padding: "4px 8px",
     border: "0",

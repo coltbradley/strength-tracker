@@ -1440,7 +1440,7 @@ describe("Session focus presentation", () => {
     );
 
     expect(await screen.findByText(
-      "3-member Superset A is an overview-only circuit. Paired Focus supports exactly two members.",
+      "This workout opens in List because Superset A has 3 exercises.",
     )).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Superset A" })).toBeNull();
   });

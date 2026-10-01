@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 const styles = readFileSync("src/styles.css", "utf8");
 
 afterEach(() => {
-  document.getElementById("demo-scenario-controls")?.remove();
+  document.getElementById("demo-scenario-badge")?.remove();
   delete document.documentElement.dataset.demoTextScale;
   delete document.documentElement.dataset.demoReducedMotion;
   window.history.replaceState(null, "", "/");
@@ -20,8 +20,10 @@ describe("DEV preview emulations", () => {
 
     const badge = document.getElementById("demo-scenario-badge");
     expect(badge?.textContent).toContain("DEMO · VERSIOND");
-    expect(badge?.textContent).toContain("TEXT 1.3× EMULATION");
-    expect(badge?.textContent).toContain("REDUCED-MOTION EMULATION");
+    expect(badge?.textContent).toContain("TEXT 130%");
+    expect(badge?.textContent).toContain("MOTION ↓");
+    expect(badge?.getAttribute("aria-label")).toContain("1.3 times text scale emulation");
+    expect(badge?.getAttribute("aria-label")).toContain("reduced-motion emulation");
     expect(document.documentElement.dataset.demoTextScale).toBe("130");
     expect(document.documentElement.dataset.demoReducedMotion).toBe("true");
     expect(window.location.search).toContain("demoTextScale=130");

@@ -4316,6 +4316,11 @@
     gap: var(--s-3);
   }
 
+  .focus-deck:has(.superset-round-editor) .focus-stage {
+    flex: 0 0 100px;
+    min-height: 100px;
+  }
+
   /* One shared, non-interactive line sits immediately before the focus
    * controls. FocusDeck keeps the spoken set/round status; these marks are
    * hidden from assistive tech and use shape as well as semantic color roles
