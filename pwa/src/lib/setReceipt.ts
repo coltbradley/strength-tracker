@@ -69,7 +69,7 @@ export function projectSetReceipt(input: SetReceiptInput): SetReceipt {
       // refused: both rows are live there until somebody retries it.
       if (replacementOnServer && opMatchesVoid(rejected, correctionOf))
         return review(
-          "The corrected set is saved, but the void of the original was rejected. Both are live on the server until it is retried.",
+          `The corrected set is saved, but the void of the original was rejected. Both are live on the server until it is retried.${rejected.last_error ? ` ${rejected.last_error}` : ""}`,
         );
       return review(rejected.last_error ?? "A correction write was rejected.");
     }

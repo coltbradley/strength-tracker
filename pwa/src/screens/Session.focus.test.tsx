@@ -1716,7 +1716,7 @@ describe("Session per-set receipts", () => {
     vi.mocked(getExactSetReceiptIds).mockResolvedValue({ setIds: new Set([replacement.id]), voidIds: new Set() });
     render(<MemoryRouter><Session /></MemoryRouter>);
     await inList();
-    expect(await screen.findByRole("button", { name: /Review sync status: original set void was refused/i })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Review sync status:.*Both are live on the server.*original set void was refused/i })).toBeTruthy();
     expect(screen.queryByRole("note", { name: R.synced })).toBeNull();
   });
 
