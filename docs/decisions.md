@@ -3760,6 +3760,14 @@ recorded here once, so a later reader does not "simplify" a pair apart.
   `styles.contrast.test.ts`, which also fails if a literal-colour token is added
   to `:root` without one.
 
+- **The port review fixes ride on top** (`fix/port-review`, N1-N10: a staged
+  warmup no longer leaks into the next exercise, a just-queued set says On this
+  phone before the network read returns, Add exercise moves the dock, Swap acts
+  on the named superset member, 44 px Focus/List segments, a scroll cue). They
+  touch the same `Session.tsx` regions as the load-integrity call sites; both
+  sets of edits are kept (build inside try with the integrity message, and the
+  staged type/focus/swap/receipt-snapshot fixes). Tests: `Session.portreview.test.tsx`.
+
 Not done: the Phase 2 browser gate and real-phone offline logging with exact
 UUID readback are still unrun here (no local Supabase); the mixed-version
 rollback limit of the `receipt` status is unchanged; items already dead on a

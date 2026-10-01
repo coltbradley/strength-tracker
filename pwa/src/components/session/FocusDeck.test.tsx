@@ -105,9 +105,35 @@ describe("FocusDeck", () => {
     expect(middle.textContent).not.toContain("Last time");
   });
 
-  it("shows the unit note beside the set position", () => {
-    render(<FocusDeck {...props({ unitNote: "Session unit · Settings says lb" })} />);
-    expect(screen.getByText("Session unit · Settings says lb")).toBeTruthy();
+  it("V3: the unit note is on its own line, not inside the position row", () => {
+    const { container } = render(
+      <FocusDeck {...props({ unitNote: "Session unit · Settings says lb" })} />,
+    );
+    const note = screen.getByText("Session unit · Settings says lb");
+    expect(container.querySelector(".focus-deck-position-row")!.contains(note)).toBe(false);
+    expect(container.querySelector(".focus-deck-status")!.contains(note)).toBe(true);
+  });
+
+  it("V1: the middle band fades and says MORE only while content is hidden below the dock", () => {
+    const sizes = { scrollHeight: 400, clientHeight: 200 };
+    const scrollHeight = vi
+      .spyOn(HTMLElement.prototype, "scrollHeight", "get")
+      .mockImplementation(() => sizes.scrollHeight);
+    const clientHeight = vi
+      .spyOn(HTMLElement.prototype, "clientHeight", "get")
+      .mockImplementation(() => sizes.clientHeight);
+    try {
+      const { container, rerender } = render(<FocusDeck {...props()} />);
+      expect(container.querySelector(".focus-middle--more")).not.toBeNull();
+      expect(screen.getByText(/MORE/)).toBeTruthy();
+      sizes.scrollHeight = 200;
+      rerender(<FocusDeck {...props()} />);
+      expect(container.querySelector(".focus-middle--more")).toBeNull();
+      expect(screen.queryByText(/MORE/)).toBeNull();
+    } finally {
+      scrollHeight.mockRestore();
+      clientHeight.mockRestore();
+    }
   });
 
   it("marks completed, current, and future sets in order without another spoken status", () => {

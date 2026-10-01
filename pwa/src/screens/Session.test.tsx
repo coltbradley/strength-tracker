@@ -143,13 +143,17 @@ describe("Session corrections", () => {
       sheet.getByRole("button", { name: "reps value — tap to type" }).textContent,
     ).toContain("9");
 
-    // Another entry cannot be selected while the correction is open: the
-    // sheet's own draft stays with its source entry.
+    // The Fix sheet's backdrop covers the header in a real browser, so this is
+    // a robustness check (jsdom has no hit testing): jumping to another entry
+    // leaves the sheet's own draft with its source entry.
     fireEvent.click(screen.getByRole("button", { name: /^Today's workout,/ }));
     const today = within(screen.getByRole("dialog", { name: "Today's workout" }));
+    fireEvent.click(today.getByRole("button", { name: /^Back Squat/ }));
     expect(
-      (today.getByRole("button", { name: /^Back Squat/ }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+      within(screen.getByRole("dialog", { name: /^Fix / })).getByRole("button", {
+        name: "reps value — tap to type",
+      }).textContent,
+    ).toContain("9");
     expect(outbox.enqueue).not.toHaveBeenCalled();
   });
 });

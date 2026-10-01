@@ -1490,11 +1490,16 @@ describe("Session focus presentation", () => {
     // the correction is a draft of its own: nothing is queued until Save
     expect(vi.mocked(outbox.enqueueCorrection)).not.toHaveBeenCalled();
 
-    // a jump elsewhere is locked while the correction is open
+    // The Fix sheet's backdrop covers the header in a real browser, so Today's
+    // workout cannot normally be opened now; if it is (jsdom has no hit
+    // testing), jumping elsewhere still must not touch the correction's own
+    // draft, which stays with the set's exercise.
     fireEvent.click(screen.getByRole("button", { name: TODAY }));
     const today = within(screen.getByRole("dialog", { name: "Today's workout" }));
-    expect((today.getByRole("button", { name: /^Back Squat/ }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(today.getByRole("button", { name: "CLOSE" }));
+    fireEvent.click(today.getByRole("button", { name: /^Back Squat/ }));
+    expect(
+      within(screen.getByRole("dialog", { name: /^Fix / })).getByRole("button", { name: "reps value — tap to type" }).textContent,
+    ).toContain("9");
 
     fireEvent.click(within(screen.getByRole("dialog", { name: /^Fix / })).getByRole("button", { name: "Save correction" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueueCorrection)).toHaveBeenCalledTimes(1));

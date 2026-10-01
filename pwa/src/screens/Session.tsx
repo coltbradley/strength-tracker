@@ -378,6 +378,8 @@ export function Session() {
   const [bwAddOpen, setBwAddOpen] = useState<string | null>(null);
   /** Which paired editor owns the ephemeral pad or plate sheet, if either. */
   const [roundInputKey, setRoundInputKey] = useState<string | null>(null);
+  /** The member a Swap was opened FOR; null means the open entry. */
+  const [swapKey, setSwapKey] = useState<string | null>(null);
 
   const [rest, setRest] = useState<ActiveRest | null>(null);
   // survives DONE so the next log can still record elapsed rest
@@ -665,6 +667,23 @@ export function Session() {
         ids.add(replacementId);
         ids.add(originalId);
       }
+
+      // The queue is local and already known: show it NOW, before the network
+      // read returns, so a set that was just enqueued says "On this phone"
+      // rather than "Needs review". Entries the new read no longer lists stay
+      // until the exact read lands, so an ACK cannot flash review either.
+      setReceiptSnapshot((previous) => {
+        const sameScope = previous.sessionId === requestedSession && previous.ownerId === ownerId;
+        const known = new Set(entries.map((entry) => entry.key));
+        return {
+          sessionId: requestedSession, ownerId,
+          entries: sameScope ? [...entries, ...previous.entries.filter((entry) => !known.has(entry.key))] : entries,
+          correctionLinks: sameScope ? { ...previous.correctionLinks, ...correctionLinks } : correctionLinks,
+          readError: sameScope ? previous.readError : null,
+          serverSetIds: sameScope ? previous.serverSetIds : new Set(),
+          serverVoidIds: sameScope ? previous.serverVoidIds : new Set(),
+        };
+      });
 
       try {
         const exact = await getExactSetReceiptIds(requestedSession, ownerId, [...ids]);
@@ -1765,7 +1784,9 @@ export function Session() {
     stagedDraftsRef.current[draftKey] = {
       entryKg: prefilledLoad,
       reps: p.reps,
-      setType: stagedKind,
+      // a freshly opened entry takes its type from ITS plan, never from the
+      // toggle another exercise left behind
+      setType: fresh ? openingKind : stagedKind,
       rpe: fresh ? null : rpe,
       durationSeconds,
       enteredLoad: authoredInDisplayUnit ? bracket?.entered_load ?? undefined : repeatTyped,
@@ -2112,7 +2133,10 @@ export function Session() {
     // the create-exercise sheet behind the picker can never send a substitute
     // to the end of the list because somebody forgot to say so.
     if (kind === "search") setPicking("add");
-    if (kind === "swap") setPicking("swap");
+    if (kind === "swap") {
+      setPicking("swap");
+      setSwapKey(memberKey);
+    }
   };
 
   const openPad = (
@@ -2137,7 +2161,7 @@ export function Session() {
     if (!sessionId) return;
     const existing = entries.find((e) => e.exercise_id === ex.id);
     if (existing) {
-      setOpenKey(existing.key);
+      jumpToEntry(existing);
       setSheet(null);
       return;
     }
@@ -2154,7 +2178,10 @@ export function Session() {
     setExtras(nextExtras);
     await cacheSet(cacheKeys.sessionExtras(sessionId), nextExtras);
     setDeclaring(null);
+    // the dock and Log follow the new exercise, in Focus as well as List
+    setFocusKey(`extra:${ex.id}`);
     setOpenKey(`extra:${ex.id}`);
+    setSelectedEntryKey(`extra:${ex.id}`);
   };
 
   // ---- corrections ---------------------------------------------------------
@@ -2466,6 +2493,28 @@ export function Session() {
       ...skips,
       [entry.key]: skipRecordFor(entry, "exercise", reason),
     });
+    startRestAfterSkippedPartner(entry);
+  };
+  /** A1 was logged mid-round and then A2 was skipped: the round closes here,
+   *  so the clock and strip start from A1's set rather than staying on the
+   *  PREVIOUS round's end (which would inflate the next set's recorded rest). */
+  const startRestAfterSkippedPartner = (skippedEntry: ExerciseEntry) => {
+    const pair = twoMemberSuperset(orderedEntries, skippedEntry.key);
+    if (!pair) return;
+    const partner = pair[0].key === skippedEntry.key ? pair[1] : pair[0];
+    if (partner.key in skips || entryProgress(partner) <= entryProgress(skippedEntry)) return;
+    const last = newestOf(setsForEntry(partner));
+    const startedAt = last ? Date.parse(last.performed_at) : NaN;
+    if (!last || Number.isNaN(startedAt)) return;
+    restRef.current = { startedAt };
+    const bracket = bracketFor(partner, Math.max(0, entryProgress(partner) - 1), "working");
+    const targetSeconds = getExerciseRestSeconds(partner.exercise_id, bracket?.rest_seconds ?? null);
+    const forLabel = `${partner.name} ${setPositionLabel(last, setsForEntry(partner)).text}`;
+    if (autoStartRest) {
+      setRest({ startedAt, targetSeconds, forLabel });
+      armRestAlert(startedAt + targetSeconds * 1000, forLabel);
+    }
+    mirrorRest(autoStartRest ? targetSeconds : null, autoStartRest ? forLabel : null);
   };
 
   /** Extras with no logged sets can be removed outright (session-local). */
@@ -2567,8 +2616,9 @@ export function Session() {
   /** An exercise chosen from a picker, or created because the library lacked
    *  it: it either joins the day or takes over the open entry's movement,
    *  depending on which picker was opened. */
+  const swapTarget = swapKey === null ? null : (entries.find((e) => e.key === swapKey) ?? null);
   const pickedExercise = (ex: ExerciseRow) => {
-    if (picking === "swap" && openEntry) swapExercise(openEntry, ex);
+    if (picking === "swap" && (swapTarget ?? openEntry)) swapExercise((swapTarget ?? openEntry)!, ex);
     else addExercise(ex);
   };
 
@@ -3282,7 +3332,6 @@ export function Session() {
         kind: "bodyweight",
         addedOn: draft.entryKg > 0 || bwAddOpen === entry.key,
         timed: isTimed(entry),
-        onAddLoad: () => setBwAddOpen(entry.key),
       };
     }
     return null;
@@ -3332,6 +3381,7 @@ export function Session() {
           view.bodyweight && trackingOf(entry) === "reps"
             ? {
                 on: draft.entryKg > 0 || bwAddOpen === entry.key,
+                onAdd: () => setBwAddOpen(entry.key),
                 onRemove: () => {
                   setBwAddOpen(null);
                   onDraftChange({
@@ -3370,19 +3420,33 @@ export function Session() {
   /** A rest is running for a set that was just saved: RPE, Note and Fix last
    *  then refer to THAT set (the panel above the dock says LAST SET), not to
    *  the next one being staged (M1, M2). */
-  const restedSet = rest !== null ? lastSet : null;
+  const midRoundSet =
+    roundView?.nowIndex === 1 &&
+    roundView.states[0] === "done" &&
+    focusSupersetPair &&
+    scopeNewestSet &&
+    setsForEntry(focusSupersetPair[0]).some((x) => x.id === scopeNewestSet.id)
+      ? scopeNewestSet
+      : null;
+  const restedSet = rest !== null ? lastSet : midRoundSet;
   const keyTargetSet = restedSet ?? scopeNewestSet;
   const stagedRpe = nowEntry ? draftOf(nowEntry).rpe : null;
 
+  // The Swap key names the member it acts on: the round's NOW member in a
+  // superset ("Swap A2"), the focus entry otherwise.
+  const swapKeyEntry = focusSupersetPair ? nowEntry : focusEntry;
+  const swapKeyTag = focusSupersetPair && swapKeyEntry
+    ? ` ${supersetInfo.get(swapKeyEntry.key)?.tag ?? ""}`.trimEnd()
+    : "";
   const focusKeys: FocusKeys = {
     onRpe: () => setRpeSheetOpen(true),
     rpeValue: restedSet ? (restedSet.rpe ?? null) : stagedRpe,
     onNote: keyTargetSet ? () => setNoteFor(keyTargetSet.id) : null,
     fourth:
-      focusEntry && scopeNewestSet === null && !swapFrozen(focusEntry)
+      swapKeyEntry && scopeNewestSet === null && !swapFrozen(swapKeyEntry)
         ? {
-            label: focusEntry.substitutedFor ? "Swap again" : "Swap",
-            onPress: () => openSheet("swap"),
+            label: `${swapKeyEntry.substitutedFor ? "Swap again" : "Swap"}${swapKeyTag}`,
+            onPress: () => openSheet("swap", swapKeyEntry.key),
           }
         : keyTargetSet
           ? { label: "Fix last", onPress: () => startCorrection(keyTargetSet) }
@@ -3775,7 +3839,7 @@ export function Session() {
               className="swap-action"
               onClick={() => {
                 setMoreOpen(false);
-                openSheet("swap");
+                openSheet("swap", entry.key);
               }}
             >
               {entry.substitutedFor ? "SWAP AGAIN" : "SWAP EXERCISE"}
@@ -3973,7 +4037,6 @@ export function Session() {
           formatScheme={scheme}
           receiptMark={receiptMark}
           onSelect={jumpToEntry}
-          isLocked={() => editing !== null}
           onMoveBlock={moveBlock}
           canMoveBlock={canMoveBlock}
           reorderLocked={reorderLocked}
@@ -4020,7 +4083,7 @@ export function Session() {
 
           {inFocusDeck && focusEntry ? (
             <FocusDeck
-              key={focusEntry.key}
+              key={(nowEntry ?? focusEntry).key}
               entries={orderedEntries}
               entry={nowEntry ?? focusEntry}
               entryProgress={entryProgress}
@@ -4035,7 +4098,7 @@ export function Session() {
               onAddExtraSet={() => setExtraSetArmed(true)}
               supersetHeading={focusRoundHeading}
               picture={focusPicture}
-              cue={nowView?.bracket?.notes ?? null}
+              cue={nowEntry?.substitutedFor ? null : (nowView?.bracket?.notes ?? null)}
               lastTime={
                 nowEntry && nowView && !isTick(nowEntry) && !roundMiddle
                   ? lastTime(nowEntry.exercise_id, nowView.mode, true, nowView.noLoad)
@@ -4152,12 +4215,12 @@ export function Session() {
 
       {/* The same picker, aimed at the open exercise instead of at the end of
           the list. Picking the planned movement back out of it is the undo. */}
-      {sheet === "swap" && openEntry && (
+      {sheet === "swap" && (swapTarget ?? openEntry) && (
         <ExercisePicker
           title="SWAP EXERCISE"
           exercises={allExercises}
           failed={exercisesFailed}
-          onPick={(ex) => swapExercise(openEntry, ex)}
+          onPick={(ex) => swapExercise((swapTarget ?? openEntry)!, ex)}
           onAddNew={(q) => {
             setSheet(null);
             setNewName(q);

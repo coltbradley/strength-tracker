@@ -51,18 +51,32 @@ export interface ActiveRest {
  *  Focus/List switch), and the next mount saw an over rest it had never
  *  announced and played the tone again. Bounded, so a long session cannot
  *  grow it without end. */
-const announcedRests: number[] = [];
+const announcedRests: Array<{ startedAt: number; targetSeconds: number }> = [];
 
-export function restAnnounced(startedAt: number): boolean {
-  return announcedRests.includes(startedAt);
+/** Has THIS rest, at this target, been announced? A later target (+30 after
+ *  the rest was over) is a new deadline and is announced again; the same or a
+ *  shorter one is not. */
+export function restAnnounced(startedAt: number, targetSeconds = 0): boolean {
+  return announcedRests.some(
+    (r) => r.startedAt === startedAt && r.targetSeconds >= targetSeconds,
+  );
+}
+
+/** A rest over by more than this when a screen first sees it is history, not
+ *  news: a reload twenty minutes later must not say "Rest over". */
+const STALE_REST_MS = 10_000;
+
+function markAnnounced(startedAt: number, targetSeconds: number): void {
+  const known = announcedRests.find((r) => r.startedAt === startedAt);
+  if (known) known.targetSeconds = Math.max(known.targetSeconds, targetSeconds);
+  else announcedRests.push({ startedAt, targetSeconds });
+  if (announcedRests.length > 50) announcedRests.shift();
 }
 
 /** Mark a rest as announced without announcing it: a deliberate "End rest
  *  now" is the lifter's own act and must not be followed by a buzz for it. */
 export function silenceRestCue(startedAt: number): void {
-  if (announcedRests.includes(startedAt)) return;
-  announcedRests.push(startedAt);
-  if (announcedRests.length > 50) announcedRests.shift();
+  markAnnounced(startedAt, Infinity);
 }
 
 /** Test seam: forget every announcement. */
@@ -91,11 +105,11 @@ export function useRestCue(
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const announce = () => {
-      if (restAnnounced(startedAt)) return;
+      if (restAnnounced(startedAt, targetSeconds)) return;
       // Marked announced BEFORE either cue is attempted, and for the rest as a
       // whole rather than per channel: a browser that grants no notification
       // permission must not be asked again on every re-arm.
-      silenceRestCue(startedAt);
+      markAnnounced(startedAt, targetSeconds);
       // The tone first: it is the only cue an installed iOS web app can make,
       // and it is the one the lifter hears with the phone face-down. The
       // preference is read here rather than subscribed to — see getRestSound.
@@ -119,16 +133,21 @@ export function useRestCue(
       }
     };
 
-    const arm = () => {
-      if (restAnnounced(startedAt)) return;
+    const arm = (cold = false) => {
+      if (restAnnounced(startedAt, targetSeconds)) return;
       const remainingMs = startedAt + targetSeconds * 1000 - Date.now();
       if (remainingMs <= 0) {
+        // Cold open on a rest that ended long ago: remember it, say nothing.
+        if (cold && remainingMs < -STALE_REST_MS) {
+          markAnnounced(startedAt, targetSeconds);
+          return;
+        }
         announce();
         return;
       }
       timer = setTimeout(arm, Math.min(remainingMs, 2_147_000_000));
     };
-    arm();
+    arm(true);
 
     // A phone locked mid-rest suspends timers; on return the deadline has
     // passed and this is the moment to catch up.

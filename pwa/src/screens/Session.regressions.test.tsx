@@ -371,8 +371,11 @@ describe("Superset keys act on the round (L2)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Log A2" }));
     await vi.waitFor(() => expect(queuedSets()).toHaveLength(2));
     await pause();
-    // the newest set is A2's
-    fireEvent.click(await screen.findByRole("button", { name: "Fix" }));
+    // the newest set is A2's; click the dock's Fix last KEY, not the rest
+    // panel's own Fix button
+    const key = await screen.findByRole("button", { name: "Fix last" });
+    expect(key.classList.contains("focus-key")).toBe(true);
+    fireEvent.click(key);
     expect(within(screen.getByRole("dialog", { name: /^Fix / })).getByText(/Barbell Row/)).toBeTruthy();
   });
 });
@@ -381,7 +384,7 @@ describe("The rest-over cue is announced once (H2)", () => {
   it("H2: sheets and the Focus/List switch do not replay an over rest's tone", async () => {
     await seed([rx("bench", "bench-press", "Bench Press", 60, 3)]);
     await cacheSet(cacheKeys.sessionRest(active.id), {
-      startedAt: Date.now() - 400_000,
+      startedAt: Date.now() - 61_000,
       targetSeconds: 60,
       forLabel: "Bench Press set 1",
     });

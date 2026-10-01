@@ -28,4 +28,32 @@ describe("size floors", () => {
     expect(token("--tap-min")).toBeGreaterThanOrEqual(44);
     expect(token("--tap")).toBeGreaterThanOrEqual(44);
   });
+
+  // The header's Focus | List segments rendered 40px tall while the token
+  // check above passed: the floor has to be read off the rules that size the
+  // controls, not only off the token.
+  const minHeightOf = (selector: string): number => {
+    const start = styles.indexOf(`${selector} {`);
+    if (start < 0) throw new Error(`rule ${selector} not found`);
+    const body = styles.slice(start, styles.indexOf("}", start));
+    const match = body.match(/min-height:\s*([^;]+);/);
+    if (!match) throw new Error(`${selector} has no min-height`);
+    const value = match[1]!.trim();
+    if (value === "var(--tap-min)") return token("--tap-min");
+    if (value === "var(--tap)") return token("--tap");
+    const px = value.match(/^([0-9.]+)px$/);
+    if (!px) throw new Error(`${selector}: cannot read min-height ${value}`);
+    return Number(px[1]);
+  };
+
+  it.each([
+    ".session-hd-seg",
+    ".session-hd-count",
+    ".sync-chip",
+    ".gear-btn",
+    ".focus-deck-more",
+    ".text-link",
+  ])("sizes %s to at least 44px", (selector) => {
+    expect(minHeightOf(selector)).toBeGreaterThanOrEqual(44);
+  });
 });

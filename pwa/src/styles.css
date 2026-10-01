@@ -2448,13 +2448,15 @@
 
   .session-hd-toggle {
     display: inline-flex;
-    padding: var(--s-1);
+    padding: 0;
+    overflow: hidden;
     border-radius: var(--radius-pill);
     border: var(--bw) solid var(--control-outline);
   }
 
   .session-hd-seg {
-    min-height: 40px;
+    min-height: var(--tap-min);
+    min-width: var(--tap-min);
     padding: 0 var(--s-6);
     border-radius: var(--radius-pill);
     font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
@@ -2492,6 +2494,25 @@
 
   .topbar:has(.topbar-session) .header-action span:not(.fab-off-dot, .fab-queue) {
     display: none;
+  }
+
+  /* At 320 px the session controls and the four right-hand controls cannot
+   * share a row at 44px each, so the two rows are deliberate: the session
+   * controls (count, Focus | List) own row one and never move; the sync chip
+   * and the support icons are row two, so a chip that grows ("Sending 3")
+   * widens only its own row. */
+  @media (max-width: 360px) {
+    .topbar:has(.topbar-session) {
+      padding-block: var(--s-3);
+    }
+
+    .topbar:has(.topbar-session) .topbar-right {
+      flex: 1 0 100%;
+    }
+
+    .topbar:has(.topbar-session) .header-actions {
+      margin-left: auto;
+    }
   }
 
   @media (max-width: 430px) {
@@ -2858,6 +2879,10 @@
   .note-sheet-input {
     width: 100%;
     min-height: 96px;
+    border: var(--rule-hair);
+    border-radius: var(--r-card);
+    background: var(--paper-raised);
+    font-family: var(--font-sans);
   }
 
   /* ---- logged sets as ledger rows ---- */
@@ -3143,12 +3168,13 @@
     text-transform: uppercase;
   }
 
-  /* "lb this session · Settings says kg" — current-set ochre, because it is a
-   * state that is overriding something, not a label. */
+  /* "lb this session · Settings says kg" — its own line under the position,
+   * in the quiet ink: it is a note, and ochre is reserved for the current set. */
   .focus-unit-note {
-    color: var(--focus-set-current);
+    color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
+    overflow-wrap: anywhere;
   }
 
   .focus-deck-more {
@@ -3215,7 +3241,31 @@
     transform: scaleY(1.3);
   }
 
-  /* Band two: the one that scrolls. */
+  /* Band two: the one that scrolls. The wrap only anchors the "more" cue. */
+  .focus-middle-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .focus-more-cue {
+    position: absolute;
+    right: 0;
+    bottom: var(--s-2);
+    padding: var(--s-1) var(--s-4);
+    border-radius: var(--radius-pill);
+    background: var(--paper-raised);
+    border: var(--rule-hair);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
+    letter-spacing: var(--track-1);
+    pointer-events: none;
+  }
+
   .focus-middle {
     flex: 1;
     min-width: 0;
@@ -3231,9 +3281,12 @@
     justify-content: safe center;
     gap: var(--s-5);
     padding: var(--s-4) 0 var(--s-7);
-    /* a short fade at the bottom edge says "there is more above the dock" when
-     * the band has to scroll */
-    mask-image: linear-gradient(to bottom, var(--mask-opaque) calc(100% - var(--s-7)), transparent);
+  }
+
+  /* a short fade at the bottom edge says "there is more above the dock", and
+   * only while the band really has more to scroll to */
+  .focus-middle--more {
+    mask-image: linear-gradient(to bottom, var(--mask-opaque) calc(100% - 2 * var(--s-8)), transparent);
   }
 
   .focus-cue {
@@ -3292,7 +3345,10 @@
   }
 
   .focus-chip-btn,
-  .focus-middle .chip {
+  .focus-middle .chip,
+  .note-sheet .chip,
+  .rpe-sheet .chip,
+  .correction-sheet .chip {
     min-height: var(--tap-md);
     padding: 0 var(--s-8);
     border: 0;
@@ -3317,6 +3373,8 @@
   .note-sheet .btn,
   .correction-sheet .btn,
   .wk-list-dock .btn,
+  .plate-base .btn,
+  .session-footer .btn,
   .focus-deck .btn,
   .sheet .tw-units + .microcopy ~ .btn {
     justify-content: center;
@@ -3342,6 +3400,9 @@
   }
 
   .focus-middle .chip:active,
+  .note-sheet .chip:active,
+  .rpe-sheet .chip:active,
+  .correction-sheet .chip:active,
   .focus-chip-btn:active {
     background: var(--surface-key-press);
   }
@@ -4577,8 +4638,9 @@
   }
 
   .plate-base {
-    border: var(--bw-hair) solid var(--control-border-color);
-    border-radius: var(--radius);
+    border: var(--rule-hair);
+    border-radius: var(--r-card);
+    background: var(--paper-raised);
     padding: var(--s-6);
     display: flex;
     flex-direction: column;
