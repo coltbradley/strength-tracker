@@ -3844,3 +3844,20 @@ rule; two decisions need a sentence.
 - **Not done, deliberately.** L3 (client-clock last-write-wins on prefs) is
   documented behaviour, presentation only. I1-I5 are informational. The
   Phase 2 browser gate and phone verification are still NOT RUN.
+
+## 2026-10-01 Live-session UX pass: reorder per exercise, rest keeps its target
+
+- **Reorder is per exercise.** `sessionOrder` blocks are one exercise (a ramp
+  is one entry) or one superset run; a named section is a heading, not a unit.
+  Run identity ("these were separate runs") is read off the CANONICAL entries,
+  never the rearranged order, so the join guard still holds and a split section
+  can be healed by moving the intruder back out. An exercise keeps its own
+  section label wherever it lands.
+- **"End rest now" records `endedEarlyAt`; it never rewrites the target.** The
+  rest is over at once ("Ended early at 0:42 · target 2:30"); the tone stays
+  silent. Moving the target afterwards clears the flag.
+- **Skip reasons and LOAD NEXT.** The reason chips open at the top of the
+  middle band and take focus; a skip leads to NEXT EXERCISE. LOAD NEXT shows
+  the compact picture for every load kind and the superset NOW member. The
+  rest panel no longer prints "Next: ..." (header and dock tag say it). Focus is
+  restored after LOG settles; dock steppers hold 44 px at 320.

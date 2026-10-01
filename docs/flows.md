@@ -196,11 +196,13 @@ why.
   exercise as a row with its state glyph, target, count and a quiet roll-up of
   its per-set receipts, tap to jump, today's order, "+ Add exercise", "Back to
   Train (the session keeps running)" and "Finish session". A superset or a
-  named-section run is one movable block whose members are each their own jump
-  button. Order is session-local (`sessionOrder`): drag the ⠿ handle, press
+  ramp (one entry) moves as one block; a named section is only a heading, so its
+  exercises move one at a time, within it or across it (each keeps its own
+  section label). Order is session-local (`sessionOrder`): drag the ⠿ handle, press
   ArrowUp/ArrowDown on it, or use the visible Move up / Move down keys; all
   three reach the same guarded move and the plan and set indices never change.
-  A move the block rules refuse says so, and the keys disable while a log or a
+  A move that would join two separate runs of one section or one superset
+  letter is refused and says so, and the keys disable while a log or a
   correction is in flight. Rows pinned by an open correction are disabled, not
   silent.
 - **Focus** — three bands and a dock. Top: exercise name (or "Superset A" and
@@ -231,13 +233,20 @@ why.
   bracket re-prefills its targets. A 200 ms lock after each tap stops a double
   tap inserting twice; a correction's Save is never gated. A failed local write
   keeps the draft, says so, and offers retry; nothing is shown as logged
-  unless it is durable on this phone.
+  unless it is durable on this phone. LOG is disabled while the set saves, so
+  once it settles focus is put back (LOG again, else NEXT EXERCISE, else the
+  exercise heading) rather than falling to the page.
 - **Rest** — the clock replaces the picture in the middle band: ◷ RESTING with
-  −30 / +30, tap the clock to type a time, and a single-line "Next: Barbell
-  Row · set 3 of 4". When the target passes it becomes a REST OVER card
-  ("Ready when you are") and never logs, skips or finishes anything by itself.
-  Below it: LAST SET (the set just saved, its receipt word, and Fix) and LOAD
-  NEXT (the plates for the next set, tapping opens the plate sheet). The dock
+  −30 / +30 and tap the clock to type a time. The position of the next set is
+  said twice (header and dock tag), not a third time on the panel. When the
+  target passes it becomes a REST OVER card ("Ready when you are") and never
+  logs, skips or finishes anything by itself. "End rest now ›" ends it early
+  WITHOUT touching the target: the card says "Ended early at 0:42 · target
+  2:30"; any later −30/+30 or typed time puts the rest back on. Below it: LAST
+  SET (the set just saved, its receipt word, and Fix) and LOAD NEXT, the
+  compact picture of the next set for every kind of load (plates, the dumbbell
+  pair with its one/two switch, the pin; a superset names the NOW member, "A1 ·
+  ..."), tapping it does what the big picture does. The dock
   is tagged "NEXT SET · SET 4 OF 6" with "End rest now ›". The tone and
   notification fire once per rest — however many sheets, remounts or
   Focus/List switches happen — and "End rest now" is silent. List shows the
@@ -266,10 +275,12 @@ why.
   them and the set's note. Failure keeps the sheet open with everything typed.
   ✕ on a logged row (List) is a two-tap void.
 - **Skip / unskip** — the Skip key opens reason chips (Equipment taken,
-  Already warm, Out of time, Didn't feel right) or free text; a skipped entry
-  shows "Skipped · <reason>. Unskip to log it." even during a rest (and the rest
-  band then drops its NEXT SET tag and LOAD NEXT card). Session-local; the record
-  is the sets.
+  Already warm, Out of time, Didn't feel right) at the TOP of the middle band
+  (above the rest card, focused, never below the fold under the dock). A
+  skipped entry shows "Skipped · <reason>.", reads SKIPPED instead of a set
+  position, and offers NEXT EXERCISE → plus Unskip, even during a rest (the
+  rest band then drops its NEXT SET tag and LOAD NEXT card). Session-local; the
+  record is the sets.
 - **Superset rounds** — a two-member superset is logged member by member. The
   middle band shows an A1 card and an A2 card (● NOW, ✓ done this round,
   ○ NEXT, – SKIPPED), a one-line hint, and the NOW member's load picture; the
