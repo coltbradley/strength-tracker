@@ -33,6 +33,35 @@ export interface ActiveRest {
   forLabel: string;
 }
 
+/**
+ * The ticking clock of one rest: seconds elapsed, seconds remaining, and
+ * whether it is over. Exported so the focus deck's "End rest now" link can
+ * disappear the moment the rest is over without a second copy of the maths.
+ */
+export function useRestClock(rest: ActiveRest | null): {
+  elapsed: number;
+  remaining: number;
+  ready: boolean;
+} {
+  const [now, setNow] = useState(() => Date.now());
+
+  // One rest is one `startedAt`. Keying the tick on the whole `rest` object
+  // meant every −30/+30 built a new object by spread, which restarted the
+  // interval — so the clock stuttered on every adjustment.
+  const startedAt = rest?.startedAt ?? null;
+
+  useEffect(() => {
+    if (startedAt === null) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 400);
+    return () => clearInterval(t);
+  }, [startedAt]);
+
+  const elapsed = rest ? Math.max(0, (now - rest.startedAt) / 1000) : 0;
+  const remaining = rest ? rest.targetSeconds - elapsed : 0;
+  return { elapsed, remaining, ready: rest !== null && remaining <= 0 };
+}
+
 interface RestTimerProps {
   rest: ActiveRest | null;
   onAdjust: (deltaSeconds: number) => void;
@@ -49,6 +78,10 @@ interface RestTimerProps {
   lastSetRpe?: number | null;
   onRateLastSet?(rpe: number | null): void;
   onNoteLastSet?(): void;
+  /** "strip" (default): the docked strip. "panel": the focus deck's middle
+   *  band — a big clock with −30/+30, then a REST OVER card once it is. The
+   *  panel leaves rating and notes to the dock's own RPE and Note keys. */
+  variant?: "strip" | "panel";
 }
 
 export function RestTimer({
@@ -60,23 +93,10 @@ export function RestTimer({
   lastSetRpe = null,
   onRateLastSet,
   onNoteLastSet,
+  variant = "strip",
 }: RestTimerProps) {
-  const [now, setNow] = useState(() => Date.now());
-
-  // One rest is one `startedAt`. Keying the tick on the whole `rest` object
-  // meant every −30/+30 built a new object by spread, which restarted the
-  // interval — so the clock stuttered on every adjustment.
+  const { elapsed, remaining, ready } = useRestClock(rest);
   const startedAt = rest?.startedAt ?? null;
-
-  useEffect(() => {
-    if (startedAt === null) return;
-    const t = setInterval(() => setNow(Date.now()), 400);
-    return () => clearInterval(t);
-  }, [startedAt]);
-
-  const elapsed = rest ? Math.max(0, (now - rest.startedAt) / 1000) : 0;
-  const remaining = rest ? rest.targetSeconds - elapsed : 0;
-  const ready = rest !== null && remaining <= 0;
 
   // Notifying is a side effect, so it belongs in an effect. Raised from the
   // render body, React could fire a system notification for a render it went
@@ -129,6 +149,69 @@ export function RestTimer({
     : Math.round(
         Math.max(0, remaining / Math.max(1, rest.targetSeconds)) * 100,
       );
+
+  if (variant === "panel") {
+    return (
+      <div
+        key={rest.startedAt}
+        className={`rest-panel ${ready ? "rest-panel-ready" : "rest-timer-enter"}`}
+        role="timer"
+        aria-label={ready ? "rest timer complete" : "rest timer"}
+      >
+        <span className="sr-only" role="status" aria-live="assertive">
+          {ready ? "Rest over. Your next set is ready when you are." : ""}
+        </span>
+        {ready ? (
+          <>
+            <div className="rest-panel-label">■ REST OVER</div>
+            <div className="rest-panel-ready-title">Ready when you are.</div>
+            <div className="rest-panel-sub">
+              {formatClock(elapsed)} since the last set · target{" "}
+              {formatClock(rest.targetSeconds)}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rest-panel-head">
+              <span className="rest-panel-label">◷ RESTING</span>
+              <span className="rest-panel-adjust">
+                <button
+                  type="button"
+                  className="rest-panel-btn"
+                  aria-label="take 30 seconds off the rest target"
+                  onClick={() => onAdjust(-30)}
+                >
+                  −30
+                </button>
+                <button
+                  type="button"
+                  className="rest-panel-btn"
+                  aria-label="add 30 seconds to the rest target"
+                  onClick={() => onAdjust(30)}
+                >
+                  +30
+                </button>
+              </span>
+            </div>
+            <button
+              type="button"
+              className="rest-panel-clock"
+              onClick={onEdit}
+              aria-label={`rest remaining ${spokenClock(remaining)} — tap to change`}
+            >
+              {formatClock(remaining)}
+            </button>
+            <span className="rest-panel-track">
+              <span
+                className="rest-panel-fill"
+                style={{ transform: `scaleX(${pct / 100})` }}
+              />
+            </span>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     /* role="timer" names the strip for a screen reader and carries an
@@ -210,6 +293,38 @@ export function RestTimer({
             </button>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The line above the dock's numbers while a rest runs: "NEXT SET · SET 4 OF
+ * 6", so it is plain the numbers being edited belong to the NEXT set and not
+ * the one just saved — and, until the rest is over, a quiet link to end it
+ * early. Not a button-shaped button: starting early is allowed, never urged.
+ */
+export function RestDockTag({
+  rest,
+  label,
+  onEndNow,
+}: {
+  rest: ActiveRest;
+  label: string;
+  onEndNow(elapsedSeconds: number): void;
+}) {
+  const { elapsed, ready } = useRestClock(rest);
+  return (
+    <div className="rest-dock-tag">
+      <span className="rest-dock-tag-label">{label}</span>
+      {!ready && (
+        <button
+          type="button"
+          className="text-link"
+          onClick={() => onEndNow(Math.ceil(elapsed))}
+        >
+          End rest now ›
+        </button>
       )}
     </div>
   );

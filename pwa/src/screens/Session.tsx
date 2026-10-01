@@ -31,11 +31,14 @@
 //   ordinary answer. Rating a set after the fact is a correction like any
 //   other, because `sets` is append-only.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { type StepDef } from "../components/Stepper";
 import { Note } from "../components/Note";
-import { RestTimer, type ActiveRest } from "../components/RestTimer";
+import { RestDockTag, RestTimer, type ActiveRest } from "../components/RestTimer";
+import { LoadPicture, PlateDiagram, type LoadPictureModel } from "../components/session/LoadPicture";
+import { plateText } from "../lib/loadPicture";
+import type { FocusKeys } from "../components/session/FocusDeck";
 import { SetRow } from "../components/SetRow";
 import { NumberPad, type PadRequest } from "../components/NumberPad";
 import { PlateSheet } from "../components/PlateSheet";
@@ -142,7 +145,6 @@ import {
   resolveLoadEntry,
   totalKg,
 } from "../lib/loadEntry";
-import { loadGridFor } from "../lib/loadGrid";
 import {
   offersLoadStyle,
   resolveLoadStyle,
@@ -381,6 +383,10 @@ export function Session() {
   // dismissed is harmless: the row that reads it (`restTimerEl` below) is
   // gated on `rest`, which becomes null at the same time.
   const [lastLoggedSet, setLastLoggedSet] = useState<SetInsert | null>(null);
+  /** The entry whose "+ Add load (belt or vest)" row is open in focus. A
+   *  bodyweight movement keeps reps as its hero; the added load is a small
+   *  row under them, open while this names it or while a load is staged. */
+  const [bwAddOpen, setBwAddOpen] = useState<string | null>(null);
   const [skips, setSkips] = useState<Record<string, SkipRecord>>({});
   const [voidArm, setVoidArm] = useArmed();
   // The set being CORRECTED, with the stepper values it displaced so Cancel
@@ -1099,15 +1105,6 @@ export function Session() {
     editing?.enteredUnit ?? currentDraft?.enteredUnit,
     inputUnit,
   );
-  const loadGrid = openEntry && currentBracket?.load_pct_tm == null
-    ? loadGridFor(
-        { id: openEntry.exercise_id, name: openEntry.name, equipment },
-        inputUnit,
-        loadEntry,
-        { typedValue: displayedLoad },
-      )
-    : null;
-  const nearbyLoads = loadGrid?.nearbyStandardValues(displayedLoad).slice(0, 3) ?? [];
   // the total is what the column caps, so a per-side entry caps at half
   const maxEntryKg = perSide ? MAX_LOAD_KG / 2 : MAX_LOAD_KG;
 
@@ -2398,6 +2395,7 @@ export function Session() {
     entry: ExerciseEntry,
     showAdvance = true,
     part: "full" | "hero" | "detail" = "full",
+    keys: ReactNode = null,
   ) => {
     const prescribed = entry.brackets.length > 0;
     const done = entryProgress(entry);
@@ -2560,24 +2558,6 @@ export function Session() {
               ? b
               : a,
           ).id;
-    const newestSetForThis =
-      entrySetsForThis.find((s) => s.id === newestSetIdForThis) ?? null;
-    /** "Last: 145 kg × 5 working" — the focus hero's tappable line onto
-     *  `startCorrection`. Ticks have nothing numeric to show or correct via
-     *  this route; `SetEditor` never renders it for `tracking === "done"`. */
-    const lastSetLine =
-      newestSetForThis === null
-        ? null
-        : `Last: ${toDisplay(
-            enteredKg(
-              newestSetForThis.load_kg,
-              newestSetForThis.load_entry ?? "total",
-            ),
-            unit,
-          )} ${unit}${
-            newestSetForThis.load_entry === "per_side" ? "/side" : ""
-          } × ${newestSetForThis.reps} ${newestSetForThis.set_type}`;
-
     const editorBlock = (
       <>
         {pairedRound && roundA1 && roundA2 ? (
@@ -2666,20 +2646,6 @@ export function Session() {
             unit={inputUnit}
             maxEntryKg={maxEntryKg}
             loadSteps={loadSteps(entry.exercise_id, inputUnit)}
-            nearbyLoads={nearbyLoads}
-            onChooseNearbyLoad={(value) => {
-              const nextKg = fromDisplay(value, inputUnit);
-              if (editing) {
-                setEditing({ ...editing, enteredLoad: value, enteredUnit: inputUnit, loadEdited: true });
-              } else {
-                rememberStagedDraft(entry, {
-                  entryKg: nextKg,
-                  enteredLoad: value,
-                  enteredUnit: inputUnit,
-                });
-              }
-              setEntryKg(nextKg);
-            }}
             rpeShown={rpeShown(entry.exercise_id)}
             logLabel={
               editing
@@ -2701,20 +2667,18 @@ export function Session() {
             variant={
               presentation === "focus" && !editing ? "focus" : "overview"
             }
-            lastPerformance={
-              presentation === "focus" && !isTick(entry)
-                ? lastTime(entry.exercise_id, true, noLoadEditor)
+            keysSlot={keys}
+            addedLoad={
+              presentation === "focus" && !editing && isBodyweightEquipment(equipMap[entry.exercise_id] ?? null)
+                ? {
+                    on: entryKg > 0 || bwAddOpen === entry.key,
+                    onRemove: () => {
+                      setBwAddOpen(null);
+                      rememberStagedDraft(entry, { entryKg: 0, enteredLoad: undefined, enteredUnit: undefined });
+                      setEntryKg(0);
+                    },
+                  }
                 : null
-            }
-            restSlot={undefined}
-            hasWarmupBracket={warmupSets(entry) > 0}
-            onAlreadyWarm={() => {
-              if (!editing) rememberStagedDraft(entry, { setType: "working" });
-              setSetType("working");
-            }}
-            lastSetLine={presentation === "focus" ? lastSetLine : null}
-            onEditLastSet={
-              newestSetForThis ? () => startCorrection(newestSetForThis) : undefined
             }
             disabled={!setsLoaded || setsFailed}
             onDraftChange={(next) => {
@@ -3504,17 +3468,19 @@ export function Session() {
       : `Next: ${target.name}, ${position}`;
   };
 
+  const adjustRest = (d: number) => {
+    if (!rest) return;
+    const targetSeconds = Math.max(0, rest.targetSeconds + d);
+    setRest({ ...rest, targetSeconds });
+    mirrorRest(targetSeconds, rest.forLabel);
+    // the closed-app alert follows the target
+    armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
+  };
+
   const restTimerEl = (
       <RestTimer
         rest={rest}
-        onAdjust={(d) => {
-          if (!rest) return;
-          const targetSeconds = Math.max(0, rest.targetSeconds + d);
-          setRest({ ...rest, targetSeconds });
-          mirrorRest(targetSeconds, rest.forLabel);
-          // the closed-app alert follows the target
-          armRestAlert(rest.startedAt + targetSeconds * 1000, rest.forLabel);
-        }}
+        onAdjust={adjustRest}
         onEdit={() => openPad("rest")}
         /* dismissing hides the strip only: the clock keeps measuring, so
            the mirror keeps its startedAt with a null target — and a strip
@@ -3535,6 +3501,159 @@ export function Session() {
           : undefined}
       />
   );
+
+  // ---- focus deck: the picture, the rest band, the keys ---------------------
+
+  // Everything below describes the open entry, which in focus IS the focus
+  // entry; a superset round draws its own A1/A2 cards instead.
+  const pictureEntry =
+    inFocusDeck && focusEntry && !focusSupersetPair && openEntry?.key === focusEntry.key && !isTick(focusEntry)
+      ? focusEntry
+      : null;
+  const pictureEquipment = pictureEntry ? (equipMap[pictureEntry.exercise_id] ?? null) : null;
+  const focusBodyweight = pictureEntry !== null && isBodyweightEquipment(pictureEquipment);
+  const focusRepsOnly = focusBodyweight && entryKg === 0;
+  const pictureModel: LoadPictureModel | null = !pictureEntry
+    ? null
+    : plateable && plateSplit
+      ? {
+          kind: "plates",
+          split: plateSplit,
+          baseKg: exerciseBarKg,
+          baseName: pictureEquipment === "barbell" ? "Bar" : "Sled",
+          onOpen: () => openSheet("plates"),
+        }
+      : loadStyle === "stack"
+        ? {
+            kind: "stack",
+            totalKg: totalLoadKg,
+            canSwitch: canToggleLoadStyle,
+            onOpen: () => openSheet("plates"),
+          }
+        : perSideIcon !== null
+          ? {
+              kind: "dumbbell",
+              implementKg: entryKg,
+              pair: perSide,
+              word: perSideIcon,
+              onToggle: offersLoadEntry(loadEntryInput) ? toggleLoadEntry : undefined,
+            }
+          : focusBodyweight
+            ? {
+                kind: "bodyweight",
+                addedOn: entryKg > 0 || bwAddOpen === pictureEntry.key,
+                onAddLoad: () => setBwAddOpen(pictureEntry.key),
+              }
+            : null;
+  const focusPicture = pictureModel ? (
+    <LoadPicture model={pictureModel} unit={unit} />
+  ) : null;
+  /** The coach's cue for the set being staged — `prescriptions.notes`, the
+   *  coach's own words for this exercise on this day. */
+  const focusCue = focusEntry
+    ? ((currentBracket && openEntry?.key === focusEntry.key ? currentBracket : focusEntry.brackets[0])?.notes ?? null)
+    : null;
+
+  const lastLoggedEntry = lastLoggedSet
+    ? (entries.find((e) => e.exercise_id === lastLoggedSet.exercise_id) ?? null)
+    : null;
+  const lastLoggedLine = lastLoggedSet
+    ? `${lastLoggedEntry?.name ?? "Last exercise"} · set ${lastLoggedSet.set_index + 1} · ${
+        lastLoggedSet.load_kg > 0
+          ? `${toDisplay(enteredKg(lastLoggedSet.load_kg, lastLoggedSet.load_entry ?? "total"), unit)} ${unit}${lastLoggedSet.load_entry === "per_side" ? " × 2" : ""} × `
+          : "× "
+      }${lastLoggedSet.reps}`
+    : null;
+  const focusRestSlot = (
+    <>
+      <RestTimer
+        variant="panel"
+        rest={rest}
+        onAdjust={adjustRest}
+        onEdit={() => openPad("rest")}
+        onDone={() => undefined}
+        nextSetLabel={nextSetLabel()}
+      />
+      {lastLoggedSet && lastLoggedLine && (
+        <button
+          type="button"
+          className="focus-saved-card"
+          onClick={() => startCorrection(lastLoggedSet)}
+        >
+          <span>
+            <span className="focus-card-eyebrow">LAST SET · ALREADY SAVED</span>
+            <span className="focus-saved-line">{lastLoggedLine}</span>
+          </span>
+          <span className="focus-card-action">Fix</span>
+        </button>
+      )}
+      {pictureModel?.kind === "plates" && plateSplit && (
+        <button
+          type="button"
+          className="focus-load-next"
+          onClick={() => openSheet("plates")}
+        >
+          <PlateDiagram split={plateSplit} unit={unit} compact />
+          <span>
+            <span className="focus-card-eyebrow">LOAD NEXT</span>
+            <span className="focus-load-next-text">
+              {plateText(plateSplit, exerciseBarKg, unit)}
+            </span>
+          </span>
+        </button>
+      )}
+    </>
+  );
+
+  const focusNextSetTag = (() => {
+    if (focusRoundHeading) return `NEXT SET · ${focusRoundHeading.subtitle.toUpperCase()}`;
+    if (!focusEntry) return "NEXT SET";
+    const total = targetSets(focusEntry);
+    return total === 0
+      ? "NEXT SET"
+      : `NEXT SET · SET ${Math.min(entryProgress(focusEntry) + 1, total)} OF ${total}`;
+  })();
+  const focusDockTag = rest ? (
+    <RestDockTag
+      rest={rest}
+      label={focusNextSetTag}
+      onEndNow={(elapsed) => {
+        const targetSeconds = Math.max(0, elapsed);
+        setRest({ ...rest, targetSeconds });
+        mirrorRest(targetSeconds, rest.forLabel);
+        // the rest is over now; a buzz later would be a stale one
+        disarmRestAlert();
+      }}
+    />
+  ) : null;
+
+  const focusNewestSet = focusEntry
+    ? (setsForEntry(focusEntry).reduce<SetInsert | null>(
+        (a, b) =>
+          a === null ||
+          b.set_index > a.set_index ||
+          (b.set_index === a.set_index && b.performed_at > a.performed_at)
+            ? b
+            : a,
+        null,
+      ))
+    : null;
+  const focusKeys: FocusKeys = {
+    onRpe: () => setMoreOpen(true),
+    onNote: () => {
+      if (lastLoggedSet) openNote(lastLoggedSet.id);
+      setMoreOpen(true);
+    },
+    fourth:
+      focusEntry && !editing && !swapFrozen(focusEntry) && focusNewestSet === null
+        ? {
+            label: focusEntry.substitutedFor ? "Swap again" : "Swap",
+            onPress: () => openSheet("swap"),
+          }
+        : focusNewestSet && !editing
+          ? { label: "Fix last", onPress: () => startCorrection(focusNewestSet) }
+          : null,
+  };
 
   return (
     <div className="session-shell">
@@ -3581,11 +3700,9 @@ export function Session() {
             <FocusDeck
               entries={entries}
               entry={focusEntry}
-              unitSwitch={<UnitSwitch unit={unit} onChange={switchWorkoutUnit} />}
               entryProgress={entryProgress}
               entryDone={entryDone}
               entryState={entryState}
-              onViewFullWorkout={showOverview}
               onChooseNext={(entry) => {
                 setFocusKey(entry.key);
                 setOpenKey(entry.key);
@@ -3595,27 +3712,25 @@ export function Session() {
                 (focusSupersetPair === null ||
                   focusSupersetPair.every(entryDone))
               }
-              renderEditor={(entry) => renderEditor(entry, false, "hero")}
-              onOpenMore={() => setMoreOpen(true)}
+              renderEditor={(entry, keys) =>
+                renderEditor(entry, false, "hero", keys)
+              }
               formatScheme={scheme}
-              topSlot={!sheetOpen ? restTimerEl : undefined}
               workoutComplete={workoutDone && !editing}
               extraSetArmed={extraSetArmed}
               onFinishWorkout={finishWorkout}
               onAddExtraSet={() => setExtraSetArmed(true)}
               supersetHeading={focusRoundHeading}
-              onSwap={
-                focusEntry && !editing && !swapFrozen(focusEntry)
-                  ? () => openSheet("swap")
-                  : undefined
+              picture={focusPicture}
+              cue={focusCue}
+              lastTime={
+                focusSupersetPair || isTick(focusEntry)
+                  ? null
+                  : lastTime(focusEntry.exercise_id, true, focusRepsOnly)
               }
-              swapLabel={
-                focusEntry
-                  ? focusEntry.substitutedFor
-                    ? "Swap again"
-                    : "Swap exercise"
-                  : null
-              }
+              restSlot={rest && !sheetOpen && !editing ? focusRestSlot : null}
+              dockTag={rest && !editing ? focusDockTag : null}
+              keys={focusKeys}
               onSkip={
                 focusEntry
                   ? (reason) => skipEntryWithReason(focusEntry, reason)
