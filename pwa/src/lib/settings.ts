@@ -36,6 +36,7 @@
 import { reportError } from "./errors";
 import type { LoadEntry, LoadUnit } from "./types";
 import type { LoadStyle } from "./loadStyle";
+import { plateDisplayValue } from "./plates";
 import { lbToKg, type Unit } from "./units";
 
 // ---- shape -----------------------------------------------------------------
@@ -765,9 +766,17 @@ function nearestIn(list: readonly number[], value: number): number | null {
   return best;
 }
 
+/** Same bar, as the lifter reads it in `u` (20.41 kg and 20.4118 kg are both
+ *  "45 lb"). Strict kg equality missed a bar typed in lb and stored rounded. */
+function sameBar(a: number, b: number, u: Unit): boolean {
+  return plateDisplayValue(a, u) === plateDisplayValue(b, u);
+}
+
 function repairBarsForUnit(u: Unit): void {
   const inv = getBarInventory(u);
   if (inv.length === 0) return;
+  const other = getBarInventory(u === "kg" ? "lb" : "kg");
+  const otherUnit: Unit = u === "kg" ? "lb" : "kg";
 
   const sel = getSetting("bar");
   if (!inv.some((b) => nearKg(b, sel[u]))) {
@@ -779,16 +788,23 @@ function repairBarsForUnit(u: Unit): void {
   let changed = false;
   const next: ExercisePrefs = {};
   for (const [id, pref] of Object.entries(prefs)) {
-    // 0 means "no bar" and is unit-independent — never remap it.
+    const bar = pref.barKg;
+    // 0 means "no bar" and is unit-independent — never remap it. Neither is a
+    // value that is NOT a bar from the other catalogue: a 34 kg / 75 lb sled
+    // is a fact about a machine, not a stand-in for a bar, and snapping it to
+    // the nearest bar silently changed the load that plate math starts from.
+    // Only a bar that is in the other system's catalogue (and not this one's)
+    // is a catalogue choice that should follow the unit.
     if (
-      pref.barKg === undefined ||
-      pref.barKg === 0 ||
-      inv.some((b) => nearKg(b, pref.barKg as number))
+      bar === undefined ||
+      bar === 0 ||
+      inv.some((b) => sameBar(b, bar, u)) ||
+      !other.some((b) => sameBar(b, bar, otherUnit))
     ) {
       next[id] = pref;
       continue;
     }
-    const fixed = nearestIn(inv, pref.barKg);
+    const fixed = nearestIn(inv, bar);
     next[id] = fixed === null ? pref : { ...pref, barKg: fixed };
     changed = changed || fixed !== null;
   }

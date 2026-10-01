@@ -1582,7 +1582,7 @@ export function Session() {
       baseKnown: hasExerciseBase(entry.exercise_id, equip),
       baseName: (equip === "barbell" ? "Bar" : "Sled") as "Bar" | "Sled",
       plateSplit:
-        style === "plates" ? split(totalLoadKg, baseKg, inventory) : null,
+        style === "plates" ? split(totalLoadKg, baseKg, inventory, unit) : null,
       canSwitchStyle: offersLoadStyleSwitch(equip, entry.name, pref.loadStyle),
       bellWord: (lowerEquip === "dumbbell"
         ? "dumbbell"
