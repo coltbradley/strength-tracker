@@ -688,6 +688,19 @@ the new Session screen and are untested. From the repo root: `supabase start`,
 prints `NOT RUN` and exits 3 if it cannot run, so a skipped gate cannot look
 like a pass. Hosted URLs are refused. Record the result here.
 
+### 3b. Live load-sync gate (pre-release, not CI)
+
+Drives the demo in real Chromium in lb and kg, records every write the app
+queues, and replays them into PGlite with the full migration chain. Needs
+Chromium (`npx playwright install chromium` under `pwa/`), so it is not in CI.
+From the repo root, after `npm --prefix pwa ci && npm --prefix scripts ci`:
+`node pwa/e2e/live-load-sync.mjs --label release --out /tmp/live-e2e` (about
+12 minutes). It must exit 0 with no `--allow` flags: 0 rejected writes, 0
+invariant violations, 0 gating mismatches. `authored-drift` and `log-refused`
+rows are informational. Last run on `fix/display-precision`: 182 writes
+captured, 182/182 accepted, 0 gating mismatches. See
+`docs/live-load-sync-e2e.md`.
+
 ### 4. Phone verification (NOT RUN)
 
 On the real installed iPhone, new data only, recorded here with the served SHA:

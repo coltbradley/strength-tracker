@@ -353,7 +353,7 @@ describe("Session supersets", () => {
     const dialog = within(screen.getByRole("dialog", { name: "Today's workout" }));
     fireEvent.click(dialog.getByRole("button", { name: "Show weights in pounds" }));
     fireEvent.click(dialog.getByRole("button", { name: "CLOSE" }));
-    expect(card("A2").textContent).toContain("55.12");
+    expect(card("A2").textContent).toContain("55.1");
     expect(chooser("A1").textContent).toContain("49.6");
   });
 

@@ -81,3 +81,10 @@ reset` when replacing the whole local database is intended.
 
 This browser suite does not prove a phone service-worker update run or replace
 the roadmap's separate phone acceptance gate.
+
+## Live load-sync gate (no Supabase needed)
+
+`live-load-sync.mjs` drives the demo build in lb and kg, captures every outbox
+write and replays it into PGlite with the real migrations. See
+`docs/live-load-sync-e2e.md`. Run: `node pwa/e2e/live-load-sync.mjs` from the
+repo root (`npm --prefix scripts ci` once for PGlite).

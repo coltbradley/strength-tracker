@@ -934,6 +934,16 @@ cd supabase/functions/endurance-sync && deno check index.ts && deno test normali
 cd pwa && npm ci && npm run build && npm test -- --run
 ```
 
+Pre-release gate, NOT CI (needs Chromium; about 12 minutes): the live
+load-sync harness drives the demo in lb and kg, captures every queued write and
+replays it into PGlite. It must exit 0 with no `--allow` flags before a release
+or any change to load entry, units or display of loads/bodyweight:
+
+```bash
+npm --prefix pwa ci && npm --prefix scripts ci && (cd pwa && npx playwright install chromium)
+node pwa/e2e/live-load-sync.mjs --label release --out /tmp/live-e2e
+```
+
 Run only the tests that cover what you touched; run the full matrix above
 before treating a cross-cutting change (schema, shared `lib/`, CI itself) as
 done.

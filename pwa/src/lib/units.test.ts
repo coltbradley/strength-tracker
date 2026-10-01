@@ -7,6 +7,8 @@ import {
   stepKgFor,
   toDisplay,
   fromDisplay,
+  stagedDisplayLoad,
+  toStoredKg,
 } from "./units";
 
 describe("units", () => {
@@ -44,5 +46,24 @@ describe("units", () => {
   it("stepKgFor falls back to the global step with no override", () => {
     expect(stepKgFor("squat", "kg", false)).toBe(2.5);
     expect(stepKgFor(null, "kg", true)).toBe(0.5);
+  });
+});
+
+describe("bodyweight and staged display precision", () => {
+  it("a bodyweight typed in lb reads back as typed after storage (every 0.1 lb)", () => {
+    for (let t = 800; t <= 6000; t++) {
+      const lb = t / 10;
+      expect(toDisplay(toStoredKg(lbToKg(lb)), "lb")).toBe(lb);
+    }
+    expect(toStoredKg(lbToKg(180.5))).toBe(81.87);
+  });
+
+  it("a converted staged load never shows hundredths in lb", () => {
+    expect(stagedDisplayLoad(102.5, 225, "lb", "lb")).toBe(225); // typed wins
+    expect(stagedDisplayLoad(102.5, 102.5, "kg", "lb")).toBe(226);
+    expect(stagedDisplayLoad(72.5, 72.5, "kg", "lb")).toBe(159.8);
+    expect(stagedDisplayLoad(25, 55.1, "lb", "kg")).toBe(25);
+    expect(stagedDisplayLoad(27.22, 60, "lb", "kg")).toBe(27.22);
+    expect(stagedDisplayLoad(21.25, 21.25, "kg", "kg")).toBe(21.25);
   });
 });

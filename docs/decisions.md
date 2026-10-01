@@ -3861,3 +3861,16 @@ rule; two decisions need a sentence.
   the compact picture for every load kind and the superset NOW member. The
   rest panel no longer prints "Next: ..." (header and dock tag say it). Focus is
   restored after LOG settles; dock steppers hold 44 px at 320.
+
+## 2026-10-01 Bodyweight and staged loads: typed precision in, unit precision out
+
+- **Bodyweight is stored at two decimals everywhere** (`toStoredKg`; the End
+  screen used to round to 0.1 kg, so 180.5 lb came back as 180.6 lb). Both
+  `sessions.bodyweight_kg` and `bodyweight_log.weight_kg` are numeric(5,2), so
+  no column change; what was typed in lb reads back as typed.
+- **A staged load converted to the other unit shows at that unit's precision**
+  (lb one decimal, kg two only when the stored kg has them) instead of
+  hundredths of a kg turned into lb (225.97). A value typed in the viewing unit
+  still shows exactly as typed. Stored values are unchanged. The pre-release
+  gate for this class is `pwa/e2e/live-load-sync.mjs` (see AGENTS.md "Tests, by
+  area").
