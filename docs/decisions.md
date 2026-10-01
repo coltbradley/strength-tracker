@@ -3176,3 +3176,28 @@ on every visibility change and every minute. A session left open for days
 delays the update that long unless the app is closed, which activates the
 waiting worker on the next launch; the overnight sweep closes stale sessions.
 
+
+## 2026-10-01 Today's order is session-local and never touches the plan
+
+The lifter can drag the exercises of the day into the order they will actually
+do them (overview "Reorder", `ReorderList`). That order is a list of entry keys
+held on this device beside `skips`, `subs` and `extras`
+(`cacheKeys.sessionOrder`, applied by `applyEntryOrder` in
+`pwa/src/lib/entryOrder.ts` when the entries are built). It is not written to
+Postgres and not to `prescriptions.position`: once a session points at a day
+the day is locked (2026-09-24), and "rows before bench today" is a fact about
+today, not an edit to what the coach wrote. Entry keys are prescription ids, so
+every set keeps its `prescription_id` and `set_index` wherever the exercise is
+shown; next exercise, focus advance and the overview all read the one applied
+list.
+
+The unit is the entry. A superset moves as one unit with its members adjacent
+and in A1/A2 order, whatever the saved keys say. Entries the order does not
+name (a later extra) keep their natural slot; stale keys are dropped. Exercises
+may cross sections and keep the section the plan gave them: labels print per
+run of same-section entries, so a section (or MAIN WORK) can appear twice
+rather than the app relabelling or snapping the exercise back.
+
+Consequence: like skips, a reorder lives only on the device that made it and
+is cleared at Finish/Discard. Another phone resuming the session sees the
+plan's order.

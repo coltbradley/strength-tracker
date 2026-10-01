@@ -3515,6 +3515,103 @@
     min-height: var(--tap-min);
   }
 
+  /* ---- reorder list (Version D) ----
+   * Today's order is a session-local presentation order (lib/entryOrder.ts):
+   * the handle drags it, the plan never changes. */
+  .reorder-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .reorder-item {
+    position: relative;
+    border-bottom: var(--rule-hair);
+    background: var(--bg-raised);
+  }
+
+  .reorder-item-drag {
+    z-index: 2;
+    box-shadow: var(--shadow-toast);
+    opacity: 0.95;
+  }
+
+  .reorder-item-over {
+    box-shadow: inset 0 var(--bw-thick) 0 var(--accent-dim);
+  }
+
+  .reorder-item-selected .reorder-body {
+    box-shadow: inset 0 0 0 2px var(--accent-dim);
+  }
+
+  .reorder-heading {
+    padding: var(--s-6) 0 var(--s-2);
+  }
+
+  .reorder-row {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .reorder-handle {
+    flex: none;
+    min-width: var(--tap-min);
+    min-height: var(--tap);
+    color: var(--text-dim);
+    font-size: var(--fs-body);
+    cursor: grab;
+    /* a touch drag on the handle must not scroll the page */
+    touch-action: none;
+    user-select: none;
+  }
+
+  .reorder-item-drag .reorder-handle {
+    cursor: grabbing;
+  }
+
+  .reorder-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-rows: auto auto;
+    gap: var(--s-1) var(--s-5);
+    align-items: baseline;
+    padding: var(--s-6) 0;
+    min-height: var(--tap);
+    text-align: left;
+  }
+
+  .reorder-body .state-glyph {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .reorder-title {
+    grid-column: 2;
+    font-size: var(--fs-body);
+    font-weight: 500;
+    line-height: 1.25;
+  }
+
+  .reorder-sub {
+    grid-column: 2;
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    letter-spacing: var(--track-1);
+    color: var(--text-dim);
+  }
+
+  .reorder-meta {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    align-self: center;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+  }
+
   /* ---- session focus deck ----
    * Focus is a presentation of the existing controlled set editor, with no
    * extra state to reconcile after a return to the overview. The compact
