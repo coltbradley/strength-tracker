@@ -3030,7 +3030,7 @@ export function Session() {
 
   /** A superset member that is not the open entry has no staged draft: stage
    *  one from the plan, exactly as opening it would. */
-  const defaultRoundDraft = (entry: ExerciseEntry): SetDraft => {
+  const defaultRoundDraft = (entry: ExerciseEntry, forUnit: Unit = unit): SetDraft => {
     const kind = suggestedKind(entry);
     const bracket = bracketFor(entry, countFor(entry, kind), kind);
     const entryMode = resolveLoadEntry({
@@ -3068,8 +3068,8 @@ export function Session() {
         ? Math.round(fromDisplay(authoredLoad, authoredUnit) * 100) / 100
         : Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100;
     const staged = stageLoad({
-      unit,
-      stepKg: stepKgFor(entry.exercise_id, unit, false),
+      unit: forUnit,
+      stepKg: stepKgFor(entry.exercise_id, forUnit, false),
       sourceEntryKg,
       origin:
         authoredLoad !== null && authoredUnit !== null
@@ -3126,9 +3126,33 @@ export function Session() {
     const ownerId = knownOwner();
     const requestedSession = sessionId;
     const identityEpoch = identityEpochRef.current;
+    // A draft the lifter has not touched is still just the plan's (or last
+    // time's) number: re-stage it as the nearest loadable value in the unit
+    // they are switching TO, so 60 kg does not become "132.3 lb"
+    // (lib/displayLoad.ts, rule 3). A draft they typed or stepped keeps its
+    // typed number and unit (the next block stamps it), and the screen quotes
+    // the conversion.
+    const untouched = (entry: ExerciseEntry) =>
+      !dirtyDraftsRef.current.has(`${entry.key}:${entry.exercise_id}`);
+    let restagedOpen = false;
+    if (openEntry && !focusSupersetPair && untouched(openEntry)) {
+      const fresh = defaultRoundDraft(openEntry, next);
+      rememberStagedDraft(
+        openEntry,
+        {
+          entryKg: fresh.entryKg,
+          enteredLoad: fresh.enteredLoad,
+          enteredUnit: fresh.enteredUnit,
+          planRef: fresh.planRef,
+        },
+        false,
+      );
+      setEntryKg(fresh.entryKg);
+      restagedOpen = true;
+    }
     // Stamp a prefilled draft's displayed value before changing units. An
     // authored value already has its own unit and must keep that provenance.
-    if (openEntry && currentDraft?.enteredUnit === undefined) {
+    if (openEntry && !restagedOpen && currentDraft?.enteredUnit === undefined) {
       rememberStagedDraft(
         openEntry,
         { enteredLoad: displayedLoad, enteredUnit: unit },
@@ -3139,6 +3163,10 @@ export function Session() {
       setRoundDrafts((prior) => {
         const nextDrafts = { ...prior };
         for (const member of focusSupersetPair) {
+          if (prior[member.key] === undefined && untouched(member)) {
+            nextDrafts[member.key] = defaultRoundDraft(member, next);
+            continue;
+          }
           const draft = prior[member.key] ?? roundDraftFor(member);
           nextDrafts[member.key] = draft.enteredUnit !== undefined
             ? draft

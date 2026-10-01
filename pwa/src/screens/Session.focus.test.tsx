@@ -694,6 +694,32 @@ describe("Session focus presentation", () => {
     expectAcceptedAuthoredLoad(payload);
   });
 
+  it("re-stages an untouched plan load on the loadable grid when the unit is switched, and back", async () => {
+    resetDbForTests();
+    setSetting("unit", "kg");
+    const bench = { ...prescription(), load_kg: 60, resolved_load_kg: 60,
+      entered_load: 60, entered_unit: "kg" as const, load_entry: "total" as const };
+    await seed("reps", [bench]);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+    await vi.waitFor(() => expect(dockValue("load")).toBe("60"));
+
+    switchUnit("Show weights in pounds");
+    // 60 kg is 132.3 lb: not a number anyone loads. The nearest 5 lb is 130.
+    expect(dockValue("load")).toBe("130");
+    expect(screen.getByText("plan 60 kg")).toBeTruthy();
+
+    switchUnit("Show weights in kilograms");
+    expect(dockValue("load")).toBe("60");
+    expect(screen.queryByText(/^plan /)).toBeNull();
+
+    switchUnit("Show weights in pounds");
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
+    const payload = firstQueuedSet();
+    expect(payload).toMatchObject({ load_kg: 58.97, entered_load: 130, entered_unit: "lb" });
+    expectAcceptedAuthoredLoad(payload);
+  });
+
   it("persists the unit for this owner and session without changing the device default", async () => {
     resetDbForTests();
     setSetting("unit", "kg");
