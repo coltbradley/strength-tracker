@@ -509,7 +509,9 @@ batch of correctness bugs, and settings. What changed structurally, and why:
   putting them in Postgres would create a third write-ownership class beside
   "PWA writes actuals" and "both write plans", for data no view and no MCP
   tool reads. Accepted cost: settings do not sync across devices, and a
-  cleared browser storage loses them. Export exists; training data is never
+  cleared browser storage loses them. (Reversed for the per-exercise record
+  only, 2026-10-01 "Per-exercise prefs sync across devices"; every global
+  setting is still device-local.) Export exists; training data is never
   in there. (Reversed for the per-exercise record by 2026-10-01 "Per-exercise
   prefs sync across devices"; global settings stay device-local.)
 - **Two correctness fixes changed semantics, not just behaviour.** A planned
@@ -3306,8 +3308,9 @@ each other.
   plate machines and never for a cable; an unknown sled weight reads "Set sled
   weight"; `plateText` names the base ("Sled only", not "Bar only", L5).
   Authored `entered_load`/`entered_unit` are quoted as authored in lb mode.
-- **Light only, tokens only.** One stylesheet; all colour through role tokens so
-  a dark theme is a token swap; the smallest type is 11 px (`--fs-micro`,
+- **Tokens only** (the port was light-only; dark mode has since landed as one
+  token block, "Dark theme, with light as the default"). One stylesheet; all
+  colour through role tokens so a dark theme is a token swap; the smallest type is 11 px (`--fs-micro`,
   `--fs-label`) and targets are at least 44 px; dead rules, classes and the
   orphaned PlateBar/RpeChips/LoadIcons/loadGrid are deleted. Test-pinned in
   `styles.floors.test.ts`.
@@ -3696,3 +3699,68 @@ Considered and rejected: a CI job that fails when stale branches exist. Branch
 hygiene is a judgment about whether work is abandoned, and a red build on
 `main` for someone else's branch would be noise. The inventory informs; a person
 decides.
+
+## 2026-10-01 Integrating the seven branches: what each rule means now
+
+Seven branches (plate math, load integrity, exercise prefs sync, Record, Train,
+dark mode, work inventory) were merged onto the Version D port one at a time,
+each keeping every fix. Where two of them touched the same thing the rule is
+recorded here once, so a later reader does not "simplify" a pair apart.
+
+- **Two kinds of "per-session / per-exercise" preference, never conflated.**
+  Per-exercise prefs (`ExercisePref`: base weight, plates vs stack, one vs two
+  dumbbells, rest, step, unit) belong to the ACCOUNT and sync through
+  `exercise_prefs`. The unit and the exercise order chosen for ONE session
+  (`sessionPrefs`, a kv key `sessionPrefs:{owner}:{session}`) are session-local,
+  per owner, never synced and never written to the plan or to any set index;
+  they exist so a lifter can read a workout in the other unit or do it in a
+  different order without touching the plan or their defaults. A unit switch
+  repairs only catalogue bars (a custom sled is a fact about a machine), and any
+  repair it makes goes through `commitExercisePref`, so it is stamped and synced.
+  `sessionPrefs` are removed with the device cache; finished sessions' keys
+  accumulate until then (accepted, small).
+- **A correction's void is held behind its replacement, on purpose, and the pair
+  is named.** `outbox.ts` will not send the void of a corrected set until the
+  replacement has left the queue (insert before void: the reverse loses the
+  set). The cost is a window, unbounded if the void is refused, in which the
+  server holds BOTH rows live at one `set_index`, double-counting volume and
+  e1RM and what MCP reads. Do not reorder it to shorten the window. Instead the
+  LAST SET card and the List row of the replacement say "Correction waiting to
+  send" and that the original stays live until it lands, and a refused void with
+  the replacement already saved reads as Needs review with both-rows-live
+  wording. Retry is the way out.
+- **Receipts are exact-UUID proof, and the same proof serves Train.** A set is
+  Saved only when the server returned that UUID (a correction: the replacement
+  AND the original's void). Train's finished-today line reads the same receipts
+  for the finished session when it can, and otherwise says only what the queue
+  proves. A per-correction `receipt` metadata row stays in the outbox so the
+  relation survives a cache clear (see the ACK witness entry above).
+- **Batch repair of dead load sets is an export-gated exception, not a loosened
+  rule.** A 23514 "load must match" refusal is normally not retryable (same bytes,
+  same answer). `repairDeadLoadSets` lifts that for exactly that message on a
+  `sets` insert owned by the current owner, only after a fresh export of the
+  queue, a reviewed list, and an all-or-nothing revalidation against the current
+  queue: it nulls `entered_load`/`entered_unit` (legacy provenance, which the
+  trigger accepts) and touches nothing else. With `buildSetLoad` and the outbox
+  gate new writes cannot need it; it exists for items already dead on phones.
+- **The session screen does not wait for identity (codex review F4).** Identity
+  is not authorization. The session opens on the live owner, else the owner the
+  persisted session names, and with neither it opens on the device unit and the
+  canonical order; LOG works, every write is stamped with the known owner (or
+  held if none) and the flusher holds it if the live owner differs. Saving the
+  session unit and order waits for an owner. When the owner arrives the saved
+  choices are read in the background, without putting the screen behind a
+  spinner mid-set.
+- **Surfaces took the better of each branch.** Train uses train-d's layout and
+  state words (its week strip already opens Program, so the codex week-context
+  card is gone) with the codex card language; Record uses record-d's list, pins
+  and undo with the same cards and `shownLoadValue` through `SetRow` for logged
+  sets; Dark has a value for every token Version D and codex introduced
+  (dock surfaces, current-row tint, plates, receipts), enforced by
+  `styles.contrast.test.ts`, which also fails if a literal-colour token is added
+  to `:root` without one.
+
+Not done: the Phase 2 browser gate and real-phone offline logging with exact
+UUID readback are still unrun here (no local Supabase); the mixed-version
+rollback limit of the `receipt` status is unchanged; items already dead on a
+phone are not repaired by this build beyond the existing batch tool.

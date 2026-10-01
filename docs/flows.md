@@ -56,8 +56,12 @@ Supabase sends the stock link email and the paste path is the working one.
   known; `N waiting on this phone` (waiting or held: a held write is NOT on the
   server); `N need review` (refused); and only with none of those, `all sets on
   the server`. Other queued writes (session end, voids, notes, bodyweight) are
-  never called sets: they add `· N other changes waiting`. Then REST DAY /
-  Recover. and the next workout.
+  never called sets: they add `· N other changes waiting`. When this phone knows
+  the finished session and is online, the line uses the same exact-UUID
+  receipts the Session screen shows instead of an empty queue: `N sets
+  confirmed on the server` only when every live set was read back by its UUID,
+  `k of N sets not confirmed on the server` otherwise; a failed read falls back
+  to the queue wording. Then REST DAY / Recover. and the next workout.
 - **Draft today**: the label and a dashed "Draft — nothing planned in it yet.
   Not a missed day." with Fill in this day. Offline or failed refresh shows a
   dashed one-line note over the cached plan.
@@ -217,6 +221,10 @@ why.
   raise) and never for a cable; an unset sled base reads "Set sled weight".
   Dumbbells show the pair and the total. The plate sheet edits the base, the
   type and the per-exercise choice, synced to your account.
+- **Already warm** — while an exercise still has a prescribed warmup, a link
+  beside the WARMUP | WORKING toggle stages the working set and logs nothing; it
+  is a shortcut, not a skip, and is unrelated to the "Already warm" REASON chip
+  that the Skip key offers.
 - **Log a set** — Log appends one set at the next `set_index`, stamps the rest
   it ended, starts the rest clock and advances. Working sets count against the
   plan, warmups do not. Ramp brackets are one entry walked in order; crossing a
@@ -240,7 +248,10 @@ why.
   returned that exact set UUID, or acknowledged it), ! Needs review (rejected,
   or only the cache remains), ‖ Held (queued under another account). The LAST
   SET card shows only what the receipt proves; it never says "already saved"
-  on its own. After a correction it names the replacement row.
+  on its own. After a correction it names the replacement row, and while that
+  correction's void is still held behind the replacement it also says
+  "Correction waiting to send": the server holds both rows live until the void
+  lands.
 - **RPE and Note** — RPE opens a focused sheet. During a rest it rates the set
   just saved ("Rate set 2, just saved"); with no rest it stages the next set
   ("RPE for the next set"). A rating on a saved set is a correction underneath.
@@ -574,13 +585,16 @@ rather than thanking someone for a report it dropped.
 
 - No from-scratch program authoring in-app (Claude/coach owns programming;
   duplicate-then-edit covers one-off days).
-- No mid-session exercise reorder (tap any order instead).
+- No reordering of the PLAN from the session screen. Reordering today's workout
+  is session-local only (☰ → Today's workout): it never changes the plan or any
+  set index, and it is not synced.
 - No post-session summary screen: the End screen's count is shown before the
   commit, and a toast is the confirmation after it.
 - No session-level history browse yet (per-exercise only) — revisit when
   real use asks "what did I do Tuesday".
-- No settings sync across devices, and no per-set RPE, duration or
-  bodyweight-plus-load logging (see decisions.md for each).
+- Global settings do not sync across devices (there is no `user_settings`
+  table); only the per-exercise prefs do (decisions.md, 2026-10-01). The unit
+  and the order chosen for one session are session-local and never sync.
 - No swipe gestures anywhere. The lists already carry a press-and-hold drag,
   and a horizontal swipe on rows that also scroll vertically makes both feel
   unreliable — with chalky hands, mid workout, on a list whose destructive

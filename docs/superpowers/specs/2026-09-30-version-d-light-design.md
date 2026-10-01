@@ -24,8 +24,9 @@ without losing a staged draft, rest clock, correction, or queued set.
 
 The app must distinguish a set durable on this phone from one confirmed on
 the server. The visual refresh cannot delay, duplicate, hide, or relabel a
-training record. No dark theme, schema migration, or new logging engine is
-needed for the first light-session release.
+training record. No dark theme, schema migration, or new logging engine was
+needed for the first light-session release (dark mode and the other
+integrated work shipped afterwards; see "Integrated on feat/version-d").
 
 ## Scope and sequence
 
@@ -64,7 +65,8 @@ Focus shows exercise or paired-round identity, set/round progress, the
 movement-specific value, equipment and plate guidance when real data supports
 it, the coach's authored cue when present, and last performance when known.
 The lower area keeps the load/reps/duration controls and the primary Log, Done,
-Log round, or Finish action in stable positions. A four-control utility row
+Log A1 / Log A2 (a superset member, see Superseded below), or Finish action in
+stable positions. A four-control utility row
 keeps RPE, Note, Skip, and Plates one tap away; where Plates is inapplicable,
 the current Swap or Fix-last action can occupy its place. These controls use
 the existing handlers and sheets. No action is indicated solely by colour or
@@ -169,8 +171,11 @@ Pinned Record goals need a separate owner and persistence decision. Added
 load for bodyweight needs a decision about the meaning of total `load_kg`
 when body mass is unknown. A coach Apply button needs a plan-confirmation
 contract consistent with the MCP and locked-day rules. These three features,
-and dark mode, are outside the initial implementation plans. Their absence
-does not prevent the light logging flow from being useful or truthful.
+and dark mode, were outside the initial implementation plans. Their absence
+did not prevent the light logging flow from being useful or truthful. Since
+then (2026-10-01): pinned goals are decided and shipped (a goal row IS the pin,
+`docs/decisions.md` "Record: pinned means having a goal") and dark mode is
+adopted; bodyweight added load and the coach Apply button remain open.
 
 ## Verification and release
 
@@ -208,8 +213,9 @@ order). What shipped:
   visible Move up/down), receipts and Finish; Focus | List toggle and a round
   sync chip; member-by-member supersets; RPE, Note and Fix as focused sheets;
   per-set receipts; the List ledger. Dark mode, surrounding screens (item 5),
-  pinned goals, bodyweight added-load meaning and the coach Apply button are
-  not part of this slice. Bodyweight "+ Add load" records the added kg as the
+  pinned goals, bodyweight added-load meaning and the coach Apply button were
+  not part of this slice (the first two have since been integrated, below;
+  Apply and the bodyweight meaning remain open). Bodyweight "+ Add load" records the added kg as the
   set's `load_kg`; "added" is stated beside it so it is not read as total mass.
 
 Product decisions and why:
@@ -249,3 +255,29 @@ partner's warmup is reached by tapping its card); the Phase 2 browser gate's
 selectors are updated but it has not been run (it needs local Supabase and
 Docker); real-phone and exact UUID readback acceptance remain open, as the
 Verification section requires.
+
+## Integrated on feat/version-d (2026-10-01)
+
+Seven branches were merged onto the slice above, each keeping every fix. What
+changes for this spec:
+
+- **Surrounding screens (item 5).** Train follows the design's layout (week strip
+  with state words that open Program, FIRST UP, Go and a preview sheet, honest
+  sync line that prefers exact-UUID receipts, PAST vs MISSED, multi-program).
+  Record is recent-first with PINNED GOALS, undo and offline honesty. Both use the
+  codex card language (raised paper, hairline, card radius).
+- **Dark mode** is one token block; every dock, current-row, plate and receipt
+  token has a dark value and the contrast test covers those pairs. The
+  light-only wording above ("Light only, tokens only") is superseded: tokens only
+  stays, light-only does not.
+- **Per-exercise prefs sync to the account** (`exercise_prefs`); the session unit
+  and the session order are a different thing: session-local, per owner and per
+  session, never synced (`sessionPrefs`). The "unit for THIS session" in the ☰
+  sheet is the second kind.
+- **Load fields** are derived once from what was typed (`buildSetLoad`) and the
+  outbox refuses a set the database would refuse; plate math is integer
+  arithmetic on the display unit; a custom sled survives a unit switch.
+- **Not blocked on identity.** With a known (or persisted) owner, or none at
+  all, the session opens and logs; the outbox stamps or holds. A correction whose
+  void is still held is named "Correction waiting to send" on the replacement,
+  because the server holds both rows live until the void lands.

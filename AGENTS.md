@@ -118,6 +118,23 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   - One dock editor, one RestTimer API. Colour comes from role tokens only,
     type is never below 11 px, controls are at least 44 px, and the middle
     band scrolls above the dock.
+- Session-local choices are not account prefs. The unit for THIS session and
+  today's exercise order live in `sessionPrefs` (kv key per owner and session),
+  never sync, and never touch the plan, a set index or the device default;
+  per-exercise prefs (`ExercisePref`) are the account-synced record. Do not
+  merge the two in code or in copy. The session screen does not wait for
+  identity: it opens on the known owner (live, else persisted), or on the device
+  unit and canonical order with none, and the outbox stamps or holds each write
+  (identity is not authorization).
+- A correction's void is HELD behind its replacement in the outbox (insert
+  before void, never the reverse) and `receipt` is an outbox status: a witness
+  row kept after a correction's void is acknowledged, excluded from counts,
+  flush and exports. While the void is held the server has BOTH rows live, so
+  the replacement says "Correction waiting to send"; do not reorder the pair to
+  shorten that window. `repairDeadLoadSets` (23514 load mismatch only, owner,
+  fresh export, all-or-nothing) is the one export-gated exception to "a
+  constraint violation is not retryable" (`docs/decisions.md`, 2026-10-01
+  "Integrating the seven branches").
 - `session_skips` (20260917000000) is the record of an exercise the
   lifter skipped mid-session, WHY they skipped it (an optional
   200-character reason), and whether the whole slot was skipped or only
