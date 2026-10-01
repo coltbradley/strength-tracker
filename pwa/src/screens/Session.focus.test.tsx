@@ -479,6 +479,34 @@ describe("Session focus presentation", () => {
     ).toBe("22.5");
   });
 
+  it("List lists the open exercise as a ledger: logged sets oldest first, the next set marked, the rest dim", async () => {
+    resetDbForTests();
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 3),
+    ]);
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+
+    const upcoming = await screen.findByRole("list", {
+      name: "sets still to do for Bench Press",
+    });
+    const rows = within(upcoming).getAllByRole("listitem");
+    // three planned, one logged: sets 2 and 3 remain, set 2 is the next one
+    expect(rows.map((row) => row.querySelector(".ledger-set-n")?.textContent)).toEqual(["2", "3"]);
+    expect(rows[0].getAttribute("aria-current")).toBe("step");
+    expect(within(rows[0]).getByText("NEXT")).toBeTruthy();
+    expect(rows[1].getAttribute("aria-current")).toBeNull();
+    // the logged set sits above them, with its receipt
+    const logged = screen.getByRole("group", { name: "logged sets for Bench Press" });
+    expect(within(logged).getAllByRole("button", { name: /^Correct logged set/ })).toHaveLength(1);
+  });
+
   it("opens timed work in focus with duration as the hero and logs seconds", async () => {
     resetDbForTests();
     await seed("time");

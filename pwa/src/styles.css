@@ -8370,6 +8370,138 @@
   .plan-screen .week-detail {
     background: var(--surface-dock);
   }
+
+  /* 11. List: the workout as a ledger -------------------------------------- */
+
+  .wk-overview-list {
+    gap: var(--s-1);
+  }
+
+  .wk-section-head {
+    padding: var(--s-6) var(--s-3) var(--s-2);
+    letter-spacing: var(--track-3);
+  }
+
+  /* the open exercise is one white card; a done exercise is one quiet line,
+     the rest a line each */
+  .wk-list-item-current {
+    gap: var(--s-1);
+    padding: var(--s-5) var(--s-6);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-hair-color);
+  }
+
+  .wk-list-card-name {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-body));
+    font-weight: 800;
+    letter-spacing: 0;
+  }
+
+  .wk-list-card-head {
+    align-items: center;
+  }
+
+  .wk-list-row {
+    min-height: var(--tap-min);
+    grid-template-columns: var(--s-9) auto minmax(0, 1fr) auto;
+    border-radius: var(--r-card);
+  }
+
+  .wk-list-name {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-body));
+  }
+
+  /* a finished exercise needs no scheme under its name: the count says it */
+  .wk-list-item[data-state="done"] .wk-list-summary {
+    display: none;
+  }
+
+  .wk-list-body {
+    gap: var(--s-3);
+    margin-top: var(--s-2);
+  }
+
+  /* logged rows, oldest first: where it sits, what it was, its receipt mark */
+  .wk-list-item-current .ledger-sets {
+    gap: 0;
+  }
+
+  .wk-list-item-current .ledger-set,
+  .wk-list-item-current .ledger-set-main {
+    min-height: var(--tap-min);
+  }
+
+  .wk-list-item-current .ledger-set {
+    border-bottom: 0;
+  }
+
+  .wk-list-item-current .ledger-set-n {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
+  }
+
+  .ledger-set-receipt .set-receipt-glyph {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-body));
+    font-weight: 700;
+  }
+
+  .ledger-set-receipt .set-receipt-synced {
+    color: var(--text-dim);
+  }
+
+  /* what is still to do: the next set lit, the others dim */
+  .ledger-plan {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ledger-plan-row {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--s-3);
+    min-height: var(--tap-min);
+    color: var(--text-dim);
+  }
+
+  .ledger-plan-text {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  .ledger-plan-next {
+    margin: var(--s-1) calc(-1 * var(--s-4));
+    padding: 0 var(--s-4);
+    border-radius: var(--r-card);
+    background: var(--surface-current);
+    color: var(--text);
+  }
+
+  .ledger-plan-next .ledger-plan-text {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-base));
+    font-weight: 700;
+  }
+
+  .ledger-plan-next .ledger-set-n,
+  .ledger-plan-tag {
+    color: var(--focus-set-current);
+    font-weight: 700;
+  }
+
+  .ledger-plan-tag {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
+    letter-spacing: var(--track-2);
+  }
+
+  .wk-list-dock {
+    margin-top: var(--s-2);
+  }
 }
 
 /* ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import {
   formatMonth,
   formatAuthoredLoad,
   formatPlate,
+  formatRxSetLine,
   formatRxTarget,
   formatSessionDate,
   formatShortDate,
@@ -63,6 +64,33 @@ const rx = (over: Partial<ResolvedPrescriptionRow>): ResolvedPrescriptionRow =>
     superset_group: null,
     ...over,
   }) as ResolvedPrescriptionRow;
+
+describe("formatRxSetLine is one planned set of the ledger", () => {
+  it("quotes the load before the reps", () => {
+    expect(
+      formatRxSetLine(rx({ resolved_load_kg: 101, plate_load_kg: 100 }), "kg"),
+    ).toBe("100 kg × 5");
+  });
+
+  it("keeps a rep range and converts to the shown unit", () => {
+    expect(
+      formatRxSetLine(
+        rx({ reps_min: 3, reps_max: 5, resolved_load_kg: 100, plate_load_kg: 100 }),
+        "lb",
+      ),
+    ).toBe("220.5 lb × 3-5");
+  });
+
+  it("falls back to the percentage, then to bare reps", () => {
+    expect(formatRxSetLine(rx({ load_pct_tm: 80 }), "kg")).toBe("80% TM × 5");
+    expect(formatRxSetLine(rx(), "kg")).toBe("5 reps");
+  });
+
+  it("says Done and Timed for tracking without numbers", () => {
+    expect(formatRxSetLine(rx({ tracking: "done", reps_min: 0, reps_max: 0 }), "kg")).toBe("Done");
+    expect(formatRxSetLine(rx({ tracking: "time", reps_min: 0, reps_max: 0 }), "kg")).toBe("Timed");
+  });
+});
 
 describe("formatRxTarget is the one prescription formatter", () => {
   it("renders sets, reps and the plate-rounded load", () => {
