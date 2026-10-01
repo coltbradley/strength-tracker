@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { reloadSettings, resetAllSettings, setSetting } from "./settings";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { getSetting, reloadSettings, resetAllSettings, setSetting } from "./settings";
 import { applyTheme, resolveTheme, startTheme } from "./theme";
 
 class MemoryStorage {
@@ -153,5 +155,100 @@ describe("startTheme", () => {
     expect(sys.listeners.size).toBe(0);
     sys.flip(true);
     expect(theme()).toBe("light");
+  });
+});
+
+describe("startTheme on Safari < 14 (MediaQueryList without EventTarget)", () => {
+  it("falls back to addListener/removeListener instead of throwing", () => {
+    let dark = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal("matchMedia", () => ({
+      get matches() {
+        return dark;
+      },
+      addListener: (fn: () => void) => listeners.add(fn),
+      removeListener: (fn: () => void) => listeners.delete(fn),
+    }));
+    setSetting("appearance", "system");
+    const off = startTheme();
+    expect(theme()).toBe("light");
+    dark = true;
+    for (const fn of listeners) fn();
+    expect(theme()).toBe("dark");
+    off();
+    expect(listeners.size).toBe(0);
+  });
+});
+
+// index.html's pre-paint script is a hand-mirrored copy of the settings read +
+// resolveTheme(). Run the REAL script against what settings.ts really writes.
+describe("index.html pre-paint script", () => {
+  const html = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
+  const code = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? "";
+
+  function run(): string | undefined {
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.style.colorScheme = "";
+    (0, eval)(code);
+    // unset = the stylesheet's default, light
+    return theme() ?? "light";
+  }
+
+  it("is present", () => {
+    expect(code).toContain("strength-log.settings");
+  });
+
+  it("reads the envelope settings.ts writes", () => {
+    stubSystem(false);
+    setSetting("appearance", "dark");
+    expect(run()).toBe("dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+    setSetting("appearance", "light");
+    expect(run()).toBe("light");
+  });
+
+  it("follows the system for 'system', like resolveTheme()", () => {
+    setSetting("appearance", "system");
+    stubSystem(true);
+    expect(run()).toBe("dark");
+    stubSystem(false);
+    expect(run()).toBe("light");
+  });
+
+  it("agrees with settings.ts on stored envelopes it cannot use", () => {
+    stubSystem(true);
+    const raw = (v: string) => localStorage.setItem("strength-log.settings", v);
+    // legacy / older envelope with no appearance key -> light (the default)
+    raw(JSON.stringify({ v: 1, values: { unit: "kg" } }));
+    expect(run()).toBe("light");
+    // an envelope settings.ts rejects (no numeric v) must not paint dark first
+    raw(JSON.stringify({ values: { appearance: "dark" } }));
+    reloadSettings();
+    expect(getSetting("appearance")).toBe("light");
+    expect(run()).toBe("light");
+    // garbage and unknown values
+    raw("{not json");
+    expect(run()).toBe("light");
+    raw(JSON.stringify({ v: 2, values: { appearance: "sepia" } }));
+    expect(run()).toBe("light");
+    // a newer envelope is read as-is
+    raw(JSON.stringify({ v: 99, values: { appearance: "dark" } }));
+    expect(run()).toBe("dark");
+  });
+
+  it("leaves light when localStorage or matchMedia throw", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("SecurityError");
+      },
+    });
+    expect(run()).toBe("light");
+    vi.stubGlobal("localStorage", new MemoryStorage());
+    localStorage.setItem(
+      "strength-log.settings",
+      JSON.stringify({ v: 2, values: { appearance: "system" } }),
+    );
+    vi.stubGlobal("matchMedia", undefined);
+    expect(run()).toBe("light");
   });
 });

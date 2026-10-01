@@ -19,7 +19,9 @@
       (function () {
         try {
           var t = "light";
-          var a = JSON.parse(localStorage.getItem("strength-log.settings")).values.appearance;
+          var e = JSON.parse(localStorage.getItem("strength-log.settings"));
+          if (typeof e.v !== "number" || !e.values) throw 0; // settings.ts load() rejects this too
+          var a = e.values.appearance;
           if (a === "dark") t = "dark";
           else if (a === "system" && matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
           document.documentElement.dataset.theme = t;

@@ -81,9 +81,18 @@ export function startTheme(): () => void {
   const offSettings = subscribeSettings(update);
   // The listener is attached regardless of the current choice and re-resolves
   // each time, so switching to "system" later needs no (re)subscription.
-  mq?.addEventListener("change", update);
+  // Safari < 14 has no EventTarget on MediaQueryList, only addListener; calling
+  // addEventListener there throws at startup, before first render.
+  if (mq) {
+    if (typeof mq.addEventListener === "function")
+      mq.addEventListener("change", update);
+    else if (typeof mq.addListener === "function") mq.addListener(update);
+  }
   return () => {
     offSettings();
-    mq?.removeEventListener("change", update);
+    if (!mq) return;
+    if (typeof mq.removeEventListener === "function")
+      mq.removeEventListener("change", update);
+    else if (typeof mq.removeListener === "function") mq.removeListener(update);
   };
 }
