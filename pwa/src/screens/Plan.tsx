@@ -140,7 +140,7 @@ const MAIN_LABEL = "MAIN WORK";
 /** Sections the editor offers before anything the day already uses. */
 const SECTION_SUGGESTIONS = ["Activations", "Abs", "Cooldown"];
 
-function draftFrom(
+export function draftFrom(
   r: ResolvedPrescriptionRow,
   equipment: string | null,
 ): RxDraft {
@@ -192,7 +192,7 @@ function unchanged(r: ResolvedPrescriptionRow, p: PrescriptionPatch): boolean {
   );
 }
 
-function patchFrom(d: RxDraft): PrescriptionPatch {
+export function patchFrom(d: RxDraft): PrescriptionPatch {
   // The load fields come from lib/setLoad.ts and nowhere else: the typed
   // number and its unit are the source, load_kg is derived from them.
   // `draft.load_kg` is only the stepper's working copy, and rounding it back

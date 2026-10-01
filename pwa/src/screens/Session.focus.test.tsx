@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { isAcceptedAuthoredLoad } from "../lib/setLoad";
 import "fake-indexeddb/auto";
 
 import { IDBFactory } from "fake-indexeddb";
@@ -155,15 +156,12 @@ async function seed(
   await cacheSet(cacheKeys.sessionSets(active.id), sets);
 }
 
-// Same arithmetic as validate_entered_load_consistency() in the applied
-// Postgres migration. The queue payload must pass before it reaches the phone.
+// The outbox is mocked here, so apply the same gate it applies: the TS mirror
+// of validate_entered_load_consistency() (lib/setLoad.ts), which the PGlite
+// property test proves equal to the applied migration.
 function expectAcceptedAuthoredLoad(payload: SetInsert) {
   expect(payload.entered_load).not.toBeNull();
-  const expectedTotal = Math.round(
-    payload.entered_load! * (payload.entered_unit === "lb" ? 0.45359237 : 1) *
-      (payload.load_entry === "per_side" ? 2 : 1) * 100,
-  ) / 100;
-  expect(payload.load_kg).toBe(expectedTotal);
+  expect(isAcceptedAuthoredLoad(payload)).toEqual({ ok: true });
 }
 
 function firstQueuedSet(): SetInsert {
