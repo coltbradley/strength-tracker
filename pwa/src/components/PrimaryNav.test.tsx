@@ -131,26 +131,43 @@ describe("primary navigation", () => {
     });
   });
 
-  it("hides healthy sync while keeping queued and failed writes visible", () => {
+  it("shows healthy sync as a bare check and widens for queued and failed writes", () => {
     const view = render(<App />);
-    expect(screen.queryByText("SYNCED")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "All sets on the server" }).textContent,
+    ).toBe("✓");
 
     h.status = { ...h.status, pending: 2, state: "idle" };
     view.rerender(<App />);
-    expect(screen.getByRole("button", { name: "2 QUEUED" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /^On phone · 2/ }).textContent,
+    ).toContain("On phone · 2");
 
     h.status = { ...h.status, pending: 2, state: "syncing" };
     view.rerender(<App />);
-    expect(screen.getByRole("button", { name: "SYNCING 2…" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /^Sending · 2/ }).textContent,
+    ).toContain("Sending · 2");
 
     h.status = { ...h.status, pending: 1, dead: 1, state: "error" };
     view.rerender(<App />);
     expect(
-      screen.getByRole("button", { name: "review 1 failed writes" }),
+      screen.getByRole("button", { name: "Review 1 failed writes" }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "1 RETRYING · RETRY" }),
+      screen.getByRole("button", { name: /^On phone · 1, retrying/ }),
     ).toBeTruthy();
+  });
+
+  it("puts the session controls slot in the topbar on /session, in place of the wordmark", () => {
+    window.history.replaceState({}, "", "/session");
+    render(<App />);
+
+    const topbar = document.querySelector(".topbar") as HTMLElement;
+    expect(topbar.querySelector(".topbar-session")).not.toBeNull();
+    expect(
+      within(topbar).queryByRole("button", { name: "go to Train" }),
+    ).toBeNull();
   });
 
   it("keeps Coach, problem reporting, and Settings in the header with their sheets", async () => {
@@ -194,10 +211,10 @@ describe("primary navigation", () => {
       within(tools).getByRole("button", { name: "settings" }),
     ).toBeTruthy();
     expect(
-      within(tools).getByRole("button", { name: "review 1 failed writes" }),
+      within(tools).getByRole("button", { name: "Review 1 failed writes" }),
     ).toBeTruthy();
     expect(
-      within(tools).getByRole("button", { name: "1 RETRYING · RETRY" }),
+      within(tools).getByRole("button", { name: /^On phone · 1, retrying/ }),
     ).toBeTruthy();
   });
 });

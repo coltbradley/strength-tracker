@@ -179,6 +179,27 @@ afterEach(() => {
   resetAllSettings();
 });
 
+// Session picks its opening presentation once, after sets have loaded, and
+// "focus" is its pre-decision default. The List button exists from the first
+// paint, so a test that means "the lifter leaves focus" must let that one-time
+// decision settle first or it would race it.
+async function listButton() {
+  await vi.waitFor(() =>
+    expect(document.querySelector(".focus-shell")).not.toBeNull(),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  return screen.getByRole("button", { name: "List" });
+}
+
+// The unit switch lives in the "Today's workout" sheet (topbar ☰ count), not
+// on the screen, so reaching it means opening the sheet first.
+function unitButton(name: string) {
+  if (!screen.queryByRole("dialog", { name: "Today's workout" })) {
+    fireEvent.click(screen.getByRole("button", { name: /^Today's workout/ }));
+  }
+  return screen.getByRole("button", { name });
+}
+
 describe("Session focus presentation", () => {
   it("opens an eligible started or restored session in focus mode by default", async () => {
     render(
@@ -188,7 +209,7 @@ describe("Session focus presentation", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
+      await listButton(),
     ).toBeTruthy();
     expect(screen.queryByText(/target 8/i)).toBeNull();
     expect(document.body.classList.contains("focus-chrome-hidden")).toBe(true);
@@ -237,11 +258,11 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
+      await listButton(),
     );
     fireEvent.click(screen.getByRole("button", { name: "increase reps by 1" }));
     fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
 
     expect(
       screen.getByRole("button", { name: "reps value — tap to type" })
@@ -302,13 +323,13 @@ describe("Session focus presentation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "increase load by 2.5 kg" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: /^Back Squat(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(
       await screen.findByRole("heading", { name: "Back Squat" }),
     ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     expect(
@@ -492,14 +513,14 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "2" }));
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
-    expect(screen.getByRole("button", { name: "Show weights in pounds" }).getAttribute("aria-pressed")).toBe("true");
+    expect(unitButton("Show weights in pounds").getAttribute("aria-pressed")).toBe("true");
 
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in kilograms" }));
-    expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(unitButton("Show weights in kilograms"));
+    expect(unitButton("Show weights in kilograms").getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("102.06");
 
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
-    expect(screen.getByRole("button", { name: "Show weights in kilograms" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(unitButton("Show weights in kilograms").getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
 
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
@@ -524,8 +545,8 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "5" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in kilograms" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    fireEvent.click(unitButton("Show weights in kilograms"));
+    fireEvent.click(unitButton("Show weights in pounds"));
     expect(screen.getByRole("button", { name: "load value — tap to type" }).textContent).toBe("225.25");
     fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
     await vi.waitFor(() => expect(vi.mocked(outbox.enqueue)).toHaveBeenCalledTimes(1));
@@ -551,7 +572,7 @@ describe("Session focus presentation", () => {
     fireEvent.click(screen.getByRole("button", { name: "0" }));
     fireEvent.click(screen.getByRole("button", { name: "SET LOAD" }));
     fireEvent.click(screen.getByRole("button", { name: "Last: 30 kg × 8 working" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    fireEvent.click(unitButton("Show weights in pounds"));
     fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
     fireEvent.click(screen.getByRole("button", { name: "6" }));
     fireEvent.click(screen.getByRole("button", { name: "6" }));
@@ -581,7 +602,7 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    fireEvent.click(unitButton("Show weights in pounds"));
     fireEvent.click(screen.getByRole("button", { name: "load value — tap to type" }));
     fireEvent.click(screen.getByRole("button", { name: "7" }));
     fireEvent.click(screen.getByRole("button", { name: "0" }));
@@ -610,7 +631,7 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "Last: 30 kg × 8 working" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    fireEvent.click(unitButton("Show weights in pounds"));
     fireEvent.click(screen.getByRole("button", { name: "increase load by 5 lb" }));
     fireEvent.click(screen.getByRole("button", { name: "SAVE SET 1" }));
 
@@ -950,7 +971,7 @@ describe("Session focus presentation", () => {
     render(<MemoryRouter><Session /></MemoryRouter>);
 
     await screen.findByText("round 1 of 2");
-    fireEvent.click(screen.getByRole("button", { name: "Show weights in pounds" }));
+    fireEvent.click(unitButton("Show weights in pounds"));
     const a1 = screen.getByLabelText("A1 Bench Press");
     const a2 = screen.getByLabelText("A2 Barbell Row");
     expect(within(a1).getByRole("button", { name: /load value/ }).textContent).toBe("44.09");
@@ -1209,7 +1230,7 @@ describe("Session focus presentation", () => {
     expect(await screen.findByRole("timer", { name: /^rest timer/ })).toBeTruthy();
 
     fireEvent.click(
-      screen.getByRole("button", { name: /— current — view full workout$/ }),
+      screen.getByRole("button", { name: "List" }),
     );
     fireEvent.click(
       screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }),
@@ -1263,9 +1284,7 @@ describe("Session focus presentation", () => {
       })[1]!,
     );
     fireEvent.click(
-      screen.getAllByRole("button", {
-        name: /— current — view full workout$/,
-      })[0]!,
+      screen.getByRole("button", { name: "List" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
 
@@ -1452,11 +1471,7 @@ describe("Session focus presentation", () => {
     // dot opens overview (see FocusDeck's rail: onViewFullWorkout fires for
     // any dot whose state is "current", not one particular member).
     fireEvent.click(
-      (
-        await screen.findAllByRole("button", {
-          name: /— current — view full workout$/,
-        })
-      )[0]!,
+      await listButton(),
     );
     fireEvent.click(screen.getByRole("button", { name: /^Barbell Row(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
@@ -1480,7 +1495,7 @@ describe("Session focus presentation", () => {
       await Promise.resolve();
     });
     expect(screen.getByRole("timer", { name: /^rest timer/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
     act(() => vi.advanceTimersByTime(30_000));
 
@@ -1568,7 +1583,7 @@ describe("Session focus presentation", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
+      await listButton(),
     );
     fireEvent.click(screen.getByRole("button", { name: /^Bench Press(, selected)? — / }));
     fireEvent.click(screen.getByRole("button", { name: "Go to current exercise" }));
@@ -1618,7 +1633,7 @@ describe("Session focus presentation", () => {
     // Bench is already done, so the session opens in focus on Squat. Switch
     // to overview, open Bench, and start correcting its logged set.
     fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
+      await listButton(),
     );
     fireEvent.click(
       await screen.findByRole("button", { name: "expand details" }),
@@ -1690,7 +1705,7 @@ describe("Session focus presentation", () => {
         .textContent,
     ).toBe("9");
 
-    fireEvent.click(screen.getByRole("button", { name: /— current — view full workout$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
 
     // The correction on Back Squat must still be the one on screen, staged.
     expect(screen.getByRole("button", { name: "SAVE SET 1" })).toBeTruthy();

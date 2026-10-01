@@ -48,7 +48,11 @@ import {
   type SetEditorProps,
 } from "../components/session/SetEditor";
 import { SupersetRoundEditor } from "../components/session/SupersetRoundEditor";
-import { UnitSwitch } from "../components/session/UnitSwitch";
+import {
+  SessionHeaderControls,
+  SessionHeaderPortal,
+} from "../components/session/SessionHeader";
+import { TodayWorkoutSheet } from "../components/session/TodayWorkoutSheet";
 import { FocusDeck } from "../components/session/FocusDeck";
 import { FocusMoreSheet } from "../components/session/FocusMoreSheet";
 import { WorkoutOverview } from "../components/session/WorkoutOverview";
@@ -258,6 +262,8 @@ export function Session() {
   const [presentation, setPresentation] =
     useState<SessionPresentation>("focus");
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  // "Today's workout" sheet, opened from the topbar's ☰ count.
+  const [workoutSheetOpen, setWorkoutSheetOpen] = useState(false);
   const priorFocusKey = useRef<string | null>(null);
 
   // The number the USER types. On a per-side exercise it is one side; the
@@ -3427,6 +3433,23 @@ export function Session() {
   // one way out of the workout instead of a button that would only stage an
   // unplanned extra set.
   const workoutDone = entries.length > 0 && entries.every(entryDone);
+  // The topbar's "☰ 9/25": sets done over sets the plan asks for. Progress is
+  // capped at each entry's own target so an extra set cannot push the count
+  // past the total, and entries with no plan (extras) are in neither number.
+  // Voided sets never arrive here: setsForEntry reads live sets only.
+  const headerTotal = entries.reduce((n, e) => n + targetSets(e), 0);
+  const headerDone = entries.reduce(
+    (n, e) => n + Math.min(entryProgress(e), targetSets(e)),
+    0,
+  );
+  const jumpToEntry = (entry: ExerciseEntry) => {
+    if (presentation === "focus" && focusEligible) {
+      setFocusKey(entry.key);
+    } else {
+      setSelectedEntryKey(entry.key);
+    }
+    setOpenKey(entry.key);
+  };
   const finishWorkout = () => {
     // ending the session ends the rest; nothing to announce
     disarmRestAlert();
@@ -3657,6 +3680,34 @@ export function Session() {
 
   return (
     <div className="session-shell">
+      <SessionHeaderPortal>
+        <SessionHeaderControls
+          done={headerDone}
+          total={headerTotal}
+          presentation={presentation}
+          focusEligible={focusEligible}
+          onOpenWorkout={() => setWorkoutSheetOpen(true)}
+          onFocus={enterFocus}
+          onList={showOverview}
+        />
+      </SessionHeaderPortal>
+      {workoutSheetOpen && (
+        <TodayWorkoutSheet
+          entries={entries}
+          unit={unit}
+          onUnitChange={switchWorkoutUnit}
+          entryProgress={entryProgress}
+          entryState={entryState}
+          isSkipped={(entry) => Boolean(skips[entry.key])}
+          formatScheme={scheme}
+          onSelect={jumpToEntry}
+          isLocked={(entry) =>
+            editingEntryKey !== null && entry.key !== editingEntryKey
+          }
+          onFinish={finishWorkout}
+          onClose={() => setWorkoutSheetOpen(false)}
+        />
+      )}
       <div
         className="session-scroll"
         style={
@@ -3691,7 +3742,6 @@ export function Session() {
                     {doneEntries} OF {entries.length} DONE
                   </span>
                 )}
-                <UnitSwitch unit={unit} onChange={switchWorkoutUnit} />
               </div>
             </div>
           )}

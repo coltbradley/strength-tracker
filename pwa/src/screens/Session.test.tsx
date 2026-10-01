@@ -106,6 +106,16 @@ beforeEach(async () => {
   await cacheSet(cacheKeys.sessionSets(active.id), [benchSet]);
 });
 
+// Session decides its opening presentation once, after sets load; "List" exists
+// from the first paint, so let that decision settle before leaving focus.
+async function listButton() {
+  await vi.waitFor(() =>
+    expect(document.querySelector(".focus-shell")).not.toBeNull(),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  return screen.getByRole("button", { name: "List" });
+}
+
 describe("Session corrections", () => {
   it("keeps a staged correction on its source entry when another Detail is requested", async () => {
     render(
@@ -118,7 +128,7 @@ describe("Session corrections", () => {
     // start — go to the workout overview first, since "expand details" is
     // the accordion's own control.
     fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
+      await listButton(),
     );
     fireEvent.click(
       await screen.findByRole("button", { name: "expand details" }),
@@ -475,7 +485,7 @@ describe("Session hero capture", () => {
     );
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /— current — view full workout$/ }),
+      await listButton(),
     );
     expect(screen.getByRole("button", { name: "UNSKIP" })).toBeTruthy();
   });
