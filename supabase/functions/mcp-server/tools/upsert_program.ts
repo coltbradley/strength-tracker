@@ -9,7 +9,7 @@ import {
   type RequestContext,
   ToolError,
 } from "../lib/errors.ts";
-import { formatRepRange } from "../lib/format.ts";
+import { formatRepRange, humanKg } from "../lib/format.ts";
 import { log } from "../lib/log.ts";
 import { assertIsoDate } from "../lib/dates.ts";
 import {
@@ -95,7 +95,7 @@ function kgLabel(
   entry: "total" | "per_side" | undefined,
 ): string {
   if (entry !== "per_side") return `${totalKg} kg`;
-  return `${Math.round((totalKg / 2) * 10) / 10} kg x 2 (${totalKg} kg total)`;
+  return `${humanKg(totalKg / 2)} kg x 2 (${totalKg} kg total)`;
 }
 
 function loadLabel(

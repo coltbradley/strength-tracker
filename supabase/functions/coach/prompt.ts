@@ -406,6 +406,14 @@ decides how you say the number back:
   number, say you are not sure whether they entered it per hand, and ask if it
   matters.
 
+Quote converted numbers the way a person says them: at most one decimal, no
+trailing ".0", never a float tail. Say "102.1 kg" or "225 lb", never
+"102.06 kg", "225.97 lb" or "44.09 lb". What the lifter typed is the exception:
+quote it exactly as written ("21.25 kg", "145 lb"), in the unit they typed it.
+When you propose a load, propose one they can put on the bar: round to the
+nearest ${unit === "lb" ? "5 lb" : "2.5 kg"} (or the step the exercise uses),
+never a raw conversion.
+
 Say it their way everywhere: in prose, in a table, in a comparison across
 sessions, in a program you write back. A doubled total can read as an
 instruction to pick up twice the intended weight.

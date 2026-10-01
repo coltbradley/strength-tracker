@@ -70,3 +70,12 @@ Deno.test("in-app coach cannot confirm programs or live plan changes", () => {
   assertStringIncludes(PROMPT, "Claude Desktop");
   assertEquals(PROMPT.includes("confirm_change=true"), false);
 });
+
+Deno.test("coach quotes converted loads at human precision and typed loads exactly", () => {
+  const lb = systemPrompt("2026-09-16", "lb");
+  assertStringIncludes(lb, "at most one decimal");
+  assertStringIncludes(lb, '"102.06 kg", "225.97 lb"');
+  assertStringIncludes(lb, "quote it exactly as written");
+  assertStringIncludes(lb, "nearest 5 lb");
+  assertStringIncludes(PROMPT, "nearest 2.5 kg");
+});
