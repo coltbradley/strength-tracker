@@ -12,6 +12,7 @@ import type { Db } from "./db.ts";
 import { must, visibleExerciseIds } from "./db.ts";
 import { todayIso } from "./dates.ts";
 import { ToolError } from "./errors.ts";
+import { buildSetLoad, LoadIntegrityError } from "./setLoad.ts";
 
 // NOTE: there is deliberately no `position` field. The ARRAY ORDER is the
 // order of the day, and both tools renumber from it. A caller-supplied
@@ -377,7 +378,28 @@ export function prescriptionRows(
   plannedWorkoutId: string,
   prescriptions: Prescription[],
 ): Record<string, unknown>[] {
-  return prescriptions.map((p, i) => ({
+  return prescriptions.map((p, i) => {
+    // The authored load goes through the one derivation shared with the PWA
+    // (lib/setLoad.ts, byte-identical to pwa/src/lib/setLoad.ts), so load_kg,
+    // load_entry and the authored pair agree with the database rule exactly.
+    // The old inline Math.round on a float product disagreed with Postgres
+    // numeric on rounding ties and on values with more than 3 decimals.
+    let built: ReturnType<typeof buildSetLoad> | null = null;
+    if (p.load) {
+      try {
+        built = buildSetLoad({
+          typedValue: p.load.value,
+          typedUnit: p.load.unit,
+          loadEntry: p.load.entry,
+        });
+      } catch (e) {
+        if (e instanceof LoadIntegrityError) {
+          throw new ToolError(`Prescription ${i + 1}: ${e.message}`);
+        }
+        throw e;
+      }
+    }
+    return {
     user_id: ownerId,
     planned_workout_id: plannedWorkoutId,
     exercise_id: p.exercise_id,
@@ -385,16 +407,15 @@ export function prescriptionRows(
     sets: p.sets,
     reps_min: p.reps_min,
     reps_max: p.reps_max,
-    load_kg: p.load
-      ? Math.round(
-        ((p.load.unit === "lb" ? p.load.value * 0.45359237 : p.load.value) *
-          (p.load.entry === "per_side" ? 2 : 1)) * 100,
-      ) / 100
-      : p.load_kg == null ? null : Math.round(p.load_kg * 100) / 100,
+    load_kg: built
+      ? built.load_kg
+      : p.load_kg == null
+      ? null
+      : Math.round(p.load_kg * 100) / 100,
     load_pct_tm: p.load_pct_tm ?? null,
-    load_entry: p.load?.entry ?? p.load_entry ?? null,
-    entered_load: p.load?.value ?? null,
-    entered_unit: p.load?.unit ?? null,
+    load_entry: built?.load_entry ?? p.load_entry ?? null,
+    entered_load: built?.entered_load ?? null,
+    entered_unit: built?.entered_unit ?? null,
     rest_seconds: p.rest_seconds ?? null,
     notes: p.notes ?? null,
     superset_group: p.superset_group ?? null,
@@ -413,5 +434,6 @@ export function prescriptionRows(
     // 'working' either way. Explicit here, homogeneous keys, no surprise.
     set_type: p.set_type ?? "working",
     tracking: p.tracking ?? "reps",
-  }));
+    };
+  });
 }
