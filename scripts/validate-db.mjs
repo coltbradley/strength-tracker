@@ -4079,5 +4079,68 @@ console.log("\nexercise prefs (synced presentation, last-write-wins):");
   });
 }
 
+// --- goals: the exercise must be visible (20261001010000) --------------------
+console.log("\ngoals (visible-exercise check on insert and update):");
+
+{
+  const GA = "00000000-0000-4000-8000-000000fa0001";
+  const GB = "00000000-0000-4000-8000-000000fa0002";
+  await db.exec(
+    `insert into auth.users (id, email) values ('${GA}', 'ga@example.test'), ('${GB}', 'gb@example.test');
+     insert into exercises (id, name, primary_muscles, source)
+       values ('Goals_Private_Lift', 'Goals Private Lift', array['quadriceps'], 'custom');
+     insert into exercise_owners (exercise_id, user_id) values ('Goals_Private_Lift', '${GA}');`,
+  );
+  const code = async (uid, sql) => {
+    try {
+      await asUser(uid, sql);
+      return "accepted";
+    } catch (e) {
+      return `${e.code}`;
+    }
+  };
+
+  await check("a goal on another user's PRIVATE custom exercise fails exactly like a missing id (no oracle)", async () => {
+    const priv = await code(GB, `insert into goals (exercise_id, target_e1rm_kg) values ('Goals_Private_Lift', 100)`);
+    const missing = await code(GB, `insert into goals (exercise_id, target_e1rm_kg) values ('Goals_No_Such_Lift', 100)`);
+    assertEq(priv, missing, "private-to-others answers like a nonexistent id");
+    assertEq(priv, "42501", "refused by the policy before the FK");
+    const n = await db.query(`select count(*)::int as n from goals where exercise_id = 'Goals_Private_Lift'`);
+    assertEq(n.rows[0].n, 0, "no cross-user goal row exists to block delete_exercise");
+  });
+
+  await check("re-pointing a goal at an invisible exercise is refused the same way", async () => {
+    await asUser(GB, `insert into goals (exercise_id, target_e1rm_kg) values ('Barbell_Deadlift', 150)`);
+    const upd = await code(GB, `update goals set exercise_id = 'Goals_Private_Lift' where exercise_id = 'Barbell_Deadlift'`);
+    assertEq(upd, "42501", "the update arm is held to the same rule");
+    const upsert = await code(GB, `insert into goals (exercise_id, target_e1rm_kg) values ('Barbell_Deadlift', 160)
+      on conflict (user_id, exercise_id) do update set exercise_id = 'Goals_Private_Lift'`);
+    assertEq(upsert, "42501", "the upsert's update arm too");
+  });
+
+  await check("the owner, and a library exercise, still work for goals", async () => {
+    assertEq(await code(GA, `insert into goals (exercise_id, target_e1rm_kg) values ('Goals_Private_Lift', 120)`), "accepted", "owner of the private exercise");
+    assertEq(await code(GB, `update goals set target_e1rm_kg = 155 where exercise_id = 'Barbell_Deadlift'`), "accepted", "update on a library exercise");
+    const own = await db.query(`select count(*)::int as n from goals where user_id = '${GB}' and target_e1rm_kg = 155`);
+    assertEq(own.rows[0].n, 1, "the update landed");
+  });
+
+  await check("goals stay owner-only: another user cannot read, update or delete them, or insert as them", async () => {
+    const read = await asUser(GB, `select count(*)::int as n from goals where user_id = '${GA}'`);
+    assertEq(read.rows[0].n, 0, "no read of another user's goal");
+    await asUser(GB, `update goals set target_e1rm_kg = 1 where user_id = '${GA}'`);
+    await asUser(GB, `delete from goals where user_id = '${GA}'`);
+    const still = await db.query(`select target_e1rm_kg::float as v from goals where user_id = '${GA}'`);
+    assertEq(still.rows[0].v, 120, "untouched");
+    assertEq(await code(GB, `insert into goals (user_id, exercise_id, target_e1rm_kg) values ('${GA}', 'Barbell_Squat', 100)`), "42501", "explicit other user_id");
+  });
+
+  await check("deleting the private exercise is not blocked by a stranger's goal", async () => {
+    await db.exec(`delete from goals where exercise_id = 'Goals_Private_Lift'; delete from exercise_owners where exercise_id = 'Goals_Private_Lift'; delete from exercises where id = 'Goals_Private_Lift'`);
+    const n = await db.query(`select count(*)::int as n from exercises where id = 'Goals_Private_Lift'`);
+    assertEq(n.rows[0].n, 0, "removed");
+  });
+}
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
