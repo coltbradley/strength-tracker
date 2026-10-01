@@ -167,7 +167,9 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
 
     await context.setOffline(true);
     await page.getByRole("button", { name: /^LOG SET(?:\s|$)/i }).click();
-    await expect(page.locator(".focus-progress-rail")).toBeVisible();
+    // the LAST SET card claims only what the receipt proves: queued on the
+    // phone while offline, never "saved"
+    await expect(page.getByRole("status", { name: /^Set status: On this phone/ })).toBeVisible();
     const queued = await page.evaluate(async () => {
       const database = await new Promise((resolve, reject) => {
         const request = indexedDB.open("strength-log", 1);
@@ -184,9 +186,10 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
     });
     expect(queued).toHaveLength(1);
     expect(queued[0].user_id).toBe(userA.id);
-    await page.getByRole("button", { name: `more options for ${exerciseName}` }).click();
-    await expect(page.locator(".logged-set-wrap")).toHaveCount(1);
-    await page.getByRole("button", { name: "Close" }).click();
+    // List's open card is the ledger of what is logged
+    await page.getByRole("button", { name: "List" }).click();
+    await expect(page.getByRole("button", { name: /^Correct logged set 1/ })).toHaveCount(1);
+    await page.getByRole("button", { name: "Focus" }).click();
 
     await context.setOffline(false);
     let sessionSets = await waitFor(async () => {
@@ -196,10 +199,10 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
     expect(sessionSets).toHaveLength(1);
     const originalSet = sessionSets[0];
 
-    await page.getByRole("button", { name: `more options for ${exerciseName}` }).click();
-    await page.getByRole("button", { name: "Correct logged set 1" }).click();
-    await page.getByRole("button", { name: /increase load by/i }).click();
-    await page.getByRole("button", { name: /^SAVE SET 1$/i }).click();
+    await page.getByRole("button", { name: "Fix last" }).click();
+    const fixSheet = page.getByRole("dialog", { name: /^Fix / });
+    await fixSheet.getByRole("button", { name: /increase load by/i }).click();
+    await fixSheet.getByRole("button", { name: "Save correction" }).click();
     sessionSets = await waitFor(async () => {
       const result = await rows(page, "sets", `select=id,user_id,session_id,prescription_id,set_index,load_kg,reps,performed_at&session_id=eq.${session.id}&order=created_at.asc`);
       return result.length >= 2 ? result : null;
@@ -213,8 +216,12 @@ test.describe("Phase 2 local seeded browser lifecycle", () => {
 
     for (let index = 0; index < 2; index += 1) {
       await page.getByRole("button", { name: /^LOG SET(?:\s|$)/i }).click();
+      // past the 200 ms duplicate-tap lock
+      await page.waitForTimeout(300);
     }
-    await page.getByRole("button", { name: /^FINISH$/i }).click();
+    // Focus has no footer: Finish lives in Today's workout
+    await page.getByRole("button", { name: /^Today's workout,/ }).click();
+    await page.getByRole("dialog", { name: "Today's workout" }).getByRole("button", { name: "Finish session" }).click();
     await expect(page.getByRole("heading", { name: "End session" })).toBeVisible();
     await page.getByRole("button", { name: "End session" }).click();
 

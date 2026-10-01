@@ -2515,6 +2515,29 @@
     opacity: 0.55;
   }
 
+  .reorder-title {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-width: 0;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-body));
+    font-weight: 700;
+    letter-spacing: normal;
+    text-transform: none;
+    overflow-wrap: anywhere;
+  }
+
+  .reorder-sub {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-meta));
+    font-weight: 400;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
   .reorder-count {
     display: flex;
     flex-direction: column;
@@ -2593,9 +2616,11 @@
     gap: var(--s-4);
   }
 
+  /* load and reps side by side, like the dock; a lone card takes the row */
   .correction-numbers {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     gap: var(--s-3);
   }
 
@@ -2957,7 +2982,10 @@
      * scrolled to, instead of being centred past the top edge. */
     justify-content: safe center;
     gap: var(--s-5);
-    padding: var(--s-4) 0;
+    padding: var(--s-4) 0 var(--s-7);
+    /* a short fade at the bottom edge says "there is more above the dock" when
+     * the band has to scroll */
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--s-7)), transparent);
   }
 
   .focus-cue {
@@ -3055,6 +3083,14 @@
   .correction-sheet .btn-primary,
   .note-sheet .btn-primary {
     min-height: 64px;
+  }
+
+  /* Save stays on screen however tall the sheet gets (320px, large text) */
+  .correction-sheet .btn-primary {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    box-shadow: 0 calc(-1 * var(--s-3)) 0 var(--bg);
   }
 
   .focus-middle .chip:active,
@@ -3563,7 +3599,26 @@
 
     .focus-middle {
       gap: var(--s-3);
-      padding: var(--s-2) 0;
+      padding: var(--s-2) 0 var(--s-6);
+    }
+
+    /* the dock gives back some height: the numbers stay legible (30px) and
+     * every target stays at 44px or more */
+    .focus-dock {
+      gap: var(--s-3);
+      padding-top: var(--s-4);
+    }
+
+    .dock-num {
+      min-height: 68px;
+    }
+
+    .dock-num-value {
+      font-size: calc(var(--demo-text-scale, 1) * 30px);
+    }
+
+    .focus-key {
+      min-height: var(--tap-min);
     }
 
     .focus-saved-card,

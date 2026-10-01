@@ -13,6 +13,12 @@ offline set held in IndexedDB and then synced, a correction (void plus a new
 row at the same index), additional sets, session finish, exact row readback,
 and a second user's denied read and void attempt.
 
+Version D selectors: the offline set is asserted through the LAST SET card's
+receipt ("On this phone", never "Saved"), the correction goes through the
+`Fix last` key and its own "Fix ..." sheet ("Save correction"), logged rows are
+read from List, and the session is finished from Today's workout (the ☰ count
+in the header), since Focus has no footer.
+
 The email-code sign-in screen is NOT RUN by this suite. The repository's local
 Auth SMTP points at the external AgentMail host, so this fixture uses local
 password sign-in and sends no email.
