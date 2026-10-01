@@ -700,7 +700,22 @@ export function createOutbox({
             break attempt;
           }
 
-          const kind = classify(item.op, err);
+          let kind = classify(item.op, err);
+
+          // A refusal "for good" deletes the item AND (through onDiscarded)
+          // the local pref, so it needs more than the response: the request
+          // must have gone out as a CONFIRMED identity. A 42501 from a request
+          // that ran as `anon` (token missing between a sign-out and this
+          // flush) looks identical to "this exercise is not yours to see", and
+          // forgetting the lifter's choice for that is not undone by signing
+          // back in (L4). Unconfirmed means the item is kept: dead (visible,
+          // retryable once signed in) when the session is gone, pending when
+          // we could not find out.
+          if (kind === "discard") {
+            const confirmed = await identityConfirmed(requestOwner);
+            if (confirmed === "no") kind = "dead";
+            else if (confirmed === "unknown") kind = "retry";
+          }
 
           if (kind === "discard") {
             await db.delete("outbox", row.key);
@@ -798,6 +813,23 @@ export function createOutbox({
       // IndexedDB itself failed; queue is untouched, surface the error.
       const message = e instanceof Error ? e.message : String(e);
       setStatus({ state: "error", lastError: message });
+    }
+  }
+
+  /**
+   * Was the request that just failed made by a signed-in `owner`? "yes" only
+   * when the identity captured BEFORE the request is a real user, is still the
+   * live one now, and (where the transport can say) the session is valid.
+   * "no": not signed in / a different person. "unknown": the session check
+   * itself could not be answered (offline), so nothing may be concluded.
+   */
+  async function identityConfirmed(owner: string | null): Promise<"yes" | "no" | "unknown"> {
+    if (typeof owner !== "string" || whoAmI() !== owner) return "no";
+    if (!transport.refreshAuth) return "yes";
+    try {
+      return (await transport.refreshAuth()) && whoAmI() === owner ? "yes" : "no";
+    } catch {
+      return "unknown";
     }
   }
 

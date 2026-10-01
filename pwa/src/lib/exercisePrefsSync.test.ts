@@ -581,6 +581,70 @@ describe("a refused pref is forgotten, not re-queued forever (F1)", () => {
   });
 });
 
+describe("a refusal is discarded only when identity is confirmed (L4)", () => {
+  const rls = { message: "new row violates row-level security policy", code: "42501", status: 403 };
+
+  async function run(refreshAuth: (() => Promise<boolean>) | undefined, whoAfter?: () => string | null) {
+    globalThis.indexedDB = new IDBFactory();
+    resetDbForTests();
+    replaceExercisePrefsState({ sled: { barKg: 20 } }, { owner: ALICE, stamps: { sled: T1 } });
+    const dropped: OutboxOp[] = [];
+    let calls = 0;
+    const outbox = createOutbox({
+      getDb,
+      transport: {
+        async insert() { calls += 1; return rls; },
+        async update() { return null; },
+        ...(refreshAuth ? { refreshAuth } : {}),
+      },
+      isOnline: () => true,
+      currentUserId: () => (whoAfter && calls > 0 ? whoAfter() : ALICE),
+      onDiscarded: (op) => {
+        dropped.push(op);
+        if (op.kind === "insert" && op.table === "exercise_prefs") {
+          dropRefusedExercisePref(op.payload.exercise_id, op.payload.updated_at);
+        }
+      },
+    });
+    await outbox.enqueue({
+      kind: "insert",
+      table: "exercise_prefs",
+      payload: prefToUpsert(ALICE, "sled", { barKg: 20 }, T1),
+    });
+    await outbox.flush();
+    return { outbox, dropped };
+  }
+
+  it("a 42501 while the session is gone (anon) keeps the item and the local pref", async () => {
+    const { outbox, dropped } = await run(async () => false);
+    expect(dropped).toEqual([]);
+    expect(getExercisePref("sled")).toEqual({ barKg: 20 });
+    expect(getExercisePrefsSyncState().stamps).toEqual({ sled: T1 });
+    expect(outbox.getStatus().dead).toBe(1);
+  });
+
+  it("a 42501 while the session check cannot be answered stays pending, pref kept", async () => {
+    const { outbox, dropped } = await run(async () => { throw new Error("offline"); });
+    expect(dropped).toEqual([]);
+    expect(getExercisePref("sled")).toEqual({ barKg: 20 });
+    expect(outbox.getStatus().dead).toBe(0);
+    expect(outbox.getStatus().pending).toBe(1);
+  });
+
+  it("a 42501 when the live identity changed during the request keeps everything", async () => {
+    const { dropped } = await run(async () => true, () => BOB);
+    expect(dropped).toEqual([]);
+    expect(getExercisePref("sled")).toEqual({ barKg: 20 });
+  });
+
+  it("a confirmed signed-in refusal is still discarded with its local pref", async () => {
+    const { outbox, dropped } = await run(async () => true);
+    expect(dropped).toHaveLength(1);
+    expect(getExercisePref("sled")).toEqual({});
+    expect(await outbox.inspect()).toEqual([]);
+  });
+});
+
 describe("identity claim and triggers (F5, F6)", () => {
   it("claims for a new account at once, even while the previous account's fetch hangs", async () => {
     let release: (r: ExercisePrefRow[]) => void = () => {};
