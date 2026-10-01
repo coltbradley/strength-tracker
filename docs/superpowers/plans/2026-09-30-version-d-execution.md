@@ -46,5 +46,7 @@ Review full branch for data durability, identity, correction receipt, grouping, 
 
 ## Progress
 
-- Baseline: pending.
-- Tasks 1-9: planned.
+- Baseline: `e1a4930` (`docs: authorize Version D implementation slices`). The initial PWA suite had 1,074 passing tests.
+- Task 1 implementation committed as `9bed15c` (`feat(session): add Focus/List workout map`). The controlled switch, real logged rows and correction access in List, completed summaries, and grouping behavior are covered by focused tests. List selection remains separate from details expansion, and staged correction drafts stay owned by Session across view changes.
+- Task 1 verification: focused suite 94/94 passed; full PWA suite 1,079/1,079 passed; `npm run typecheck` passed. Exact commands and red/green evidence are in `.superpowers/sdd/2026-09-30-version-d-execution/task-1-report.md`.
+- Task 1 rendered browser, viewport, phone, and human acceptance remain for integrated verification. This slice adds no per-set receipt claims. Tasks 2-9 remain planned.
