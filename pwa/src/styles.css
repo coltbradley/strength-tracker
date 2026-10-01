@@ -176,6 +176,10 @@
     --accent: var(--aubergine);
     --accent-press: var(--aubergine-press);
     --accent-dim: var(--aubergine);
+    /* Multiplier on the check-in grid's accent tint (CheckinWeek.tsx). Cell text
+     * is --text on the composited fill, so a bright accent (dark theme) needs a
+     * weaker tint than a deep one to stay AA at the top of the scale. */
+    --heat-scale: 1;
     --rest-surface: color-mix(in srgb, var(--aubergine) 7%, var(--paper-raised));
     --rest-ready-surface: color-mix(in srgb, var(--aubergine) 16%, var(--paper-raised));
     --danger: var(--brick);
@@ -330,6 +334,7 @@
     --brick: #ec7a62;
     --teal: #6fb7c4;
 
+    --heat-scale: 0.6;
     --text-inverse: #16131c;
     --focus-set-completed-mark: #16131c;
 

@@ -115,3 +115,18 @@ describe.each(THEMES)("%s theme contrast", (_name, tokens) => {
     }
   }
 });
+
+// The check-in grid tints --accent by up to MAX_ENERGY_FILL_PERCENT * --heat-scale
+// over the page and puts --text on it (CheckinWeek.tsx, lib/checkinWeek.ts).
+describe.each(THEMES)("%s theme check-in heat cell", (_name, tokens) => {
+  it.each([10, 57])("--text stays AA on an accent fill of %i%%", (percent) => {
+    const scale = Number(tokens["heat-scale"]);
+    const fill = over(
+      [...parseColor(tokens, "accent").slice(0, 3), (percent / 100) * scale] as Rgba,
+      parseColor(tokens, "bg"),
+    );
+    const text = over(parseColor(tokens, "text"), fill);
+    const [a, b] = [lum(text), lum(fill)].sort((x, y) => y - x);
+    expect((a + 0.05) / (b + 0.05)).toBeGreaterThanOrEqual(4.5);
+  });
+});

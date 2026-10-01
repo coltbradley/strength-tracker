@@ -173,7 +173,7 @@ export function CheckinWeek({
                     className={sel.trim() || undefined}
                     aria-label={`${b.label} ${dayName}: average energy ${cell.label} from ${cell.n} check-in${cell.n === 1 ? "" : "s"}`}
                     style={{
-                      background: `color-mix(in srgb, var(--accent) ${cell.percent}%, transparent)`,
+                      background: `color-mix(in srgb, var(--accent) calc(${cell.percent}% * var(--heat-scale)), transparent)`,
                     }}
                   >
                     {cell.label}
