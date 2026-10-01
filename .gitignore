@@ -38,3 +38,6 @@ scripts/.cache/
 
 # playwright-mcp scratch (snapshots, console logs)
 .playwright-mcp/
+
+# live load-sync e2e output (pwa/e2e/live-load-sync.mjs)
+live-e2e-out/
