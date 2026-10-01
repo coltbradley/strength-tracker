@@ -191,10 +191,11 @@ export function inProgressClock(iso: string, now: number): string {
 }
 
 /**
- * "all sets on the server" is a claim, so it needs proof: identity known, the
- * outbox read, and no set write waiting, held or dead. Anything less says what
- * IS true. Held counts as not on the server: a held write is queued on this
- * phone and will not be sent by it.
+ * "N sets confirmed on the server" is a claim, so it needs exact proof: each
+ * set read back by its own UUID (`finishedProof`). Without that proof an empty
+ * queue only supports what the phone can see, so the line says "nothing
+ * waiting on this phone" and never "on the server". Held counts as not on the
+ * server: a held write is queued on this phone and will not be sent by it.
  */
 export function syncLine(sync: TrainSyncSummary): string {
   if (!sync.checked) return "checking…";
@@ -216,7 +217,7 @@ export function syncLine(sync: TrainSyncSummary): string {
     parts.push(
       proof && proof.sets > 0
         ? `${proof.sets} ${proof.sets === 1 ? "set" : "sets"} confirmed on the server`
-        : "all sets on the server",
+        : "nothing waiting on this phone",
     );
   }
   if (sync.otherPending > 0)

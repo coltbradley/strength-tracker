@@ -225,7 +225,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     // "checking…" until the outbox has been read, then the proven claim
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toBe(
-        "✓ Upper strength finished · all sets on the server",
+        "✓ Upper strength finished · nothing waiting on this phone",
       ),
     );
     expect(screen.queryByText("Rest day")).toBeNull();
@@ -631,7 +631,7 @@ describe("Today + coach plan changes (onPlanChanged)", () => {
     render(<Today presentation="train" userId="u1" />);
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toContain(
-        "all sets on the server · 2 other changes waiting",
+        "nothing waiting on this phone · 2 other changes waiting",
       ),
     );
     vi.mocked(outbox.inspect).mockResolvedValue([]);

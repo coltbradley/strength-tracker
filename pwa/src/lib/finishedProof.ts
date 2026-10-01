@@ -27,6 +27,28 @@ export interface FinishedSessionProof {
   unconfirmed: number;
 }
 
+/** A proof read for one session, tagged with that session's id. */
+export interface TaggedFinishedProof {
+  sessionId: string;
+  proof: FinishedSessionProof | null;
+}
+
+/**
+ * The proof to SHOW for `sessionId`: only one that was read for that very
+ * session. A screen that holds the last proof in state while the session it
+ * shows changes (a second workout finished the same day) would otherwise quote
+ * the first session's "N sets confirmed on the server" until its own read
+ * lands, or for good when that read hangs offline.
+ */
+export function proofForSession(
+  held: TaggedFinishedProof | null,
+  sessionId: string | null,
+): FinishedSessionProof | null {
+  return held !== null && sessionId !== null && held.sessionId === sessionId
+    ? held.proof
+    : null;
+}
+
 export async function readFinishedSessionProof(
   sessionId: string,
   ownerId: string,

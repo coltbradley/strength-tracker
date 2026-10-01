@@ -26,7 +26,11 @@ import { TemplateSheet } from "../components/TemplateSheet";
 import { CheckInSheet } from "../components/CheckInSheet";
 import { TrainHome, type TrainWeekDay } from "../components/TrainHome";
 import { useOutboxStatus } from "../hooks/useOutboxStatus";
-import { readFinishedSessionProof, type FinishedSessionProof } from "../lib/finishedProof";
+import {
+  proofForSession,
+  readFinishedSessionProof,
+  type TaggedFinishedProof,
+} from "../lib/finishedProof";
 import {
   applyTemplate,
   createPlannedWorkout,
@@ -1346,8 +1350,12 @@ export function Today({
     needsSyncLine && trainWorkoutToday
       ? (reviewable.get(trainWorkoutToday.workout.id)?.id ?? null)
       : null;
-  const [finishedProof, setFinishedProof] =
-    useState<FinishedSessionProof | null>(null);
+  // The proof belongs to the session it was read for (F-7): a second finished
+  // session the same day must not borrow the first one's "N confirmed" while
+  // its own read is in flight (or hangs offline).
+  const [finishedProofState, setFinishedProof] =
+    useState<TaggedFinishedProof | null>(null);
+  const finishedProof = proofForSession(finishedProofState, finishedSessionId);
   useEffect(() => {
     if (!finishedSessionId || !userId || !online) {
       setFinishedProof(null);
@@ -1355,7 +1363,7 @@ export function Today({
     }
     let cancelled = false;
     void readFinishedSessionProof(finishedSessionId, userId).then((proof) => {
-      if (!cancelled) setFinishedProof(proof);
+      if (!cancelled) setFinishedProof({ sessionId: finishedSessionId, proof });
     });
     return () => {
       cancelled = true;

@@ -27,7 +27,7 @@ vi.mock("./sync", () => ({
 }));
 vi.mock("./errors", () => ({ reportError: () => undefined }));
 
-import { readFinishedSessionProof } from "./finishedProof";
+import { proofForSession, readFinishedSessionProof } from "./finishedProof";
 
 const set = (id: string): SetInsert =>
   ({ id, session_id: "s1", exercise_id: "x", set_index: 0, set_type: "working", load_kg: 50, reps: 5 }) as SetInsert;
@@ -62,5 +62,22 @@ describe("readFinishedSessionProof", () => {
     h.fail = false;
     h.cached = [];
     expect(await readFinishedSessionProof("s1", "u")).toBeNull();
+  });
+});
+
+describe("proofForSession (F-7)", () => {
+  const proof = { sets: 6, confirmed: 6, unconfirmed: 0 };
+
+  it("shows a proof only for the session it was read for", () => {
+    const held = { sessionId: "first", proof };
+    expect(proofForSession(held, "first")).toBe(proof);
+    // a second finished session the same day must not borrow the first's proof
+    expect(proofForSession(held, "second")).toBeNull();
+    expect(proofForSession(held, null)).toBeNull();
+    expect(proofForSession(null, "first")).toBeNull();
+  });
+
+  it("a proof that failed to read stays null for its own session", () => {
+    expect(proofForSession({ sessionId: "first", proof: null }, "first")).toBeNull();
   });
 });

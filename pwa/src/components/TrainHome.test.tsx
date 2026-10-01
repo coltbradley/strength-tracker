@@ -376,7 +376,7 @@ describe("finished today", () => {
     renderHome({ ...props, sync: sync() });
     const confirm = screen.getByRole("status");
     expect(confirm.textContent).toContain("Lower A finished");
-    expect(confirm.textContent).toContain("all sets on the server");
+    expect(confirm.textContent).toContain("nothing waiting on this phone");
     expect(screen.getByText("REST DAY")).toBeTruthy();
     expect(
       confirm.compareDocumentPosition(screen.getByText("Recover.")) &
@@ -414,7 +414,7 @@ describe("finished today", () => {
 
   it("does not let other writes pose as sets (T2)", () => {
     expect(syncLine(sync({ otherPending: 1 }))).toBe(
-      "all sets on the server · 1 other change waiting",
+      "nothing waiting on this phone · 1 other change waiting",
     );
     expect(syncLine(sync({ otherPending: 2, dead: 1 }))).toBe(
       "1 needs review · 2 other changes waiting",
@@ -435,8 +435,9 @@ describe("finished today", () => {
     expect(
       syncLine(sync({ waiting: 2, proof: { sets: 6, confirmed: 4, unconfirmed: 2 } })),
     ).toBe("2 waiting on this phone");
-    // no proof read: the queue-only wording stands
-    expect(syncLine(sync({ proof: null }))).toBe("all sets on the server");
+    // no proof read: only what the phone can see is claimed, never "on the server"
+    expect(syncLine(sync({ proof: null }))).toBe("nothing waiting on this phone");
+    expect(syncLine(sync({ proof: null }))).not.toContain("on the server");
   });
 
   it("renders no sync claim at all without a summary", () => {
