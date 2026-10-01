@@ -78,6 +78,7 @@ import {
   getSetNotesByIds,
   mergeSets,
   type LastActuals,
+  type LastActualSet,
 } from "../lib/data";
 import {
   bracketFor,
@@ -165,7 +166,7 @@ import {
   PlateMachineIcon,
   StackIcon,
 } from "../components/icons/LoadIcons";
-import { buildSetLoad, LoadIntegrityError, typedFromDraft } from "../lib/setLoad";
+import { buildSetLoad, LoadIntegrityError, shownLoadValue, typedFromDraft } from "../lib/setLoad";
 import { fromDisplay, kgToLb, stagedDisplayLoad, stepKgFor, toDisplay, type Unit } from "../lib/units";
 import type {
   ActiveSession,
@@ -1565,7 +1566,13 @@ export function Session() {
           }
         : null,
       lastThisSession: lastThis
-        ? { load_kg: lastThis.load_kg, reps: lastThis.reps }
+        ? {
+            load_kg: lastThis.load_kg,
+            reps: lastThis.reps,
+            load_entry: lastThis.load_entry,
+            entered_load: lastThis.entered_load,
+            entered_unit: lastThis.entered_unit,
+          }
         : null,
       lastSession: lastActuals[openEntry.exercise_id] ?? null,
     }, bodyweightFallback(equipment));
@@ -1574,9 +1581,16 @@ export function Session() {
       ? Math.round(fromDisplay(bracket.entered_load, bracket.entered_unit) * 100) / 100
       : Math.round(enteredKg(p.loadKg, loadEntry) * 100) / 100;
     const authoredInDisplayUnit = bracket?.entered_load != null && bracket.entered_unit === unit;
+    // An earlier set typed in this unit and convention comes back as typed.
+    const repeatTyped =
+      p.entered && p.entered.unit === unit && p.entered.entry === loadEntry
+        ? p.entered.load
+        : undefined;
     const prefilledLoad = authoredInDisplayUnit
       ? sourceEntryKg
-      : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100;
+      : repeatTyped !== undefined
+        ? Math.round(fromDisplay(repeatTyped, unit) * 100) / 100
+        : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100;
     setEntryKg(prefilledLoad);
     setReps(p.reps);
     stagedDraftsRef.current[draftKey] = {
@@ -1585,8 +1599,8 @@ export function Session() {
       setType: stagedKind,
       rpe: fresh ? null : rpe,
       durationSeconds,
-      enteredLoad: authoredInDisplayUnit ? bracket?.entered_load ?? undefined : undefined,
-      enteredUnit: authoredInDisplayUnit ? unit : undefined,
+      enteredLoad: authoredInDisplayUnit ? bracket?.entered_load ?? undefined : repeatTyped,
+      enteredUnit: authoredInDisplayUnit || repeatTyped !== undefined ? unit : undefined,
     };
     // Only on a fresh open. After that the toggle belongs to the lifter (and
     // to logSet, which advances it as the plan's warmups are used up):
@@ -3524,18 +3538,28 @@ export function Session() {
   ): string | null => {
     const a = lastActuals[exerciseId];
     if (!a) return null;
-    const shown = (kg: number) =>
-      `${toDisplay(enteredKg(kg, entryMode), unit)} ${unit}${entryMode === "per_side" ? "/side" : ""}`;
+    // What was typed comes back as typed (same unit, same convention);
+    // anything else is the one-decimal conversion of the stored total.
+    const shown = (set: LastActualSet) => {
+      const typedHere =
+        set.entered_load != null &&
+        set.entered_unit === unit &&
+        (set.load_entry ?? null) === entryMode;
+      const value = typedHere
+        ? set.entered_load
+        : toDisplay(enteredKg(set.load_kg, entryMode), unit);
+      return `${value} ${unit}${entryMode === "per_side" ? "/side" : ""}`;
+    };
     if (latestOnly)
       return repsOnly
         ? `Last time · ${a.reps} reps`
-        : `Last time · ${shown(a.load_kg)} × ${a.reps}`;
+        : `Last time · ${shown(a)} × ${a.reps}`;
     // a value cached before runs existed carries only the top set
     const run = a.run && a.run.length > 0 ? a.run : [a];
     const sameLoad = run.every((s) => s.load_kg === run[0].load_kg);
     const body = sameLoad
-      ? `${shown(run[0].load_kg)} × ${run.map((s) => s.reps).join(", ")}`
-      : run.map((s) => `${shown(s.load_kg)} × ${s.reps}`).join(" · ");
+      ? `${shown(run[0])} × ${run.map((s) => s.reps).join(", ")}`
+      : run.map((s) => `${shown(s)} × ${s.reps}`).join(" · ");
     return `Last time · ${body}`;
   };
 
@@ -3677,7 +3701,15 @@ export function Session() {
             reps_max: bracket.reps_max,
           }
         : null,
-      lastThisSession: last ? { load_kg: last.load_kg, reps: last.reps } : null,
+      lastThisSession: last
+        ? {
+            load_kg: last.load_kg,
+            reps: last.reps,
+            load_entry: last.load_entry,
+            entered_load: last.entered_load,
+            entered_unit: last.entered_unit,
+          }
+        : null,
       lastSession: lastActuals[entry.exercise_id] ?? null,
     }, bodyweightFallback(equipMap[entry.exercise_id] ?? null));
     const authoredLoad = bracket?.entered_load ?? null;
@@ -3686,16 +3718,24 @@ export function Session() {
         ? Math.round(fromDisplay(authoredLoad, authoredUnit) * 100) / 100
         : Math.round(enteredKg(prefill.loadKg, entryMode) * 100) / 100;
     const authoredInDisplayUnit = authoredLoad !== null && authoredUnit === unit;
+    const repeatTyped =
+      prefill.entered && prefill.entered.unit === unit && prefill.entered.entry === entryMode
+        ? prefill.entered.load
+        : undefined;
     return {
       entryKg: authoredInDisplayUnit
         ? sourceEntryKg
-        : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100,
+        : repeatTyped !== undefined
+          ? Math.round(fromDisplay(repeatTyped, unit) * 100) / 100
+          : Math.round(fromDisplay(toDisplay(sourceEntryKg, unit), unit) * 100) / 100,
       reps: prefill.reps,
       setType: kind,
       rpe: null,
       ...(authoredInDisplayUnit
         ? { enteredLoad: authoredLoad, enteredUnit: unit }
-        : {}),
+        : repeatTyped !== undefined
+          ? { enteredLoad: repeatTyped, enteredUnit: unit }
+          : {}),
     };
   };
 
@@ -3961,12 +4001,12 @@ export function Session() {
       return `${name} · ${duration == null ? "timed set" : `${formatClock(duration)} held`}`;
     }
     if (lastLoggedSet.load_entry === "per_side") {
-      return `${name} · ${toDisplay(enteredKg(lastLoggedSet.load_kg, "per_side"), unit)} ${unit}/hand × ${lastLoggedSet.reps}`;
+      return `${name} · ${shownLoadValue(lastLoggedSet, unit)} ${unit}/hand × ${lastLoggedSet.reps}`;
     }
     if (lastLoggedSet.load_entry === "total") {
-      return `${name} · ${toDisplay(lastLoggedSet.load_kg, unit)} ${unit} total × ${lastLoggedSet.reps}`;
+      return `${name} · ${shownLoadValue(lastLoggedSet, unit)} ${unit} total × ${lastLoggedSet.reps}`;
     }
-    return `${name} · ${toDisplay(lastLoggedSet.load_kg, unit)} ${unit} load unclassified × ${lastLoggedSet.reps}`;
+    return `${name} · ${shownLoadValue(lastLoggedSet, unit)} ${unit} load unclassified × ${lastLoggedSet.reps}`;
   };
 
   const focusStageNode = focusEntry ? (() => {

@@ -1267,6 +1267,12 @@ export async function getExerciseDemo(
 export interface LastActualSet {
   load_kg: number;
   reps: number;
+  /** How the number was typed. Optional: a value cached before these existed,
+   *  and a legacy row, carries only the total. Read back through
+   *  `shownLoadValue` so last time quotes what the lifter typed. */
+  load_entry?: LoadEntry | null;
+  entered_load?: number | null;
+  entered_unit?: "kg" | "lb" | null;
 }
 
 /**
@@ -1297,6 +1303,9 @@ export interface ActualsRow {
   set_type: string;
   performed_at: string;
   session_id: string;
+  load_entry?: LoadEntry | null;
+  entered_load?: number | null;
+  entered_unit?: "kg" | "lb" | null;
 }
 
 /** Rows per request. Also the signal for "there may be more". */
@@ -1343,7 +1352,13 @@ export async function scanLastActuals(
   const anyType: Record<string, RunBuild> = {};
   const add = (into: Record<string, RunBuild>, r: ActualsRow): void => {
     const cur = into[r.exercise_id];
-    const one: LastActualSet = { load_kg: r.load_kg, reps: r.reps };
+    const one: LastActualSet = {
+      load_kg: r.load_kg,
+      reps: r.reps,
+      ...(r.entered_load != null && r.entered_unit != null
+        ? { load_entry: r.load_entry ?? null, entered_load: r.entered_load, entered_unit: r.entered_unit }
+        : {}),
+    };
     if (cur === undefined) {
       into[r.exercise_id] = { ...one, session_id: r.session_id, run: [one] };
       return;
@@ -1373,7 +1388,14 @@ export async function scanLastActuals(
     Object.fromEntries(
       Object.entries(built).map(([id, b]) => [
         id,
-        { load_kg: b.load_kg, reps: b.reps, run: [...b.run].reverse() },
+        {
+          load_kg: b.load_kg,
+          reps: b.reps,
+          ...(b.entered_load != null && b.entered_unit != null
+            ? { load_entry: b.load_entry ?? null, entered_load: b.entered_load, entered_unit: b.entered_unit }
+            : {}),
+          run: [...b.run].reverse(),
+        },
       ]),
     );
   return { ...finish(anyType), ...finish(best) };
@@ -1470,7 +1492,7 @@ export async function getLastActuals(excludeSessionId?: string): Promise<CacheRe
     scanLastActuals(async (cursor) => {
       let q = supabase
         .from("v_live_sets")
-        .select("exercise_id,load_kg,reps,set_type,performed_at,session_id")
+        .select("exercise_id,load_kg,reps,set_type,performed_at,session_id,load_entry,entered_load,entered_unit")
         .order("performed_at", { ascending: false })
         .limit(ACTUALS_PAGE);
       // strict `lt` can skip rows sharing the boundary timestamp to the
@@ -1946,6 +1968,9 @@ export interface RxOutcome {
   repsMax: number;
   prescribedLoadKg: number | null;
   prescribedEntry: LoadEntry | null;
+  /** exactly what the plan's author typed, when recorded */
+  prescribedEnteredLoad: number | null;
+  prescribedEnteredUnit: "kg" | "lb" | null;
   /** what the plan asked for; null when the prescription has since gone */
   plannedSets: number | null;
   loggedSets: number;
@@ -1986,6 +2011,8 @@ export function summariseAdherence(
         repsMax: r.reps_max,
         prescribedLoadKg: r.prescribed_load_kg,
         prescribedEntry: r.prescribed_load_entry,
+        prescribedEnteredLoad: r.prescribed_entered_load ?? null,
+        prescribedEnteredUnit: r.prescribed_entered_unit ?? null,
         plannedSets: bundle.plannedSets[r.prescription_id] ?? null,
         loggedSets: 1,
         firstIndex: r.set_index,
