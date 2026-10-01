@@ -745,6 +745,8 @@ describe("outbox", () => {
       held: 0,
       state: "idle",
       lastError: null,
+      // an ACK happened in this run: the chip's sheet may quote its time
+      lastSyncedAt: expect.any(Number),
     });
   });
 
@@ -872,6 +874,8 @@ describe("outbox", () => {
       held: 0,
       state: "idle",
       lastError: null,
+      // an ACK happened in this run: the chip's sheet may quote its time
+      lastSyncedAt: expect.any(Number),
     });
   });
 
@@ -965,6 +969,8 @@ describe("outbox", () => {
       held: 0,
       state: "idle",
       lastError: null,
+      // an ACK happened in this run: the chip's sheet may quote its time
+      lastSyncedAt: expect.any(Number),
     });
     const db = await getDb();
     expect(await db.count("outbox")).toBe(0);
@@ -997,6 +1003,8 @@ describe("outbox", () => {
       held: 0,
       state: "idle",
       lastError: null,
+      // an ACK happened in this run: the chip's sheet may quote its time
+      lastSyncedAt: expect.any(Number),
     });
   });
 
@@ -1038,6 +1046,8 @@ describe("outbox", () => {
       held: 0,
       state: "idle",
       lastError: null,
+      // an ACK happened in this run: the chip's sheet may quote its time
+      lastSyncedAt: expect.any(Number),
     });
   });
 
