@@ -1142,9 +1142,13 @@ export function Session() {
   // session actually has — never persisted, so a reload always re-derives it
   // rather than promising to restore a visual mode nobody saved.
   const focusPresentationStarted = useRef(false);
+  // A tap on Focus or List before the session finished loading is a choice:
+  // the default below must not overwrite it a moment later.
+  const viewPickedByUser = useRef(false);
   useEffect(() => {
     if (!setsLoaded || !prefsReady || focusPresentationStarted.current) return;
     focusPresentationStarted.current = true;
+    if (viewPickedByUser.current) return;
     if (!focusEligible) {
       setPresentation("overview");
       return;
@@ -1372,6 +1376,7 @@ export function Session() {
   };
 
   const showOverview = () => {
+    viewPickedByUser.current = true;
     priorFocusKey.current = openKey;
     const current = focusKey ?? openKey ?? selectedEntryKey;
     setSelectedEntryKey(current);
@@ -1380,6 +1385,7 @@ export function Session() {
   };
 
   const enterFocus = () => {
+    viewPickedByUser.current = true;
     if (!focusEligible) return;
     const next = transitionPresentation(
       presentation,

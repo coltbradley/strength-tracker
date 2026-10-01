@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OutboxEntry } from "./outbox";
-import { projectSetReceipt } from "./setReceipt";
+import { projectSetReceipt, setQueueHeld } from "./setReceipt";
 
 const ownerId = "alice";
 const originalId = "set-original";
@@ -139,5 +139,20 @@ describe("projectSetReceipt", () => {
       serverSetIds: new Set([originalId]),
       serverVoidIds: new Set([originalId]),
     })).toEqual({ state: "synced" });
+  });
+});
+
+describe("setQueueHeld", () => {
+  it("is true only for a held write of this set", () => {
+    expect(setQueueHeld([entry("sets", originalId, "held")], originalId)).toBe(true);
+    expect(setQueueHeld([entry("sets", originalId, "waiting")], originalId)).toBe(false);
+    expect(setQueueHeld([entry("sets", "someone-else", "held")], originalId)).toBe(false);
+    expect(setQueueHeld([], originalId)).toBe(false);
+  });
+
+  it("follows a correction to the void of the original", () => {
+    const voidHeld = entry("set_voids", originalId, "held");
+    expect(setQueueHeld([voidHeld], replacementId, originalId)).toBe(true);
+    expect(setQueueHeld([voidHeld], replacementId)).toBe(false);
   });
 });

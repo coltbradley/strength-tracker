@@ -129,10 +129,10 @@
     --plate-15: #c9a227;
     --plate-10: #3f8a5c;
     --plate-5: #3a3f47;
-    --plate-2h: #9c4750;
-    --plate-1h: #8a8f97;
     --plate-steel: #6f757e;
     --plate-collar: #565b63;
+    --plate-2h: #9c4750;
+    --plate-1h: #8a8f97;
     --teal: #2e6e7e;
 
     /* Surfaces for the focus dock: white cards and mist keys on a lavender
@@ -160,7 +160,6 @@
     --rule-hair-color: rgb(var(--ink-rgb) / 0.12);
     --rule-color: rgb(var(--ink-rgb) / 0.22);
     --rule-strong-color: rgb(var(--ink-rgb) / 0.28);
-    --rule-heavy-color: rgb(var(--ink-rgb) / 0.35);
     --rule-hair: var(--bw-hair) solid var(--rule-hair-color);
     --rule: var(--bw-hair) solid var(--rule-color);
     --rule-strong: var(--bw-hair) solid var(--rule-strong-color);
@@ -304,8 +303,6 @@
     /* -- motion ----------------------------------------------------------- */
     --dur-sheet: 200ms;
     --ease-sheet: cubic-bezier(0.22, 1, 0.36, 1);
-    --dur-tick: 400ms;
-    --dur-blink: 1.6s;
     /* Named motions for live-session feedback (set logged, next set enters,
      * mode switch) — transform/opacity only, so they cost nothing on the
      * rest timer's 400ms re-render. Reduced-motion zeroes every animation
@@ -449,15 +446,6 @@
     }
   }
 
-  @keyframes blink {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.3;
-    }
-  }
 
   /* One flash for a tap that lands on the 200 ms duplicate-LOG lock
    * (Decision 6): the tap was real, it just wasn't a second insert. */
@@ -722,7 +710,6 @@
   .banner-row > *,
   .rest-row > *,
   .week-row > *,
-  .wk-main > *,
   .drawer-row > *,
   .sheet-row > *,
   .logged-set > *,
@@ -737,7 +724,6 @@
   .screen-title,
   .today-context,
   .week-state,
-  .wk-target,
   .rx-name,
   .rx-spec,
   .rx-context,
@@ -887,7 +873,6 @@
   .swap-action,
   .set-void,
   .back-link,
-  .set-note-add,
   .pad-cancel {
     display: inline-flex;
     align-items: center;
@@ -916,25 +901,20 @@
    * This is only legitimate because nothing else is tappable inside the
    * expanded box. It is not a licence to shrink controls. */
   .sheet-close,
-  .set-note-add,
   .topbar-title,
   .plate-hint,
-  .rpe-reveal,
   .rest-timer-time,
   .checkin-link {
     position: relative;
   }
 
-  .sheet-close,
-  .set-note-add {
+  .sheet-close {
     min-height: 0;
   }
 
   .sheet-close::after,
-  .set-note-add::after,
   .topbar-title::after,
   .plate-hint::after,
-  .rpe-reveal::after,
   .rest-timer-time::after,
   .checkin-link::after {
     content: "";
@@ -1099,15 +1079,7 @@
     color: var(--text-dim);
   }
 
-  .link-btn {
-    border: 0;
-    background: none;
-    padding: var(--s-5) 0;
-    font: inherit;
-    color: var(--text-dim);
-    text-decoration: underline;
-    min-height: var(--tap-min);
-  }
+  
 
   /* ---- login ---- */
 
@@ -1737,19 +1709,7 @@
   }
 
   /* HOW TO, beside the open entry's name: the seed's photos and steps */
-  .wk-demo {
-    flex: 0 0 auto;
-    margin-left: var(--s-4);
-    padding: var(--s-1) var(--s-4);
-    background: transparent;
-    color: var(--info);
-    border: var(--bw-hair) solid var(--info);
-    border-radius: var(--radius);
-    font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-label));
-    letter-spacing: var(--track-1);
-    min-height: 32px;
-  }
+  
 
   .demo-photos {
     display: grid;
@@ -1823,8 +1783,7 @@
    * they are hit-extended rather than grown: the plate calculator, the
    * total/per-side toggle, and the RPE reveal. 6px of bleed. Aubergine keeps
    * these read labels high-contrast without using a decorative tint. */
-  .plate-hint,
-  .rpe-reveal {
+  .plate-hint {
     --hit-bleed: 6px;
     font-family: var(--font-mono);
     font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
@@ -1836,10 +1795,7 @@
   /* The load-mode glyph shares .plate-hint's sizing, colour and hit-bleed
      * (it is already in that shared selector list above in section 2); this
      * only centres the inline svg on the text baseline. */
-  .load-style-icon {
-    display: inline-flex;
-    align-items: center;
-  }
+  
 
   /* The reveal is the LAST item in the load head and the only one that can
    * sit beside two others (PER SIDE ×2 and the plate hint both appear when a
@@ -1847,11 +1803,7 @@
    * family rule is that a bleed never exceeds the gap to the next target, so
    * this one takes 4px: 6 + 4 lands exactly on 10 rather than overlapping its
    * neighbour's box by 2px. */
-  .rpe-reveal {
-    --hit-bleed: 4px;
-    flex: none;
-    white-space: nowrap;
-  }
+  
 
   /* In the plan editor the toggle has no section head to sit in, so it needs
    * its own right-alignment. Same control, same words, same colour as the one
@@ -1863,10 +1815,7 @@
 
   /* ---- logged sets ---- */
 
-  .logged-sets {
-    display: flex;
-    flex-direction: column;
-  }
+  
 
   /* no border-bottom: SetRow is only ever rendered inside .logged-set-wrap,
    * which owns the hairline */
@@ -1964,9 +1913,7 @@
     text-underline-offset: 0.2em;
   }
 
-  .correcting-note {
-    color: var(--accent-dim);
-  }
+  
 
   /* An exercise being done in place of the one the plan named. Same voice as
      the correction note above — both say "this open exercise is temporarily
@@ -3865,7 +3812,6 @@
     flex-wrap: wrap;
   }
 
-
   /* ---- sheets / drawers ---- */
 
   .sheet-backdrop {
@@ -4384,7 +4330,6 @@
   .plate-base-unset {
     border-style: dashed;
   }
-
 
   /* ---- load picture: what is in front of the lifter ---- */
 
@@ -5634,172 +5579,60 @@
 
   /* Fills the same space a plain hero editor would (see the flex chain
    * comment above .set-editor-focus). */
-  .superset-round-editor {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
+  
 
-  .superset-round-members {
-    display: grid;
-    flex: 1 0 auto;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: repeat(2, minmax(max-content, 1fr));
-    gap: var(--s-8);
-    min-height: 0;
-    min-width: 0;
-  }
+  
 
-  .superset-member-card {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    min-height: 142px;
-    padding: var(--s-5) var(--s-6);
-    border: 1px solid var(--rule-strong-color);
-    background: var(--bg-raised);
-  }
+  
 
   /* Focus keeps two live members and two durable actions on one phone
    * screen. Compact cards preserve the 44px controls and return room to the
    * shared movement stage above them. */
-  .focus-deck .superset-round-members {
-    flex: 0 1 auto;
-    grid-template-rows: repeat(2, minmax(76px, auto));
-    gap: var(--s-3);
-  }
+  
 
-  .focus-deck .superset-member-card {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-content: center;
-    align-items: center;
-    column-gap: var(--s-3);
-    row-gap: 0;
-    min-height: 0;
-    padding: var(--s-2) var(--s-4);
-  }
+  
 
-  .focus-deck .superset-round-member-label {
-    margin-bottom: 0;
-    line-height: 1.2;
-  }
+  
 
-  .focus-deck .superset-member-target {
-    margin: 0;
-    white-space: nowrap;
-  }
+  
 
-  .focus-deck .superset-member-row {
-    grid-column: 1 / -1;
-    align-items: center;
-    gap: var(--s-2);
-  }
+  
 
-  .focus-deck .superset-member-history {
-    display: none;
-  }
+  
 
-  .focus-deck .superset-round-actions {
-    flex: none;
-    gap: var(--s-2);
-    padding-top: var(--s-3);
-  }
+  
 
-  .superset-round-actions {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-5);
-    margin-top: auto;
-    padding-top: var(--s-7);
-  }
+  
 
-  .superset-round-member-label {
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-label));
-    letter-spacing: var(--track-1);
-    text-transform: uppercase;
-    margin-bottom: var(--s-4);
-  }
+  
 
-  .superset-member-target {
-    margin: 0 0 var(--s-2);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-label));
-    font-variant-numeric: tabular-nums;
-  }
+  
 
-  .superset-member-row {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: var(--s-4);
-  }
+  
 
   /* Keep the load controls at the 44px tap floor. The multiplier and reps
    * move together when a long pound value cannot share one phone-width row. */
-  .superset-member-row .stepper-inline {
-    gap: var(--s-4);
-  }
+  
 
-  .superset-member-row .stepper-btn {
-    flex-basis: var(--tap-min);
-    min-width: var(--tap-min);
-  }
+  
 
-  .superset-member-reps {
-    display: inline-flex;
-    align-items: baseline;
-    gap: var(--s-4);
-    flex: none;
-  }
+  
 
-  .superset-member-row .stepper-value {
-    font-size: calc(var(--demo-text-scale, 1) * 42px);
-    border-bottom: none;
-  }
+  
 
-  @media (max-width: 359px) {
-    .superset-member-row .stepper-value {
-      font-size: calc(var(--demo-text-scale, 1) * 36px);
-    }
-  }
+  
 
-  .superset-member-row .stepper-sub {
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
-    color: var(--text);
-    padding-bottom: 0;
-  }
+  
 
-  .superset-member-x {
-    color: var(--text-dim);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
-  }
+  
 
-  .superset-member-detail {
-    margin-top: var(--s-2);
-  }
+  
 
-  .superset-member-history {
-    margin-top: var(--s-2);
-    color: var(--text-dim);
-    font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-label));
-    font-variant-numeric: tabular-nums;
-    letter-spacing: var(--track-1);
-  }
+  
 
-  .superset-round-error {
-    margin: 0;
-    color: var(--danger);
-  }
+  
 
-  .superset-partial-action {
-    min-height: var(--tap-min);
-  }
+  
 
   .focus-deck .btn,
   .focus-deck .drawer-action,
@@ -6002,12 +5835,7 @@
   /* Recessive by design — a 44px `+ NOTE` under every logged set would
    * compete with the set itself. Hit-extended (see the micro-label family);
    * it is the only tappable thing in its band. */
-  .set-note-add {
-    align-self: flex-start;
-    font-weight: 600;
-    letter-spacing: var(--track-1);
-    padding: var(--s-1) var(--s-5) var(--s-4) 0;
-  }
+  
 
   /* Tap to edit an existing note. Computed ~25px on one line of text. */
   .set-note-preview {
@@ -6022,31 +5850,15 @@
     margin-bottom: var(--s-4);
   }
 
-  .set-note-editor {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
-    padding: 0 0 var(--s-5);
-  }
+  
 
-  .set-note-input {
-    min-height: var(--tap);
-    margin-top: 0;
-  }
+  
 
-  .set-note-actions {
-    display: flex;
-    gap: var(--s-4);
-    justify-content: flex-end;
-  }
+  
 
   /* Save / Cancel on a set note: 36px, and reached with the keyboard open
    * and a thumb. No rhythm to protect here — the editor is already a block. */
-  .set-note-actions .btn {
-    min-height: var(--tap-min);
-    padding: 0 var(--s-6);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-label));
-  }
+  
 
   /* sign out sits apart from the utility rows */
   .signout-btn {
@@ -6765,104 +6577,37 @@
    * to the question the screen exists to ask", set in the smallest type on the
    * screen. This is the same arithmetic, promoted, plus the silhouette you
    * actually check against the bar in front of you. */
-  .plate-bar-wrap {
-    margin-top: var(--s-5);
-  }
+  
 
-  .plate-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 232px;
-    max-width: 100%;
-    margin: 0 auto;
-    height: 46px;
-    position: relative;
-  }
+  
 
   /* the shaft runs behind the stacks; a machine has no bar and omits it */
-  .pb-shaft {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 6px;
-    transform: translateY(-50%);
-    background: var(--plate-steel);
-    border-radius: 1px;
-  }
+  
 
-  .pb-stack {
-    display: flex;
-    align-items: center;
-    position: relative;
-  }
+  
 
-  .pb-plate {
-    width: 13px;
-    margin: 0 1px;
-    border-radius: 2px;
-    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
-  }
+  
 
-  .pb-collar {
-    width: 6px;
-    height: 17px;
-    background: var(--plate-collar);
-    border-radius: 1px;
-  }
+  
 
   /* heights are proportional to real plate diameters, so the silhouette is the
    * one you are about to look at on the bar */
-  .pb-25 {
-    height: 46px;
-    background: var(--plate-25);
-  }
-  .pb-20 {
-    height: 46px;
-    background: var(--plate-20);
-  }
-  .pb-15 {
-    height: 38px;
-    background: var(--plate-15);
-  }
-  .pb-10 {
-    height: 32px;
-    background: var(--plate-10);
-  }
-  .pb-5 {
-    height: 26px;
-    background: var(--plate-5);
-  }
-  .pb-2h {
-    height: 21px;
-    width: 9px;
-    background: var(--plate-2h);
-  }
-  .pb-1h {
-    height: 16px;
-    width: 7px;
-    background: var(--plate-1h);
-  }
+  
+  
+  
+  
+  
+  
+  
 
   /* the words, not a micro-label: this is the instruction for THIS set, and it
    * is also the only version of it a screen reader or a colour-blind lifter
    * gets. --text, not --text-dim. */
-  .plate-bar-key {
-    font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
-    font-weight: 600;
-    color: var(--text);
-    text-align: center;
-    margin-top: var(--s-3);
-  }
+  
 
   /* split() reports when the plates on hand cannot make the target. Saying so
    * beats drawing a bar that is quietly the wrong weight. */
-  .plate-bar-warn {
-    font-weight: 400;
-    color: var(--text-dim);
-  }
+  
 
   @media (max-width: 359px) {
     .bug-diag {
