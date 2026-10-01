@@ -646,7 +646,10 @@ class Run {
   async closeSheet() {
     const p = this.page;
     for (let i = 0; i < 3; i++) {
-      const close = p.locator("button:visible").filter({ hasText: /^close$/i });
+      // ux/skin renders the sheet's dismissal as a visual "×" plus an sr-only
+      // "CLOSE" (textContent "×CLOSE"), so match the accessible name — what a
+      // screen-reader user and getByRole see — not the visible text.
+      const close = p.getByRole("button", { name: /^close$/i });
       if (!(await close.count())) break;
       await close.last().click({ timeout: 3000 }).catch(() => p.keyboard.press("Escape"));
       await sleep(400);
