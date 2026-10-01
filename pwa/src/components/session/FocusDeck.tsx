@@ -54,6 +54,11 @@ export interface FocusDeckProps {
   /** "NEXT SET · SET 4 OF 6" and End rest now, above the dock's numbers
    *  while resting — so it is plain the numbers belong to the NEXT set. */
   dockTag?: ReactNode;
+  /** Set when the set being staged is a WARMUP of an entry that also has
+   *  working sets: the position line then counts the warmups ("SET 1 OF 2 ·
+   *  WARMUP") instead of the working sets. A warmup-only run needs no help:
+   *  its own target already is the warmups. */
+  warmupPosition?: { number: number; of: number } | null;
   /** "Session unit · Settings says lb", while one is overriding it. */
   unitNote?: string | null;
   keys: FocusKeys;
@@ -211,6 +216,7 @@ export function FocusDeck({
   restSlot,
   dockTag,
   unitNote = null,
+  warmupPosition = null,
   keys,
   onSkip,
   skipped = false,
@@ -232,8 +238,9 @@ export function FocusDeck({
         .slice(entryIndex + 1)
         .find((candidate) => !entryDone(candidate)) ?? null)
     : null;
-  const setPosition =
-    target === 0
+  const setPosition = warmupPosition
+    ? `SET ${warmupPosition.number} OF ${warmupPosition.of}`
+    : target === 0
       ? "SET BY FEEL"
       : `SET ${Math.min(progress + 1, target)} OF ${target}`;
   const warmupRun = warmupSets(entry) > 0 && workingSets(entry) === 0;
@@ -283,7 +290,7 @@ export function FocusDeck({
         <div className="focus-deck-position-row">
           <div className="focus-deck-position">
             {supersetHeading ? supersetHeading.subtitle : setPosition}
-            {warmupRun && !supersetHeading ? " · WARMUP" : ""}
+            {(warmupRun || warmupPosition) && !supersetHeading ? " · WARMUP" : ""}
           </div>
           {unitNote && <span className="focus-unit-note">{unitNote}</span>}
         </div>

@@ -153,6 +153,57 @@ describe("Session focus rest panel", () => {
     expect(screen.queryByRole("button", { name: /Open plates$/ })).toBeNull();
   });
 
+  it("reads SET n OF m · WARMUP for the warmups of a mixed entry", async () => {
+    equipment(["bench-press", "Bench Press", "barbell"]);
+    await seed([
+      { ...rx("bench-w", "bench-press", "Bench Press", 40, 2), set_type: "warmup", position: 0 },
+      { ...rx("bench", "bench-press", "Bench Press", 60, 3), set_type: "working", position: 1 },
+    ]);
+    renderSession();
+
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await settle();
+    // the plan opens on its first warmup
+    expect(screen.getByText("SET 1 OF 2 · WARMUP")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+    await vi.waitFor(() => expect(queuedSets()).toHaveLength(1));
+    expect(await screen.findByText("SET 2 OF 2 · WARMUP")).toBeTruthy();
+  });
+
+  it("names the saved set by its working-set number, not set_index (which counts warmups)", async () => {
+    equipment(["bench-press", "Bench Press", "barbell"]);
+    const prior = (index: number, type: "warmup" | "working"): SetInsert => ({
+      id: `bench-${index}`,
+      session_id: active.id,
+      exercise_id: "bench-press",
+      prescription_id: "bench",
+      set_index: index,
+      set_type: type,
+      load_kg: 60,
+      reps: 5,
+      performed_at: `2026-09-12T12:0${index}:00.000Z`,
+      rest_seconds_actual: null,
+      load_entry: "total",
+      rpe: null,
+    });
+    // one warmup (index 0) then two working sets (1, 2); the third working
+    // set is logged now at index 3
+    await seed(
+      [rx("bench", "bench-press", "Bench Press", 60, 4)],
+      [prior(0, "warmup"), prior(1, "working"), prior(2, "working")],
+    );
+    renderSession();
+
+    await screen.findByRole("heading", { name: "Bench Press" });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "LOG SET" }));
+
+    expect(await screen.findByText("LAST SET · ALREADY SAVED")).toBeTruthy();
+    expect(queuedSets()[0]?.set_index).toBe(3);
+    expect(screen.getByText("Bench Press · set 3 · 60 kg × 5")).toBeTruthy();
+    expect(screen.queryByText("Bench Press · set 4 · 60 kg × 5")).toBeNull();
+  });
+
   it("Fix on the saved-set card starts a correction of that set: set_index kept, original voided", async () => {
     await seed([rx("bench", "bench-press", "Bench Press", 60)]);
     renderSession();

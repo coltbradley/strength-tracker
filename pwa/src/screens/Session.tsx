@@ -3528,10 +3528,30 @@ export function Session() {
     : null;
 
   const lastLoggedEntry = lastLoggedSet
-    ? (entries.find((e) => e.exercise_id === lastLoggedSet.exercise_id) ?? null)
+    ? (entries.find((e) =>
+        setsForEntry(e).some((s) => s.id === lastLoggedSet.id),
+      ) ??
+      entries.find((e) => e.exercise_id === lastLoggedSet.exercise_id) ??
+      null)
     : null;
+  // `set_index` counts warmups, so "set 4" after the third working set would
+  // be wrong. Name the set the way the lifter counts it: "warmup N" for a
+  // warmup, otherwise its working-set number within its entry.
+  const lastLoggedPosition = (() => {
+    if (!lastLoggedSet) return "";
+    const own = lastLoggedEntry
+      ? setsForEntry(lastLoggedEntry).filter(
+          (s) =>
+            s.exercise_id === lastLoggedSet.exercise_id &&
+            (s.set_type === "warmup") === (lastLoggedSet.set_type === "warmup"),
+        )
+      : [];
+    const upTo = own.filter((s) => s.set_index <= lastLoggedSet.set_index);
+    const n = Math.max(upTo.length, 1);
+    return lastLoggedSet.set_type === "warmup" ? `warmup ${n}` : `set ${n}`;
+  })();
   const lastLoggedLine = lastLoggedSet
-    ? `${lastLoggedEntry?.name ?? "Last exercise"} · set ${lastLoggedSet.set_index + 1} · ${
+    ? `${lastLoggedEntry?.name ?? "Last exercise"} · ${lastLoggedPosition} · ${
         lastLoggedSet.load_kg > 0
           ? `${toDisplay(enteredKg(lastLoggedSet.load_kg, lastLoggedSet.load_entry ?? "total"), unit)} ${unit}${lastLoggedSet.load_entry === "per_side" ? " × 2" : ""} × `
           : "× "
@@ -3611,6 +3631,20 @@ export function Session() {
         null,
       ))
     : null;
+  // A mixed entry's warmup counts its own warmups: "SET 1 OF 2 · WARMUP".
+  const focusWarmupPosition =
+    focusEntry &&
+    !editing &&
+    !roundState &&
+    openEntry?.key === focusEntry.key &&
+    setType === "warmup" &&
+    workingSets(focusEntry) > 0
+      ? (() => {
+          const planned = warmupSets(focusEntry);
+          const number = warmupCount(focusEntry) + 1;
+          return { number, of: Math.max(planned, number) };
+        })()
+      : null;
   const focusKeys: FocusKeys = {
     onRpe: () => setMoreOpen(true),
     onNote: () => {
@@ -3739,6 +3773,7 @@ export function Session() {
               // dock holds Finish session instead.
               dockTag={rest && !editing && !workoutDone ? focusDockTag : null}
               keys={focusKeys}
+              warmupPosition={focusWarmupPosition}
               onSkip={
                 focusEntry
                   ? (reason) => skipEntryWithReason(focusEntry, reason)

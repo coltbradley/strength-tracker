@@ -4862,6 +4862,13 @@
     font-size: var(--fs-sm);
   }
 
+  /* The line under the clock: which set the rest is leading into. */
+  .rest-panel-next {
+    color: var(--text-dim);
+    font-size: var(--fs-label);
+    text-align: center;
+  }
+
   /* "NEXT SET · SET 4 OF 6" and End rest now, above the dock's numbers. */
   .rest-dock-tag {
     display: flex;

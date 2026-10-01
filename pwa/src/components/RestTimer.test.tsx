@@ -244,6 +244,31 @@ describe("RestTimer", () => {
     expect(screen.queryByText(/Recorded against/)).toBeNull();
   });
 
+  it("panel variant shows the next-set line under the clock, resting and ready", () => {
+    const { rerender } = render(
+      <RestTimer
+        variant="panel"
+        rest={{ startedAt: Date.now(), targetSeconds: 90, forLabel: "Squat set 1" }}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+        nextSetLabel="Next: Superset A, round 2 of 3"
+      />,
+    );
+    expect(screen.getByText("Next: Superset A, round 2 of 3")).toBeTruthy();
+    rerender(
+      <RestTimer
+        variant="panel"
+        rest={overdue()}
+        onAdjust={noop}
+        onEdit={noop}
+        onDone={noop}
+        nextSetLabel="Next: Superset A, round 2 of 3"
+      />,
+    );
+    expect(screen.getByText("Next: Superset A, round 2 of 3")).toBeTruthy();
+  });
+
   it("shows REST OVER and a screen-reader alert once the target has elapsed", () => {
     render(
       <RestTimer
