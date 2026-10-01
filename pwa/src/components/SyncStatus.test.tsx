@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
     lastError: null as string | null,
   },
   known: true,
+  online: true,
   flush: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("../hooks/useOutboxStatus", () => ({
   useOutboxStatus: () => h.status,
   useOutboxKnown: () => h.known,
 }));
+vi.mock("../hooks/useFabDrag", () => ({ useOnline: () => h.online }));
 vi.mock("../lib/sync", () => ({ outbox: { flush: h.flush } }));
 vi.mock("./OutboxSheet", () => ({
   OutboxSheet: () => <div role="dialog" aria-label="Queue" />,
@@ -28,6 +30,7 @@ vi.mock("./OutboxSheet", () => ({
 beforeEach(() => {
   h.status = { pending: 0, dead: 0, held: 0, state: "idle", lastError: null };
   h.known = true;
+  h.online = true;
   h.flush.mockClear();
 });
 afterEach(() => cleanup());
@@ -43,14 +46,34 @@ describe("SyncStatus chip", () => {
     expect(h.flush).not.toHaveBeenCalled();
   });
 
-  it("shows ◐ On phone · N for waiting writes and flushes on tap", () => {
+  it("shows ◐ On phone · N for waiting writes; a tap opens the queue AND sends", () => {
     h.status = { ...h.status, pending: 3 };
     render(<SyncStatus />);
     const chip = screen.getByRole("button", { name: /^On phone · 3/ });
     expect(chip.textContent).toBe("◐On phone · 3");
+    // the compact (session header) rendering reads the count off the chip
+    expect(chip.getAttribute("data-count")).toBe("3");
     fireEvent.click(chip);
     expect(h.flush).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Queue" })).toBeTruthy();
+  });
+
+  it("D2: offline, a tap on a waiting chip still answers by opening the queue, and does not pretend to send", () => {
+    h.online = false;
+    h.status = { ...h.status, pending: 1 };
+    render(<SyncStatus />);
+    const chip = screen.getByRole("button", { name: /^On phone · 1/ });
+    expect(chip.getAttribute("aria-label")).toMatch(/offline/i);
+    fireEvent.click(chip);
+    expect(screen.getByRole("dialog", { name: "Queue" })).toBeTruthy();
+    expect(h.flush).not.toHaveBeenCalled();
+  });
+
+  it("D2: a sending chip opens the queue too", () => {
+    h.status = { ...h.status, pending: 2, state: "syncing" };
+    render(<SyncStatus />);
+    fireEvent.click(screen.getByRole("button", { name: /^Sending · 2/ }));
+    expect(screen.getByRole("dialog", { name: "Queue" })).toBeTruthy();
   });
 
   it("shows ↑ Sending · N while a flush is running", () => {
@@ -68,6 +91,7 @@ describe("SyncStatus chip", () => {
     expect(chip.className).not.toContain("dead");
     fireEvent.click(chip);
     expect(h.flush).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("dialog", { name: "Queue" })).toBeTruthy();
   });
 
   it("shows ‖ Held and opens the queue instead of flushing", () => {
@@ -119,5 +143,15 @@ describe("SyncStatus chip", () => {
     expect(chip.textContent).toBe("◐Retrying");
     fireEvent.click(chip);
     expect(h.flush).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("dialog", { name: "Queue" })).toBeTruthy();
+  });
+
+  it("D2: the all-synced chip says so offline without claiming a send", () => {
+    h.online = false;
+    render(<SyncStatus />);
+    const chip = screen.getByRole("button", { name: /^Nothing waiting to send/ });
+    expect(chip.getAttribute("aria-label")).toMatch(/offline/i);
+    fireEvent.click(chip);
+    expect(screen.getByRole("dialog", { name: "Queue" })).toBeTruthy();
   });
 });

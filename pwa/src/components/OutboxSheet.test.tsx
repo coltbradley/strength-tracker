@@ -6,7 +6,7 @@
 // promises — a "Retry" that cannot work is worse than no retry at all, and a
 // couple of writes syncing on gym wifi must not be dressed as a failure.
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
@@ -32,7 +32,11 @@ const h = vi.hoisted(() => ({
   buildQueueExport: vi.fn(() => ({ items: [] })),
   downloadText: vi.fn(),
   unit: "kg" as "kg" | "lb",
+  known: true,
+  online: true,
 }));
+
+vi.mock("../hooks/useFabDrag", () => ({ useOnline: () => h.online }));
 
 vi.mock("../hooks/useUnit", () => ({ useUnit: () => h.unit }));
 
@@ -40,6 +44,7 @@ vi.mock("../lib/sync", () => ({
   outbox: {
     // one stable object, so useSyncExternalStore does not loop
     getStatus: () => h.status,
+    isStatusKnown: () => h.known,
     subscribe: () => () => {},
     inspect: () => Promise.resolve(h.entries),
     retryDead: h.retryDead,
@@ -114,8 +119,47 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   h.unit = "kg";
+  h.known = true;
+  h.online = true;
   Reflect.deleteProperty(navigator, "canShare");
   Reflect.deleteProperty(navigator, "share");
+});
+
+describe("D2: the sheet is reachable from the chip in every state", () => {
+  beforeEach(() => {
+    h.status = { pending: 0, dead: 0, held: 0, state: "idle", lastError: null };
+  });
+
+  it("says everything is on the server, with the last-synced time when it is known", async () => {
+    const at = new Date(2026, 9, 1, 15, 42).getTime();
+    h.status = { ...h.status, pending: 0, dead: 0, lastSyncedAt: at } as typeof h.status;
+    render(<OutboxSheet onClose={() => undefined} />);
+    expect(await screen.findByRole("dialog", { name: "All on the server" })).toBeTruthy();
+    expect(screen.getByText(/Everything you have logged is on the server/)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toMatch(/Last write reached the server at/);
+    h.status = { ...h.status, lastSyncedAt: undefined } as typeof h.status;
+  });
+
+  it("does not invent a last-synced time it does not have", async () => {
+    render(<OutboxSheet onClose={() => undefined} />);
+    await screen.findByRole("dialog", { name: "All on the server" });
+    expect(screen.queryByText(/Last write/)).toBeNull();
+  });
+
+  it("is titled Not yet on the server while writes wait, and says offline is normal", async () => {
+    h.online = false;
+    await show([entry({ key: 1 })]);
+    expect(screen.getByRole("dialog", { name: "Not yet on the server" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toMatch(/Offline/);
+  });
+
+  it("claims nothing while the queue has not been read", async () => {
+    h.known = false;
+    h.status = { ...h.status, pending: 0, dead: 0, held: 0 };
+    render(<OutboxSheet onClose={() => undefined} />);
+    expect(await screen.findByRole("dialog", { name: "Checking the queue" })).toBeTruthy();
+    expect(screen.queryByText(/Everything you have logged is on the server/)).toBeNull();
+  });
 });
 
 describe("formatAge", () => {

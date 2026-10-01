@@ -46,6 +46,12 @@ export interface OutboxStatus {
   held: number;
   state: SyncState;
   lastError: string | null;
+  /**
+   * Wall-clock ms of the last write the server acknowledged during this app
+   * run. Not persisted: after a cold start it is simply unknown, and nothing
+   * may show a time it does not have.
+   */
+  lastSyncedAt?: number | null;
 }
 
 export interface TransportError {
@@ -684,7 +690,11 @@ export function createOutbox({
             } else {
               await db.delete("outbox", row.key);
             }
-            setStatus({ ...counts(await readAll(db)), lastError: null });
+            setStatus({
+              ...counts(await readAll(db)),
+              lastError: null,
+              lastSyncedAt: Date.now(),
+            });
             try {
               onSynced?.(item.op);
             } catch {

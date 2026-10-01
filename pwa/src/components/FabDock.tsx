@@ -6,7 +6,6 @@
 // one that looks live and fails after a spinner is not.
 import { useEffect, useState } from "react";
 import { useOnline } from "../hooks/useFabDrag";
-import { useOutboxStatus } from "../hooks/useOutboxStatus";
 import { CoachSheet } from "./CoachSheet";
 import { ReportBugSheet } from "./ReportBugSheet";
 import { onCoachOpen } from "../lib/coachOpen";
@@ -20,7 +19,6 @@ interface FabDockProps {
 
 export function FabDock({ userId, route }: FabDockProps) {
   const online = useOnline();
-  const status = useOutboxStatus();
   const [open, setOpen] = useState<"coach" | "bug" | null>(null);
   // The per-person switch (coach_access). Starts ON and stays on unless a row
   // says otherwise: the edge function is the boundary and answers 403 on its
@@ -139,11 +137,6 @@ export function FabDock({ userId, route }: FabDockProps) {
             </g>
           </svg>
           <span>Report</span>
-          {status.pending > 0 && (
-            <span className="fab-queue" aria-hidden="true">
-              {status.pending > 9 ? "9+" : status.pending}
-            </span>
-          )}
         </button>
       </div>
 

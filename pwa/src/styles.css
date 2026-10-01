@@ -637,7 +637,7 @@
   @media (max-width: 359px) {
     /* Keep sync recovery and all three header controls inside the phone-width
      * column. Their icon buttons retain accessible names and 44px targets. */
-    .header-action span:not(.fab-off-dot, .fab-queue) {
+    .header-action span:not(.fab-off-dot) {
       display: none;
     }
   }
@@ -2492,7 +2492,7 @@
     gap: 0;
   }
 
-  .topbar:has(.topbar-session) .header-action span:not(.fab-off-dot, .fab-queue) {
+  .topbar:has(.topbar-session) .header-action span:not(.fab-off-dot) {
     display: none;
   }
 
@@ -3116,6 +3116,41 @@
     margin: 0;
     padding: 0 var(--gutter);
   }
+
+  /* ---- chrome fixes (final) ---- */
+
+  /* D2. The sync chip never changes the header's geometry in the session.
+   * Above 360px the session header is ONE row with no slack, and a chip that
+   * grew from a 44px check to "On phone · 1" wrapped it (66px to 111px, the
+   * whole screen jumping under the thumb). So there the chip is always the same
+   * 44px circle: glyph plus the count read off data-count; the words stay in
+   * the accessible name and in the queue sheet one tap away. At 360px and below
+   * the chip already lives alone on row two, where growing moves nothing. */
+  @media (min-width: 361px) {
+    .topbar:has(.topbar-session) .sync-chip {
+      width: var(--tap-min);
+      min-width: var(--tap-min);
+      padding: 0;
+      gap: var(--s-1);
+      overflow: hidden;
+    }
+
+    .topbar:has(.topbar-session) .sync-chip > :not(.sync-chip-glyph) {
+      display: none;
+    }
+
+    .topbar:has(.topbar-session) .sync-chip[data-count]::after {
+      content: attr(data-count);
+    }
+  }
+
+  /* The count never wraps or clips in the fixed chip. */
+  .sync-chip[data-count]::after {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- End screen (Version D): "That's the session." ---- */
+
 
   /* ---- session focus deck: three bands (Version D) ----
    * status (above) / .focus-middle / .focus-dock. The middle takes whatever
@@ -6741,7 +6776,7 @@
     height: 16px;
   }
 
-  .header-action span:not(.fab-off-dot, .fab-queue) {
+  .header-action span:not(.fab-off-dot) {
     font-family: var(--font-mono);
     font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
     font-weight: 700;
@@ -6761,29 +6796,15 @@
     opacity: 0.65;
   }
 
-  .fab-off-dot,
-  .fab-queue {
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    min-width: 14px;
-    height: 14px;
-    border-radius: var(--radius-pill);
-    font-family: var(--font-mono);
-    font-size: calc(var(--demo-text-scale, 1) * 9px);
-    line-height: 14px;
-    text-align: center;
-    border: var(--bw-hair) solid var(--bg);
-  }
-
   .fab-off-dot {
+    position: absolute;
+    top: 12px;
+    right: 9px;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
     background: var(--text-dim);
-  }
-
-  .fab-queue {
-    background: var(--accent);
-    color: var(--text-inverse);
-    padding: 0 3px;
+    border: var(--bw-hair) solid var(--bg);
   }
 
   /* -- parts of a day ------------------------------------------------------

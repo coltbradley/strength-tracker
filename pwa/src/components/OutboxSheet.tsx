@@ -30,7 +30,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Sheet } from "./Sheet";
 import { outbox } from "../lib/sync";
-import { useOutboxStatus } from "../hooks/useOutboxStatus";
+import { useOutboxKnown, useOutboxStatus } from "../hooks/useOutboxStatus";
+import { useOnline } from "../hooks/useFabDrag";
 import { getExercises } from "../lib/data";
 import { buildQueueExport, downloadText, exportFilename } from "../lib/export";
 import { reportError, toast } from "../lib/errors";
@@ -142,6 +143,8 @@ export function OutboxSheet({
 }: { onClose: () => void; receiptReviewReason?: string | null }) {
   const unit = useUnit();
   const status = useOutboxStatus();
+  const known = useOutboxKnown();
+  const online = useOnline();
   const [entries, setEntries] = useState<OutboxEntry[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -330,8 +333,38 @@ export function OutboxSheet({
       .finally(() => setBusy(false));
   };
 
+  // The heading and the first sentence come from the outbox's own counts, not
+  // from `entries`: that list loads asynchronously, and an empty list on first
+  // paint must never read as "everything is on the server".
+  const nothingWaiting = known && status.pending === 0 && status.dead === 0;
+  const checking = !known && status.pending === 0 && status.dead === 0;
+  const title = checking
+    ? "Checking the queue"
+    : nothingWaiting
+      ? "All on the server"
+      : "Not yet on the server";
+  const lastSynced =
+    typeof status.lastSyncedAt === "number"
+      ? new Date(status.lastSyncedAt).toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : null;
+
   return (
-    <Sheet title="UNSYNCED WRITES" onClose={onClose}>
+    <Sheet title={title} onClose={onClose}>
+      {nothingWaiting && !receiptReviewReason && (lastSynced !== null || !online) && (
+        <p className="microcopy outbox-all-synced" role="status">
+          {lastSynced !== null && `Last write reached the server at ${lastSynced}. `}
+          {!online && "You are offline right now; new sets will queue here."}
+        </p>
+      )}
+      {!nothingWaiting && !online && !receiptReviewReason && (
+        <p className="microcopy outbox-offline" role="status">
+          Offline. This is the normal state without a connection: writes wait
+          on this phone and go up on their own when it reconnects.
+        </p>
+      )}
       {receiptReviewReason && (
         <p className="microcopy receipt-review-reason" role="alert">
           This set needs review: {receiptReviewReason}
@@ -371,7 +404,9 @@ export function OutboxSheet({
 
         {!receiptReviewReason && (
           <div className="microcopy">
-          {entries.length === 0
+          {checking
+            ? "Reading the queue on this phone. Nothing is claimed until that is done."
+            : entries.length === 0
             ? "Nothing is waiting. Everything you have logged is on the server."
             : dead.length === 0 && held.length === 0
               ? "Queued on this phone until it can reach the server. This is the normal state offline, and nothing is lost while it waits."
