@@ -62,9 +62,12 @@ node pwa/e2e/live-load-sync.mjs --label main --pwa-dir ../main-checkout/pwa --ou
 #          --allow kind,kind   do not gate on these mismatch kinds (waive a known issue)
 ```
 
-Mismatches of kind `authored-drift` are informational (a prescription logged
-untouched in the other unit moves by the display rounding, at most about
-0.1 kg); everything else gates.
+Mismatches of kind `authored-drift` are informational: a prescription that
+arrives from the other unit is staged as the nearest loadable value on the
+step grid (display rule 3), so an untouched set can differ from it by up to
+half a step. A drift beyond half a step is `prefill-drift` and gates, as does
+a staged number with more than one decimal that was not typed
+(`display-precision`; a quarter-kg in kg is exempt). Everything else gates.
 
 `npm --prefix pwa run test:live-load` is the same command. Exit status is 0
 only when the replay accepts every op, no invariant is violated, and no screen

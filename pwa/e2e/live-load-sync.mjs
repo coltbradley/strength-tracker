@@ -749,20 +749,37 @@ class Run {
     const rxIdx = /^live-rx-(\d+)$/.exec(set.prescription_id ?? "");
     if (rxIdx && PLAN[Number(rxIdx[1])] && PLAN[Number(rxIdx[1])].set_type !== set.set_type)
       issue("set-type", `prescription ${set.prescription_id} is ${PLAN[Number(rxIdx[1])].set_type} but the set was written as ${set.set_type}`);
-    // what the coach prescribed vs what an untouched set wrote
+    // what the coach prescribed vs what an untouched set wrote.
+    //
+    // Display rule 3 (docs/decisions.md, "Human-precision loads"): a plan that
+    // arrives from the OTHER unit is staged as the nearest LOADABLE value on the
+    // exercise's step grid, so an untouched set legitimately differs from the
+    // prescription by up to half a step (info, never gating). A drift BEYOND
+    // half a step is a genuinely wrong load and gates ("prefill-drift").
     if (rxIdx && PLAN[Number(rxIdx[1])] && /unchanged|untouched|next set after mid-rest|superset round [23]/i.test(desc)) {
       const rx = PLAN[Number(rxIdx[1])];
       if (rx.load_kg != null) {
         const drift = Math.round((set.load_kg - rx.load_kg) * 100) / 100;
-        if (Math.abs(drift) > 0.0051)
+        // half of the coarse step of the unit shown (5 lb / 2.5 kg), per hand
+        // doubled into the total, plus the database's 0.01 kg
+        const halfStepKg = (unit === "lb" ? 2.5 * KG_PER_LB : 1.25) * (per ? 2 : 1) + 0.011;
+        if (Math.abs(drift) > halfStepKg)
+          issue("prefill-drift", `prescribed ${rx.load_kg} kg, logged untouched as ${set.load_kg} kg (${set.entered_load} ${set.entered_unit}); drift ${drift} kg is more than half a step in ${unit}`);
+        else if (Math.abs(drift) > 0.0051)
           this.mismatches.push({
             run: this.name, step: desc, kind: "authored-drift", severity: "info",
-            detail: `prescribed ${rx.load_kg} kg (${rx.entered_load ?? "?"} ${rx.entered_unit ?? ""}), logged untouched as ${set.load_kg} kg (${set.entered_load} ${set.entered_unit}); drift ${drift} kg`,
+            detail: `prescribed ${rx.load_kg} kg (${rx.entered_load ?? "?"} ${rx.entered_unit ?? ""}), logged untouched as ${set.load_kg} kg (${set.entered_load} ${set.entered_unit}); drift ${drift} kg (within half a step: the nearest loadable value)`,
           });
       }
     }
-    if (!typed && before.unit === "lb" && before.shown != null && /\.\d\d/.test(String(before.shown)))
-      issue("display-precision", `lb draft shown as ${before.shown} (more than the one decimal every other lb figure uses)`);
+    // A staged number the lifter did not type is read at human precision: one
+    // decimal at most, in either unit. The one exception is a quarter-kg in kg
+    // (21.25, the 1.25 kg plate), which is a real load, not a conversion tail.
+    if (!typed && before.shown != null && /\.\d\d/.test(String(before.shown))) {
+      const quarterKg = unit === "kg" && Math.abs(before.shown * 4 - Math.round(before.shown * 4)) < 1e-9;
+      if (!quarterKg)
+        issue("display-precision", `${unit} draft shown as ${before.shown} (more than the one decimal every converted figure uses)`);
+    }
     if (typed) {
       if (set.entered_load !== typed.value || set.entered_unit !== typed.unit)
         issue("typed-vs-entered", `typed ${typed.value} ${typed.unit} but entered_load/unit = ${set.entered_load} ${set.entered_unit}`);
