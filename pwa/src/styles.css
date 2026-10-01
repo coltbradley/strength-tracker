@@ -7650,12 +7650,6 @@
     margin: 0 var(--s-3);
   }
 
-  .workout-preview-row > .note,
-  .workout-preview-row > .coach-note {
-    flex: 0 0 100%;
-    margin-top: var(--s-3);
-  }
-
   /* Start stays under the thumb while the list scrolls */
   .workout-preview-actions {
     bottom: 0;
@@ -7750,6 +7744,631 @@
   .rpe-sheet .ledger-set,
   .focus-more .ledger-set {
     min-height: var(--tap-key);
+  }
+
+  /* 5. settings ------------------------------------------------------------ */
+
+  .settings-group {
+    padding-top: var(--s-4);
+    border-top: 0;
+  }
+
+  .settings-danger {
+    margin-top: var(--s-4);
+  }
+
+  .setting-block {
+    gap: var(--s-4);
+  }
+
+  /* the sheet's own microcopy sits close to the card it explains */
+  .sheet .microcopy {
+    margin-top: 0;
+    padding-inline: var(--s-3);
+  }
+
+  .sheet .microcopy.settings-warn {
+    padding-left: var(--s-5);
+    border-left-width: var(--bw-thick);
+  }
+
+  .signout-btn {
+    min-height: var(--tap-key);
+  }
+
+  /* 6. check-in -------------------------------------------------------------- */
+
+  .checkin-sheet {
+    gap: var(--s-6);
+  }
+
+  .checkin-group {
+    gap: var(--s-4);
+  }
+
+  .checkin-still {
+    padding: var(--s-5) var(--s-6);
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+  }
+
+  .checkin-earlier {
+    padding-inline: var(--s-3);
+  }
+
+  .checkin-follow {
+    margin-top: var(--s-4);
+    padding: var(--s-6);
+    border: var(--bw) solid var(--danger);
+    border-radius: var(--r-card);
+  }
+
+  .checkin-scale .chip,
+  .checkin-seg .chip {
+    border-radius: var(--r-card);
+  }
+
+  /* 7. coach ------------------------------------------------------------------ */
+
+  .coach-starters {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: var(--s-3);
+  }
+
+  .coach-starters .chip {
+    width: 100%;
+    min-height: var(--tap);
+    justify-content: flex-start;
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+    font-weight: 600;
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-body));
+  }
+
+  .coach-msg-user {
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-key);
+  }
+
+  .coach-msg-assistant {
+    box-shadow: none;
+    padding-left: 0;
+  }
+
+  .coach-compose {
+    border-top: 0;
+    padding-top: var(--s-4);
+  }
+
+  .coach-input {
+    min-height: var(--tap-log);
+  }
+
+  .coach-actions {
+    margin-top: var(--s-5);
+  }
+
+  .coach-attach.btn,
+  .coach-attach {
+    min-height: var(--tap-md);
+  }
+
+  .coach-send {
+    min-height: var(--tap-md);
+    min-width: 7rem;
+    border-radius: var(--r-card);
+  }
+
+  .coach-msg-action {
+    padding: 0 var(--s-5);
+    border-radius: var(--radius-pill);
+    background: var(--surface-key);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-sm));
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* 9. outbox ----------------------------------------------------------------- */
+
+  .queue-calm {
+    margin: 0;
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-body));
+    line-height: 1.45;
+  }
+
+  .queue-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: var(--s-3);
+  }
+
+  .queue-stat {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+    padding: var(--s-5) var(--s-6);
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+  }
+
+  .queue-stat > span:first-child {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+    color: var(--text-dim);
+    overflow-wrap: anywhere;
+  }
+
+  .queue-stat .sheet-row-value {
+    font-family: var(--font-sans);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
+    font-weight: 800;
+    text-align: left;
+  }
+
+  .queue-stat .sheet-row-value.queue-state-held {
+    color: var(--info);
+  }
+
+  .queue-stat-dead {
+    background: var(--surface-danger);
+  }
+
+  .queue-stat-dead > span:first-child,
+  .queue-stat .sheet-row-value.queue-state-dead {
+    color: var(--danger);
+  }
+
+  .queue-recover-title {
+    margin: var(--s-3) 0 0;
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-base));
+    font-weight: 800;
+  }
+
+  .queue-step {
+    display: grid;
+    grid-template-columns: var(--s-10) minmax(0, 1fr);
+    gap: var(--s-5);
+    align-items: start;
+    padding: var(--s-6);
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+  }
+
+  .queue-step-n {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-pill);
+    background: var(--surface-key);
+    font-weight: 800;
+  }
+
+  .queue-step-body,
+  .queue-block,
+  .queue-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-width: 0;
+  }
+
+  .queue-step-body > .btn,
+  .queue-actions > .btn {
+    min-height: var(--tap);
+  }
+
+  .queue-step-body .btn-ghost {
+    background: var(--surface-key);
+  }
+
+  .queue-step-body .microcopy,
+  .queue-actions .microcopy {
+    margin-top: 0;
+    padding-inline: 0;
+  }
+
+  .queue-step-body .queue-item {
+    padding-block: var(--s-4);
+  }
+
+  /* the white sheet cards share a hairline so their edge reads on the near-white
+     raised sheet, where the fill alone is a one-step difference */
+  .sheet .sheet-row,
+  .sheet .drawer-row,
+  .sheet .queue-stat,
+  .sheet .queue-step,
+  .sheet .checkin-still,
+  .sheet .coach-starters .chip,
+  .workout-preview-row {
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-hair-color);
+  }
+
+  /* 8. program ---------------------------------------------------------------- */
+
+  /* The week is a row of cards on the page, not a card around a row: the old
+     rules bled the strip past its card on 360-399px phones. The base .week-track
+     already runs edge to edge and gives the gutter back to each page. */
+  [data-presentation="program"] > .rule-section {
+    margin-block: var(--s-4);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+  }
+
+  [data-presentation="program"] .section-head {
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
+  }
+
+  [data-presentation="program"] .cal-open {
+    white-space: nowrap;
+  }
+
+  [data-presentation="program"] .week-track {
+    margin-inline: calc(-1 * var(--gutter));
+  }
+
+  [data-presentation="program"] .week-page {
+    padding-inline: var(--gutter);
+  }
+
+  [data-presentation="program"] .week-page .week-strip {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--s-2);
+  }
+
+  @media (max-width: 359px) {
+    [data-presentation="program"] .week-track {
+      margin-inline: calc(-1 * var(--gutter));
+    }
+
+    [data-presentation="program"] .week-page {
+      padding-inline: 0;
+    }
+
+    [data-presentation="program"] .week-page .week-strip {
+      grid-template-columns: repeat(7, minmax(var(--tap-min), 1fr));
+      gap: 0;
+    }
+  }
+
+  .week-cell,
+  [data-presentation="program"] .week-cell {
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-hair-color);
+  }
+
+  .week-cell-selected,
+  [data-presentation="program"] .week-cell-selected {
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 var(--bw) var(--accent);
+  }
+
+  .week-cell-today .week-cell-num {
+    border-bottom-color: var(--accent);
+  }
+
+  /* the selected day: one card, ringed in the accent, like the design's open
+     day in the week list */
+  [data-presentation="program"] .week-detail {
+    margin-top: var(--s-5);
+    padding: var(--s-7);
+    border: var(--bw) solid var(--accent);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+  }
+
+  [data-presentation="program"] .selected-day-label {
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-lg));
+    font-weight: 800;
+    letter-spacing: var(--track-tight);
+  }
+
+  [data-presentation="program"] .rx-row {
+    border-bottom: 0;
+  }
+
+  [data-presentation="program"] .rx-name {
+    font-weight: 600;
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-body));
+  }
+
+  [data-presentation="program"] .rx-spec {
+    color: var(--text-dim);
+    text-align: right;
+  }
+
+  /* Later days, and the dated list: a card per day */
+  [data-presentation="program"] .week-item {
+    margin-block: var(--s-3);
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-hair-color);
+  }
+
+  [data-presentation="program"] .week-item .week-row {
+    padding-inline: var(--s-7);
+    min-height: var(--tap-key);
+  }
+
+  [data-presentation="program"] .week-item .week-detail {
+    margin: 0 var(--s-5) var(--s-5);
+    background: var(--surface-card);
+  }
+
+  [data-presentation="program"] .week-row .chev {
+    background: var(--surface-key);
+  }
+
+  .week-today {
+    border-radius: var(--radius-pill);
+  }
+
+  /* 10. plan editor and pickers ----------------------------------------------- */
+
+  .plan-screen .back-link {
+    min-height: var(--tap-md);
+  }
+
+  .plan-screen .plan-title-input {
+    min-height: var(--tap-key);
+    padding-inline: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-title));
+    font-weight: 800;
+    letter-spacing: var(--track-tight);
+  }
+
+  .plan-screen .plan-title-input:focus {
+    outline-offset: var(--s-2);
+    border-radius: var(--r-card);
+  }
+
+  .plan-screen .rule-section {
+    margin-top: var(--s-4);
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  /* an exercise row: the name over its scheme, the arrow on the right, at every
+     width (the old two-line layout was only for phones under 380px) */
+  .plan-screen .week-row-rx {
+    grid-template-columns: minmax(0, 1fr) var(--tap-min);
+    grid-template-areas:
+      "name action"
+      "target action";
+    align-items: center;
+    padding: var(--s-5) var(--s-4) var(--s-5) var(--s-7);
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-hair-color);
+  }
+
+  .plan-screen .week-row-rx .week-label {
+    grid-area: name;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    font-weight: 800;
+  }
+
+  .plan-screen .week-row-rx .week-state {
+    grid-area: target;
+    text-align: left;
+    white-space: normal;
+    letter-spacing: 0;
+    font-weight: 500;
+  }
+
+  .plan-screen .week-row-rx .chev {
+    grid-area: action;
+    background: transparent;
+  }
+
+  .plan-screen .week-detail {
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-hair-color);
+  }
+
+  .plan-screen .btn-outline-ink.btn-block {
+    min-height: var(--tap-key);
+    border: var(--bw) dashed var(--control-border-color);
+    background: transparent;
+    color: var(--text);
+  }
+
+  .plan-screen .plan-block-named {
+    border-top: 0;
+    margin-top: var(--s-5);
+  }
+
+  .plan-section-head {
+    border-radius: var(--r-card);
+  }
+
+  .plan-section-name,
+  .plan-main-head .plan-section-name {
+    color: var(--text-dim);
+    letter-spacing: var(--track-3);
+  }
+
+  .dupe-warn {
+    border: var(--bw) solid var(--danger);
+    border-radius: var(--r-card);
+    background: var(--surface-danger);
+  }
+
+  .add-new-row {
+    min-height: var(--tap-key);
+    border: var(--bw) dashed var(--control-border-color);
+    border-radius: var(--r-card);
+    justify-content: center;
+    text-align: center;
+  }
+
+  /* the scheme sheet: each set row is a card */
+  .scheme-row {
+    padding: var(--s-5) var(--s-6);
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+  }
+
+  .scheme-n {
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+  }
+
+  .ss-pairing {
+    padding: var(--s-4) var(--s-5);
+    border-radius: var(--r-card);
+    background: var(--surface-key);
+  }
+
+  /* saved workouts: a card per template */
+  .sheet .week-item {
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-hair-color);
+    margin-bottom: var(--s-3);
+  }
+
+  .sheet .week-item .week-row {
+    padding-inline: var(--s-7);
+    min-height: var(--tap-key);
+  }
+
+  .sheet .week-item .week-label {
+    font-weight: 800;
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-body));
+  }
+
+  /* A note reads as one line of prose with its author up front, like the
+     design's "Coach · ..." (the label keeps its own colour so it is never
+     the only difference between a coach note and a plan note). */
+  .detail-note {
+    border-left: 0;
+    padding: 0;
+  }
+
+  .detail-note-label {
+    display: inline-block;
+    margin: 0 var(--s-2) 0 0;
+    font-family: var(--font-sans);
+    font-size: inherit;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: lowercase;
+    color: var(--info);
+  }
+
+  .detail-note-label::first-letter {
+    text-transform: uppercase;
+  }
+
+  .detail-note-label::after {
+    content: " \00b7";
+  }
+
+  .detail-note-more {
+    font-family: var(--font-mono);
+    font-size: calc(var(--demo-text-scale, 1) * var(--fs-micro));
+    letter-spacing: var(--track-1);
+    text-transform: uppercase;
+  }
+
+  .workout-preview-row > .detail-note {
+    flex: 0 0 100%;
+    margin-top: var(--s-3);
+  }
+
+  /* a sheet's controls never shrink to make room: a fixed-height (tall) sheet
+     scrolls instead, and a clipped joined control hides its own options */
+  .sheet .seg {
+    flex-shrink: 0;
+  }
+
+  /* four or more options (sections, muscles, weekdays, equipment) are a set of chips, not
+     one joined bar: they wrap, and a wrapped joined bar has no clean edge */
+  .seg:has(> .seg-btn:nth-child(4)) {
+    gap: var(--s-3);
+    overflow: visible;
+    border: 0;
+    background: none;
+  }
+
+  .seg:has(> .seg-btn:nth-child(4)) > .seg-btn {
+    padding: 0 var(--s-6);
+    border-radius: var(--radius-pill);
+    background: var(--surface-key);
+  }
+
+  .seg:has(> .seg-btn:nth-child(4)) > .seg-on {
+    background: var(--text);
+  }
+
+  /* A labelled number (sets, reps, rest, the plan editor's rows): one card with
+     the value in it and two rounded keys, like the dock's number cards. */
+  .stepper-btn,
+  .stepper-btn-fine {
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--surface-key);
+    color: var(--text);
+    font-family: var(--font-sans);
+  }
+
+  .stepper-btn-fine {
+    color: var(--text-dim);
+  }
+
+  .stepper-btn:active,
+  .stepper-btn-fine:active {
+    background: var(--surface-key-press);
+  }
+
+  .stepper-field {
+    padding: var(--s-3) var(--s-3) var(--s-3) var(--s-7);
+    border-radius: var(--r-card);
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 var(--bw-hair) var(--rule-hair-color);
+  }
+
+  .stepper-field .stepper-value {
+    border-bottom: 0;
+    font-family: var(--font-sans);
+    font-weight: 800;
+  }
+
+  .stepper-field .stepper-btn,
+  .stepper-field .stepper-btn-fine {
+    flex: 0 0 var(--tap-key);
+    min-width: var(--tap-key);
+    min-height: var(--tap-key);
+  }
+
+  .plan-screen .week-detail {
+    background: var(--surface-dock);
   }
 }
 
