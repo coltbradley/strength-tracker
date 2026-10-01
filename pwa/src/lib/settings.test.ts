@@ -321,6 +321,28 @@ describe("unit switch repairs bar selections", () => {
     // "no bar" is never remapped
     expect(getExercisePref("leg-press").barKg).toBe(0);
   });
+
+  // A sled is a machine fact, not a bar: it was snapped to the nearest bar of
+  // the other catalogue (34 kg sled -> 45 lb bar) on every unit switch.
+  it("leaves a custom sled weight alone across kg -> lb -> kg", () => {
+    setExerciseBarKg("sled-kg", 34);
+    setExerciseBarKg("sled-lb", Math.round(lbToKg(75) * 100) / 100);
+    setUnit("lb");
+    expect(getExercisePref("sled-kg").barKg).toBe(34);
+    expect(getExercisePref("sled-lb").barKg).toBe(34.02);
+    setUnit("kg");
+    expect(getExercisePref("sled-kg").barKg).toBe(34);
+    expect(getExercisePref("sled-lb").barKg).toBe(34.02);
+  });
+
+  it("still follows a catalogue bar, including one stored rounded", () => {
+    setUnit("lb");
+    setExerciseBarKg("squat", Math.round(lbToKg(45) * 100) / 100); // typed 45 lb
+    setUnit("kg");
+    expect(getExercisePref("squat").barKg).toBe(20);
+    setUnit("lb");
+    expect(kgToLb(getExercisePref("squat").barKg as number)).toBeCloseTo(45, 6);
+  });
 });
 
 describe("per-exercise preferences", () => {
