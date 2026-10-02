@@ -145,12 +145,17 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
     const last = msgs[msgs.length - 1];
     if (!last?.streaming || !last.turnId || busy) return;
     let cancelled = false;
-    void pollForAnswer(last.turnId, { isCancelled: () => cancelled }).then(
+    const recovering = last.turnId;
+    void pollForAnswer(recovering, { isCancelled: () => cancelled }).then(
       (outcome) => {
         if (cancelled) return;
         setMsgs((prev) =>
-          prev.map((m, i) => {
-            if (i !== prev.length - 1) return m;
+          prev.map((m) => {
+            // Matched by turn id, not by position: the poll can take ~24 s,
+            // Ask stays enabled meanwhile, and a question sent in that window
+            // puts its own placeholder last. Patching "the last row" wrote
+            // the old answer into the new turn while it was still streaming.
+            if (m.turnId !== recovering) return m;
             if (outcome.kind === "answer")
               return {
                 ...m,
