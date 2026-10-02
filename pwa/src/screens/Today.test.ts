@@ -7,6 +7,9 @@ import { describe, expect, it } from "vitest";
 import {
   canDoWorkoutNow,
   doNowMicrocopy,
+  requestedDateFrom,
+  splitOutsideWeek,
+  weekTally,
   showFirstRun,
   trainWorkoutForToday,
   weekPageDate,
@@ -15,6 +18,70 @@ import {
   workoutStates,
 } from "./Today";
 import type { PlannedWorkoutRow } from "../lib/types";
+
+describe("UI-08: weekTally and splitOutsideWeek", () => {
+  const day = (id: string, scheduled_date: string | null) =>
+    ({ id, scheduled_date }) as unknown as PlannedWorkoutRow;
+  const week = [
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30",
+    "2026-10-01",
+    "2026-10-02",
+    "2026-10-03",
+    "2026-10-04",
+  ];
+
+  it("counts only the days shown, and calls a past undone day missed, not to go", () => {
+    const workouts = [
+      day("aug", "2026-08-10"),
+      day("sep29", "2026-09-29"),
+      day("sep30", "2026-09-30"),
+      day("today", "2026-10-01"),
+    ];
+    const states = new Map<string, import("./Today").WorkoutState>([
+      ["aug", "MISSED"],
+      ["sep29", "MISSED"],
+      ["sep30", "DONE"],
+      ["today", "TODAY"],
+    ]);
+    expect(weekTally(workouts, states, week)).toBe(
+      "1 DONE · 1 TO GO · 1 MISSED",
+    );
+  });
+
+  it("never prints a ratio", () => {
+    const states = new Map<string, import("./Today").WorkoutState>([
+      ["a", "DONE"],
+    ]);
+    expect(weekTally([day("a", "2026-09-28")], states, week)).not.toMatch(
+      /[%/]/,
+    );
+  });
+
+  it("splits what is outside the week into earlier and later", () => {
+    const { earlier, later } = splitOutsideWeek(
+      [day("a", "2026-08-10"), day("b", "2026-10-12"), day("c", null)],
+      week,
+    );
+    expect(earlier.map((w) => w.id)).toEqual(["a"]);
+    expect(later.map((w) => w.id)).toEqual(["b", "c"]);
+  });
+});
+
+describe("UI-02: requestedDateFrom", () => {
+  it("reads the day a Train link asked for", () => {
+    expect(requestedDateFrom("?date=2026-09-30")).toBe("2026-09-30");
+    expect(requestedDateFrom("?x=1&date=2026-12-28")).toBe("2026-12-28");
+  });
+
+  it("ignores nothing, malformed and impossible dates", () => {
+    expect(requestedDateFrom("")).toBeNull();
+    expect(requestedDateFrom("?date=tomorrow")).toBeNull();
+    expect(requestedDateFrom("?date=2026-02-31")).toBeNull();
+    expect(requestedDateFrom("?date=2026-9-3")).toBeNull();
+  });
+});
 
 describe("weekPageDate", () => {
   it("is the identity for the page already selected", () => {
@@ -279,24 +346,25 @@ describe("trainWorkoutForToday", () => {
     const workout = day();
     const states = new Map([[workout.id, "DONE" as const]]);
 
-    expect(
-      trainWorkoutForToday([workout], states, "2026-09-04"),
-    ).toEqual({ workout, state: "DONE" });
+    expect(trainWorkoutForToday([workout], states, "2026-09-04")).toEqual({
+      workout,
+      state: "DONE",
+    });
   });
 
   it.each(["DONE", "SKIPPED"] as const)(
     "prefers an unfinished same-day workout over a %s one",
     (completedState) => {
-    const completed = day({ id: "completed" });
-    const ready = day({ id: "ready", day_index: 1 });
-    const states = new Map([
-      [completed.id, completedState],
-      [ready.id, "TODAY" as const],
-    ]);
+      const completed = day({ id: "completed" });
+      const ready = day({ id: "ready", day_index: 1 });
+      const states = new Map([
+        [completed.id, completedState],
+        [ready.id, "TODAY" as const],
+      ]);
 
-    expect(
-      trainWorkoutForToday([completed, ready], states, "2026-09-04"),
-    ).toEqual({ workout: ready, state: "TODAY" });
+      expect(
+        trainWorkoutForToday([completed, ready], states, "2026-09-04"),
+      ).toEqual({ workout: ready, state: "TODAY" });
     },
   );
 
@@ -308,9 +376,11 @@ describe("trainWorkoutForToday", () => {
       [second.id, "TODAY" as const],
     ]);
 
-    expect(trainWorkoutForToday([first, second], states, "2026-09-04")).toEqual({
-      workout: second,
-      state: "TODAY",
-    });
+    expect(trainWorkoutForToday([first, second], states, "2026-09-04")).toEqual(
+      {
+        workout: second,
+        state: "TODAY",
+      },
+    );
   });
 });

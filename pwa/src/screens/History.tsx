@@ -60,6 +60,7 @@ import {
   type StaleReason,
 } from "../lib/data";
 import { SessionList, WeekLine } from "../components/SessionHistory";
+import { discardOutcome } from "../lib/discardOutcome";
 import {
   getSessionLog,
   getWeeklySummary,
@@ -765,12 +766,22 @@ export function History({ userId }: { userId: string }) {
       // same race as voidPastSet: the queued patch has to reach the server
       // before the refetch asks it what is still live
       await outbox.flush();
+      const outcome = discardOutcome(await outbox.inspect(), sessionId);
       // the discard touches EVERY exercise trained that day, not just the one
       // on screen — clear the whole per-exercise cache family so stale
       // offline reads can't resurrect it
       await invalidateForSessionClose();
       setReloadTick((t) => t + 1);
-      toast("Session discarded — every exercise from that day");
+      // Queued is not accepted (UI-18): a session with sets is refused by the
+      // database, and saying "discarded" then is false.
+      toast(
+        outcome === "refused"
+          ? "The server won't discard a session that has sets. It's still in your record."
+          : outcome === "queued"
+            ? "Discard saved on this phone. It applies when you're back online."
+            : "Session discarded — every exercise from that day",
+        outcome === "refused" ? "error" : undefined,
+      );
     } catch (e) {
       reportError(e, "discard session");
     }

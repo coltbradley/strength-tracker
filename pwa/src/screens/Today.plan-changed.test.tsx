@@ -18,6 +18,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 vi.mock("react-router-dom", () => ({
   useNavigate: () => vi.fn(),
+  useLocation: () => ({ search: "" }),
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
     <a href={to} {...props}>
       {children}
