@@ -3960,3 +3960,123 @@ is still the source of truth for a draft. All of it lives in ONE module,
   (Record list and detail), `End.test.tsx`, `TrainHome.test.tsx`; Deno tests for
   `humanKg` and the coach prompt. The live gate's display check was updated for
   rule 3 (see `pwa/e2e/live-load-sync.mjs`).
+
+## 2026-10-01 Audit remediation: database
+
+Ids refer to `docs/audits/2026-10-01-repository-audit.md`; the plan is
+`docs/superpowers/plans/2026-10-01-audit-remediation.md`. Migrations
+`20261002000000` and `20261002010000`.
+
+- **History triggers are SECURITY DEFINER** (DB-1, DB-2).
+  `refuse_rewriting_used_training_max` and `refuse_orphaning_logged_sets` run as
+  definer with a pinned `search_path` and execute revoked. The `auth.users`
+  existence check is the cascade detector, and an invoker cannot read
+  `auth.users`, which is why same-day TM corrections failed with "permission
+  denied for table users". Chosen over `pg_trigger_depth() > 1`, which would
+  also let a service-role hard delete of a dated planned day cascade past the
+  guard.
+- **No SECURITY DEFINER function in `public` is client-callable** (DB-3, DB-4,
+  DB-13). `validate-db` asserts it with an empty allowlist. Adding to the
+  allowlist needs a decision entry.
+- **A set with reps 0 is not a working set** in count views (DB-6, DB-7). The
+  filter is on `reps`, never on `tracking`. `rep_outcome` is null (undefined),
+  not 'missed', for done and time prescriptions, because a tick or a hold has
+  no rep target to miss.
+- **`v_adherence` buckets by `app_tz(s.user_id)` again** (DB-5, DB-11). A later
+  migration had re-created it from a stale copy. A view rewrite starts from
+  `pg_get_viewdef` of the replayed chain, never from an old migration's text.
+
+## 2026-10-01 Audit remediation: MCP server
+
+- **Plan-lock and TM-history refusals reach the model as ToolErrors** (MCP-2,
+  MCP-3). `dbRefusal` in `lib/errors.ts` builds them from the database's own
+  message and hint for 55000, 23001 and 23514. No pre-checks: the database stays
+  the authority, so the tool cannot disagree with the trigger.
+- **Long id lists are chunked** (about 100 per request, `lib/chunk.ts`) and long
+  reads paged past PostgREST's 1000-row cap (MCP-4, MCP-13).
+- **"Last time" for repeat and similar-day lookups is the newest session with at
+  least one live set** (MCP-8).
+- **`add_exercise` never confirms that an id exists in the global namespace**
+  (MCP-11). Non-Latin names need an explicit id; accents fold to ASCII.
+- **Prescriptions with `tracking = 'time'` carry no duration** (MCP-10). Seconds
+  are logged per set.
+- **`get_bodyweight` from/to are local calendar days** converted to UTC instants
+  (MCP-12). `search_exercises` and `resolve_exercises` rank first and cut second
+  (MCP-6).
+- **Shared-row writes** (MCP-1, MCP-17). `update_exercise` stamps `updated_by`,
+  and the destructive and shared-row tools refuse ephemeral (coach) tokens in
+  code, not only at the connector. Whether any account may edit shared seeded
+  rows is still OPEN and is Colt's decision.
+
+## 2026-10-01 Audit remediation: edge functions and infrastructure
+
+- **push-alerts runs with the gateway's `verify_jwt` off** (INFRA-1, EDGE-1,
+  EDGE-12). The gateway check never protected the user routes, since the public
+  anon key passes it. Every user route authenticates through `auth.getUser` and
+  `/sweep` checks `x-sweep-secret`. With the gateway check on, the pg_cron sweep
+  (no Authorization header) was rejected before the function ran. Deployed with
+  `--no-verify-jwt`, and `supabase/config.toml` says the same. Successful sends
+  now stamp `sent_at`.
+- **The deploy workflow's `supabase` job also runs on pwa-only pushes** (INFRA-2),
+  so a client never publishes ahead of an unapplied migration.
+- **`check-pwa-env` requires `role=anon` in the JWT or an `sb_publishable_` key**
+  (INFRA-3).
+- **Endurance sync** (EDGE-4, EDGE-5, EDGE-2). Re-reading an upstream activity
+  refreshes measurements but never `name`. Poll windows are per provider.
+  intervals.icu uses UTC `start_date`.
+- **A coach turn that fails after generation began is metered by estimate** and
+  counts toward the daily cap (EDGE-8). Its partial response is not stored, and
+  replayed history strips old context blocks (EDGE-3).
+
+## 2026-10-01 Audit remediation: PWA auth and cache
+
+- **The boot answer, not `INITIAL_SESSION(null)`, owns the cold-start null**
+  (CORE-1, NEW-CORE-1). After 3 s (250 ms offline) a stored session is drawn
+  provisionally, as identity only. The real answer always overrides it.
+- **`useAuth` renders only after the cache claim settles**, and claims are
+  serialized (CORE-4).
+- **Only an EMPTY answer from a request with no live stored token is
+  distrusted** (CORE-2): served as "offline" from cache, never written.
+- **Cache invalidation epochs are per key prefix** (CORE-3). An in-flight fetch
+  never writes over a newer invalidation.
+- **413, 414, 415 and 431 are dead `rejected` (no Retry); 405 is dead
+  `unknown`** (CORE-6). The same bytes get the same answer.
+
+## 2026-10-01 Audit remediation: PWA session
+
+- **A group of three or more is a circuit** (UI-14). Rest waits for the whole
+  round, and stations after the first record `rest_seconds_actual` null.
+  Two-member non-reps groups are unchanged.
+- **Finish with unlogged changes asks first**, with the same prompt as the Train
+  exit (UI-20).
+- **A TM change is announced on `plan:changed`**, with no page reload (PLAN-5).
+  An open session keeps its start-time prescription snapshot.
+- **Only a note still owed to the server keeps its local text** over a fresh
+  server read (UI-21).
+- **Timed sets: duration 1 to 7200 is enforced in the outbox admission gate**
+  (SESS-3), matching the database check. `duration_seconds` is read back with
+  every set (SESS-6, UI-16).
+- **A failed session-set read with no cache disables LOG** (SESS-4, UI-19).
+
+## 2026-10-01 Audit remediation: PWA plan and record
+
+- **Copying a planned day goes through one column list and one row builder**
+  (`lib/prescriptionCopy.ts`; PLAN-1, PLAN-2). Every row carries every key, for
+  the bulk-insert reason in AGENTS.md.
+- **Exports are the record, not just sets** (CORE-10, UI-04). CSV columns are
+  appended, never reordered. Unreadable optional tables are named in
+  `unavailable`. Paging is keyset.
+- **"Queued" is not "accepted"** (UI-18). The discard and finish screens ask the
+  queue (`discardOutcome`) before claiming success.
+- **A failed uncached history read renders "couldn't load" with retry, never
+  empty** (UI-15, PLAN-10, PLAN-11).
+- **Program's week tally counts only shown days** (UI-08). Outside days are
+  EARLIER or LATER. There is still no adherence ratio.
+- **Plan editor** (UI-01, UI-03). Leaving with an open row saves it first, and a
+  locked day says so up front.
+
+## 2026-10-01 Audit remediation: accessibility
+
+- **Steppers keep a stable accessible name** and carry the value through
+  `aria-describedby` (UI-06). Only the top sheet is exposed to assistive tech
+  (UI-11).

@@ -298,6 +298,14 @@ supabase functions deploy mcp-server --no-verify-jwt
 `--no-verify-jwt` is required every deploy: the function does its own bearer
 auth and the gateway must not demand a Supabase JWT.
 
+`push-alerts` is deployed the same way (`verify_jwt = false` in
+`supabase/config.toml`, `--no-verify-jwt` in `deploy.yml`). The pg_cron sweep
+sends no Authorization header, so a gateway JWT check rejected it before the
+function ran. The check never protected the user routes anyway (the public anon
+key passes it): those authenticate through `auth.getUser`, and `/sweep` checks
+`x-sweep-secret`. A hand deploy of `push-alerts` without the flag puts the 401
+back.
+
 ### Without the CLI: the Supabase MCP and a pinned bundle (retired 2026-09-06)
 
 **Production no longer runs a shim.** On 2026-09-06 `mcp-server` was deployed
@@ -381,7 +389,7 @@ and the matching function secret:
 
 ```bash
 supabase secrets set SWEEP_SECRET="$(openssl rand -base64 32)"
-supabase functions deploy push-alerts
+supabase functions deploy push-alerts --no-verify-jwt
 ```
 
 Until both Vault rows exist, `run_alert_sweep()` does nothing and raises a
@@ -406,6 +414,12 @@ select status_code, content from net._http_response order by created desc limit 
 select kind, fire_at, sent_at, error from rest_alerts
  where sent_at is null and cancelled_at is null order by fire_at;
 ```
+
+The gateway fix (INFRA-1, EDGE-1) is in code and in the deploy workflow, so
+nothing is blocking the sweep except these manual steps. Turning it on is still
+yours: set `SWEEP_SECRET`, create both Vault rows with the same secret value,
+then read `net._http_response` after a tick and expect a 200 with `sent`,
+`stale` and `failed` counts. Until you have seen that, the sweep is unproven.
 
 ### Is the sweep alive?
 

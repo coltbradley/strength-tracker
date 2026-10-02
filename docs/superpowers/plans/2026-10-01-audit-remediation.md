@@ -1,8 +1,47 @@
 # Audit remediation plan
 
-Status: in progress (streams A to G dispatched 2026-10-01). Sources: `docs/audits/2026-10-01-repository-audit.md` and the three `docs/audits/2026-10-01-deployed-ui-audit*.md` passes.
+Status: implemented on `fix/audit-remediation`, pending push (2026-10-01). Sources: `docs/audits/2026-10-01-repository-audit.md` and the three `docs/audits/2026-10-01-deployed-ui-audit*.md` passes.
 
 The audit ran at `d5e7b64`. Every finding was then re-checked at `902266d`, after the Version D, load-precision and exercise_prefs merges, by reading current code, re-running the PGlite replays, and executing the real supabase-js client offline for CORE-1. This plan uses the re-checked verdicts only.
+
+## Outcome
+
+Streams A to H are implemented and merged on `fix/audit-remediation`. Decisions
+are recorded in `docs/decisions.md` (2026-10-01, "Audit remediation" entries).
+
+- **A. Database.** Definer history triggers (DB-1, DB-2), no client-callable
+  definer function (DB-3, DB-4, DB-13), reps-0 and `rep_outcome` semantics
+  (DB-6, DB-7), `v_adherence` timezone restored (DB-5, DB-11).
+- **B. MCP.** Database refusals surface as ToolErrors, chunked and paged reads,
+  ranking, bodyweight day handling, `updated_by` and coach-token refusals
+  (MCP-2 to MCP-4, MCP-6, MCP-8, MCP-10 to MCP-13, MCP-17, MCP-1 in part).
+- **C. Edge and infra.** push-alerts without the gateway JWT check, sent_at
+  stamping, deploy job on pwa-only pushes, env check, sync and coach metering
+  fixes (INFRA-1 to INFRA-3, EDGE-1 to EDGE-5, EDGE-8, EDGE-12).
+- **D. PWA auth and cache.** Boot answer owns the null, claim ordering, empty
+  answer distrust, per-prefix epochs, dead statuses (CORE-1 to CORE-4, CORE-6,
+  NEW-CORE-1).
+- **E. PWA session.** Circuits, Finish prompt, TM change without reload, note
+  precedence, timed-set gate and read-back, failed-read LOG (SESS-3, SESS-4,
+  SESS-6, PLAN-5, UI-14, UI-16, UI-19 to UI-21).
+- **F. PWA plan and record.** One copy path, full exports, honest discard
+  outcome, "couldn't load" states, week tally, plan editor saves (PLAN-1, PLAN-2,
+  PLAN-10, PLAN-11, CORE-10, UI-01 to UI-04, UI-08, UI-15, UI-18).
+- **G. Accessibility.** Stable stepper names, top sheet only (UI-06, UI-11).
+- **H. Docs.** Decisions entries, README, security, architecture and setup
+  auth framing, coach disabled-tool list, tool counts, roadmap and ledger
+  status, deploy runbook.
+
+Open:
+
+- **MCP-1, shared-row edit policy.** Whether any account may edit shared seeded
+  exercises. Colt's decision; only `updated_by` and the coach-token refusal
+  landed.
+- **Turning the sweep on.** Manual: `SWEEP_SECRET`, both Vault rows, then read
+  `net._http_response` (docs/deploy.md). A-137 and A-138 stay open until then.
+- **P3 list.** Unchanged.
+- **Memory files.** Not touched here; the fixes are listed in the re-verification
+  notes and belong to their owner.
 
 ## What changed since the audit
 

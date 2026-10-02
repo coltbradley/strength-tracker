@@ -1,8 +1,8 @@
 # Consolidated roadmap, 2026-09-19
 
-## Version D local implementation, 2026-10-01
+## Version D, 2026-10-01
 
-The nine scoped light-redesign tasks are locally implemented, tested and reviewed on `codex/version-d-light-plan`; the whole-branch review and its final durability fixes are complete at source `125d203` (1,178 tests, typecheck/build and scoped re-review pass). See the [local evidence report](../superpowers/plans/2026-10-01-version-d-local-verification.md) for current scope and acceptance limits. This branch work does not change the historical deployed facts below or close Phase 2 phone/server acceptance. Old failed-record recovery is waived; new-write durability remains required.
+The nine scoped light-redesign tasks are merged to `main` (integration recorded in `docs/decisions.md`, 2026-10-01); the whole-branch review and its final durability fixes were complete at source `125d203` (1,178 tests, typecheck/build and scoped re-review pass). See the [local evidence report](../superpowers/plans/2026-10-01-version-d-local-verification.md) for current scope and acceptance limits. Production proof for phone and new-data acceptance is still unperformed, and the merge does not change the historical deployed facts below or close Phase 2 phone/server acceptance. Old failed-record recovery is waived; new-write durability remains required.
 
 ## Current status (2026-09-24)
 
@@ -11,7 +11,13 @@ Reconciled against `main` at `4da2c7d` and the live Supabase project on
 
 **Phase 0 and Phase 1 code are merged and deployed.** Slices 1 and 2 landed
 through PR #10 (2026-09-21) and PR #12 (2026-09-24). Remote migrations match
-local through `20260924052445`. MCP `/health` answers ok.
+local through `20260924052445` on 2026-09-24; local migrations now end at
+`20261002010000` and have not been confirmed remote (run
+`supabase migration list` before relying on this). MCP `/health` answers ok.
+
+**2026-10-01.** `main` includes Version D, load-sync recovery, per-user
+`exercise_prefs` and `goals`, and the audit remediation (decisions.md,
+2026-10-01; plan in `docs/superpowers/plans/2026-10-01-audit-remediation.md`).
 
 **Phase 2 started before Phase 1's gate closed, and that is accepted.** PR #12
 also carried atomic, locked plan writes, permanent plan locks once a session

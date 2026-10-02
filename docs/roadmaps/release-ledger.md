@@ -3,7 +3,7 @@
 Status source of truth for stop-release and Phase 0 re-verification items.
 Do not scatter status in `docs/plan.md` or old implementation plans.
 
-Version D branch-local implementation evidence is in the [2026-10-01 local verification report](../superpowers/plans/2026-10-01-version-d-local-verification.md). It is not a deployment receipt or a closure of the production-proof rows below. Recovery of the old failed phone records is waived, while new-data phone and exact UUID acceptance remain unperformed.
+Version D implementation evidence (merged to `main`) is in the [2026-10-01 local verification report](../superpowers/plans/2026-10-01-version-d-local-verification.md). It is not a deployment receipt or a closure of the production-proof rows below. Recovery of the old failed phone records is waived, while new-data phone and exact UUID acceptance remain unperformed.
 
 Phase 0 engineering merged 2026-09-21 (PR #8). Phase 1 Slices 1 and 2
 merged 2026-09-21 (PR #10) and 2026-09-24 (PR #12), along with early Phase 2
@@ -17,7 +17,11 @@ readback), A-91 (zero-row close) and A-84 (atomic plan replacement) were fixed
 with tests; see `docs/superpowers/plans/2026-09-24-a135-a91-a84-release-and-record.md`. A-90 and A-148 followed with tests (with A-06 and A-204, which
 are not ledger rows); see `docs/superpowers/plans/2026-09-24-phase-2-record-safety.md`. A-143 followed the same day,
 with A-203, A-04, A-05 and A-13 (not ledger rows). A-137 and A-138 are deferred to Phase 5 and
-no longer block Phase 1's gate.
+no longer block Phase 1's gate. 2026-10-01: the gateway fault behind A-137
+and A-138 (INFRA-1, EDGE-1: push-alerts deployed with JWT verification on, so
+the cron sweep was rejected) is fixed in code and in the deploy workflow. Live
+proof is still pending and neither row is closed: it needs `SWEEP_SECRET`, the
+Vault rows and a read of `net._http_response`.
 
 States: `open` · `fixed with test` · `needs live proof` · `not reproducible`.
 A finding is not closed because the audit is old. Close only with a regression
