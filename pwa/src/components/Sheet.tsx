@@ -11,7 +11,11 @@
 // - Sheets nest (the number pad opens over Settings). Key handling lives on
 //   the sheet element and stops there, so the innermost sheet wins.
 // - The app root goes `inert` while any sheet is open, so a screen reader
-//   cannot read through the scrim into the page behind it.
+//   cannot read through the scrim into the page behind it. Every sheet under
+//   the top one is inert and aria-hidden too, so a nested sheet is the only
+//   modal layer exposed (UI-11). Likewise every
+//   sheet under the top one is inert and aria-hidden, so a nested sheet is the
+//   only modal layer exposed (UI-11).
 //
 // Scroll ownership lives here: `.sheet` is overflow-y:auto with contained
 // overscroll, so a sheet taller than its cap (Settings is ~2000px at 320px
@@ -48,6 +52,20 @@ const FOCUSABLE = [
 
 /** Nested sheets share one inert app root; the last one out turns it back on. */
 let openSheets = 0;
+
+/** Open sheets' backdrops, outermost first. Only the last is live. */
+const sheetStack: HTMLElement[] = [];
+
+function setLayerHidden(el: HTMLElement | undefined, hidden: boolean) {
+  if (!el) return;
+  if (hidden) {
+    el.setAttribute("inert", "");
+    el.setAttribute("aria-hidden", "true");
+  } else {
+    el.removeAttribute("inert");
+    el.removeAttribute("aria-hidden");
+  }
+}
 
 function setRootInert(on: boolean) {
   const root = document.getElementById("root");
@@ -119,6 +137,7 @@ export function Sheet({
 }: SheetProps) {
   const titleId = useId();
   const boxRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<Element | null>(null);
   const kb = useKeyboardInset();
 
@@ -128,6 +147,11 @@ export function Sheet({
     openerRef.current = document.activeElement;
     openSheets += 1;
     setRootInert(true);
+    const backdrop = backdropRef.current;
+    if (backdrop) {
+      setLayerHidden(sheetStack[sheetStack.length - 1], true);
+      sheetStack.push(backdrop);
+    }
 
     const box = boxRef.current;
     const seed =
@@ -137,6 +161,13 @@ export function Sheet({
     return () => {
       openSheets = Math.max(0, openSheets - 1);
       if (openSheets === 0) setRootInert(false);
+      // The layer underneath goes live again BEFORE focus returns to the
+      // opener that lives in it.
+      if (backdrop) {
+        const at = sheetStack.lastIndexOf(backdrop);
+        if (at !== -1) sheetStack.splice(at, 1);
+        setLayerHidden(sheetStack[sheetStack.length - 1], false);
+      }
       // never focus into a still-inert subtree
       const opener = openerRef.current;
       if (opener instanceof HTMLElement && document.contains(opener)) {
@@ -177,6 +208,7 @@ export function Sheet({
 
   return createPortal(
     <div
+      ref={backdropRef}
       className="sheet-backdrop"
       style={{ "--kb": `${kb}px` } as CSSProperties}
       onClick={(e) => {

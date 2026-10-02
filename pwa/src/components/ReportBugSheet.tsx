@@ -124,6 +124,7 @@ export function ReportBugSheet({
         className="input bug-text"
         data-sheet-autofocus
         rows={4}
+        aria-label="What went wrong"
         placeholder="What were you doing, and what happened instead?"
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -152,11 +153,6 @@ export function ReportBugSheet({
       >
         {busy ? "Sending…" : "Send report"}
       </button>
-      {/* The only place the buttons' movability is discoverable. Shown here
-          because it is the one moment someone is already looking at them. */}
-      <div className="microcopy">
-        In the way? Press and hold the buttons, then drag them anywhere.
-      </div>
     </Sheet>
   );
 }

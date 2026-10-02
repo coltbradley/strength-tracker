@@ -165,3 +165,29 @@ describe("snapping a load to the display grid", () => {
     expect(screen.getByLabelText("increase load by 5 lb")).toBeTruthy();
   });
 });
+
+describe("Stepper accessible value", () => {
+  const descOf = (btn: HTMLElement) =>
+    (btn.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent)
+      .join(" ");
+
+  it("UI-06: the tap-to-type button describes its current value, and follows it", () => {
+    const steps = [{ label: "+ 1", delta: 1 }];
+    const props = { label: "sets", onChange: () => undefined, onTapValue: () => undefined, steps };
+    const { rerender } = render(<Stepper {...props} display="4 sets" value={4} />);
+    const btn = screen.getByRole("button", { name: "sets value — tap to type" });
+    expect(descOf(btn)).toBe("4 sets");
+    rerender(<Stepper {...props} display="5 sets" value={5} />);
+    expect(descOf(btn)).toBe("5 sets");
+  });
+
+  it("UI-06: the unit sub-text is part of the description", () => {
+    render(
+      <Stepper label="load" display="100" subText="kg" value={100} onChange={() => undefined} onTapValue={() => undefined} steps={[]} />,
+    );
+    const btn = screen.getByRole("button", { name: "load value — tap to type" });
+    expect(descOf(btn)).toBe("100 kg");
+  });
+});
