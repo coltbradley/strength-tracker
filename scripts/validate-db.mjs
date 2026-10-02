@@ -4142,5 +4142,278 @@ console.log("\ngoals (visible-exercise check on insert and update):");
   });
 }
 
+// --- audit stream A (20261002*): grants, cascades, view correctness -------
+console.log("\naudit A: grants and role-level DML:");
+await db.exec("reset role;");
+
+await check("DB-13: no SECURITY DEFINER function in public is executable by anon/authenticated unless allowlisted", async () => {
+  // Allowlist: definer functions the PWA/clients are MEANT to call over rpc.
+  const ALLOW = new Set([]);
+  const r = await db.query(`
+    select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as sig, p.proname,
+           has_function_privilege('anon', p.oid, 'execute') as anon,
+           has_function_privilege('authenticated', p.oid, 'execute') as authed
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.prosecdef
+       and p.prokind = 'f'
+     order by 1`);
+  const bad = r.rows.filter((x) => !ALLOW.has(x.proname) && (x.anon || x.authed)).map((x) => `${x.sig} anon=${x.anon} authed=${x.authed}`);
+  assertEq(bad, [], "definer functions callable by anon/authenticated");
+});
+
+{
+  const U = (n) => `00000000-0000-4000-8000-0000000a${String(n).padStart(4, "0")}`;
+  const ID = (k, n) => `${k}0000000-0000-4000-8000-0000000a${String(n).padStart(4, "0")}`;
+  const AA = U(1); // training-max user
+  const AB = U(2); // account-deletion user
+  const AC = U(3); // non-cascade prescription delete
+  const AD = U(4); // Auckland user for the service-role view path
+  const AE = U(5); // tick / hold sets
+  const code = async (uid, sql) => {
+    try {
+      await asUser(uid, sql);
+      return "accepted";
+    } catch (e) {
+      return `${e.code}`;
+    }
+  };
+  await db.exec(
+    `insert into auth.users (id, email) values
+       ('${AA}', 'aa@example.test'), ('${AB}', 'ab@example.test'), ('${AC}', 'ac@example.test'),
+       ('${AD}', 'ad@example.test'), ('${AE}', 'ae@example.test')`,
+  );
+  // One planned day with one prescription and an open session for a user.
+  const plan = async (uid, n, rx = {}) => {
+    const prog = ID("1", n), day = ID("2", n), p = ID("3", n), sess = ID("4", n);
+    await db.exec(`
+      insert into programs (id, user_id, name, confirmed_at) values ('${prog}', '${uid}', 'P${n}', now());
+      insert into planned_workouts (id, user_id, program_id, day_index, label) values ('${day}', '${uid}', '${prog}', 0, 'D');
+      insert into prescriptions (id, user_id, planned_workout_id, exercise_id, position, sets, reps_min, reps_max, ${rx.cols ?? "load_kg"}, tracking)
+        values ('${p}', '${uid}', '${day}', '${rx.exercise ?? "Barbell_Squat"}', 0, 3, ${rx.repsMin ?? 5}, ${rx.repsMax ?? 5}, ${rx.vals ?? "100"}, '${rx.tracking ?? "reps"}');
+      insert into sessions (id, user_id, planned_workout_id, started_at) values ('${sess}', '${uid}', '${day}', now() - interval '1 day');`);
+    return { prog, day, p, sess };
+  };
+  const addSet = (uid, sid, ids, performedAt, load, reps, o = {}) =>
+    db.exec(`insert into sets (id, user_id, session_id, exercise_id, prescription_id, set_index, set_type, load_kg, reps, performed_at)
+      values ('${sid}', '${uid}', '${ids.sess}', '${o.exercise ?? "Barbell_Squat"}', ${o.noRx ? "null" : `'${ids.p}'`}, ${o.idx ?? 0}, 'working', ${load}, ${reps}, ${performedAt})`);
+
+  // --- DB-3 / DB-4: grants ---
+  await check("DB-3: the vault key function and its helpers are not callable by anon or authenticated", async () => {
+    for (const fn of [
+      "public.integration_encryption_key()",
+      "public.encrypt_integration_secret(jsonb)",
+      "public.decrypt_integration_secret(bytea)",
+      "public._integration_xor_obfuscate(bytea, text)",
+    ]) {
+      const r = await db.query(
+        `select has_function_privilege('anon', '${fn}', 'execute') as anon,
+                has_function_privilege('authenticated', '${fn}', 'execute') as authed`,
+      );
+      assertEq(r.rows[0], { anon: false, authed: false }, `execute on ${fn}`);
+    }
+  });
+
+  await check("DB-3: service_role keeps encrypt/decrypt and the round trip still works for it", async () => {
+    for (const fn of ["public.encrypt_integration_secret(jsonb)", "public.decrypt_integration_secret(bytea)"]) {
+      const r = await db.query(`select has_function_privilege('service_role', '${fn}', 'execute') as ok`);
+      assertEq(r.rows[0].ok, true, `service_role execute on ${fn}`);
+    }
+    await db.exec("begin");
+    try {
+      await db.exec(`select set_config('app.integration_key', 'test-key-32-bytes-long!!!!!!', true)`);
+      await db.exec("set local role service_role");
+      const r = await db.query(
+        `select decrypt_integration_secret(encrypt_integration_secret('{"k":"v"}'::jsonb)) as j`,
+      );
+      assertEq(r.rows[0].j, { k: "v" }, "service_role round trip");
+    } finally {
+      await db.exec("rollback");
+    }
+  });
+
+  await check("DB-3: an anon caller is refused outright", async () => {
+    await db.exec("set role anon");
+    try {
+      let c = "accepted";
+      try {
+        await db.query(`select public.integration_encryption_key()`);
+      } catch (e) {
+        c = e.code;
+      }
+      assertEq(c, "42501", "permission denied for function");
+    } finally {
+      await db.exec("reset role");
+    }
+  });
+
+  await check("DB-4: reserve_coach_turn is service_role only, with pg_temp pinned", async () => {
+    const sig = "public.reserve_coach_turn(uuid, uuid, int, numeric)";
+    const r = await db.query(
+      `select has_function_privilege('anon', '${sig}', 'execute') as anon,
+              has_function_privilege('authenticated', '${sig}', 'execute') as authed,
+              has_function_privilege('service_role', '${sig}', 'execute') as svc,
+              (select proconfig from pg_proc where oid = '${sig}'::regprocedure) as cfg`,
+    );
+    assertEq([r.rows[0].anon, r.rows[0].authed, r.rows[0].svc], [false, false, true], "execute grants");
+    assert(r.rows[0].cfg.some((c) => /^search_path=.*pg_temp/.test(c)), `search_path pins pg_temp: ${r.rows[0].cfg}`);
+  });
+
+  await check("DB-4: service_role can still reserve a turn", async () => {
+    await db.exec("set role service_role");
+    try {
+      const r = await db.query(
+        `select reserve_coach_turn('${AA}', gen_random_uuid(), 50, 1000000) as j`,
+      );
+      assertEq(r.rows[0].j, { ok: true }, "reservation");
+    } finally {
+      await db.exec("reset role");
+    }
+  });
+
+  // --- DB-2: training max edits as authenticated ---
+  {
+    const ids = await plan(AA, 1, { cols: "load_pct_tm", vals: "80" });
+    await db.exec(`
+      insert into training_maxes (user_id, exercise_id, value_kg, effective_date) values
+        ('${AA}', 'Barbell_Deadlift', 180, current_date - 60),
+        ('${AA}', 'Barbell_Deadlift', 190, current_date - 30),
+        ('${AA}', 'Barbell_Squat', 140, current_date - 60),
+        ('${AA}', 'Barbell_Squat', 150, current_date - 20)`);
+    await addSet(AA, ID("5", 1), ids, "now() - interval '10 days'", 120, 5);
+
+    await check("DB-2: an authenticated user can correct a training max nothing depends on", async () => {
+      assertEq(
+        await code(AA, `update training_maxes set value_kg = 185 where exercise_id = 'Barbell_Deadlift' and effective_date = current_date - 60`),
+        "accepted",
+        "same-day correction of an unused max",
+      );
+      const v = await db.query(
+        `select value_kg::float as v from training_maxes where user_id = '${AA}' and exercise_id = 'Barbell_Deadlift' and effective_date = current_date - 60`,
+      );
+      assertEq(v.rows[0].v, 185, "the correction landed");
+    });
+
+    await check("DB-2: an authenticated user can delete a training max nothing depends on", async () => {
+      assertEq(
+        await code(AA, `delete from training_maxes where exercise_id = 'Barbell_Deadlift' and effective_date = current_date - 30`),
+        "accepted",
+        "delete of an unused max",
+      );
+      const n = await db.query(
+        `select count(*)::int as n from training_maxes where user_id = '${AA}' and exercise_id = 'Barbell_Deadlift'`,
+      );
+      assertEq(n.rows[0].n, 1, "one left");
+    });
+
+    await check("DB-2: a max that logged sets depended on is still refused, with the intended error", async () => {
+      assertEq(
+        await code(AA, `update training_maxes set value_kg = 155 where exercise_id = 'Barbell_Squat' and effective_date = current_date - 20`),
+        "23514",
+        "update refused",
+      );
+      assertEq(
+        await code(AA, `delete from training_maxes where exercise_id = 'Barbell_Squat' and effective_date = current_date - 20`),
+        "23514",
+        "delete refused",
+      );
+    });
+  }
+
+  // --- DB-1: deleting the account ---
+  {
+    const ids = await plan(AB, 2);
+    await addSet(AB, ID("5", 2), ids, "now() - interval '1 hour'", 100, 5);
+    await db.exec(`insert into training_maxes (user_id, exercise_id, value_kg, effective_date) values ('${AB}', 'Barbell_Squat', 150, current_date - 30)`);
+
+    await check("DB-1: deleting a user with sets logged against a prescription succeeds and leaves nothing", async () => {
+      await db.exec(`delete from auth.users where id = '${AB}'`);
+      const r = await db.query(
+        `select (select count(*) from sets where user_id = '${AB}')::int as sets,
+                (select count(*) from prescriptions where user_id = '${AB}')::int as rx,
+                (select count(*) from sessions where user_id = '${AB}')::int as sessions,
+                (select count(*) from planned_workouts where user_id = '${AB}')::int as days,
+                (select count(*) from training_maxes where user_id = '${AB}')::int as tms`,
+      );
+      assertEq(r.rows[0], { sets: 0, rx: 0, sessions: 0, days: 0, tms: 0 }, "rows left behind");
+    });
+
+    const idsC = await plan(AC, 3);
+    await addSet(AC, ID("5", 3), idsC, "now() - interval '1 hour'", 100, 5);
+    await check("DB-1: a real prescription delete with sets is still refused (23001), as authenticated and as superuser", async () => {
+      assertEq(await code(AC, `delete from prescriptions where id = '${idsC.p}'`), "23001", "authenticated delete");
+      let c = "accepted";
+      try {
+        await db.exec(`delete from prescriptions where id = '${idsC.p}'`);
+      } catch (e) {
+        c = e.code;
+      }
+      assertEq(c, "23001", "superuser delete");
+    });
+  }
+
+  // --- DB-5: v_adherence uses the row owner's timezone on every path ---
+  {
+    await db.exec(`insert into user_config (user_id, tz) values ('${AD}', 'Pacific/Auckland')`);
+    const ids = await plan(AD, 4, { cols: "load_pct_tm", vals: "80" });
+    // 20:00 UTC is the next calendar day in Auckland; the max takes effect on that day.
+    const at = "(date_trunc('day', now() at time zone 'UTC') + interval '20 hours') at time zone 'UTC'";
+    await db.exec(`insert into training_maxes (user_id, exercise_id, value_kg, effective_date)
+      values ('${AD}', 'Barbell_Squat', 100, ((${at}) at time zone 'Pacific/Auckland')::date)`);
+    await addSet(AD, ID("5", 4), ids, at, 80, 5);
+    await check("DB-5: v_adherence resolves the max in the row owner's timezone on the service-role path too", async () => {
+      const svc = await db.query(`select prescribed_load_kg::float as v from v_adherence where user_id = '${AD}'`);
+      const usr = await asUser(AD, `select prescribed_load_kg::float as v from v_adherence`);
+      assertEq(usr.rows[0].v, 80, "authenticated path");
+      assertEq(svc.rows[0].v, 80, "service-role/superuser path agrees");
+    });
+  }
+
+  // --- DB-11: day counts follow the lifter's calendar, not the database's ---
+  await check("DB-11: v_cycle_screen counts days in the user's timezone (UTC+14 and UTC-12 both see 3)", async () => {
+    await db.exec(`insert into cycle_context (user_id, status) values ('${AD}', 'natural')`);
+    for (const tz of ["Pacific/Kiritimati", "Etc/GMT+12"]) {
+      await db.exec(`update user_config set tz = '${tz}' where user_id = '${AD}';
+        delete from cycle_events where user_id = '${AD}';
+        insert into cycle_events (id, user_id, kind, local_date)
+          values (gen_random_uuid(), '${AD}', 'period_start', (now() at time zone '${tz}')::date - 3)`);
+      const r = await db.query(`select days_since_period::int as d from v_cycle_screen where user_id = '${AD}'`);
+      assertEq(r.rows[0].d, 3, `days since period in ${tz}`);
+    }
+    await db.exec(`update user_config set tz = 'Pacific/Auckland' where user_id = '${AD}'`);
+  });
+
+  // --- DB-6 / DB-7: ticks and holds ---
+  {
+    const done = await plan(AE, 5, { exercise: "Barbell_Deadlift", tracking: "done", repsMin: 10, repsMax: 10 });
+    await db.exec(`insert into sets (id, user_id, session_id, exercise_id, prescription_id, set_index, set_type, load_kg, reps, performed_at)
+      values ('${ID("6", 5)}', '${AE}', '${done.sess}', 'Barbell_Deadlift', '${done.p}', 1, 'working', 0, 0, now() - interval '2 hours'),
+             ('${ID("6", 6)}', '${AE}', '${done.sess}', 'Barbell_Deadlift', '${done.p}', 2, 'working', 0, 0, now() - interval '119 minutes'),
+             ('${ID("6", 7)}', '${AE}', '${done.sess}', 'Barbell_Deadlift', null, 3, 'working', 100, 5, now() - interval '118 minutes')`);
+    const reps = await plan(AE, 6, { repsMin: 5, repsMax: 5 });
+    await addSet(AE, ID("5", 6), reps, "now() - interval '1 hour'", 100, 3);
+
+    await check("DB-6: ticks and holds (reps 0) are not working sets in volume, session counts, weekly summary or the trend digest", async () => {
+      const vol = await db.query(`select working_sets::int as n, tonnage_kg::float as t from v_weekly_volume where user_id = '${AE}' and exercise_id = 'Barbell_Deadlift'`);
+      assertEq([vol.rows[0].n, vol.rows[0].t], [1, 500], "v_weekly_volume");
+      const cnt = await db.query(`select total_sets::int as total, working_sets::int as w from v_session_set_counts where session_id = '${done.sess}'`);
+      assertEq(cnt.rows[0], { total: 3, w: 1 }, "v_session_set_counts keeps total_sets, counts only reps > 0 as working");
+      const sum = await db.query(`select working_sets::int as n from v_weekly_summary where user_id = '${AE}'`);
+      assertEq(sum.rows.map((x) => x.n), [2], "v_weekly_summary (1 deadlift + 1 squat)");
+      const dig = await db.query(`select lifts from v_trend_digest where user_id = '${AE}'`);
+      const lift = dig.rows[0].lifts.find((l) => l.exercise_id === "Barbell_Deadlift");
+      assertEq(lift.working_sets_this_week + lift.working_sets_last_week, 1, "v_trend_digest lift counts");
+    });
+
+    await check("DB-7: a completed tick has no rep outcome; a short rep set on a reps prescription is still 'missed'", async () => {
+      const r = await db.query(`select prescription_id, set_index, rep_outcome from v_adherence where user_id = '${AE}' order by prescription_id, set_index`);
+      assertEq(
+        r.rows.map((x) => [x.set_index, x.rep_outcome]),
+        [[1, null], [2, null], [0, "missed"]],
+        "done sets null; reps set judged",
+      );
+    });
+  }
+}
+
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
