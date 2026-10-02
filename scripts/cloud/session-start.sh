@@ -24,6 +24,16 @@ ci_if_stale() {
   fi
 }
 
+# Docker is installed but its daemon is not started for us, and `supabase
+# start` needs it. Start it detached; it is ready within a few seconds, long
+# before anyone reaches for the local stack. Skipped when already running.
+# The subshell matters: a plain `&` makes dockerd a job of this script, and the
+# bare `wait`s below would then block on a daemon that never exits.
+if command -v dockerd >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
+  log "starting dockerd"
+  (setsid nohup dockerd </dev/null >/tmp/session-dockerd.log 2>&1 &)
+fi
+
 ci_if_stale pwa &
 ci_if_stale scripts &
 wait
