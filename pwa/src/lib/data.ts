@@ -10,10 +10,12 @@ import {
   cacheSet,
   cacheDelete,
   cacheDeleteByPrefix,
+  cacheEpochFor,
   cacheFamilies,
   cacheKeys,
 } from "./db";
 import { reportError } from "./errors";
+import { storedSessionIsLive } from "./persistedSession";
 import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
@@ -120,6 +122,24 @@ interface CacheDeps {
   cacheSet: (key: string, value: unknown) => Promise<void>;
   report: (e: unknown, context: string) => void;
   now?: () => number;
+  /**
+   * Reads the invalidation epoch of a key (db.ts `cacheEpochFor`). When it
+   * changed while a fetch was in flight, the answer predates an invalidation
+   * or a user change and must not be written back (CORE-3).
+   */
+  epoch?: (key: string) => number;
+  /**
+   * Whether the request that just ran was authenticated as a user. After a
+   * failed token refresh supabase-js sends the ANON key, and PostgREST answers
+   * a SELECT under RLS with 200 and zero rows, not an error (CORE-2). Omitted
+   * means "assume yes".
+   */
+  sessionLive?: () => boolean;
+}
+
+/** Zero rows, or no row: the shape an RLS-filtered anon read comes back in. */
+function isEmptyAnswer(data: unknown): boolean {
+  return data === null || data === undefined || (Array.isArray(data) && data.length === 0);
 }
 
 /** How long one failing read stays quiet after it has been reported once.
@@ -151,8 +171,23 @@ export function makeFetchWithCache(deps: CacheDeps) {
     fetcher: () => Promise<T>,
   ): Promise<CacheRead<T>> {
     try {
+      const epoch = deps.epoch?.(key);
       const data = await fetcher();
-      await deps.cacheSet(key, data);
+      // An EMPTY answer from a request with no live session is not an answer
+      // about this user's data (CORE-2). It is "the server never told us",
+      // the same as offline, so the cache is kept and served. Errors still
+      // take the catch path below untouched: a server that said no is not
+      // relabelled as a network that was down.
+      if (isEmptyAnswer(data) && deps.sessionLive && !deps.sessionLive()) {
+        const cached = await deps.cacheGet<T>(key);
+        if (cached !== undefined) {
+          return { data: cached, fromCache: true, stale: "offline" };
+        }
+        return { data, fromCache: false, stale: null };
+      }
+      if (deps.epoch === undefined || deps.epoch(key) === epoch) {
+        await deps.cacheSet(key, data);
+      }
       return { data, fromCache: false, stale: null };
     } catch (e) {
       const cached = await deps.cacheGet<T>(key);
@@ -171,10 +206,15 @@ export function makeFetchWithCache(deps: CacheDeps) {
   };
 }
 
+// Demo mode swaps in an in-memory client with no stored session.
+const demoMode = import.meta.env.VITE_DEMO === "1";
+
 const fetchWithCache = makeFetchWithCache({
   cacheGet,
   cacheSet,
   report: reportError,
+  epoch: cacheEpochFor,
+  sessionLive: () => demoMode || storedSessionIsLive(),
 });
 
 // ---- cache invalidation verbs ----------------------------------------------
