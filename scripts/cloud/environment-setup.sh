@@ -29,20 +29,18 @@ install_deno() {
 }
 
 # Supabase CLI, for `supabase start` (the Phase 2 browser gate needs the local
-# stack; Docker is preinstalled) and `supabase functions serve`. The usual
-# installs download a GitHub release asset, and the cloud GitHub proxy refuses
-# release assets from repositories not attached to the session, so build it
-# from the Go module proxy instead. Bounded so a slow build cannot push the
-# script past the cache window; without it, PGlite (scripts/validate-db.mjs)
+# stack; Docker is preinstalled) and `supabase functions serve`. Installed from
+# npm like Deno: the `supabase` package's Linux binary is an npm optional
+# dependency (@supabase/cli-linux-x64), so nothing is fetched from GitHub. It
+# used to be built with `go install github.com/supabase/cli@latest`, which
+# stopped working: `@latest` resolves to the last v1 (v2 is +incompatible),
+# that needs Go >= 1.25 against the image's 1.24, and from v2 the Go module no
+# longer contains `start` at all. Without it, PGlite (scripts/validate-db.mjs)
 # still covers the schema.
 install_supabase() {
-  if timeout 210 env GOBIN=/usr/local/bin GOFLAGS=-trimpath \
-      go install github.com/supabase/cli@latest >/tmp/env-supabase.log 2>&1; then
-    [ -x /usr/local/bin/cli ] && mv /usr/local/bin/cli /usr/local/bin/supabase
-    log "supabase $(supabase --version 2>/dev/null)"
-  else
-    log "supabase CLI not installed (see /tmp/env-supabase.log); PGlite paths still work"
-  fi
+  npm install -g supabase@2 >/tmp/env-supabase.log 2>&1 \
+    && log "supabase $(supabase --version 2>/dev/null)" \
+    || log "supabase CLI not installed (see /tmp/env-supabase.log); PGlite paths still work"
 }
 
 # Chromium and its OS libraries for the Playwright suites in pwa/e2e. The
