@@ -176,3 +176,10 @@ Deno.test(
 Deno.test("is read-only", () => {
   assertEquals(h().meta.readOnly, true);
 });
+
+Deno.test("MCP-12: an impossible calendar date is a ToolError, not a Postgres 500", async () => {
+  const t = toolHarness(registerGetCheckins, "get_checkins");
+  const result = await t.run({ from: "2026-02-30" });
+  assertEquals(result.isError, true);
+  assertEquals(result.content[0].text.includes("calendar date"), true);
+});

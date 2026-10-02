@@ -106,3 +106,50 @@ export async function appTz(db: Db): Promise<string> {
 export async function todayIso(db: Db): Promise<string> {
   return isoDateInTz(new Date(), await appTz(db));
 }
+
+/** How far `tz` runs ahead of UTC at `instantMs`, in ms (negative in the west). */
+function tzOffsetMs(instantMs: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(instantMs));
+  const n = (type: string) =>
+    Number(parts.find((p) => p.type === type)?.value ?? "0");
+  const asUtc = Date.UTC(
+    n("year"),
+    n("month") - 1,
+    n("day"),
+    n("hour"),
+    n("minute"),
+    n("second"),
+  );
+  return asUtc - Math.floor(instantMs / 1000) * 1000;
+}
+
+/**
+ * The instant a local calendar day STARTS in `tz`. "Bound by local date" on a
+ * timestamptz column means comparing against these, not against the bare date,
+ * which Postgres reads as UTC midnight. Two passes so a DST change on the day
+ * itself still lands on the real midnight.
+ */
+export function localDayStart(date: string, tz: string): Date {
+  const utcMidnight = Date.parse(`${date}T00:00:00Z`);
+  let guess = utcMidnight;
+  for (let i = 0; i < 2; i++) {
+    guess = utcMidnight - tzOffsetMs(guess, tz);
+  }
+  return new Date(guess);
+}
+
+/** The calendar date after `date` (both YYYY-MM-DD, no zone involved). */
+export function nextIsoDate(date: string): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}

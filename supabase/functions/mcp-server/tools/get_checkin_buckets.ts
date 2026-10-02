@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
+import { assertIsoDate } from "../lib/dates.ts";
 import { must } from "../lib/db.ts";
 import {
   guard,
@@ -56,6 +57,8 @@ export function registerGetCheckinBuckets(
     },
     (args) =>
       guard(ctx, "get_checkin_buckets", async () => {
+        if (args.from) assertIsoDate(args.from, "from");
+        if (args.to) assertIsoDate(args.to, "to");
         // Default `to` to tomorrow in UTC to capture the latest local date for any timezone.
         // No timezone is more than +14h from UTC, so tomorrow UTC is always >= today everywhere.
         const to = args.to ?? isoDaysAgo(-1);

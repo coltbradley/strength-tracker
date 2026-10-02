@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
+import { assertIsoDate } from "../lib/dates.ts";
 import { must } from "../lib/db.ts";
 import {
   guard,
@@ -119,6 +120,8 @@ export function registerGetCheckins(
     },
     (args) =>
       guard(ctx, "get_checkins", async () => {
+        if (args.from) assertIsoDate(args.from, "from");
+        if (args.to) assertIsoDate(args.to, "to");
         if (args.from && args.to && args.from > args.to) {
           // ToolError: a validation message for the caller, not a Sentry report.
           throw new ToolError("from must be on or before to.");

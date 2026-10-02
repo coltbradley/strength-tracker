@@ -63,3 +63,10 @@ Deno.test("is read-only and says to compare like buckets", () => {
   assertEquals(t.meta.readOnly, true);
   assertStringIncludes(t.meta.description.toLowerCase(), "same time of day");
 });
+
+Deno.test("MCP-12: an impossible calendar date is a ToolError, not a Postgres 500", async () => {
+  const t = toolHarness(registerGetCheckinBuckets, "get_checkin_buckets");
+  const result = await t.run({ to: "2026-02-30" });
+  assertEquals(result.isError, true);
+  assertEquals(result.content[0].text.includes("calendar date"), true);
+});

@@ -3,6 +3,12 @@ import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
 import {
+  appTz,
+  assertIsoDate,
+  localDayStart,
+  nextIsoDate,
+} from "../lib/dates.ts";
+import {
   guard,
   jsonResult,
   ToolError,
@@ -68,6 +74,10 @@ export function registerGetBodyweight(
     },
     (args) =>
       guard(ctx, "get_bodyweight", async () => {
+        // Shape is not reality: 2026-02-30 matches the regex and would reach
+        // Postgres as an opaque error.
+        if (args.from) assertIsoDate(args.from, "from");
+        if (args.to) assertIsoDate(args.to, "to");
         if (args.from && args.to && args.from > args.to) {
           throw new ToolError("from must be on or before to.");
         }
@@ -78,9 +88,22 @@ export function registerGetBodyweight(
           .eq("user_id", db.ownerId);
 
         let since: string | undefined;
+        // The end of the window, for the rolling means: a window that ended
+        // last month must not be averaged "over the last 7 days from now".
+        let anchorMs = Date.now();
         if (args.from || args.to) {
-          if (args.from) q = q.gte("measured_at", args.from);
-          if (args.to) q = q.lte("measured_at", args.to);
+          // measured_at is a timestamptz and from/to are the lifter's LOCAL
+          // dates, so bound by the instants those days start at. A bare date
+          // compares as UTC midnight, which dropped the whole `to` day.
+          const tz = await appTz(db);
+          if (args.from) {
+            q = q.gte("measured_at", localDayStart(args.from, tz).toISOString());
+          }
+          if (args.to) {
+            const endExclusive = localDayStart(nextIsoDate(args.to), tz);
+            q = q.lt("measured_at", endExclusive.toISOString());
+            anchorMs = Math.min(anchorMs, endExclusive.getTime());
+          }
         } else {
           since = new Date(Date.now() - 90 * 86_400_000).toISOString();
           q = q.gte("measured_at", since);
@@ -92,7 +115,7 @@ export function registerGetBodyweight(
         ) as unknown as BodyweightRow[];
 
         const meanOver = (days: number) => {
-          const cutoff = Date.now() - days * 86_400_000;
+          const cutoff = anchorMs - days * 86_400_000;
           const inWindow = rows.filter(
             (r) => Date.parse(r.measured_at) >= cutoff,
           );
