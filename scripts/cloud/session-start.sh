@@ -9,19 +9,6 @@ cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
 log() { echo "[session-start] $*" >&2; }
 
-# Docker is preinstalled but its daemon is not running, so `supabase start`
-# fails until something starts it. Launch it first, detached so it outlives
-# this hook, and let it boot while the installs below run.
-dockerd_started=
-if command -v dockerd >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
-  sudo_=
-  [ "$(id -u)" = 0 ] || sudo_="sudo -n"
-  log "starting dockerd (log: /tmp/dockerd.log)"
-  # In a subshell, so the `wait`s below do not wait on the daemon.
-  ( $sudo_ setsid nohup dockerd >/tmp/dockerd.log 2>&1 </dev/null & )
-  dockerd_started=1
-fi
-
 # npm ci only when the lockfile changed since the last install.
 ci_if_stale() {
   local dir=$1 stamp="$1/node_modules/.lock-sha"
@@ -36,6 +23,20 @@ ci_if_stale() {
     log "npm ci failed in $dir (see /tmp/session-npm-${dir//\//-}.log)"
   fi
 }
+
+# Docker is installed but its daemon is not started for us, and `supabase
+# start` needs it. Start it detached; it is ready within a few seconds, long
+# before anyone reaches for the local stack. Skipped when already running.
+# The subshell matters: a plain `&` makes dockerd a job of this script, and the
+# bare `wait`s below would then block on a daemon that never exits.
+dockerd_started=
+if command -v dockerd >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
+  sudo_=
+  [ "$(id -u)" = 0 ] || sudo_="sudo -n"
+  log "starting dockerd"
+  ($sudo_ setsid nohup dockerd </dev/null >/tmp/session-dockerd.log 2>&1 &)
+  dockerd_started=1
+fi
 
 ci_if_stale pwa &
 ci_if_stale scripts &
@@ -63,7 +64,7 @@ fi
 
 if [ -n "$dockerd_started" ]; then
   for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
-  docker info >/dev/null 2>&1 || log "dockerd did not come up (see /tmp/dockerd.log)"
+  docker info >/dev/null 2>&1 || log "dockerd did not come up (see /tmp/session-dockerd.log)"
 fi
 
 exit 0
