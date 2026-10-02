@@ -1,4 +1,5 @@
 /** Client turns plus stored usage — what the model actually sees. */
+import { lifterWords } from "../memory-extract.ts";
 
 export interface ThreadTurn {
   role: "user" | "assistant";
@@ -39,7 +40,12 @@ export function threadForModel(
 
   const thread: ThreadTurn[] = [];
   for (const row of prior) {
-    thread.push({ role: "user", text: row.prompt });
+    // record() stores the prompt as sent, which includes the per-turn context
+    // envelope. Replaying it would feed the model up to 20 stale plans and
+    // memory blocks at full input price; only the fresh turn carries context.
+    const text = lifterWords(row.prompt);
+    if (text.length === 0) continue; // nothing the lifter said: drop the pair
+    thread.push({ role: "user", text });
     thread.push({ role: "assistant", text: row.response });
   }
   thread.push(lastUser);

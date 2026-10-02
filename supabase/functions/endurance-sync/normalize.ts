@@ -85,3 +85,58 @@ export function when(v: unknown): string | null {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
+
+const HAS_ZONE = /(Z|[+-]\d{2}:?\d{2})$/i;
+
+/**
+ * Like `when`, but a string with no zone designator is read as UTC rather than
+ * in whatever zone the runtime has, so the result never depends on the host.
+ */
+export function whenUtc(v: unknown): string | null {
+  if (typeof v === "string" && !HAS_ZONE.test(v.trim())) {
+    return when(`${v.trim()}Z`);
+  }
+  return when(v);
+}
+
+/**
+ * intervals.icu start time (EDGE-2). `start_date_local` is the athlete's wall
+ * clock with no zone, so reading it as UTC shifts the row by their offset and
+ * the two-minute cross-source dedup never matches Strava's true-UTC
+ * `start_date`. Prefer `start_date` (UTC, sent without a designator). Only when
+ * it is absent do we fall back to the local string, stored as if UTC: the
+ * athlete's zone is not in this payload, so that row stays offset until it is.
+ */
+export function intervalsStartedAt(a: Record<string, unknown>): string | null {
+  return whenUtc(a.start_date) ?? whenUtc(a.start_date_local);
+}
+
+/**
+ * The columns a re-read may refresh on a row already held (EDGE-4): every
+ * measurement, and not `name`, which the owner may have edited (annotations
+ * belong to the owner, measurements to the sync).
+ */
+export function measurementsOnly(
+  r: NormalizedActivity,
+): Omit<NormalizedActivity, "name"> {
+  // deno-lint-ignore no-unused-vars
+  const { name: _name, ...rest } = r;
+  return rest;
+}
+
+/**
+ * Where one provider's poll starts (EDGE-5): its OWN newest row minus the
+ * overlap, so a newly connected or long-failing provider is not judged by
+ * another source's progress. No rows of its own means a full backfill window.
+ * Clamped to now so a future-dated row cannot halt polling.
+ */
+export function pollSince(
+  newestIso: string | null,
+  nowMs: number,
+  overlapMs: number,
+  backfillDays: number,
+): Date {
+  const newest = newestIso ? Date.parse(newestIso) : NaN;
+  if (Number.isNaN(newest)) return new Date(nowMs - backfillDays * 86_400_000);
+  return new Date(Math.min(newest, nowMs) - overlapMs);
+}

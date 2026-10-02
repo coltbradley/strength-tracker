@@ -70,3 +70,27 @@ test("the PWA build emits build.json from VITE_BUILD_SHA", async () => {
   assert.match(cfg, /fileName: "build\.json"/);
   assert.match(cfg, /VITE_BUILD_SHA/);
 });
+
+test("INFRA-1: push-alerts deploys with the gateway JWT check off, pinned in both places", async () => {
+  const text = await yaml();
+  assert.match(text, /supabase functions deploy push-alerts --no-verify-jwt/);
+  const cfg = await readFile(join(root, "supabase/config.toml"), "utf8");
+  assert.match(cfg, /\[functions\.push-alerts\]\s*\nverify_jwt = false/);
+  // The old comment claimed turning this off opens subscribe/schedule/cancel.
+  // It does not: every non-sweep route calls auth.getUser itself.
+  assert.equal(text.includes("would open"), false);
+  const fn = await readFile(join(root, "supabase/functions/push-alerts/index.ts"), "utf8");
+  const sweepAt = fn.indexOf('route === "sweep"');
+  const userAt = fn.indexOf("await resolveUser(req)");
+  assert.ok(sweepAt >= 0 && userAt > sweepAt, "resolveUser must follow the sweep branch and precede every other route");
+  assert.equal(fn.slice(0, userAt).includes('case "POST subscribe"'), false);
+});
+
+test("INFRA-2: a pwa-only push still runs db push before pages publishes", async () => {
+  const text = await yaml();
+  const filter = text.slice(text.indexOf("- id: filter"), text.indexOf("  supabase:\n"));
+  // supabase=true whenever pwa=true, so an earlier failed db push is retried
+  // instead of being skipped by a path diff that no longer mentions supabase/.
+  assert.match(filter, /s=true/);
+  assert.match(filter, /if \[ "\$p" = "true" \]/);
+});

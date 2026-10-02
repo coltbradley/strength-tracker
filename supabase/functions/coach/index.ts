@@ -55,6 +55,7 @@ import {
 } from "./memory-extract.ts";
 import { coachAdmission, parseAllowlist } from "./lib/allowlist.ts";
 import { lastClientUserTurn, threadForModel } from "./lib/thread.ts";
+import { failedTurnAccounting } from "./usage.ts";
 
 // Sonnet 5, at MEDIUM effort. This reverses the move to Opus, which its own
 // comment said was one line to undo, and it moves effort UP one step at the
@@ -538,8 +539,19 @@ async function record(a: {
   };
   stop: string | null;
   failed: string | null;
+  generationBegan: boolean;
+  promptChars: number;
   startedAt: number;
 }): Promise<void> {
+  // A turn that threw after generating is metered by estimate and counts
+  // toward the day cap; one that failed before any output stays a free refusal.
+  const acct = failedTurnAccounting({
+    failed: a.failed,
+    generationBegan: a.generationBegan,
+    usage: a.usage,
+    answerChars: a.answer.length,
+    promptChars: a.promptChars,
+  });
   const logContent = (Deno.env.get("COACH_LOG_CONTENT") ?? "on") !== "off";
   const last = lastClientUserTurn(a.turns);
   const attachments = (last?.attachments ?? []).map((x) => ({
@@ -560,7 +572,7 @@ async function record(a: {
       tools: a.tools,
       stop: a.stop,
       error: a.failed,
-      ...a.usage,
+      ...acct.usage,
     }),
   );
 
@@ -568,16 +580,20 @@ async function record(a: {
     user_id: a.userId,
     turn_id: a.turnId,
     model: MODEL,
-    input_tokens: a.usage.input,
-    output_tokens: a.usage.output,
-    cache_read_tokens: a.usage.cacheRead,
-    cache_write_tokens: a.usage.cacheWrite,
+    input_tokens: acct.usage.input,
+    output_tokens: acct.usage.output,
+    cache_read_tokens: acct.usage.cacheRead,
+    cache_write_tokens: acct.usage.cacheWrite,
     latency_ms: Date.now() - a.startedAt,
     tools_used: a.tools,
-    stop_reason: a.stop,
-    refused: a.failed,
+    stop_reason: acct.stop ?? a.stop,
+    refused: acct.refused,
     prompt: logContent ? (last?.text ?? null) : null,
-    response: logContent ? a.answer : null,
+    // A failed turn keeps no response: the history query replays every row
+    // with a non-null prompt and response and no `refused`, and a metered
+    // failure is no longer `refused`. A partial or empty answer replayed as an
+    // assistant turn would poison every later request.
+    response: logContent && a.failed === null ? a.answer : null,
     attachments,
   };
 
@@ -1062,6 +1078,10 @@ Deno.serve(async (req) => {
   let usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let stop: string | null = null;
   let failed: string | null = null;
+  // For metering a turn that dies mid-stream (failedTurnAccounting, EDGE-8).
+  // Text only: attachment bytes would overstate the tokens billed.
+  let generationBegan = false;
+  const promptChars = thread.reduce((n, t) => n + t.text.length, 0);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -1182,6 +1202,12 @@ Deno.serve(async (req) => {
         } as any);
 
         for await (const event of s) {
+          if (
+            event.type === "content_block_start" ||
+            event.type === "content_block_delta"
+          ) {
+            generationBegan = true;
+          }
           if (event.type === "content_block_delta") {
             if (event.delta.type === "text_delta") {
               answer += event.delta.text;
@@ -1239,6 +1265,8 @@ Deno.serve(async (req) => {
           usage,
           stop,
           failed,
+          generationBegan,
+          promptChars,
           startedAt,
         });
         // The turn is over, so the credential for it is too. Anthropic's
