@@ -1,6 +1,6 @@
 # Audit remediation plan
 
-Status: proposed, nothing implemented. Source: `docs/audits/2026-10-01-repository-audit.md`.
+Status: in progress (streams A to G dispatched 2026-10-01). Sources: `docs/audits/2026-10-01-repository-audit.md` and the three `docs/audits/2026-10-01-deployed-ui-audit*.md` passes.
 
 The audit ran at `d5e7b64`. Every finding was then re-checked at `902266d`, after the Version D, load-precision and exercise_prefs merges, by reading current code, re-running the PGlite replays, and executing the real supabase-js client offline for CORE-1. This plan uses the re-checked verdicts only.
 
@@ -33,6 +33,37 @@ Eleven items are worth fixing soon (P1). Each has a real user who will hit it or
 | MCP-4          | `get_lift_history` builds `.in("set_id", up to 500 ids)`, about 18 KB of URL. The repo already documents a list like this being refused.                                         | Any main lift past about 230 logged sets.                                                        | The flagship history read fails outright. URL limit unverified live, so verify first.                                                           |
 
 Gated pair, not P1 today but must ship together: **INFRA-1** (the cron sweep sends no `Authorization`, and push-alerts deploys with JWT verification on, so the gateway rejects it) and **EDGE-1** (a successful send never sets `sent_at`). Today the sweep does nothing, and nobody misses it because `SWEEP_SECRET` isn't set. Fix INFRA-1 alone and every prompt re-sends every 5 minutes for 6 hours.
+
+## Deployed UI audits folded in
+
+The three browser audits of the deployed `902266d` build (`docs/audits/2026-10-01-deployed-ui-audit.md`, `-deeper-pass.md`, `-transitions.md`) found 21 issues, UI-01 to UI-21. Several are the same defects this audit found from the code side:
+
+| UI id | Same as                | Note                                                                                                          |
+| ----- | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| UI-19 | SESS-4                 | Failed session read becomes zero sets, Log enabled, duplicate index. Both audits independently reproduced it. |
+| UI-16 | SESS-6                 | Saved sets drop `duration_seconds`; correcting a resumed timed set loses it.                                  |
+| UI-04 | CORE-10                | Exports omit duration, RPE and authored load.                                                                 |
+| UI-15 | PLAN-10, PLAN-11       | Failed uncached history reads show as empty.                                                                  |
+| UI-21 | CORE-8 (set_notes LWW) | A stale cached note overrides a newer server note.                                                            |
+
+The rest are new: UI-01 (Done planning drops an open prescription draft, High), UI-02, UI-03, UI-05 to UI-14, UI-17, UI-18, UI-20. Every one is assigned to a workstream below.
+
+## Workstreams (implementation order and ownership)
+
+These supersede the batch ordering further down for implementation. They are cut by file ownership so the streams can run in parallel worktrees without stepping on each other. The batch text below remains the fix detail.
+
+| Stream                               | Owns                                                                                                                                                      | Items                                                                                                                                                       |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. Database                          | `supabase/migrations/` (new files only), `scripts/validate-db.mjs`                                                                                        | DB-1, DB-2, DB-3, DB-4, DB-5, DB-6, DB-7, DB-11, DB-13                                                                                                      |
+| B. MCP server                        | `supabase/functions/mcp-server/`                                                                                                                          | MCP-1 (updated_by only), MCP-2, MCP-3, MCP-4, MCP-5, MCP-6, MCP-8, MCP-10, MCP-11, MCP-12, MCP-13, MCP-17                                                   |
+| C. Edge and infra                    | `supabase/functions/{coach,push-alerts,endurance-sync}/`, `.github/workflows/`, `supabase/config.toml`, `scripts/check-*`                                 | INFRA-1 with EDGE-1 and EDGE-12, EDGE-2, EDGE-3, EDGE-4, EDGE-5, EDGE-8, INFRA-2, INFRA-3                                                                   |
+| D. PWA auth and cache                | `useAuth.ts`, `currentUser.ts`, `db.ts`, `outbox.ts`, `fetchWithCache` in `data.ts`                                                                       | CORE-1, NEW-CORE-1, CORE-2, CORE-3, CORE-4, CORE-5, CORE-6, CORE-12                                                                                         |
+| E. PWA live session                  | `Session.tsx`, `End.tsx`, `components/session/**`, `TrainingMaxSheet`, set-note code, `getServerSessionSets` and `SET_COLUMNS` in `data.ts`, vitest setup | SESS-3, SESS-4/UI-19, SESS-6/UI-16, PLAN-5, UI-14, UI-20, UI-21, NEW-SESS-1                                                                                 |
+| F. PWA plan, train, record, coach UI | `Plan.tsx`, `Today.tsx`/Train, Record/History, `CoachSheet`, `Login`, `export.ts`, `sessionHistory.ts`, template and duplicate code in `data.ts`          | PLAN-1, PLAN-2, PLAN-4, PLAN-6, PLAN-7, PLAN-10/PLAN-11/UI-15, PLAN-14, CORE-10/UI-04, UI-01, UI-02, UI-03, UI-05, UI-08, UI-09, UI-12, UI-13, UI-17, UI-18 |
+| G. PWA accessibility and copy        | `Stepper`, `Sheet`, unlabeled form fields, Report copy                                                                                                    | UI-06, UI-07, UI-10, UI-11                                                                                                                                  |
+| H. Docs and memory                   | docs, AGENTS.md, auto-memory                                                                                                                              | Batch 8, done last against the merged result                                                                                                                |
+
+Product decision deferred to Colt, not implemented: whether shared seeded exercises stay editable by any account (MCP-1 beyond `updated_by`). INFRA-1 and EDGE-1 land together in stream C; turning the sweep on (secrets, Vault rows) stays a manual step.
 
 ## Fix batches
 
