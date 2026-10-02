@@ -8,6 +8,11 @@ const { from, cache, report } = vi.hoisted(() => ({
   report: vi.fn(),
 }));
 vi.mock("./supabase", () => ({ supabase: { from } }));
+const live = vi.hoisted(() => ({ value: true }));
+vi.mock("./persistedSession", async (orig) => ({
+  ...(await orig<typeof import("./persistedSession")>()),
+  storedSessionIsLive: () => live.value,
+}));
 vi.mock("./sync", () => ({ outbox: {} }));
 vi.mock("./errors", () => ({ reportError: report, toast: vi.fn() }));
 vi.mock("./db", async (orig) => ({
@@ -27,6 +32,7 @@ function failing(error: { message: string; code?: string }) {
 }
 
 beforeEach(() => {
+  live.value = true;
   cache.clear();
   report.mockClear();
 });
@@ -52,5 +58,22 @@ describe("PLAN-10: getWeeklySummary", () => {
   it("rethrows when there is no cache either", async () => {
     from.mockReturnValue(failing({ message: "down", code: "" }));
     await expect(getWeeklySummary("2026-09-28")).rejects.toThrow();
+  });
+});
+
+describe("REVIEW-1: History reads carry the CORE-2 guard", () => {
+  it("REVIEW-1: an empty answer without a live session serves the cache and does not overwrite it", async () => {
+    const cached = { week_start: "2026-09-28" };
+    cache.set("weekSummary:2026-09-28", cached);
+    live.value = false;
+    const b: Record<string, unknown> = {};
+    for (const m of ["select", "eq", "limit", "maybeSingle"]) b[m] = () => b;
+    b.then = (res: (v: unknown) => unknown) =>
+      Promise.resolve({ data: null, error: null }).then(res);
+    from.mockReturnValue(b);
+    const r = await getWeeklySummary("2026-09-28");
+    expect(r.fromCache).toBe(true);
+    expect(r.stale).toBe("offline");
+    expect(cache.get("weekSummary:2026-09-28")).toBe(cached);
   });
 });

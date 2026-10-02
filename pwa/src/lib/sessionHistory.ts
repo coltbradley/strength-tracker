@@ -14,11 +14,9 @@
 // round. It follows its neighbour's rules; it does not invent new ones.
 
 import { supabase } from "./supabase";
-import { cacheGet, cacheSet } from "./db";
 // data.ts's throwIf keeps the PostgREST code on the error, which is what lets
 // the cache wrapper tell "the server said no" from "no answer at all".
-import { makeFetchWithCache, throwIf, type CacheRead } from "./data";
-import { reportError } from "./errors";
+import { fetchWithCache, throwIf, type CacheRead } from "./data";
 import {
   formatSessionDate,
   parseLocalDate,
@@ -49,16 +47,6 @@ export const SESSION_LOG_LIMIT = 20;
 /** No twenty sessions hold this many sets between them; the cap only bounds
  *  a pathological read, the way `SESSION_SET_CAP` does in data.ts. */
 const SESSION_LOG_SET_CAP = 2000;
-
-/** The same online-first read as every other screen: `data.ts`'s factory, so
- *  a server ANSWER of no (a broken view column, a refused query) is reported
- *  and tagged "error" rather than passing as "offline" (PLAN-10). It used to
- *  be a private copy that swallowed both. */
-const fetchWithCache = makeFetchWithCache({
-  cacheGet,
-  cacheSet,
-  report: reportError,
-});
 
 // ---- the session log -------------------------------------------------------
 

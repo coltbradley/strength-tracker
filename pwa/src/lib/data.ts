@@ -214,12 +214,16 @@ export function makeFetchWithCache(deps: CacheDeps) {
 // Demo mode swaps in an in-memory client with no stored session.
 const demoMode = import.meta.env.VITE_DEMO === "1";
 
-const fetchWithCache = makeFetchWithCache({
+const sessionLive = () => demoMode || storedSessionIsLive();
+
+/** The configured wrapper (epoch + session-live guards). Shared with
+ *  sessionHistory.ts so no read builds an unguarded copy. */
+export const fetchWithCache = makeFetchWithCache({
   cacheGet,
   cacheSet,
   report: reportError,
   epoch: cacheEpochFor,
-  sessionLive: () => demoMode || storedSessionIsLive(),
+  sessionLive,
 });
 
 // ---- cache invalidation verbs ----------------------------------------------
@@ -1910,6 +1914,12 @@ export async function countServerSessionSets(
     .eq("session_id", sessionId)
     .limit(SESSION_SET_CAP);
   throwIf(error);
+  // An empty answer with no live session is RLS filtering an anon request,
+  // not a confirmed zero (CORE-2). Unknown, so throw like an unreachable
+  // server: End then does not lead with Discard.
+  if ((data ?? []).length === 0 && !sessionLive()) {
+    throw new Error("empty session count without a live session");
+  }
   return (data ?? []).length;
 }
 
@@ -1961,6 +1971,11 @@ export async function getServerSessionSets(
       .order("performed_at");
     throwIf(error);
     const rows = (data ?? []) as SetInsert[];
+    // Empty with no live session is the anon-key RLS shape (CORE-2): a failed
+    // read, not "zero sets". Take the catch path; never overwrite the cache.
+    if (rows.length === 0 && !sessionLive()) {
+      throw new Error("empty session sets without a live session");
+    }
     await cacheSet(key, rows);
     return rows;
   } catch (e) {
