@@ -435,6 +435,25 @@ export async function swapWorkoutOrder(
   await invalidatePlanCaches();
 }
 
+/**
+ * Does any session point at this planned day? Once one does, the database
+ * locks the day's structure for good (finished, open or discarded alike, since
+ * another phone may still hold sets for it), so the editor can say so BEFORE
+ * someone types into a row and meets the refusal. Null = could not find out;
+ * the caller says nothing rather than guess.
+ */
+export async function isPlannedDayLocked(
+  plannedWorkoutId: string,
+): Promise<boolean | null> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("id")
+    .eq("planned_workout_id", plannedWorkoutId)
+    .limit(1);
+  if (error) return null;
+  return (data ?? []).length > 0;
+}
+
 /** Copy a workout (and its prescriptions) onto another calendar date, at the
  *  end of the program's day order. */
 export async function duplicatePlannedWorkout(

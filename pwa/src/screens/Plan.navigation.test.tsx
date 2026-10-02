@@ -37,6 +37,7 @@ vi.mock("../lib/data", () => ({
   PlanEditRefused: class PlanEditRefused extends Error {},
   duplicatePlannedWorkout: vi.fn(),
   swapWorkoutOrder: vi.fn(),
+  isPlannedDayLocked: vi.fn().mockResolvedValue(false),
   weekOrder: (a: { day_index: number }, b: { day_index: number }) => a.day_index - b.day_index,
 }));
 
