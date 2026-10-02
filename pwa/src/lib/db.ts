@@ -171,13 +171,34 @@ export function getDb(): Promise<Database> {
   // rows forward); never delete the "outbox" or "kv" stores, and never
   // rename the database. Guard old-version branches with
   // `if (oldVersion < N)` so existing data flows through untouched.
-  dbPromise ??= openDB<StrengthDB>(dbName, 1, {
+  if (dbPromise) return dbPromise;
+  // The connection can die underneath a cached promise: WebKit closes it
+  // while the PWA is backgrounded (`terminated`), and a newer build's open
+  // asks this one to step aside (`blocking`). A cached promise to a dead
+  // connection fails every outbox write until a full reload, so both drop it
+  // and the next call reopens. A rejected open is dropped for the same
+  // reason: one failure must not be remembered forever (CORE-5). Each handler
+  // only clears ITS OWN promise, so a late event from an old connection
+  // cannot discard a newer, healthy one.
+  let mine: Promise<Database> | null = null;
+  const forget = () => {
+    if (dbPromise === mine) dbPromise = null;
+  };
+  mine = openDB<StrengthDB>(dbName, 1, {
     upgrade(db) {
       db.createObjectStore("outbox", { autoIncrement: true });
       db.createObjectStore("kv");
     },
+    blocking() {
+      const p = mine;
+      forget();
+      void p?.then((db) => db.close()).catch(() => {});
+    },
+    terminated: forget,
   });
-  return dbPromise;
+  mine.catch(forget);
+  dbPromise = mine;
+  return mine;
 }
 
 /** Test hook: reset the cached connection so fake-indexeddb starts clean.
@@ -201,12 +222,40 @@ export async function cacheGet<T>(key: string): Promise<T | undefined> {
   return (await db.get("kv", key)) as T | undefined;
 }
 
+/**
+ * Invalidation epochs, so a read that was in flight when its key was dropped
+ * can tell and decline to write its (now stale) answer back (CORE-3). A prefix
+ * delete or a full clear bumps the epoch of everything it covers; the reader
+ * compares before and after its fetch. Per prefix rather than one global
+ * counter, so logging a set (which drops the session-derived families) does
+ * not stop an unrelated read from refreshing its own cache entry.
+ */
+let clearEpoch = 0;
+const prefixEpochs = new Map<string, number>();
+let epochTick = 0;
+
+/** Changes whenever `key` has been invalidated since the last reading. Compare
+ *  two readings; the number itself means nothing. */
+export function cacheEpochFor(key: string): number {
+  let e = clearEpoch;
+  for (const [prefix, n] of prefixEpochs) {
+    if (key.startsWith(prefix) && n > e) e = n;
+  }
+  return e;
+}
+
+function bumpPrefixes(prefixes: readonly string[]): void {
+  epochTick += 1;
+  for (const p of prefixes) prefixEpochs.set(p, epochTick);
+}
+
 export async function cacheSet(key: string, value: unknown): Promise<void> {
   const db = await getDb();
   await db.put("kv", value, key);
 }
 
 export async function cacheDelete(key: string): Promise<void> {
+  bumpPrefixes([key]);
   const db = await getDb();
   await db.delete("kv", key);
 }
@@ -217,6 +266,7 @@ export async function cacheDelete(key: string): Promise<void> {
 export async function cacheDeleteByPrefix(
   prefixes: readonly string[],
 ): Promise<void> {
+  bumpPrefixes(prefixes);
   const db = await getDb();
   const keys = await db.getAllKeys("kv");
   for (const key of keys) {
@@ -240,6 +290,8 @@ export async function cacheDeleteByPrefix(
  * own confirmation step, and a cache drop must never be the thing that does it.
  */
 export async function cacheClearAll(): Promise<void> {
+  epochTick += 1;
+  clearEpoch = epochTick;
   const db = await getDb();
   await db.clear("kv");
   for (const key of LOCAL_CACHE_KEYS) {
@@ -304,7 +356,23 @@ function readCacheOwner(): string | null {
  * training maxes. The outbox is never touched here — it holds unsynced work,
  * and the flusher already refuses to replay one user's writes as another.
  */
-export async function claimCacheFor(userId: string | null): Promise<boolean> {
+export function claimCacheFor(userId: string | null): Promise<boolean> {
+  // One claim at a time. Two callers (the cold-start answer and the auth
+  // listener) used to interleave: the second read the owner marker while the
+  // first's clear was still running, saw "no change", and returned while the
+  // clear it should have waited for was in flight (CORE-1, CORE-4). Run each
+  // claim to completion, in arrival order, whatever the previous one did.
+  const run = claimChain.then(() => claimNow(userId));
+  claimChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+let claimChain: Promise<void> = Promise.resolve();
+
+async function claimNow(userId: string | null): Promise<boolean> {
   // With nowhere to record the owner we cannot detect a change, and treating
   // "unknown" as "someone else" would clear the cache on EVERY load — which
   // would quietly destroy the offline promise for anyone in private mode. Do

@@ -4,7 +4,11 @@
 // behaviour rather than on a half-parsed session.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { readPersistedSession, readPersistedUserId } from "./persistedSession";
+import {
+  readPersistedSession,
+  readPersistedUserId,
+  storedSessionIsLive,
+} from "./persistedSession";
 
 const KEY = "sb-abcdefghijklmnop-auth-token";
 
@@ -44,7 +48,9 @@ describe("readPersistedSession", () => {
     expect(readPersistedSession(store)?.user.id).toBe(
       "00000000-0000-4000-8000-000000000001",
     );
-    expect(readPersistedUserId(store)).toBe("00000000-0000-4000-8000-000000000001");
+    expect(readPersistedUserId(store)).toBe(
+      "00000000-0000-4000-8000-000000000001",
+    );
   });
 
   it("is null when nothing is stored", () => {
@@ -110,6 +116,31 @@ describe("readPersistedSession", () => {
 
   it("still reads the pre-2.x key name", () => {
     store.setItem("supabase.auth.token", JSON.stringify(session()));
-    expect(readPersistedUserId(store)).toBe("00000000-0000-4000-8000-000000000001");
+    expect(readPersistedUserId(store)).toBe(
+      "00000000-0000-4000-8000-000000000001",
+    );
+  });
+});
+
+describe("storedSessionIsLive (CORE-2)", () => {
+  const NOW = 1_800_000_000_000;
+  const withExpiry = (expires_at: unknown) =>
+    fakeStore({ [KEY]: JSON.stringify(session({ expires_at })) });
+
+  it("is true while the access token has not expired", () => {
+    expect(storedSessionIsLive(withExpiry(NOW / 1000 + 600), NOW)).toBe(true);
+  });
+
+  it("is false once it has: a request after that went out as the anon key", () => {
+    expect(storedSessionIsLive(withExpiry(NOW / 1000 - 1), NOW)).toBe(false);
+  });
+
+  it("is false with no stored session at all", () => {
+    expect(storedSessionIsLive(fakeStore(), NOW)).toBe(false);
+  });
+
+  it("cannot prove anonymity without an expiry or without storage, so it says live", () => {
+    expect(storedSessionIsLive(withExpiry(undefined), NOW)).toBe(true);
+    expect(storedSessionIsLive(null as unknown as Storage, NOW)).toBe(true);
   });
 });

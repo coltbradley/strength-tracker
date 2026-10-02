@@ -664,6 +664,103 @@ describe("fetchWithCache", () => {
     ).rejects.toBeInstanceOf(QueryError);
     expect(h.report).not.toHaveBeenCalled();
   });
+
+  describe("CORE-2: an empty answer with no live session", () => {
+    function withSession(live: boolean, seed: Record<string, unknown> = {}) {
+      const cache: Record<string, unknown> = { ...seed };
+      const report = vi.fn();
+      const fetchWithCache = makeFetchWithCache({
+        cacheGet: async <T,>(k: string) => cache[k] as T | undefined,
+        cacheSet: async (k, v) => {
+          cache[k] = v;
+        },
+        report,
+        sessionLive: () => live,
+      });
+      return { fetchWithCache, cache, report };
+    }
+
+    it("does not overwrite a good cache with the anon key's empty 200", async () => {
+      const h = withSession(false, { plan: [{ id: 1 }] });
+      const r = await h.fetchWithCache("plan", async () => []);
+      expect(r).toEqual({ data: [{ id: 1 }], fromCache: true, stale: "offline" });
+      expect(h.cache.plan).toEqual([{ id: 1 }]);
+      expect(h.report).not.toHaveBeenCalled();
+    });
+
+    it("a null single-row answer is just as empty", async () => {
+      const h = withSession(false, { one: { id: 1 } });
+      const r = await h.fetchWithCache("one", async () => null);
+      expect(r.data).toEqual({ id: 1 });
+      expect(h.cache.one).toEqual({ id: 1 });
+    });
+
+    it("with no cache yet it returns the empty answer but does not store it", async () => {
+      const h = withSession(false);
+      const r = await h.fetchWithCache("plan", async () => []);
+      expect(r).toEqual({ data: [], fromCache: false, stale: null });
+      expect("plan" in h.cache).toBe(false);
+    });
+
+    it("a signed-in empty answer is still a real answer and is cached", async () => {
+      const h = withSession(true, { plan: [{ id: 1 }] });
+      const r = await h.fetchWithCache("plan", async () => []);
+      expect(r).toEqual({ data: [], fromCache: false, stale: null });
+      expect(h.cache.plan).toEqual([]);
+    });
+
+    it("a non-empty answer is cached whatever the session says", async () => {
+      const h = withSession(false, { plan: [{ id: 1 }] });
+      await h.fetchWithCache("plan", async () => [{ id: 2 }]);
+      expect(h.cache.plan).toEqual([{ id: 2 }]);
+    });
+
+    it("a server error is still an answer of no: reported, not relabelled offline", async () => {
+      const h = withSession(false, { plan: [{ id: 1 }] });
+      const r = await h.fetchWithCache("plan", async () => {
+        throw broken();
+      });
+      expect(r.stale).toBe("error");
+      expect(h.report).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("CORE-3: a read in flight across an invalidation", () => {
+    it("does not write its stale answer back after its key was invalidated", async () => {
+      const cache: Record<string, unknown> = {};
+      let epoch = 0;
+      const fetchWithCache = makeFetchWithCache({
+        cacheGet: async <T,>(k: string) => cache[k] as T | undefined,
+        cacheSet: async (k, v) => {
+          cache[k] = v;
+        },
+        report: vi.fn(),
+        epoch: () => epoch,
+      });
+      let release!: (v: string) => void;
+      const slow = new Promise<string>((r) => (release = r));
+      const read = fetchWithCache("k", () => slow);
+      epoch += 1; // a set was logged / the user changed while it was in flight
+      release("pre-change");
+      const r = await read;
+      expect(r.data).toBe("pre-change"); // the caller still gets its answer
+      expect("k" in cache).toBe(false); // but the cache is not repopulated
+    });
+
+    it("writes normally when nothing was invalidated", async () => {
+      const cache: Record<string, unknown> = {};
+      const fetchWithCache = makeFetchWithCache({
+        cacheGet: async <T,>(k: string) => cache[k] as T | undefined,
+        cacheSet: async (k, v) => {
+          cache[k] = v;
+        },
+        report: vi.fn(),
+        epoch: () => 7,
+      });
+      await fetchWithCache("k", async () => "fresh");
+      expect(cache.k).toBe("fresh");
+    });
+  });
 });
 
 describe("applyObservationDelete", () => {

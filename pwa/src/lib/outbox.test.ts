@@ -148,7 +148,13 @@ describe("outbox", () => {
 
   it("commits a correction replacement, void, and durable link together", async () => {
     const { transport } = makeTransport();
-    const box = createOutbox({ getDb, transport, isOnline: () => false, currentUserId: () => "alice", stampUserId: () => "alice" });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => false,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     const replacement = { ...setA, id: "44444444-4444-4444-8444-444444444444" };
 
     await box.enqueueCorrection(session.id, replacement, setA.id);
@@ -160,26 +166,51 @@ describe("outbox", () => {
       ["insert", "set_voids"],
     ]);
     expect(rows.map((row) => row.user_id)).toEqual(["alice", "alice"]);
-    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toEqual({
+    expect(
+      await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id)),
+    ).toEqual({
       [replacement.id]: setA.id,
     });
   });
 
   it("commits an optional correction note and cached note remap with the correction", async () => {
     const { transport } = makeTransport();
-    const box = createOutbox({ getDb, transport, isOnline: () => false, currentUserId: () => "alice", stampUserId: () => "alice" });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => false,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     const replacement = { ...setA, id: "abababab-abab-4bab-8bab-abababababab" };
     const db = await getDb();
-    await db.put("kv", { [setA.id]: "Grip felt uneven", unrelated: "Keep me" }, cacheKeys.sessionSetNotes(session.id));
+    await db.put(
+      "kv",
+      { [setA.id]: "Grip felt uneven", unrelated: "Keep me" },
+      cacheKeys.sessionSetNotes(session.id),
+    );
 
-    await box.enqueueCorrection(session.id, replacement, setA.id, "Grip felt uneven");
+    await box.enqueueCorrection(
+      session.id,
+      replacement,
+      setA.id,
+      "Grip felt uneven",
+    );
 
-    expect((await db.getAll("outbox")).map((row) => [row.op.kind, row.op.table, row.user_id])).toEqual([
+    expect(
+      (await db.getAll("outbox")).map((row) => [
+        row.op.kind,
+        row.op.table,
+        row.user_id,
+      ]),
+    ).toEqual([
       ["insert", "sets", "alice"],
       ["insert", "set_voids", "alice"],
       ["insert", "set_notes", "alice"],
     ]);
-    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toEqual({ [replacement.id]: setA.id });
+    expect(
+      await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id)),
+    ).toEqual({ [replacement.id]: setA.id });
     expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({
       unrelated: "Keep me",
       [replacement.id]: "Grip felt uneven",
@@ -198,11 +229,25 @@ describe("outbox", () => {
       user_id: "alice",
     };
     await db.add("outbox", existing);
-    await db.put("kv", { [setA.id]: "Grip felt uneven" }, cacheKeys.sessionSetNotes(session.id));
-    await db.put("kv", { prior: "prior-set" }, cacheKeys.sessionCorrectionLinks(session.id));
+    await db.put(
+      "kv",
+      { [setA.id]: "Grip felt uneven" },
+      cacheKeys.sessionSetNotes(session.id),
+    );
+    await db.put(
+      "kv",
+      { prior: "prior-set" },
+      cacheKeys.sessionCorrectionLinks(session.id),
+    );
     const initialRows = await db.getAll("outbox");
-    const initialNotes = await db.get("kv", cacheKeys.sessionSetNotes(session.id));
-    const initialLinks = await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id));
+    const initialNotes = await db.get(
+      "kv",
+      cacheKeys.sessionSetNotes(session.id),
+    );
+    const initialLinks = await db.get(
+      "kv",
+      cacheKeys.sessionCorrectionLinks(session.id),
+    );
     const diskFull = new Error("disk full while adding note");
     const failingDb = {
       transaction: (...args: Parameters<Database["transaction"]>) => {
@@ -217,8 +262,14 @@ describe("outbox", () => {
               get(target, property) {
                 if (property === "add") {
                   return (value: OutboxItem, ...args2: unknown[]) => {
-                    if (value.op.kind === "insert" && value.op.table === "set_notes") return Promise.reject(diskFull);
-                    const method = Reflect.get(target, property) as (...methodArgs: unknown[]) => unknown;
+                    if (
+                      value.op.kind === "insert" &&
+                      value.op.table === "set_notes"
+                    )
+                      return Promise.reject(diskFull);
+                    const method = Reflect.get(target, property) as (
+                      ...methodArgs: unknown[]
+                    ) => unknown;
                     return method.call(target, value, ...args2);
                   };
                 }
@@ -230,16 +281,31 @@ describe("outbox", () => {
         };
       },
     } as unknown as Database;
-    const box = createOutbox({ getDb: () => Promise.resolve(failingDb), transport, isOnline: () => false,
-      currentUserId: () => "alice", stampUserId: () => "alice" });
+    const box = createOutbox({
+      getDb: () => Promise.resolve(failingDb),
+      transport,
+      isOnline: () => false,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     const replacement = { ...setA, id: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd" };
 
-    await expect(box.enqueueCorrection(session.id, replacement, setA.id, "Grip felt uneven"))
-      .rejects.toThrow("disk full while adding note");
+    await expect(
+      box.enqueueCorrection(
+        session.id,
+        replacement,
+        setA.id,
+        "Grip felt uneven",
+      ),
+    ).rejects.toThrow("disk full while adding note");
 
     expect(await db.getAll("outbox")).toEqual(initialRows);
-    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual(initialNotes);
-    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toEqual(initialLinks);
+    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual(
+      initialNotes,
+    );
+    expect(
+      await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id)),
+    ).toEqual(initialLinks);
   });
 
   it("captures enqueue owner before opening IndexedDB", async () => {
@@ -247,23 +313,38 @@ describe("outbox", () => {
     let owner: string | null = "alice";
     let online = false;
     let resolveDb!: (db: Database) => void;
-    const pendingDb = new Promise<Database>((resolve) => { resolveDb = resolve; });
-    const box = createOutbox({ getDb: () => pendingDb, transport, isOnline: () => online,
-      currentUserId: () => owner, stampUserId: () => owner });
+    const pendingDb = new Promise<Database>((resolve) => {
+      resolveDb = resolve;
+    });
+    const box = createOutbox({
+      getDb: () => pendingDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => owner,
+      stampUserId: () => owner,
+    });
 
-    const admission = box.enqueue({ kind: "insert", table: "sets", payload: setA });
+    const admission = box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: setA,
+    });
     owner = "bob";
     resolveDb(await getDb());
     await admission;
     online = true;
     await box.flush();
-    expect(await box.inspect()).toMatchObject([{ user_id: "alice", state: "held" }]);
+    expect(await box.inspect()).toMatchObject([
+      { user_id: "alice", state: "held" },
+    ]);
     expect(box.getStatus()).toMatchObject({ held: 1 });
     expect(calls).toEqual([]);
 
     owner = "alice";
     await box.flush();
-    expect(calls.map((call) => [call.table, (call.payload as SetInsert).id])).toEqual([["sets", setA.id]]);
+    expect(
+      calls.map((call) => [call.table, (call.payload as SetInsert).id]),
+    ).toEqual([["sets", setA.id]]);
   });
 
   it("captures one owner for every batch row before opening IndexedDB", async () => {
@@ -271,9 +352,16 @@ describe("outbox", () => {
     let owner: string | null = "alice";
     let online = false;
     let resolveDb!: (db: Database) => void;
-    const pendingDb = new Promise<Database>((resolve) => { resolveDb = resolve; });
-    const box = createOutbox({ getDb: () => pendingDb, transport, isOnline: () => online,
-      currentUserId: () => owner, stampUserId: () => owner });
+    const pendingDb = new Promise<Database>((resolve) => {
+      resolveDb = resolve;
+    });
+    const box = createOutbox({
+      getDb: () => pendingDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => owner,
+      stampUserId: () => owner,
+    });
 
     const admission = box.enqueueBatch(roundOps);
     owner = "bob";
@@ -281,14 +369,20 @@ describe("outbox", () => {
     await admission;
     online = true;
     await box.flush();
-    expect(await box.inspect()).toMatchObject([{ user_id: "alice" }, { user_id: "alice" }]);
+    expect(await box.inspect()).toMatchObject([
+      { user_id: "alice" },
+      { user_id: "alice" },
+    ]);
     expect(box.getStatus()).toMatchObject({ held: 2 });
     expect(calls).toEqual([]);
 
     owner = "alice";
     await box.flush();
-    expect(calls.map((call) => [call.table, (call.payload as SetInsert).id])).toEqual([
-      ["sets", setA.id], ["sets", setB.id],
+    expect(
+      calls.map((call) => [call.table, (call.payload as SetInsert).id]),
+    ).toEqual([
+      ["sets", setA.id],
+      ["sets", setB.id],
     ]);
   });
 
@@ -298,25 +392,45 @@ describe("outbox", () => {
     let persistedOwner: string | null = "alice";
     let online = false;
     const db = await getDb();
-    await db.put("kv", { [setA.id]: "Grip felt uneven" }, cacheKeys.sessionSetNotes(session.id));
+    await db.put(
+      "kv",
+      { [setA.id]: "Grip felt uneven" },
+      cacheKeys.sessionSetNotes(session.id),
+    );
     let resolveDb!: (db: Database) => void;
-    const pendingDb = new Promise<Database>((resolve) => { resolveDb = resolve; });
-    const box = createOutbox({ getDb: () => pendingDb, transport, isOnline: () => online,
-      currentUserId: () => liveOwner, stampUserId: () => persistedOwner });
+    const pendingDb = new Promise<Database>((resolve) => {
+      resolveDb = resolve;
+    });
+    const box = createOutbox({
+      getDb: () => pendingDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => liveOwner,
+      stampUserId: () => persistedOwner,
+    });
     const replacement = { ...setA, id: "efefefef-efef-4fef-8fef-efefefefefef" };
 
-    const admission = box.enqueueCorrection(session.id, replacement, setA.id, "Grip felt uneven");
+    const admission = box.enqueueCorrection(
+      session.id,
+      replacement,
+      setA.id,
+      "Grip felt uneven",
+    );
     liveOwner = null;
     resolveDb(db);
     await admission;
     online = true;
     await box.flush();
     expect(await box.inspect()).toMatchObject([
-      { user_id: "alice" }, { user_id: "alice" }, { user_id: "alice" },
+      { user_id: "alice" },
+      { user_id: "alice" },
+      { user_id: "alice" },
     ]);
     expect(box.getStatus()).toMatchObject({ held: 3 });
     expect(calls).toEqual([]);
-    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({ [replacement.id]: "Grip felt uneven" });
+    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({
+      [replacement.id]: "Grip felt uneven",
+    });
 
     liveOwner = "bob";
     await box.flush();
@@ -324,11 +438,22 @@ describe("outbox", () => {
     expect(box.getStatus()).toMatchObject({ held: 3 });
     liveOwner = "alice";
     await box.flush();
-    expect(calls.map((call) => [call.table, (call.payload as { id?: string; set_id?: string }).id ?? (call.payload as { set_id?: string }).set_id]))
-      .toEqual([["sets", replacement.id], ["set_voids", setA.id], ["set_notes", replacement.id]]);
+    expect(
+      calls.map((call) => [
+        call.table,
+        (call.payload as { id?: string; set_id?: string }).id ??
+          (call.payload as { set_id?: string }).set_id,
+      ]),
+    ).toEqual([
+      ["sets", replacement.id],
+      ["set_voids", setA.id],
+      ["set_notes", replacement.id],
+    ]);
     db.close();
-    const reopened = await openDB(db.name, 1) as Database;
-    expect(await reopened.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({
+    const reopened = (await openDB(db.name, 1)) as Database;
+    expect(
+      await reopened.get("kv", cacheKeys.sessionSetNotes(session.id)),
+    ).toEqual({
       [replacement.id]: "Grip felt uneven",
     });
   });
@@ -336,15 +461,35 @@ describe("outbox", () => {
   it("does not place an unknown-owner correction note in the account cache", async () => {
     const { transport } = makeTransport();
     const db = await getDb();
-    await db.put("kv", { existing: "current account note" }, cacheKeys.sessionSetNotes(session.id));
-    const box = createOutbox({ getDb, transport, isOnline: () => false,
-      currentUserId: () => null, stampUserId: () => null });
+    await db.put(
+      "kv",
+      { existing: "current account note" },
+      cacheKeys.sessionSetNotes(session.id),
+    );
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => false,
+      currentUserId: () => null,
+      stampUserId: () => null,
+    });
     const replacement = { ...setA, id: "12121212-1212-4212-8212-121212121212" };
 
-    await box.enqueueCorrection(session.id, replacement, setA.id, "queued under unknown owner");
+    await box.enqueueCorrection(
+      session.id,
+      replacement,
+      setA.id,
+      "queued under unknown owner",
+    );
 
-    expect((await db.getAll("outbox")).map((row) => row.user_id)).toEqual([null, null, null]);
-    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({ existing: "current account note" });
+    expect((await db.getAll("outbox")).map((row) => row.user_id)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(await db.get("kv", cacheKeys.sessionSetNotes(session.id))).toEqual({
+      existing: "current account note",
+    });
   });
 
   it("rolls back replacement and void when the durable link cannot commit", async () => {
@@ -364,9 +509,13 @@ describe("outbox", () => {
               get(target, property) {
                 if (property === "put") {
                   return (...putArgs: unknown[]) => {
-                    const putMethod = Reflect.get(target, "put") as (...args: unknown[]) => unknown;
+                    const putMethod = Reflect.get(target, "put") as (
+                      ...args: unknown[]
+                    ) => unknown;
                     const rawPut = putMethod.bind(target);
-                    void Promise.resolve(rawPut(...putArgs)).catch(() => undefined);
+                    void Promise.resolve(rawPut(...putArgs)).catch(
+                      () => undefined,
+                    );
                     return Promise.reject(diskFull);
                   };
                 }
@@ -378,18 +527,32 @@ describe("outbox", () => {
         };
       },
     } as unknown as Database;
-    const box = createOutbox({ getDb: () => Promise.resolve(failingDb), transport, isOnline: () => false });
+    const box = createOutbox({
+      getDb: () => Promise.resolve(failingDb),
+      transport,
+      isOnline: () => false,
+    });
     const replacement = { ...setA, id: "44444444-4444-4444-8444-444444444444" };
 
-    await expect(box.enqueueCorrection(session.id, replacement, setA.id)).rejects.toThrow("disk full");
+    await expect(
+      box.enqueueCorrection(session.id, replacement, setA.id),
+    ).rejects.toThrow("disk full");
 
     expect(await db.getAll("outbox")).toEqual([]);
-    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toBeUndefined();
+    expect(
+      await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id)),
+    ).toBeUndefined();
   });
 
   it("retains an owner-bound correction join on the pending void after cache clear", async () => {
     const { transport } = makeTransport();
-    const box = createOutbox({ getDb, transport, isOnline: () => false, currentUserId: () => "alice", stampUserId: () => "alice" });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => false,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     const replacement = { ...setA, id: "55555555-5555-4555-8555-555555555555" };
     await box.enqueueCorrection(session.id, replacement, setA.id);
     const db = await getDb();
@@ -397,17 +560,21 @@ describe("outbox", () => {
 
     await cacheClearAll();
 
-    expect(await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id))).toBeUndefined();
-    expect(await box.inspect()).toMatchObject([{
-      table: "set_voids",
-      user_id: "alice",
-      correction_link: {
-        session_id: session.id,
-        replacement_id: replacement.id,
-        original_id: setA.id,
+    expect(
+      await db.get("kv", cacheKeys.sessionCorrectionLinks(session.id)),
+    ).toBeUndefined();
+    expect(await box.inspect()).toMatchObject([
+      {
+        table: "set_voids",
+        user_id: "alice",
+        correction_link: {
+          session_id: session.id,
+          replacement_id: replacement.id,
+          original_id: setA.id,
+        },
+        state: "waiting",
       },
-      state: "waiting",
-    }]);
+    ]);
   });
 
   it("keeps the original visible when a dead replacement is followed by an independent set", async () => {
@@ -417,34 +584,63 @@ describe("outbox", () => {
     const transport: OutboxTransport = {
       async insert(table, payload) {
         calls.push({ kind: "insert", table, payload });
-        if (table === "sets" && (payload as SetInsert).id === replacement.id) return checkErr;
+        if (table === "sets" && (payload as SetInsert).id === replacement.id)
+          return checkErr;
         return null;
       },
-      async update() { return null; },
+      async update() {
+        return null;
+      },
     };
-    const box = createOutbox({ getDb, transport, isOnline: () => online,
-      currentUserId: () => "alice", stampUserId: () => "alice" });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     await box.enqueueCorrection(session.id, replacement, setA.id);
     await box.enqueue({ kind: "insert", table: "sets", payload: setB });
 
     online = true;
     await box.flush();
 
-    expect(calls.map((call) => [call.table, (call.payload as { id?: string; set_id?: string }).id ?? (call.payload as { set_id?: string }).set_id]))
-      .toEqual([["sets", replacement.id], ["sets", setB.id]]);
+    expect(
+      calls.map((call) => [
+        call.table,
+        (call.payload as { id?: string; set_id?: string }).id ??
+          (call.payload as { set_id?: string }).set_id,
+      ]),
+    ).toEqual([
+      ["sets", replacement.id],
+      ["sets", setB.id],
+    ]);
     expect(await box.inspect()).toMatchObject([
       { table: "sets", state: "dead" },
-      { table: "set_voids", state: "waiting", correction_link: { original_id: setA.id } },
+      {
+        table: "set_voids",
+        state: "waiting",
+        correction_link: { original_id: setA.id },
+      },
     ]);
 
     // A fresh outbox instance simulates reload. The correction void remains
     // queued and cannot hide the already accepted original set.
-    const reloaded = createOutbox({ getDb, transport, isOnline: () => online,
-      currentUserId: () => "alice", stampUserId: () => "alice" });
+    const reloaded = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     await reloaded.flush();
     expect(calls).toHaveLength(2);
-    expect((await reloaded.inspect()).map((row) => [row.table, row.state]))
-      .toEqual([["sets", "dead"], ["set_voids", "waiting"]]);
+    expect(
+      (await reloaded.inspect()).map((row) => [row.table, row.state]),
+    ).toEqual([
+      ["sets", "dead"],
+      ["set_voids", "waiting"],
+    ]);
   });
 
   it("sends a linked void after retrying and acknowledging its replacement", async () => {
@@ -458,10 +654,17 @@ describe("outbox", () => {
         const response = responses.shift();
         return response === undefined ? null : response;
       },
-      async update() { return null; },
+      async update() {
+        return null;
+      },
     };
-    const box = createOutbox({ getDb, transport, isOnline: () => online,
-      currentUserId: () => "alice", stampUserId: () => "alice" });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     await box.enqueueCorrection(session.id, replacement, setA.id);
     online = true;
     await box.flush();
@@ -473,7 +676,11 @@ describe("outbox", () => {
 
     await box.retryDead();
 
-    expect(calls.map((call) => call.table)).toEqual(["sets", "sets", "set_voids"]);
+    expect(calls.map((call) => call.table)).toEqual([
+      "sets",
+      "sets",
+      "set_voids",
+    ]);
     expect(await box.inspect()).toEqual([]);
   });
 
@@ -481,46 +688,67 @@ describe("outbox", () => {
     const replacement = { ...setA, id: "99999999-9999-4999-8999-999999999999" };
     const { calls, transport } = makeTransport();
     let online = false;
-    const box = createOutbox({ getDb, transport, isOnline: () => online,
-      currentUserId: () => "alice", stampUserId: () => "alice" });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     await box.enqueueCorrection(session.id, replacement, setA.id);
     const db = await getDb();
     for (const key of await db.getAllKeys("outbox")) {
       const item = (await db.get("outbox", key))!;
-      const replacementRow = item.op.kind === "insert" && item.op.table === "sets";
-      await db.put("outbox", {
-        ...item,
-        status: "dead",
-        last_error: replacementRow ? checkErr.message : rlsErr.message,
-        last_code: replacementRow ? checkErr.code : rlsErr.code,
-        last_status: replacementRow ? checkErr.status : rlsErr.status,
-      }, key);
+      const replacementRow =
+        item.op.kind === "insert" && item.op.table === "sets";
+      await db.put(
+        "outbox",
+        {
+          ...item,
+          status: "dead",
+          last_error: replacementRow ? checkErr.message : rlsErr.message,
+          last_code: replacementRow ? checkErr.code : rlsErr.code,
+          last_status: replacementRow ? checkErr.status : rlsErr.status,
+        },
+        key,
+      );
     }
 
     online = true;
     expect(await box.retryDead()).toEqual({ requeued: 0, stuck: 2 });
     expect(calls).toEqual([]);
-    expect((await box.inspect()).map((row) => [row.table, row.state]))
-      .toEqual([["sets", "dead"], ["set_voids", "dead"]]);
+    expect((await box.inspect()).map((row) => [row.table, row.state])).toEqual([
+      ["sets", "dead"],
+      ["set_voids", "dead"],
+    ]);
   });
 
   it("retries a dead linked void only alongside its retryable replacement", async () => {
     const replacement = { ...setA, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
     const { calls, transport } = makeTransport();
     let online = false;
-    const box = createOutbox({ getDb, transport, isOnline: () => online,
-      currentUserId: () => "alice", stampUserId: () => "alice" });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => "alice",
+      stampUserId: () => "alice",
+    });
     await box.enqueueCorrection(session.id, replacement, setA.id);
     const db = await getDb();
     for (const key of await db.getAllKeys("outbox")) {
       const item = (await db.get("outbox", key))!;
-      await db.put("outbox", {
-        ...item,
-        status: "dead",
-        last_error: "permission denied",
-        last_code: "42501",
-        last_status: 403,
-      }, key);
+      await db.put(
+        "outbox",
+        {
+          ...item,
+          status: "dead",
+          last_error: "permission denied",
+          last_code: "42501",
+          last_status: 403,
+        },
+        key,
+      );
     }
 
     online = true;
@@ -533,7 +761,12 @@ describe("outbox", () => {
     const { transport } = makeTransport();
     const box = createOutbox({ getDb, transport, isOnline: () => false });
     // the all-zero idle snapshot looks exactly like an empty queue
-    expect(box.getStatus()).toMatchObject({ pending: 0, dead: 0, held: 0, state: "idle" });
+    expect(box.getStatus()).toMatchObject({
+      pending: 0,
+      dead: 0,
+      held: 0,
+      state: "idle",
+    });
     expect(box.isStatusKnown()).toBe(false);
 
     await box.enqueue({ kind: "insert", table: "sets", payload: setA });
@@ -545,8 +778,13 @@ describe("outbox", () => {
     const { transport, calls } = makeTransport();
     let online = false;
     let owner: string | null = "alice";
-    const box = createOutbox({ getDb, transport, isOnline: () => online,
-      currentUserId: () => owner, stampUserId: () => owner });
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => owner,
+      stampUserId: () => owner,
+    });
     const replacement = { ...setA, id: "66666666-6666-4666-8666-666666666666" };
     await box.enqueueCorrection(session.id, replacement, setA.id);
     online = true;
@@ -555,9 +793,13 @@ describe("outbox", () => {
     expect(await box.inspect()).toEqual([]);
     expect(box.getStatus()).toMatchObject({ pending: 0, dead: 0, held: 0 });
     expect(await box.pendingVoidIds()).toEqual(new Set());
-    expect(await box.correctionLinks(session.id)).toEqual({ [replacement.id]: setA.id });
+    expect(await box.correctionLinks(session.id)).toEqual({
+      [replacement.id]: setA.id,
+    });
     await cacheClearAll();
-    expect(await box.correctionLinks(session.id)).toEqual({ [replacement.id]: setA.id });
+    expect(await box.correctionLinks(session.id)).toEqual({
+      [replacement.id]: setA.id,
+    });
     await box.flush();
     expect(calls).toHaveLength(2);
 
@@ -565,8 +807,9 @@ describe("outbox", () => {
     expect(await box.correctionLinks(session.id)).toEqual({});
     owner = null;
     expect(await box.correctionLinks(session.id)).toEqual({});
-    const witnesses = (await (await getDb()).getAll("outbox"))
-      .filter((item) => item.status === "receipt");
+    const witnesses = (await (await getDb()).getAll("outbox")).filter(
+      (item) => item.status === "receipt",
+    );
     expect(witnesses).toHaveLength(1);
     expect(witnesses[0]?.user_id).toBe("alice");
     expect(witnesses[0]?.correction_link).toMatchObject({
@@ -625,9 +868,10 @@ describe("outbox", () => {
     await expect(outbox.enqueueBatch(roundOps)).resolves.toBeUndefined();
 
     expect(
-      (await db.getAll("outbox")).map((item) =>
-        (item.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>)
-          .payload.id,
+      (await db.getAll("outbox")).map(
+        (item) =>
+          (item.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>)
+            .payload.id,
       ),
     ).toEqual([setA.id, setB.id]);
   });
@@ -1519,21 +1763,52 @@ describe("outbox visibility", () => {
   it("repairs seven exported sets atomically with the typed pounds, preserving keys and training data", async () => {
     let who = ALICE;
     const calls: Call[] = [];
-    const box = createOutbox({ admit: () => undefined, getDb, currentUserId: () => who, isOnline: () => false,
-      transport: { async insert(table, payload) { calls.push({ kind: "insert", table, payload }); return null; }, async update() { return null; } } });
+    const box = createOutbox({
+      admit: () => undefined,
+      getDb,
+      currentUserId: () => who,
+      isOnline: () => false,
+      transport: {
+        async insert(table, payload) {
+          calls.push({ kind: "insert", table, payload });
+          return null;
+        },
+        async update() {
+          return null;
+        },
+      },
+    });
     const originals = Array.from({ length: 7 }, (_, i): SetInsert => ({
       ...makeSet(`0000000${i}-1111-4111-8111-111111111111`, i),
       load_kg: [65.77, 34.02, 45.36, 52.16, 65.77, 34.02, 45.36][i],
-      load_entry: "total", entered_load: [65.8, 34, 45.4, 52.2, 65.8, 34, 45.4][i],
-      entered_unit: "kg", rpe: 8,
+      load_entry: "total",
+      entered_load: [65.8, 34, 45.4, 52.2, 65.8, 34, 45.4][i],
+      entered_unit: "kg",
+      rpe: 8,
     }));
-    await box.enqueueBatch(originals.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })));
+    await box.enqueueBatch(
+      originals.map((payload) => ({
+        kind: "insert" as const,
+        table: "sets" as const,
+        payload,
+      })),
+    );
     const db = await getDb();
     for (const key of await db.getAllKeys("outbox")) {
       const item = (await db.get("outbox", key))!;
-      await db.put("outbox", { ...item, status: "dead", retries: 1,
-        last_error: "load_kg must match entered_load, entered_unit, and load_entry",
-        last_code: "23514", last_status: 400 }, key);
+      await db.put(
+        "outbox",
+        {
+          ...item,
+          status: "dead",
+          retries: 1,
+          last_error:
+            "load_kg must match entered_load, entered_unit, and load_entry",
+          last_code: "23514",
+          last_status: 400,
+        },
+        key,
+      );
     }
     const exported = await box.inspect();
     expect(exported).toHaveLength(7);
@@ -1544,10 +1819,24 @@ describe("outbox visibility", () => {
     expect(repaired.map((e) => e.state)).toEqual(Array(7).fill("waiting"));
     // the lifter typed pounds: 145, 75, 100, 115 (then the same again) -- the
     // typed pair is solved from the kept total, nothing else changes
-    expect(repaired.map((e) => e.op)).toEqual(originals.map((payload, i) => ({ kind: "insert", table: "sets",
-      payload: { ...payload, entered_load: [145, 75, 100, 115, 145, 75, 100][i], entered_unit: "lb" } })));
-    expect(exported.map((e) => (e.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>).payload.entered_load))
-      .toEqual(originals.map((set) => set.entered_load));
+    expect(repaired.map((e) => e.op)).toEqual(
+      originals.map((payload, i) => ({
+        kind: "insert",
+        table: "sets",
+        payload: {
+          ...payload,
+          entered_load: [145, 75, 100, 115, 145, 75, 100][i],
+          entered_unit: "lb",
+        },
+      })),
+    );
+    expect(
+      exported.map(
+        (e) =>
+          (e.op as Extract<OutboxOp, { kind: "insert"; table: "sets" }>).payload
+            .entered_load,
+      ),
+    ).toEqual(originals.map((set) => set.entered_load));
     expect(calls).toHaveLength(0);
     who = BOB;
     await box.flush();
@@ -1557,20 +1846,60 @@ describe("outbox visibility", () => {
   it("F-4: repair runs the admission gate on the rewritten payload; a row the gate refuses stays dead, all or nothing", async () => {
     const { calls, transport } = makeTransport();
     // queued by a build before the gate, so the dead rows can exist at all
-    const legacy = createOutbox({ admit: () => undefined, getDb, transport, currentUserId: () => ALICE, isOnline: () => false });
+    const legacy = createOutbox({
+      admit: () => undefined,
+      getDb,
+      transport,
+      currentUserId: () => ALICE,
+      isOnline: () => false,
+    });
     // good: an ordinary mismatch the repair can fix. bad: per_side at 0 kg, which
     // would be refused again once its authored pair is nulled.
-    const good = { ...setA, load_kg: 100, load_entry: "total" as const, entered_load: 220.5, entered_unit: "lb" as const };
-    const bad = { ...setB, load_kg: 0, load_entry: "per_side" as const, entered_load: 20, entered_unit: "lb" as const };
-    await legacy.enqueueBatch([good, bad].map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })));
+    const good = {
+      ...setA,
+      load_kg: 100,
+      load_entry: "total" as const,
+      entered_load: 220.5,
+      entered_unit: "lb" as const,
+    };
+    const bad = {
+      ...setB,
+      load_kg: 0,
+      load_entry: "per_side" as const,
+      entered_load: 20,
+      entered_unit: "lb" as const,
+    };
+    await legacy.enqueueBatch(
+      [good, bad].map((payload) => ({
+        kind: "insert" as const,
+        table: "sets" as const,
+        payload,
+      })),
+    );
     const db = await getDb();
     for (const key of await db.getAllKeys("outbox")) {
       const item = (await db.get("outbox", key))!;
-      await db.put("outbox", { ...item, status: "dead", retries: 1, last_code: "23514", last_status: 400,
-        last_error: "load_kg must match entered_load, entered_unit, and load_entry" }, key);
+      await db.put(
+        "outbox",
+        {
+          ...item,
+          status: "dead",
+          retries: 1,
+          last_code: "23514",
+          last_status: 400,
+          last_error:
+            "load_kg must match entered_load, entered_unit, and load_entry",
+        },
+        key,
+      );
     }
     // the production gate (default admit)
-    const box = createOutbox({ getDb, transport, currentUserId: () => ALICE, isOnline: () => false });
+    const box = createOutbox({
+      getDb,
+      transport,
+      currentUserId: () => ALICE,
+      isOnline: () => false,
+    });
     const exported = await box.inspect();
     expect(exported.every((e) => e.loadRepairable)).toBe(true);
     expect(await box.repairDeadLoadSets(exported)).toBe(false);
@@ -1588,15 +1917,41 @@ describe("outbox visibility", () => {
   it("changes none when one exported row is stale or the owner changes", async () => {
     let who = ALICE;
     const { transport } = makeTransport();
-    const box = createOutbox({ admit: () => undefined, getDb, transport, currentUserId: () => who, isOnline: () => false });
-    const authored = [setA, setB].map((set) => ({ ...set, load_entry: "total" as const,
-      entered_load: 220.5, entered_unit: "lb" as const }));
-    await box.enqueueBatch(authored.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })));
+    const box = createOutbox({
+      admit: () => undefined,
+      getDb,
+      transport,
+      currentUserId: () => who,
+      isOnline: () => false,
+    });
+    const authored = [setA, setB].map((set) => ({
+      ...set,
+      load_entry: "total" as const,
+      entered_load: 220.5,
+      entered_unit: "lb" as const,
+    }));
+    await box.enqueueBatch(
+      authored.map((payload) => ({
+        kind: "insert" as const,
+        table: "sets" as const,
+        payload,
+      })),
+    );
     const db = await getDb();
     for (const key of await db.getAllKeys("outbox")) {
       const item = (await db.get("outbox", key))!;
-      await db.put("outbox", { ...item, status: "dead", last_code: "23514", last_status: 400,
-        last_error: "load_kg must match entered_load, entered_unit, and load_entry" }, key);
+      await db.put(
+        "outbox",
+        {
+          ...item,
+          status: "dead",
+          last_code: "23514",
+          last_status: 400,
+          last_error:
+            "load_kg must match entered_load, entered_unit, and load_entry",
+        },
+        key,
+      );
     }
     const exported = await box.inspect();
     const second = (await db.get("outbox", exported[1].key))!;
@@ -1622,46 +1977,83 @@ describe("outbox visibility", () => {
     const transport: OutboxTransport = {
       async insert(table, payload) {
         calls.push({ kind: "insert", table, payload });
-        return table === "sets" && (payload as SetInsert).id === setA.id ? checkErr : null;
+        return table === "sets" && (payload as SetInsert).id === setA.id
+          ? checkErr
+          : null;
       },
-      async update() { return null; },
+      async update() {
+        return null;
+      },
     };
-    const box = createOutbox({ admit: () => undefined, getDb, transport, currentUserId: () => ALICE, isOnline: () => online });
-    const authored = [setA, setB].map((set) => ({ ...set, load_entry: "total" as const,
-      entered_load: 220.5, entered_unit: "lb" as const }));
+    const box = createOutbox({
+      admit: () => undefined,
+      getDb,
+      transport,
+      currentUserId: () => ALICE,
+      isOnline: () => online,
+    });
+    const authored = [setA, setB].map((set) => ({
+      ...set,
+      load_entry: "total" as const,
+      entered_load: 220.5,
+      entered_unit: "lb" as const,
+    }));
     await box.enqueueBatch([
-      ...authored.map((payload) => ({ kind: "insert" as const, table: "sets" as const, payload })),
+      ...authored.map((payload) => ({
+        kind: "insert" as const,
+        table: "sets" as const,
+        payload,
+      })),
       { kind: "insert", table: "set_voids", payload: { set_id: setA.id } },
     ]);
     const db = await getDb();
     for (const key of await db.getAllKeys("outbox")) {
       const item = (await db.get("outbox", key))!;
-      await db.put("outbox", { ...item, status: "dead", last_code: item.op.table === "sets" ? "23514" : "42501",
-        last_status: item.op.table === "sets" ? 400 : 403,
-        last_error: item.op.table === "sets"
-          ? "load_kg must match entered_load, entered_unit, and load_entry" : "RLS refused" }, key);
+      await db.put(
+        "outbox",
+        {
+          ...item,
+          status: "dead",
+          last_code: item.op.table === "sets" ? "23514" : "42501",
+          last_status: item.op.table === "sets" ? 400 : 403,
+          last_error:
+            item.op.table === "sets"
+              ? "load_kg must match entered_load, entered_unit, and load_entry"
+              : "RLS refused",
+        },
+        key,
+      );
     }
     expect(await box.retryDead()).toEqual({ requeued: 0, stuck: 3 });
-    const exported = (await box.inspect()).filter((entry) => entry.loadRepairable);
+    const exported = (await box.inspect()).filter(
+      (entry) => entry.loadRepairable,
+    );
     expect(await box.repairDeadLoadSets(exported)).toBe(true);
     online = true;
     await box.flush();
     const remaining = await box.inspect();
     expect(remaining.map((row) => [row.table, row.state])).toEqual([
-      ["sets", "dead"], ["set_voids", "dead"],
+      ["sets", "dead"],
+      ["set_voids", "dead"],
     ]);
     expect(calls.map((call) => call.table)).toEqual(["sets", "sets"]);
     expect(await box.retryDead()).toEqual({ requeued: 0, stuck: 2 });
-    expect((await box.inspect()).map((row) => row.table)).toEqual(["sets", "set_voids"]);
+    expect((await box.inspect()).map((row) => row.table)).toEqual([
+      "sets",
+      "set_voids",
+    ]);
   });
 
   it("repairs only the exact authored-load failure; with no solvable typed weight the provenance becomes unknown", async () => {
     let online = false;
-    const { calls, transport } = makeTransport([{
-      code: "23514",
-      status: 400,
-      message: "load_kg must match entered_load, entered_unit, and load_entry",
-    }]);
+    const { calls, transport } = makeTransport([
+      {
+        code: "23514",
+        status: 400,
+        message:
+          "load_kg must match entered_load, entered_unit, and load_entry",
+      },
+    ]);
     const original: SetInsert = {
       ...setA,
       load_kg: 60.01, // no typed weight on any grid gives exactly this total
@@ -1692,18 +2084,34 @@ describe("outbox visibility", () => {
       entered_unit: null,
     });
     expect(box.getStatus().dead).toBe(0);
-    expect((await box.inspect())).toHaveLength(0);
+    expect(await box.inspect()).toHaveLength(0);
   });
 
   it("never repairs a different constraint or another owner's failed set", async () => {
     let online = false;
     let who = ALICE;
     const { calls, transport } = makeTransport([
-      { code: "23514", status: 400, message: "load_kg must match entered_load, entered_unit, and load_entry" },
+      {
+        code: "23514",
+        status: 400,
+        message:
+          "load_kg must match entered_load, entered_unit, and load_entry",
+      },
       checkErr,
     ]);
-    const authored = { ...setB, load_entry: "total" as const, entered_load: 220.5, entered_unit: "lb" as const };
-    const box = createOutbox({ admit: () => undefined, getDb, transport, isOnline: () => online, currentUserId: () => who });
+    const authored = {
+      ...setB,
+      load_entry: "total" as const,
+      entered_load: 220.5,
+      entered_unit: "lb" as const,
+    };
+    const box = createOutbox({
+      admit: () => undefined,
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => who,
+    });
     await box.enqueue({ kind: "insert", table: "sets", payload: setA });
     who = BOB;
     await box.enqueue({ kind: "insert", table: "sets", payload: authored });
@@ -1721,7 +2129,11 @@ describe("outbox visibility", () => {
   it("repairs a failed set before retrying its refused void and note in queue order", async () => {
     let online = false;
     let who: string | null = ALICE;
-    const calls: Array<{ table: string; payload: unknown; owner: string | null }> = [];
+    const calls: Array<{
+      table: string;
+      payload: unknown;
+      owner: string | null;
+    }> = [];
     const landedSets = new Set<string>();
     const original: SetInsert = {
       ...setA,
@@ -1741,19 +2153,28 @@ describe("outbox visibility", () => {
             return {
               code: "23514",
               status: 400,
-              message: "load_kg must match entered_load, entered_unit, and load_entry",
+              message:
+                "load_kg must match entered_load, entered_unit, and load_entry",
             };
           }
           landedSets.add(set.id);
           return null;
         }
-        if ((table === "set_voids" || table === "set_notes") &&
-            !landedSets.has((payload as { set_id: string }).set_id)) {
-          return { code: "42501", status: 403, message: "new row violates row-level security policy" };
+        if (
+          (table === "set_voids" || table === "set_notes") &&
+          !landedSets.has((payload as { set_id: string }).set_id)
+        ) {
+          return {
+            code: "42501",
+            status: 403,
+            message: "new row violates row-level security policy",
+          };
         }
         return null;
       },
-      async update() { return null; },
+      async update() {
+        return null;
+      },
     };
     const box = createOutbox({
       admit: () => undefined, // models dead items queued by a build before the gate
@@ -1779,7 +2200,10 @@ describe("outbox visibility", () => {
 
     expect(await box.repairDeadLoadSet(failed[0].key, original)).toBe(true);
     expect(landedSets.has(original.id)).toBe(true);
-    expect((await box.inspect()).map((e) => e.table)).toEqual(["set_voids", "set_notes"]);
+    expect((await box.inspect()).map((e) => e.table)).toEqual([
+      "set_voids",
+      "set_notes",
+    ]);
     who = BOB;
     expect(await box.retryDead()).toEqual({ requeued: 2, stuck: 0 });
     expect(box.getStatus()).toMatchObject({ pending: 2, held: 2, dead: 0 });
@@ -1788,10 +2212,19 @@ describe("outbox visibility", () => {
     await box.flush();
 
     expect(calls.map((c) => c.table)).toEqual([
-      "sets", "set_voids", "set_notes", "sets", "set_voids", "set_notes",
+      "sets",
+      "set_voids",
+      "set_notes",
+      "sets",
+      "set_voids",
+      "set_notes",
     ]);
     expect(calls.every((c) => c.owner === ALICE)).toBe(true);
-    expect(calls[3].payload).toEqual({ ...original, entered_load: null, entered_unit: null });
+    expect(calls[3].payload).toEqual({
+      ...original,
+      entered_load: null,
+      entered_unit: null,
+    });
     expect(calls[4].payload).toEqual(voidRow);
     expect(calls[5].payload).toEqual(noteRow);
     expect(await box.inspect()).toEqual([]);
@@ -2038,7 +2471,6 @@ describe("outbox visibility", () => {
   });
 });
 
-
 describe("successful operation subscribers", () => {
   const ALICE = "aaaaaaaa-1111-4111-8111-111111111111";
   const BOB = "bbbbbbbb-2222-4222-8222-222222222222";
@@ -2055,20 +2487,34 @@ describe("successful operation subscribers", () => {
     const transport: OutboxTransport = {
       async insert(table, payload) {
         calls.push({ kind: "insert", table, payload });
-        return await new Promise((resolve) => { finishRequest = resolve; });
+        return await new Promise((resolve) => {
+          finishRequest = resolve;
+        });
       },
-      async update() { return null; },
+      async update() {
+        return null;
+      },
     };
     const legacyCallback = vi.fn();
     const box = createOutbox({
-      getDb, transport, isOnline: () => true,
-      currentUserId: () => who, stampUserId: () => who,
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+      stampUserId: () => who,
       onSynced: legacyCallback,
     });
-    const op: OutboxOp = { kind: "insert", table: "sets", payload: makeSet("44444444-4444-4444-8444-444444444444", 0) };
+    const op: OutboxOp = {
+      kind: "insert",
+      table: "sets",
+      payload: makeSet("44444444-4444-4444-8444-444444444444", 0),
+    };
     await box.enqueue(op);
-    const events: Array<{ op: OutboxOp; ownerId: string | null | undefined }> = [];
-    const unsubscribe = box.subscribeSynced((syncedOp, ownerId) => events.push({ op: syncedOp, ownerId }));
+    const events: Array<{ op: OutboxOp; ownerId: string | null | undefined }> =
+      [];
+    const unsubscribe = box.subscribeSynced((syncedOp, ownerId) =>
+      events.push({ op: syncedOp, ownerId }),
+    );
     const flush = box.flush();
     await vi.waitFor(() => expect(finishRequest).toBeTypeOf("function"));
     who = BOB;
@@ -2087,16 +2533,31 @@ describe("successful operation subscribers", () => {
     const { calls, transport } = makeTransport();
     const legacyCallback = vi.fn();
     const box = createOutbox({
-      getDb, transport, isOnline: () => online,
-      currentUserId: () => who, stampUserId: () => who,
+      getDb,
+      transport,
+      isOnline: () => online,
+      currentUserId: () => who,
+      stampUserId: () => who,
       onSynced: legacyCallback,
     });
     const replacement = makeSet("66666666-6666-4666-8666-666666666666", 0);
     const originalId = "77777777-7777-4777-8777-777777777777";
-    const expectedLink = { session_id: session.id, replacement_id: replacement.id, original_id: originalId };
-    const events: Array<{ op: OutboxOp; ownerId: string | null | undefined; correctionLink?: typeof expectedLink }> = [];
-    box.subscribeSynced((op, ownerId, correctionLink) => events.push({ op, ownerId, correctionLink }));
-    box.subscribeSynced(() => { throw new Error("receipt observer failed"); });
+    const expectedLink = {
+      session_id: session.id,
+      replacement_id: replacement.id,
+      original_id: originalId,
+    };
+    const events: Array<{
+      op: OutboxOp;
+      ownerId: string | null | undefined;
+      correctionLink?: typeof expectedLink;
+    }> = [];
+    box.subscribeSynced((op, ownerId, correctionLink) =>
+      events.push({ op, ownerId, correctionLink }),
+    );
+    box.subscribeSynced(() => {
+      throw new Error("receipt observer failed");
+    });
 
     await box.enqueueCorrection(session.id, replacement, originalId);
     await box.flush(); // drain the enqueue-triggered flush while offline
@@ -2105,8 +2566,20 @@ describe("successful operation subscribers", () => {
 
     expect(calls.map((call) => call.table)).toEqual(["sets", "set_voids"]);
     expect(events).toEqual([
-      { op: { kind: "insert", table: "sets", payload: replacement }, ownerId: ALICE, correctionLink: expectedLink },
-      { op: { kind: "insert", table: "set_voids", payload: { set_id: originalId } }, ownerId: ALICE, correctionLink: expectedLink },
+      {
+        op: { kind: "insert", table: "sets", payload: replacement },
+        ownerId: ALICE,
+        correctionLink: expectedLink,
+      },
+      {
+        op: {
+          kind: "insert",
+          table: "set_voids",
+          payload: { set_id: originalId },
+        },
+        ownerId: ALICE,
+        correctionLink: expectedLink,
+      },
     ]);
     expect(legacyCallback).toHaveBeenCalledTimes(2);
     expect(await box.inspect()).toEqual([]);
@@ -2116,18 +2589,29 @@ describe("successful operation subscribers", () => {
     let who: string | null = ALICE;
     const { calls, transport } = makeTransport([authErr]);
     const box = createOutbox({
-      getDb, transport, isOnline: () => true,
-      currentUserId: () => who, stampUserId: () => who,
+      getDb,
+      transport,
+      isOnline: () => true,
+      currentUserId: () => who,
+      stampUserId: () => who,
       onIdentityChange: () => () => undefined,
     });
-    transport.refreshAuth = async () => { who = BOB; return true; };
-    await box.enqueue({ kind: "insert", table: "sets", payload: makeSet("55555555-5555-4555-8555-555555555555", 0) });
+    transport.refreshAuth = async () => {
+      who = BOB;
+      return true;
+    };
+    await box.enqueue({
+      kind: "insert",
+      table: "sets",
+      payload: makeSet("55555555-5555-4555-8555-555555555555", 0),
+    });
     await box.flush();
 
     expect(calls).toHaveLength(1);
-    expect(await box.inspect()).toMatchObject([{ user_id: ALICE, state: "held" }]);
+    expect(await box.inspect()).toMatchObject([
+      { user_id: ALICE, state: "held" },
+    ]);
   });
-
 
   describe("load integrity gate", () => {
     const bad: SetInsert = {
@@ -2137,20 +2621,32 @@ describe("successful operation subscribers", () => {
       entered_load: 220.5,
       entered_unit: "lb",
     };
-    const good: SetInsert = { ...setB, load_kg: 102.06, load_entry: "total", entered_load: 225, entered_unit: "lb" };
+    const good: SetInsert = {
+      ...setB,
+      load_kg: 102.06,
+      load_entry: "total",
+      entered_load: 225,
+      entered_unit: "lb",
+    };
 
     it("refuses a set the database would refuse, on every enqueue path, and queues nothing", async () => {
       const { calls, transport } = makeTransport();
       const box = createOutbox({ getDb, transport, isOnline: () => false });
-      await expect(box.enqueue({ kind: "insert", table: "sets", payload: bad })).rejects.toMatchObject({
+      await expect(
+        box.enqueue({ kind: "insert", table: "sets", payload: bad }),
+      ).rejects.toMatchObject({
         name: "LoadIntegrityError",
         code: "mismatch",
       });
-      await expect(box.enqueueBatch([
-        { kind: "insert", table: "sets", payload: good },
-        { kind: "insert", table: "sets", payload: bad },
-      ])).rejects.toMatchObject({ name: "LoadIntegrityError" });
-      await expect(box.enqueueCorrection("s1", bad, "old-id")).rejects.toMatchObject({
+      await expect(
+        box.enqueueBatch([
+          { kind: "insert", table: "sets", payload: good },
+          { kind: "insert", table: "sets", payload: bad },
+        ]),
+      ).rejects.toMatchObject({ name: "LoadIntegrityError" });
+      await expect(
+        box.enqueueCorrection("s1", bad, "old-id"),
+      ).rejects.toMatchObject({
         name: "LoadIntegrityError",
       });
       expect(await box.inspect()).toEqual([]);
@@ -2178,8 +2674,80 @@ describe("successful operation subscribers", () => {
       const { transport } = makeTransport();
       const box = createOutbox({ getDb, transport, isOnline: () => false });
       await box.enqueue({ kind: "insert", table: "sets", payload: good });
-      await box.enqueue({ kind: "insert", table: "sets", payload: { ...setA, load_kg: 61.2345 } });
+      await box.enqueue({
+        kind: "insert",
+        table: "sets",
+        payload: { ...setA, load_kg: 61.2345 },
+      });
       expect(await box.inspect()).toHaveLength(2);
     });
+  });
+});
+
+describe("CORE-6: deterministic client errors do not block the queue", () => {
+  beforeEach(() => {
+    globalThis.indexedDB = new IDBFactory();
+    resetDbForTests();
+  });
+
+  const tooLarge = (status: number): TransportError => ({
+    message: "Payload Too Large",
+    code: null,
+    status,
+  });
+
+  for (const status of [413, 414, 415, 431]) {
+    it(`a ${status} parks that one item as rejected and the next still syncs`, async () => {
+      // The same bytes get the same answer, so retrying the head forever (the
+      // old "retry" class) stalled every write queued behind it.
+      let online = false;
+      const { transport, calls } = makeTransport([tooLarge(status)]);
+      const box = createOutbox({ getDb, transport, isOnline: () => online });
+      await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+      await box.enqueue({ kind: "insert", table: "sets", payload: setB });
+      await box.flush(); // drain the enqueue-triggered runs while still offline
+      online = true;
+      await box.flush();
+
+      expect(calls).toHaveLength(2);
+      const entries = await box.inspect();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].state).toBe("dead");
+      expect(entries[0].last_status).toBe(status);
+      expect(entries[0].last_error).toBe("Payload Too Large");
+      // visible reason, and no Retry button that cannot work
+      expect(entries[0].cause).toBe("rejected");
+      expect(entries[0].retryable).toBe(false);
+    });
+  }
+
+  it("deadKind reads 413/414/415/431 as a judgement on the row", () => {
+    for (const s of [413, 414, 415, 431]) {
+      expect(deadKind(null, s)).toBe("rejected");
+    }
+    // a 405 is about the endpoint, like a 404: it could come back
+    expect(deadKind(null, 405)).toBe("unknown");
+  });
+
+  it("a 5xx is still retryable and still stops the flush", async () => {
+    let online = false;
+    const { transport, calls } = makeTransport([
+      { message: "bad gateway", code: null, status: 502 },
+    ]);
+    const box = createOutbox({
+      getDb,
+      transport,
+      isOnline: () => online,
+      retryDelaysMs: [60_000],
+    });
+    await box.enqueue({ kind: "insert", table: "sets", payload: setA });
+    await box.enqueue({ kind: "insert", table: "sets", payload: setB });
+    await box.flush(); // drain the enqueue-triggered runs while still offline
+    online = true;
+    await box.flush();
+    expect(calls).toHaveLength(1);
+    expect((await box.inspect()).every((e) => e.state === "waiting")).toBe(
+      true,
+    );
   });
 });

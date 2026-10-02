@@ -72,3 +72,95 @@ export function readPersistedUserId(
 ): string | null {
   return readPersistedSession(store)?.user?.id ?? null;
 }
+
+/**
+ * Whether the session on disk still carries an unexpired access token. After
+ * a request has run this is the cheap, synchronous way to tell if it went out
+ * as the user or, after a failed refresh, as the anon key (CORE-2). auth-js
+ * saves a refreshed session to storage before the request is built, so a live
+ * token here means the request was authenticated.
+ *
+ * Unknown answers "live": no storage, or a stored session without an expiry,
+ * cannot prove the request was anonymous, and the caller only uses a false
+ * here to refuse to cache an EMPTY answer. Bookkeeping, not authorization.
+ */
+export function storedSessionIsLive(
+  store: Storage | undefined = globalThis.localStorage,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!store) return true;
+  const s = readPersistedSession(store);
+  if (!s) return false;
+  const exp = (s as { expires_at?: unknown }).expires_at;
+  return typeof exp !== "number" || exp * 1000 > nowMs;
+}
+
+/** How long a cold start waits for `getSession()` before it draws the shell
+ *  from the stored session. A refresh that cannot reach the server retries
+ *  for about 25 s inside auth-js, which is an eternity on a splash screen. */
+export const BOOT_SESSION_WAIT_MS = 3000;
+/** The same wait when the browser already says there is no network. */
+export const BOOT_SESSION_WAIT_OFFLINE_MS = 250;
+
+interface SessionResult {
+  data: { session: Session | null };
+  error: unknown;
+}
+
+/**
+ * Resolve who is signed in at startup without waiting out a dead network
+ * (NEW-CORE-1), and without mistaking "could not ask" for "nobody"
+ * (CORE-1, CORE-12).
+ *
+ * `deliver(session, provisional)` is called once the answer is known. If
+ * `getSession()` is still pending after a short wait (shorter when
+ * `navigator.onLine` is false) and a session is on disk, that session is
+ * delivered FIRST as provisional, for identity only. The real answer is
+ * delivered when it arrives and always wins: a genuine sign-out reaches
+ * `deliver(null, false)` and clears the shell; a retryable failure keeps the
+ * stored session; a rejection falls back to it too. Returns a cancel function.
+ */
+export function resolveBootSession(
+  getSession: () => Promise<SessionResult>,
+  isRetryable: (e: unknown) => boolean,
+  deliver: (session: Session | null, provisional: boolean) => void,
+  onError?: (e: unknown) => void,
+): () => void {
+  let done = false;
+  let cancelled = false;
+  const offline =
+    typeof navigator !== "undefined" && navigator.onLine === false;
+  const timer = setTimeout(
+    () => {
+      if (done || cancelled) return;
+      const stored = readPersistedSession();
+      if (stored) deliver(stored, true);
+    },
+    offline ? BOOT_SESSION_WAIT_OFFLINE_MS : BOOT_SESSION_WAIT_MS,
+  );
+  getSession().then(
+    ({ data, error }) => {
+      done = true;
+      clearTimeout(timer);
+      if (cancelled) return;
+      deliver(
+        data.session ??
+          (error && isRetryable(error) ? readPersistedSession() : null),
+        false,
+      );
+    },
+    (e: unknown) => {
+      done = true;
+      clearTimeout(timer);
+      if (cancelled) return;
+      // A rejection (storage lock timeout) is "we never found out", the same
+      // as a retryable error: stand in the stored identity, never Login.
+      onError?.(e);
+      deliver(readPersistedSession(), false);
+    },
+  );
+  return () => {
+    cancelled = true;
+    clearTimeout(timer);
+  };
+}
