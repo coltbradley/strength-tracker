@@ -199,3 +199,9 @@ where proname in ('integration_encryption_key','encrypt_integration_secret',
 ```
 
 `true` on any row confirms DB-3 or DB-4 live.
+
+### Follow-ups from the integration review (not done, P3)
+
+- `storedSessionIsLive()` trusts the device clock; a badly wrong clock keeps serving stale cache over a genuinely empty answer until it is fixed (`pwa/src/lib/persistedSession.ts`).
+- `notesTouchedRef` in `Session.tsx` is never cleared, so a note edited on this screen keeps its local text for the rest of the mount even if another device changes it later.
+- `lastTime.ts` applies `SET_CAP` per id chunk; a capped chunk can make a session read as empty and fall back to an older one (`sets_truncated` is reported).
