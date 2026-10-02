@@ -6,7 +6,12 @@
 
 import { buildSetLoad, LoadIntegrityError } from "../lib/setLoad";
 import {
-  Fragment, useCallback, useEffect, useMemo, useRef, useState
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Stepper } from "../components/Stepper";
@@ -28,6 +33,7 @@ import {
   getExercises,
   getPlannedWorkouts,
   getResolvedPrescriptions,
+  isPlannedDayLocked,
   swapWorkoutOrder,
   updatePlannedWorkout,
   weekOrder,
@@ -138,6 +144,12 @@ function supersetName(group: number): string {
  *  read the same in all of them. */
 const MAIN_LABEL = "MAIN WORK";
 
+/** Exercises in a run of entries: a ramp is one (however many rows), each
+ *  member of a superset is one. The only count this screen shows (UI-09). */
+export function exercisesIn(entries: readonly { exercises: number }[]): number {
+  return entries.reduce((n, e) => n + e.exercises, 0);
+}
+
 /** Sections the editor offers before anything the day already uses. */
 const SECTION_SUGGESTIONS = ["Activations", "Abs", "Cooldown"];
 
@@ -160,11 +172,12 @@ export function draftFrom(
     reps_min: r.reps_min,
     reps_max: r.reps_max,
     mode: r.load_kg !== null ? "kg" : r.load_pct_tm !== null ? "pct" : "feel",
-    load_kg: r.entered_load != null && r.entered_unit != null
-      ? fromDisplay(r.entered_load, r.entered_unit)
-      : Math.round(enteredKg(storedTotal, entry) * 100) / 100,
+    load_kg:
+      r.entered_load != null && r.entered_unit != null
+        ? fromDisplay(r.entered_load, r.entered_unit)
+        : Math.round(enteredKg(storedTotal, entry) * 100) / 100,
     load_entry: entry,
-    entered_unit: r.entered_load != null ? r.entered_unit ?? null : null,
+    entered_unit: r.entered_load != null ? (r.entered_unit ?? null) : null,
     entered_load: r.entered_load ?? null,
     load_pct: r.load_pct_tm ?? 75,
     rest_seconds: r.rest_seconds ?? 180,
@@ -179,7 +192,10 @@ export function draftFrom(
  *  typed; otherwise the human-precision conversion (displayLoad rules 1-2). */
 function draftLoadText(d: RxDraft, unit: LoadUnit): string {
   return formatLoad(d.load_kg, unit, {
-    typed: d.entered_load != null && d.entered_unit ? { value: d.entered_load, unit: d.entered_unit } : null,
+    typed:
+      d.entered_load != null && d.entered_unit
+        ? { value: d.entered_load, unit: d.entered_unit }
+        : null,
   });
 }
 
@@ -210,7 +226,8 @@ export function patchFrom(d: RxDraft): PrescriptionPatch {
   const direct =
     d.mode === "kg" && d.load_kg > 0 && d.entered_unit !== null
       ? buildSetLoad({
-          typedValue: d.entered_load ?? toTypedDisplay(d.load_kg, d.entered_unit),
+          typedValue:
+            d.entered_load ?? toTypedDisplay(d.load_kg, d.entered_unit),
           typedUnit: d.entered_unit,
           loadEntry: d.load_entry,
         })
@@ -222,7 +239,11 @@ export function patchFrom(d: RxDraft): PrescriptionPatch {
     d.mode === "kg" && direct === null
       ? Math.round(Math.max(0, totalKg(d.load_kg, d.load_entry)) * 100) / 100
       : null;
-  const stored = direct ? direct.load_kg : legacyTotal !== null && legacyTotal > 0 ? legacyTotal : null;
+  const stored = direct
+    ? direct.load_kg
+    : legacyTotal !== null && legacyTotal > 0
+      ? legacyTotal
+      : null;
   return {
     sets: d.sets,
     reps_min: d.reps_min,
@@ -266,7 +287,8 @@ export function Plan() {
   const [searchOpen, setSearchOpen] = useState(false);
   /** Exercise chosen in the picker, awaiting its set scheme. */
   const [adding, setAdding] = useState<ExerciseRow | null>(null);
-  const [pendingSuperset, setPendingSuperset] = useState<PendingSuperset | null>(null);
+  const [pendingSuperset, setPendingSuperset] =
+    useState<PendingSuperset | null>(null);
   /** The section an add started from, so "Add to ACTIVATIONS" adds INTO it
    *  rather than dropping the exercise in the main body to be filed later. */
   const [addingTo, setAddingTo] = useState<string | null>(null);
@@ -306,6 +328,27 @@ export function Plan() {
     [list, workout],
   );
   const workoutLocked = activeForWorkout?.planned_workout_id === workout?.id;
+
+  // Is the day's structure already frozen by a session that points at it?
+  // Asked up front so the editor says so before anyone types into a row and
+  // meets a refusal (UI-03). Unknown (null) shows nothing.
+  const [dayFrozen, setDayFrozen] = useState<boolean | null>(null);
+  const workoutId = workout?.id ?? null;
+  useEffect(() => {
+    if (workoutId === null) return;
+    let cancelled = false;
+    setDayFrozen(null);
+    isPlannedDayLocked(workoutId)
+      .then((v) => {
+        if (!cancelled) setDayFrozen(v);
+      })
+      .catch(() => {
+        // best effort: the refusal itself is still handled where it happens
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workoutId]);
 
   // Only the newest reload may write state. A slow read for the day this
   // screen showed a moment ago could otherwise land after the current day's
@@ -593,24 +636,32 @@ export function Plan() {
     const i = siblings.findIndex((w) => w.id === workout.id);
     const other = siblings[i + dir];
     if (!other) return;
-    void run("reorder", async () => {
-      await swapWorkoutOrder(workout, other);
-      toast("Order updated");
-      reload();
-    }, [workout.id, other.id]);
+    void run(
+      "reorder",
+      async () => {
+        await swapWorkoutOrder(workout, other);
+        toast("Order updated");
+        reload();
+      },
+      [workout.id, other.id],
+    );
   };
 
   const duplicate = () =>
-    void run("duplicate workout", async () => {
-      await duplicatePlannedWorkout(workout, duplicateDate || null);
-      toast(
-        duplicateDate
-          ? `Copied to ${formatPlannedDate(duplicateDate)}`
-          : "Copied (unscheduled)",
-      );
-      setDuplicateDate("");
-      reload();
-    }, false);
+    void run(
+      "duplicate workout",
+      async () => {
+        await duplicatePlannedWorkout(workout, duplicateDate || null);
+        toast(
+          duplicateDate
+            ? `Copied to ${formatPlannedDate(duplicateDate)}`
+            : "Copied (unscheduled)",
+        );
+        setDuplicateDate("");
+        reload();
+      },
+      false,
+    );
 
   const removeWorkout = () =>
     void run("delete workout", async () => {
@@ -671,15 +722,18 @@ export function Plan() {
    * `keepOpen` is for the reorder buttons, which must not close the row they
    * just moved.
    */
-  const saveRx = (r: ResolvedPrescriptionRow, keepOpen = false) => {
-    if (!draft) return Promise.resolve();
+  const saveRx = async (
+    r: ResolvedPrescriptionRow,
+    keepOpen = false,
+  ): Promise<boolean> => {
+    if (!draft) return true;
     let patch: PrescriptionPatch;
     try {
       patch = patchFrom(draft);
     } catch (e) {
       if (!(e instanceof LoadIntegrityError)) throw e;
       toast(e.message, "error");
-      return Promise.resolve();
+      return false;
     }
     // Nothing changed: skip the write and the toast entirely, or merely opening
     // a row and closing it claims to have updated it.
@@ -688,9 +742,12 @@ export function Plan() {
         setEditingRx(null);
         setDraft(null);
       }
-      return Promise.resolve();
+      return true;
     }
-    return run("save exercise", async () => {
+    // Did it land? `run` swallows and reports its own failures, so success is
+    // recorded here rather than inferred from the promise resolving.
+    let saved = false;
+    await run("save exercise", async () => {
       try {
         await commitRx(r, patch);
       } catch (e) {
@@ -700,12 +757,28 @@ export function Plan() {
         }
         throw e;
       }
+      saved = true;
       if (!keepOpen) {
         setEditingRx(null);
         setDraft(null);
       }
       reload();
     });
+    return saved;
+  };
+
+  /**
+   * Leave the editor. An open row's draft lives in component state until the
+   * row collapses, so navigating away used to drop it silently under the
+   * promise that everything here saves as you go (UI-01). Save it first, and
+   * stay on the screen with the draft still showing if the save does not land.
+   */
+  const finishPlanning = async () => {
+    if (editingRx !== null && draft) {
+      const open = (rx ?? []).find((o) => o.id === editingRx);
+      if (open && !(await saveRx(open))) return;
+    }
+    navigate("/");
   };
 
   const removeRx = (r: ResolvedPrescriptionRow) =>
@@ -751,11 +824,13 @@ export function Plan() {
           ...(rx ?? []),
           ...paired.groups.map((group) => ({
             exercise_id: paired.exercise.id,
-            superset_group: group.superset_group === 0 ? null : group.superset_group,
+            superset_group:
+              group.superset_group === 0 ? null : group.superset_group,
           })),
           ...groups.map((group) => ({
             exercise_id: ex.id,
-            superset_group: group.superset_group === 0 ? null : group.superset_group,
+            superset_group:
+              group.superset_group === 0 ? null : group.superset_group,
           })),
         ];
         const issues = supersetRunIssues(proposed);
@@ -790,12 +865,17 @@ export function Plan() {
       // A new group needs both movements before it can exist. Hold A1 only in
       // memory, then return to the picker for A2; the next save inserts both
       // rows in the same request.
-      if (selectedGroup !== 0 && (supersetMembers[selectedGroup]?.length ?? 0) === 0) {
+      if (
+        selectedGroup !== 0 &&
+        (supersetMembers[selectedGroup]?.length ?? 0) === 0
+      ) {
         setPendingSuperset({ exercise: ex, groups, group: selectedGroup });
         setAdding(null);
         setAddingTo(groups[0]?.section ?? null);
         setSearchOpen(true);
-        toast(`Choose another exercise for Superset ${String.fromCharCode(64 + selectedGroup)}.`);
+        toast(
+          `Choose another exercise for Superset ${String.fromCharCode(64 + selectedGroup)}.`,
+        );
         return;
       }
 
@@ -896,10 +976,9 @@ export function Plan() {
       const ids = block.entries.flatMap((e) => e.rows.map((o) => o.id));
       // A rename can change where the part runs — "Abs" renamed to "Cooldown"
       // belongs at the end now.
-      const rows =
-        (rx ?? []).map((o) =>
-          ids.includes(o.id) ? { ...o, section: next } : o,
-        );
+      const rows = (rx ?? []).map((o) =>
+        ids.includes(o.id) ? { ...o, section: next } : o,
+      );
       await applyPlanEdit(workout.id, canonicalRowIds(rows), {
         sectionIds: ids,
         section: next,
@@ -914,10 +993,9 @@ export function Plan() {
   const dissolveSection = (block: PlanBlock) =>
     void run("remove section", async () => {
       const ids = block.entries.flatMap((e) => e.rows.map((o) => o.id));
-      const rows =
-        (rx ?? []).map((o) =>
-          ids.includes(o.id) ? { ...o, section: null } : o,
-        );
+      const rows = (rx ?? []).map((o) =>
+        ids.includes(o.id) ? { ...o, section: null } : o,
+      );
       await applyPlanEdit(workout.id, canonicalRowIds(rows), {
         sectionIds: ids,
         section: null,
@@ -930,12 +1008,16 @@ export function Plan() {
     });
 
   const saveTemplate = () =>
-    void run("save template", async () => {
-      const name = (templateName ?? "").trim() || workoutName(workout);
-      await saveWorkoutAsTemplate(workout, name, rx ?? []);
-      setTemplateName(null);
-      toast(`Saved "${name}" — add it to any day from Today`);
-    }, false);
+    void run(
+      "save template",
+      async () => {
+        const name = (templateName ?? "").trim() || workoutName(workout);
+        await saveWorkoutAsTemplate(workout, name, rx ?? []);
+        setTemplateName(null);
+        toast(`Saved "${name}" — add it to any day from Today`);
+      },
+      false,
+    );
 
   const saveLabel = () =>
     void run("rename workout", async () => {
@@ -976,7 +1058,16 @@ export function Plan() {
       />
       {workoutLocked && (
         <p className="microcopy" role="alert">
-          Finish the active session before changing this workout or its place in the plan.
+          Finish the active session before changing this workout or its place in
+          the plan.
+        </p>
+      )}
+      {dayFrozen === true && !workoutLocked && (
+        <p className="microcopy" role="status">
+          A session has been logged against this workout, so its exercises are
+          locked to keep that history accurate. To change the plan, duplicate
+          this workout to a future date (at the bottom of this screen) and edit
+          the copy.
         </p>
       )}
       {workout.notes && <Note label="COACH" text={workout.notes} />}
@@ -984,7 +1075,12 @@ export function Plan() {
       <section className="rule-section">
         <div className="section-head">
           <span className="field-label">EXERCISES</span>
-          <span className="section-meta">{rx?.length ?? 0}</span>
+          {/* one unit everywhere: exercises, not prescription rows (a ramp is
+              several rows of one exercise) and not entries (a superset is
+              several exercises in one) */}
+          <span className="section-meta">
+            {rx === null ? 0 : exercisesIn(blocks.flatMap((b) => b.entries))}
+          </span>
         </div>
         {rx === null && <p className="muted">Loading…</p>}
         {/* Sections are the one feature of this editor you cannot see until
@@ -1023,725 +1119,827 @@ export function Plan() {
                   <span className="plan-section-name">{MAIN_LABEL}</span>
                 </div>
               )}
-          <div
-            className={[
-              "plan-block",
-              block.section !== null ? "plan-block-named" : "",
-              blockDrag.dragging === block.key ? "block-dragging" : "",
-              blockDrag.dragging !== null && blockDrag.overIndex === bi
-                ? "block-over"
-                : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            {/* A part of the day, drawn once as a divider with what is in it.
+            <div
+              className={[
+                "plan-block",
+                block.section !== null ? "plan-block-named" : "",
+                blockDrag.dragging === block.key ? "block-dragging" : "",
+                blockDrag.dragging !== null && blockDrag.overIndex === bi
+                  ? "block-over"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {/* A part of the day, drawn once as a divider with what is in it.
                 The heading is also the handle: dragging it moves the whole
                 part, and tapping it is how a section is renamed, added to or
                 dissolved — a section you can only edit one row at a time is
                 not a thing, it is a column value. */}
-            {block.section !== null && (
-              <>
-                <button
-                  type="button"
-                  className="plan-section-head"
-                  {...blockDrag.handlers(block.key, bi)}
-                  onClick={() => {
-                    setConfirming(null);
-                    if (sectionOpen === block.key) {
-                      // closing: commit the name the way a row commits
-                      if (normalizeSection(sectionName) !== block.section)
-                        renameSection(block, sectionName);
-                      else setSectionOpen(null);
-                      return;
-                    }
-                    setSectionName(block.section ?? "");
-                    setSectionOpen(block.key);
-                  }}
-                >
-                  <span className="plan-section-name">
-                    {block.section.toUpperCase()}
-                  </span>
-                  <span className="plan-section-count">
-                    {block.entries.length}{" "}
-                    {block.entries.length === 1 ? "exercise" : "exercises"}
-                  </span>
-                  <span className="chev">
-                    {sectionOpen === block.key ? "▾" : "▸"}
-                  </span>
-                </button>
-                {sectionOpen === block.key && (
-                  <div className="plan-section-detail">
-                    {/* Commits when the panel closes, exactly as a row commits
+              {block.section !== null && (
+                <>
+                  <button
+                    type="button"
+                    className="plan-section-head"
+                    {...blockDrag.handlers(block.key, bi)}
+                    onClick={() => {
+                      setConfirming(null);
+                      if (sectionOpen === block.key) {
+                        // closing: commit the name the way a row commits
+                        if (normalizeSection(sectionName) !== block.section)
+                          renameSection(block, sectionName);
+                        else setSectionOpen(null);
+                        return;
+                      }
+                      setSectionName(block.section ?? "");
+                      setSectionOpen(block.key);
+                    }}
+                  >
+                    <span className="plan-section-name">
+                      {block.section.toUpperCase()}
+                    </span>
+                    <span className="plan-section-count">
+                      {exercisesIn(block.entries)}{" "}
+                      {exercisesIn(block.entries) === 1
+                        ? "exercise"
+                        : "exercises"}
+                    </span>
+                    <span className="chev">
+                      {sectionOpen === block.key ? "▾" : "▸"}
+                    </span>
+                  </button>
+                  {sectionOpen === block.key && (
+                    <div className="plan-section-detail">
+                      {/* Commits when the panel closes, exactly as a row commits
                         when it collapses (see saveRx). A deliberate Rename
                         button was the one control on this screen that threw the
                         edit away if you forgot it. NOT on blur: tapping "Add
                         exercise here" blurs this input, and committing there
                         would close the panel out from under the tap. */}
-                    <input
-                      className="input"
-                      aria-label="section name"
-                      value={sectionName}
-                      onChange={(e) =>
-                        setSectionName(e.target.value.slice(0, 40))
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") renameSection(block, sectionName);
-                      }}
-                    />
-                    <div className="detail-actions">
-                      {/* Adding INTO a part is the action this panel exists
+                      <input
+                        className="input"
+                        aria-label="section name"
+                        value={sectionName}
+                        onChange={(e) =>
+                          setSectionName(e.target.value.slice(0, 40))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter")
+                            renameSection(block, sectionName);
+                        }}
+                      />
+                      <div className="detail-actions">
+                        {/* Adding INTO a part is the action this panel exists
                           for: an exercise you add and then file is an
                           exercise you decided about twice. */}
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        disabled={busy}
-                        onClick={() => {
-                          setAddingTo(block.section);
-                          setSectionOpen(null);
-                          setSearchOpen(true);
-                        }}
-                      >
-                        Add exercise here
-                      </button>
-                      {/* ↑/↓ beside the drag, exactly as the exercise rows
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          disabled={busy}
+                          onClick={() => {
+                            setAddingTo(block.section);
+                            setSectionOpen(null);
+                            setSearchOpen(true);
+                          }}
+                        >
+                          Add exercise here
+                        </button>
+                        {/* ↑/↓ beside the drag, exactly as the exercise rows
                           have. Holding a heading to drag it is not something
                           anyone discovers, and drag with no alternative fails
                           WCAG 2.5.7. Same band as the drag, so a part can
                           never be moved somewhere the next render ranks it
                           straight back out of. */}
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        disabled={
-                          busy || moveBlock(blocks, block.key, -1) === null
-                        }
-                        onClick={() => {
-                          const next = moveBlock(blocks, block.key, -1);
-                          if (next) storeLayout(next);
-                        }}
-                      >
-                        ↑ Move section up
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        disabled={
-                          busy || moveBlock(blocks, block.key, 1) === null
-                        }
-                        onClick={() => {
-                          const next = moveBlock(blocks, block.key, 1);
-                          if (next) storeLayout(next);
-                        }}
-                      >
-                        ↓ Move section down
-                      </button>
-                      <button
-                        type="button"
-                        className={`btn ${confirming === block.key ? "btn-danger" : "btn-ghost"}`}
-                        disabled={busy}
-                        onClick={() =>
-                          confirming === block.key
-                            ? dissolveSection(block)
-                            : setConfirming(block.key)
-                        }
-                      >
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={
+                            busy || moveBlock(blocks, block.key, -1) === null
+                          }
+                          onClick={() => {
+                            const next = moveBlock(blocks, block.key, -1);
+                            if (next) storeLayout(next);
+                          }}
+                        >
+                          ↑ Move section up
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={
+                            busy || moveBlock(blocks, block.key, 1) === null
+                          }
+                          onClick={() => {
+                            const next = moveBlock(blocks, block.key, 1);
+                            if (next) storeLayout(next);
+                          }}
+                        >
+                          ↓ Move section down
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn ${confirming === block.key ? "btn-danger" : "btn-ghost"}`}
+                          disabled={busy}
+                          onClick={() =>
+                            confirming === block.key
+                              ? dissolveSection(block)
+                              : setConfirming(block.key)
+                          }
+                        >
+                          {confirming === block.key
+                            ? "Remove heading?"
+                            : "Remove heading"}
+                        </button>
+                      </div>
+                      <div className="microcopy">
                         {confirming === block.key
-                          ? "Remove heading?"
-                          : "Remove heading"}
-                      </button>
+                          ? "The heading goes; its exercises stay in the day, in this order, as main work."
+                          : "The name saves when you close this. Hold the heading to drag the whole part. To take one exercise out, change its section."}
+                      </div>
                     </div>
-                    <div className="microcopy">
-                      {confirming === block.key
-                        ? "The heading goes; its exercises stay in the day, in this order, as main work."
-                        : "The name saves when you close this. Hold the heading to drag the whole part. To take one exercise out, change its section."}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-            {block.entries.map((entry) => {
-              const ei = entries.findIndex((e) => e.key === entry.key);
-              const entryName = [
-                ...new Set(entry.rows.map((row) => row.exercise_name)),
-              ].join(" and ");
-              return (
-                <div
-                  key={entry.key}
-                  className={[
-                    "plan-entry",
-                    entry.supersetGroup !== null ? "ss-group" : "",
-                    entryDrag.dragging === entry.key ? "block-dragging" : "",
-                    entryDrag.dragging !== null && entryDrag.overIndex === ei
-                      ? "block-over"
-                      : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  {...(block.section === null
-                    ? blockDrag.handlers(block.key, bi)
-                    : entryDrag.handlers(entry.key, ei))}
-                >
-                  {/* Labelled once, at the top of the run, instead of a letter
+                  )}
+                </>
+              )}
+              {block.entries.map((entry) => {
+                const ei = entries.findIndex((e) => e.key === entry.key);
+                const entryName = [
+                  ...new Set(entry.rows.map((row) => row.exercise_name)),
+                ].join(" and ");
+                return (
+                  <div
+                    key={entry.key}
+                    className={[
+                      "plan-entry",
+                      entry.supersetGroup !== null ? "ss-group" : "",
+                      entryDrag.dragging === entry.key ? "block-dragging" : "",
+                      entryDrag.dragging !== null && entryDrag.overIndex === ei
+                        ? "block-over"
+                        : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    {...(block.section === null
+                      ? blockDrag.handlers(block.key, bi)
+                      : entryDrag.handlers(entry.key, ei))}
+                  >
+                    {/* Labelled once, at the top of the run, instead of a letter
                       repeated on every row. "Superset A · 2 exercises" says
                       what is actually true; "A · " on two separate rows did
                       not. */}
-                  {entry.supersetGroup !== null && (
-                    <div className="ss-head">
-                      {supersetName(entry.supersetGroup)}
-                      <span className="ss-head-note">
-                        {" · "}
-                        {supersetIssues.some((issue) =>
-                          issue.startsWith(
-                            `Superset ${String.fromCharCode(64 + entry.supersetGroup!)} `,
-                          ),
-                        )
-                          ? "malformed group, fix its order before paired rounds"
-                          : entry.exercises > 1
-                          ? entry.exercises > 2
-                            ? `${entry.exercises} exercises, overview-only circuit`
-                            : `${entry.exercises} exercises, alternated`
-                          : "nothing else in it yet"}
-                      </span>
-                    </div>
-                  )}
-                  {entry.rows.map((r) => {
-                    const editing = editingRx === r.id && draft;
-                    return (
-                      <div key={r.id} className="week-item" data-rx={r.id}>
-              <button
-                type="button"
-                className="week-row week-row-rx"
-                aria-label={`${editingRx === r.id ? "Save planned sets for" : "Edit planned sets for"} ${r.exercise_name}`}
-                onClick={() => {
-                  if (editingRx === r.id) {
-                    void saveRx(r);
-                  } else {
-                    setEditingRx(r.id);
-                    setDraft(draftFrom(r, equipmentOf.get(r.exercise_id) ?? null));
-                    setConfirming(null);
-                  }
-                }}
-              >
-                <span className="week-label">
-                  {r.exercise_name}
-                  {isRampRow(entry, r) && (
-                    <span className="rx-ramp"> · RAMP</span>
-                  )}
-                </span>
-                <span className="week-state">
-                  {r.tracking === "done" && (
-                    <span className="rx-done">TICK · </span>
-                  )}
-                  {/* Warmup is worth saying on the collapsed row: it is the
-                      difference between "you owe 5 working sets" and 3. */}
-                  {r.set_type !== undefined && r.set_type !== "working" && (
-                    <span className="rx-type">{r.set_type.toUpperCase()}</span>
-                  )}
-                  {r.sets} × {formatRepRange(r.reps_min, r.reps_max)}
-                  {/* load_kg is the TOTAL; show it back the way it was
-                      entered, so the summary and the editor agree and a pair
-                      of 20s never reads as a single 40. */}
-                  {r.load_kg !== null
-                    ? ` · ${formatLoad(enteredKg(r.load_kg, r.load_entry ?? "total"), unit, {
-                        typed:
-                          r.entered_load != null && r.entered_unit
-                            ? { value: r.entered_load, unit: r.entered_unit }
-                            : null,
-                      })} ${unit}${
-                        r.load_entry === "per_side" ? "/hand" : ""
-                      }`
-                    : r.load_pct_tm !== null
-                      ? ` · ${r.load_pct_tm}%`
-                      : ""}
-                </span>
-                <span className="chev">{editingRx === r.id ? "▾" : "▸"}</span>
-              </button>
-              {editing && draft && (
-                <div className="week-detail">
-                  <Stepper
-                    label="sets"
-                    compact
-                    onTapValue={() =>
-                      setPad({
-                        label: `SETS`,
-                        action: "SET",
-                        initial: String(draft.sets),
-                        allowDecimal: false,
-                        onCommit: (v) =>
-                          setDraft({
-                            ...draft,
-                            sets: Math.min(20, Math.max(1, Math.round(v))),
-                          }),
-                        onCancel: () => setPad(null),
-                      })
-                    }
-                    display={`${draft.sets} ${draft.sets === 1 ? "set" : "sets"}`}
-                    value={draft.sets}
-                    min={1}
-                    max={20}
-                    onChange={(v) =>
-                      setDraft({ ...draft, sets: Math.round(v) })
-                    }
-                    steps={[
-                      { label: "−", delta: -1 },
-                      { label: "+", delta: 1 },
-                    ]}
-                  />
-                  <Stepper
-                    label="reps min"
-                    compact
-                    onTapValue={() =>
-                      setPad({
-                        label: `REPS MIN`,
-                        action: "SET",
-                        initial: String(draft.reps_min),
-                        allowDecimal: false,
-                        onCommit: (v) =>
-                          setDraft({
-                            ...draft,
-                            reps_min: Math.min(100, Math.max(1, Math.round(v))),
-                          }),
-                        onCancel: () => setPad(null),
-                      })
-                    }
-                    display={`${draft.reps_min} reps min`}
-                    value={draft.reps_min}
-                    min={1}
-                    max={100}
-                    onChange={(v) =>
-                      setDraft({ ...draft, reps_min: Math.round(v) })
-                    }
-                    steps={[
-                      { label: "−", delta: -1 },
-                      { label: "+", delta: 1 },
-                    ]}
-                  />
-                  <Stepper
-                    label="reps max"
-                    compact
-                    onTapValue={() =>
-                      setPad({
-                        label: `REPS MAX`,
-                        action: "SET",
-                        initial: String(
-                          Math.max(draft.reps_min, draft.reps_max),
-                        ),
-                        allowDecimal: false,
-                        onCommit: (v) =>
-                          setDraft({
-                            ...draft,
-                            reps_max: Math.min(
-                              100,
-                              Math.max(draft.reps_min, Math.round(v)),
+                    {entry.supersetGroup !== null && (
+                      <div className="ss-head">
+                        {supersetName(entry.supersetGroup)}
+                        <span className="ss-head-note">
+                          {" · "}
+                          {supersetIssues.some((issue) =>
+                            issue.startsWith(
+                              `Superset ${String.fromCharCode(64 + entry.supersetGroup!)} `,
                             ),
-                          }),
-                        onCancel: () => setPad(null),
-                      })
-                    }
-                    display={`${Math.max(draft.reps_min, draft.reps_max)} reps max`}
-                    value={Math.max(draft.reps_min, draft.reps_max)}
-                    min={draft.reps_min}
-                    max={100}
-                    onChange={(v) =>
-                      setDraft({ ...draft, reps_max: Math.round(v) })
-                    }
-                    steps={[
-                      { label: "−", delta: -1 },
-                      { label: "+", delta: 1 },
-                    ]}
-                  />
-
-                  <div className="seg seg-types">
-                    {(
-                      [
-                        ["kg", unit.toUpperCase()],
-                        ["pct", "% TM"],
-                        ["feel", "BY FEEL"],
-                      ] as [LoadMode, string][]
-                    ).map(([mode, label]) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        className={`seg-btn ${draft.mode === mode ? "seg-on" : ""}`}
-                        onClick={() => setDraft({
-                          ...draft,
-                          mode,
-                          entered_unit: mode === "kg"
-                            ? draft.entered_unit ?? unit
-                            : null,
-                        })}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  {draft.mode === "kg" &&
-                    offersLoadEntry({
-                      equipment: equipmentOf.get(r.exercise_id) ?? null,
-                      name: r.exercise_name,
-                    }) && (
-                      /* Same control and same words as the session screen. A
-                         weight typed here means what it means at the rack. */
-                      <button
-                        type="button"
-                        className="plate-hint rx-entry-toggle"
-                          aria-label={
-                            draft.load_entry === "per_side"
-                            ? "one dumbbell in each hand; switch to one total weight"
-                            : "one total weight; switch to one dumbbell in each hand"
-                        }
-                        onClick={() =>
-                          setDraft({
-                            ...draft,
-                            load_entry:
-                              draft.load_entry === "per_side"
-                                ? "total"
-                                : "per_side",
-                          })
-                        }
-                      >
-                        {draft.load_entry === "per_side"
-                          ? "EACH HAND ×2"
-                          : "ONE TOTAL WEIGHT"}
-                      </button>
-                    )}
-                  {draft.mode === "kg" &&
-                    offersLoadEntry({
-                      equipment: equipmentOf.get(r.exercise_id) ?? null,
-                      name: r.exercise_name,
-                    }) && (
-                      <div className="microcopy">
-                        {draft.load_entry === "per_side"
-                          ? "Enter the weight on each dumbbell. The plan counts both together."
-                          : "Enter one total weight. Use this for one dumbbell or single-side work."}
+                          )
+                            ? "malformed group, fix its order before paired rounds"
+                            : entry.exercises > 1
+                              ? entry.exercises > 2
+                                ? `${entry.exercises} exercises, overview-only circuit`
+                                : `${entry.exercises} exercises, alternated`
+                              : "nothing else in it yet"}
+                        </span>
                       </div>
                     )}
-                  {draft.mode === "kg" && (
-                    <Stepper
-                      label="load"
-                      compact
-                      onTapValue={() =>
-                        setPad({
-                          label: `LOAD ${
-                            draft.load_entry === "per_side"
-                              ? "ON EACH DUMBBELL"
-                              : "ONE TOTAL WEIGHT"
-                          } IN ${unit.toUpperCase()}`,
-                          action: "SET",
-                          initial: draftLoadText(draft, unit),
-                          allowDecimal: true,
-                          onCommit: (v) =>
-                            setDraft({
-                              ...draft,
-                              load_kg: Math.min(
-                                999,
-                                Math.max(0, fromDisplay(v, unit)),
-                              ),
-                              entered_unit: unit,
-                              entered_load: v,
-                            }),
-                          onCancel: () => setPad(null),
-                        })
-                      }
-                      display={loadDraftLabel}
-                      subText={formatStoredTwin(draft.load_kg, unit)}
-                      value={draft.load_kg}
-                      min={0}
-                      max={999}
-                      onChange={(v) => setDraft({
-                        ...draft,
-                        load_kg: v,
-                        entered_unit: unit,
-                        entered_load: toTypedDisplay(v, unit),
-                      })}
-                      snap
-                      steps={[
-                        {
-                          label: "−",
-                          delta: -stepKg(unit, false),
-                          announce: `${formatLoad(stepKg(unit, false), unit)} ${unit}`,
-                        },
-                        {
-                          label: "+",
-                          delta: stepKg(unit, false),
-                          announce: `${formatLoad(stepKg(unit, false), unit)} ${unit}`,
-                        },
-                      ]}
-                    />
-                  )}
-                  {draft.mode === "pct" && (
-                    <Stepper
-                      label="percent of training max"
-                      compact
-                      onTapValue={() =>
-                        setPad({
-                          label: `PERCENT OF TRAINING MAX`,
-                          action: "SET",
-                          initial: String(draft.load_pct),
-                          allowDecimal: true,
-                          onCommit: (v) =>
-                            setDraft({
-                              ...draft,
-                              load_pct: Math.min(200, Math.max(2.5, v)),
-                            }),
-                          onCancel: () => setPad(null),
-                        })
-                      }
-                      display={loadDraftLabel}
-                      value={draft.load_pct}
-                      min={2.5}
-                      max={200}
-                      onChange={(v) => setDraft({ ...draft, load_pct: v })}
-                      steps={[
-                        { label: "−", delta: -2.5 },
-                        { label: "+", delta: 2.5 },
-                      ]}
-                    />
-                  )}
+                    {entry.rows.map((r) => {
+                      const editing = editingRx === r.id && draft;
+                      return (
+                        <div key={r.id} className="week-item" data-rx={r.id}>
+                          <button
+                            type="button"
+                            className="week-row week-row-rx"
+                            aria-label={`${editingRx === r.id ? "Save planned sets for" : "Edit planned sets for"} ${r.exercise_name}`}
+                            onClick={() => {
+                              if (editingRx === r.id) {
+                                void saveRx(r);
+                              } else {
+                                setEditingRx(r.id);
+                                setDraft(
+                                  draftFrom(
+                                    r,
+                                    equipmentOf.get(r.exercise_id) ?? null,
+                                  ),
+                                );
+                                setConfirming(null);
+                              }
+                            }}
+                          >
+                            <span className="week-label">
+                              {r.exercise_name}
+                              {isRampRow(entry, r) && (
+                                <span className="rx-ramp"> · RAMP</span>
+                              )}
+                            </span>
+                            <span className="week-state">
+                              {r.tracking === "done" && (
+                                <span className="rx-done">TICK · </span>
+                              )}
+                              {r.tracking === "time" && (
+                                <span className="rx-done">TIMED · </span>
+                              )}
+                              {/* Warmup is worth saying on the collapsed row: it is the
+                      difference between "you owe 5 working sets" and 3. */}
+                              {r.set_type !== undefined &&
+                                r.set_type !== "working" && (
+                                  <span className="rx-type">
+                                    {r.set_type.toUpperCase()}
+                                  </span>
+                                )}
+                              {r.tracking === "time"
+                                ? `${r.sets} ${r.sets === 1 ? "hold" : "holds"}`
+                                : `${r.sets} × ${formatRepRange(r.reps_min, r.reps_max)}`}
+                              {/* load_kg is the TOTAL; show it back the way it was
+                      entered, so the summary and the editor agree and a pair
+                      of 20s never reads as a single 40. */}
+                              {r.load_kg !== null
+                                ? ` · ${formatLoad(
+                                    enteredKg(
+                                      r.load_kg,
+                                      r.load_entry ?? "total",
+                                    ),
+                                    unit,
+                                    {
+                                      typed:
+                                        r.entered_load != null && r.entered_unit
+                                          ? {
+                                              value: r.entered_load,
+                                              unit: r.entered_unit,
+                                            }
+                                          : null,
+                                    },
+                                  )} ${unit}${
+                                    r.load_entry === "per_side" ? "/hand" : ""
+                                  }`
+                                : r.load_pct_tm !== null
+                                  ? ` · ${r.load_pct_tm}%`
+                                  : ""}
+                            </span>
+                            <span className="chev">
+                              {editingRx === r.id ? "▾" : "▸"}
+                            </span>
+                          </button>
+                          {editing && draft && (
+                            <div className="week-detail">
+                              <Stepper
+                                label="sets"
+                                compact
+                                onTapValue={() =>
+                                  setPad({
+                                    label: `SETS`,
+                                    action: "SET",
+                                    initial: String(draft.sets),
+                                    allowDecimal: false,
+                                    onCommit: (v) =>
+                                      setDraft({
+                                        ...draft,
+                                        sets: Math.min(
+                                          20,
+                                          Math.max(1, Math.round(v)),
+                                        ),
+                                      }),
+                                    onCancel: () => setPad(null),
+                                  })
+                                }
+                                display={`${draft.sets} ${draft.sets === 1 ? "set" : "sets"}`}
+                                value={draft.sets}
+                                min={1}
+                                max={20}
+                                onChange={(v) =>
+                                  setDraft({ ...draft, sets: Math.round(v) })
+                                }
+                                steps={[
+                                  { label: "−", delta: -1 },
+                                  { label: "+", delta: 1 },
+                                ]}
+                              />
+                              <Stepper
+                                label="reps min"
+                                compact
+                                onTapValue={() =>
+                                  setPad({
+                                    label: `REPS MIN`,
+                                    action: "SET",
+                                    initial: String(draft.reps_min),
+                                    allowDecimal: false,
+                                    onCommit: (v) =>
+                                      setDraft({
+                                        ...draft,
+                                        reps_min: Math.min(
+                                          100,
+                                          Math.max(1, Math.round(v)),
+                                        ),
+                                      }),
+                                    onCancel: () => setPad(null),
+                                  })
+                                }
+                                display={`${draft.reps_min} reps min`}
+                                value={draft.reps_min}
+                                min={1}
+                                max={100}
+                                onChange={(v) =>
+                                  setDraft({
+                                    ...draft,
+                                    reps_min: Math.round(v),
+                                  })
+                                }
+                                steps={[
+                                  { label: "−", delta: -1 },
+                                  { label: "+", delta: 1 },
+                                ]}
+                              />
+                              <Stepper
+                                label="reps max"
+                                compact
+                                onTapValue={() =>
+                                  setPad({
+                                    label: `REPS MAX`,
+                                    action: "SET",
+                                    initial: String(
+                                      Math.max(draft.reps_min, draft.reps_max),
+                                    ),
+                                    allowDecimal: false,
+                                    onCommit: (v) =>
+                                      setDraft({
+                                        ...draft,
+                                        reps_max: Math.min(
+                                          100,
+                                          Math.max(
+                                            draft.reps_min,
+                                            Math.round(v),
+                                          ),
+                                        ),
+                                      }),
+                                    onCancel: () => setPad(null),
+                                  })
+                                }
+                                display={`${Math.max(draft.reps_min, draft.reps_max)} reps max`}
+                                value={Math.max(draft.reps_min, draft.reps_max)}
+                                min={draft.reps_min}
+                                max={100}
+                                onChange={(v) =>
+                                  setDraft({
+                                    ...draft,
+                                    reps_max: Math.round(v),
+                                  })
+                                }
+                                steps={[
+                                  { label: "−", delta: -1 },
+                                  { label: "+", delta: 1 },
+                                ]}
+                              />
 
-                  {/* Which PART of the day this belongs to. Picking one
+                              <div className="seg seg-types">
+                                {(
+                                  [
+                                    ["kg", unit.toUpperCase()],
+                                    ["pct", "% TM"],
+                                    ["feel", "BY FEEL"],
+                                  ] as [LoadMode, string][]
+                                ).map(([mode, label]) => (
+                                  <button
+                                    key={mode}
+                                    type="button"
+                                    className={`seg-btn ${draft.mode === mode ? "seg-on" : ""}`}
+                                    onClick={() =>
+                                      setDraft({
+                                        ...draft,
+                                        mode,
+                                        entered_unit:
+                                          mode === "kg"
+                                            ? (draft.entered_unit ?? unit)
+                                            : null,
+                                      })
+                                    }
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+                              {draft.mode === "kg" &&
+                                offersLoadEntry({
+                                  equipment:
+                                    equipmentOf.get(r.exercise_id) ?? null,
+                                  name: r.exercise_name,
+                                }) && (
+                                  /* Same control and same words as the session screen. A
+                         weight typed here means what it means at the rack. */
+                                  <button
+                                    type="button"
+                                    className="plate-hint rx-entry-toggle"
+                                    aria-label={
+                                      draft.load_entry === "per_side"
+                                        ? "one dumbbell in each hand; switch to one total weight"
+                                        : "one total weight; switch to one dumbbell in each hand"
+                                    }
+                                    onClick={() =>
+                                      setDraft({
+                                        ...draft,
+                                        load_entry:
+                                          draft.load_entry === "per_side"
+                                            ? "total"
+                                            : "per_side",
+                                      })
+                                    }
+                                  >
+                                    {draft.load_entry === "per_side"
+                                      ? "EACH HAND ×2"
+                                      : "ONE TOTAL WEIGHT"}
+                                  </button>
+                                )}
+                              {draft.mode === "kg" &&
+                                offersLoadEntry({
+                                  equipment:
+                                    equipmentOf.get(r.exercise_id) ?? null,
+                                  name: r.exercise_name,
+                                }) && (
+                                  <div className="microcopy">
+                                    {draft.load_entry === "per_side"
+                                      ? "Enter the weight on each dumbbell. The plan counts both together."
+                                      : "Enter one total weight. Use this for one dumbbell or single-side work."}
+                                  </div>
+                                )}
+                              {draft.mode === "kg" && (
+                                <Stepper
+                                  label="load"
+                                  compact
+                                  onTapValue={() =>
+                                    setPad({
+                                      label: `LOAD ${
+                                        draft.load_entry === "per_side"
+                                          ? "ON EACH DUMBBELL"
+                                          : "ONE TOTAL WEIGHT"
+                                      } IN ${unit.toUpperCase()}`,
+                                      action: "SET",
+                                      initial: draftLoadText(draft, unit),
+                                      allowDecimal: true,
+                                      onCommit: (v) =>
+                                        setDraft({
+                                          ...draft,
+                                          load_kg: Math.min(
+                                            999,
+                                            Math.max(0, fromDisplay(v, unit)),
+                                          ),
+                                          entered_unit: unit,
+                                          entered_load: v,
+                                        }),
+                                      onCancel: () => setPad(null),
+                                    })
+                                  }
+                                  display={loadDraftLabel}
+                                  subText={formatStoredTwin(
+                                    draft.load_kg,
+                                    unit,
+                                  )}
+                                  value={draft.load_kg}
+                                  min={0}
+                                  max={999}
+                                  onChange={(v) =>
+                                    setDraft({
+                                      ...draft,
+                                      load_kg: v,
+                                      entered_unit: unit,
+                                      entered_load: toTypedDisplay(v, unit),
+                                    })
+                                  }
+                                  snap
+                                  steps={[
+                                    {
+                                      label: "−",
+                                      delta: -stepKg(unit, false),
+                                      announce: `${formatLoad(stepKg(unit, false), unit)} ${unit}`,
+                                    },
+                                    {
+                                      label: "+",
+                                      delta: stepKg(unit, false),
+                                      announce: `${formatLoad(stepKg(unit, false), unit)} ${unit}`,
+                                    },
+                                  ]}
+                                />
+                              )}
+                              {draft.mode === "pct" && (
+                                <Stepper
+                                  label="percent of training max"
+                                  compact
+                                  onTapValue={() =>
+                                    setPad({
+                                      label: `PERCENT OF TRAINING MAX`,
+                                      action: "SET",
+                                      initial: String(draft.load_pct),
+                                      allowDecimal: true,
+                                      onCommit: (v) =>
+                                        setDraft({
+                                          ...draft,
+                                          load_pct: Math.min(
+                                            200,
+                                            Math.max(2.5, v),
+                                          ),
+                                        }),
+                                      onCancel: () => setPad(null),
+                                    })
+                                  }
+                                  display={loadDraftLabel}
+                                  value={draft.load_pct}
+                                  min={2.5}
+                                  max={200}
+                                  onChange={(v) =>
+                                    setDraft({ ...draft, load_pct: v })
+                                  }
+                                  steps={[
+                                    { label: "−", delta: -2.5 },
+                                    { label: "+", delta: 2.5 },
+                                  ]}
+                                />
+                              )}
+
+                              {/* Which PART of the day this belongs to. Picking one
                       moves the whole exercise there and gives the part a
                       heading — it is not a label on a row. */}
-                  <div className="section-head">
-                    <span className="field-label">PART OF THE DAY</span>
-                  </div>
-                  <div className="seg seg-types">
-                    {["", ...knownSections, ...SECTION_SUGGESTIONS]
-                      .filter((v, j, a) => a.indexOf(v) === j)
-                      .map((secName) => (
-                        <button
-                          key={secName || "none"}
-                          type="button"
-                          className={`seg-btn ${draft.section === secName ? "seg-on" : ""}`}
-                          onClick={() =>
-                            setDraft({ ...draft, section: secName })
-                          }
-                        >
-                          {secName === "" ? MAIN_LABEL : secName.toUpperCase()}
-                        </button>
-                      ))}
-                  </div>
-                  <input
-                    className="input"
-                    aria-label="section name"
-                    placeholder="Or type a section name"
-                    value={draft.section}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        section: e.target.value.slice(0, 40),
-                      })
-                    }
-                  />
-                  <div className="microcopy">
-                    {entry.rows.length > 1
-                      ? `A section holds whole exercises, so this moves all ${entry.rows.length} rows of the ${entry.supersetGroup !== null ? "superset" : "ramp"} into it.`
-                      : `${MAIN_LABEL} is the body of the day and needs no heading. A named part gets one, and runs where its name says it does.`}
-                  </div>
+                              <div className="section-head">
+                                <span className="field-label">
+                                  PART OF THE DAY
+                                </span>
+                              </div>
+                              <div className="seg seg-types">
+                                {["", ...knownSections, ...SECTION_SUGGESTIONS]
+                                  .filter((v, j, a) => a.indexOf(v) === j)
+                                  .map((secName) => (
+                                    <button
+                                      key={secName || "none"}
+                                      type="button"
+                                      className={`seg-btn ${draft.section === secName ? "seg-on" : ""}`}
+                                      onClick={() =>
+                                        setDraft({ ...draft, section: secName })
+                                      }
+                                    >
+                                      {secName === ""
+                                        ? MAIN_LABEL
+                                        : secName.toUpperCase()}
+                                    </button>
+                                  ))}
+                              </div>
+                              <input
+                                className="input"
+                                aria-label="section name"
+                                placeholder="Or type a section name"
+                                value={draft.section}
+                                onChange={(e) =>
+                                  setDraft({
+                                    ...draft,
+                                    section: e.target.value.slice(0, 40),
+                                  })
+                                }
+                              />
+                              <div className="microcopy">
+                                {entry.rows.length > 1
+                                  ? `A section holds whole exercises, so this moves all ${entry.rows.length} rows of the ${entry.supersetGroup !== null ? "superset" : "ramp"} into it.`
+                                  : `${MAIN_LABEL} is the body of the day and needs no heading. A named part gets one, and runs where its name says it does.`}
+                              </div>
 
-                  <div className="section-head">
-                    <span className="field-label">HOW IT IS LOGGED</span>
-                  </div>
-                  <div className="seg seg-types">
-                    <button
-                      type="button"
-                      className={`seg-btn ${draft.tracking === "reps" ? "seg-on" : ""}`}
-                      onClick={() => setDraft({ ...draft, tracking: "reps" })}
-                    >
-                      WEIGHT & REPS
-                    </button>
-                    <button
-                      type="button"
-                      className={`seg-btn ${draft.tracking === "done" ? "seg-on" : ""}`}
-                      onClick={() => setDraft({ ...draft, tracking: "done" })}
-                    >
-                      JUST TICK IT OFF
-                    </button>
-                  </div>
+                              <div className="section-head">
+                                <span className="field-label">
+                                  HOW IT IS LOGGED
+                                </span>
+                              </div>
+                              <div className="seg seg-types">
+                                <button
+                                  type="button"
+                                  className={`seg-btn ${draft.tracking === "reps" ? "seg-on" : ""}`}
+                                  onClick={() =>
+                                    setDraft({ ...draft, tracking: "reps" })
+                                  }
+                                >
+                                  WEIGHT & REPS
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`seg-btn ${draft.tracking === "done" ? "seg-on" : ""}`}
+                                  onClick={() =>
+                                    setDraft({ ...draft, tracking: "done" })
+                                  }
+                                >
+                                  JUST TICK IT OFF
+                                </button>
+                                {/* UI-17: a hold or carry already planned as
+                                    timed (by the coach) is neither of the two
+                                    above. Say so rather than show neither lit;
+                                    there is no control to author one here. */}
+                                {draft.tracking === "time" && (
+                                  <button
+                                    type="button"
+                                    className="seg-btn seg-on"
+                                    aria-pressed="true"
+                                    disabled
+                                  >
+                                    TIMED HOLD
+                                  </button>
+                                )}
+                              </div>
 
-                  <div className="section-head">
-                    <span className="field-label">SUPERSET</span>
-                  </div>
-                  {/* A bare "None A B C D" said nothing about what a letter
+                              <div className="section-head">
+                                <span className="field-label">SUPERSET</span>
+                              </div>
+                              {/* A bare "None A B C D" said nothing about what a letter
                       meant or that it pairs this exercise with ANOTHER one.
                       The letter is a group name: putting two exercises in the
                       same group is the whole feature, and the editor never
                       said so or showed you who you had joined. */}
-                  <div className="microcopy">
-                    Put two exercises in the same group to alternate between
-                    them, resting once at the end rather than after each.
-                  </div>
-                  <div className="seg seg-types">
-                    {SUPERSET_CHOICES.map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className={`seg-btn ${draft.superset === value ? "seg-on" : ""}`}
-                        onClick={() => setDraft({ ...draft, superset: value })}
-                      >
-                        {label === "NONE" ? "None" : label}
-                      </button>
-                    ))}
-                  </div>
-                  {draft.superset !== 0 &&
-                    (() => {
-                      const mates = Array.from(
-                        new Map(
-                          (rx ?? [])
-                            .filter(
-                              (o) =>
-                                o.exercise_id !== r.exercise_id &&
-                                o.superset_group === draft.superset,
-                            )
-                            .map((o) => [o.exercise_id, o.exercise_name]),
-                        ).values(),
-                      );
-                      const letter = String.fromCharCode(64 + draft.superset);
-                      return (
-                        <div className="ss-pairing">
-                          {supersetIssues.some((issue) =>
-                            issue.startsWith(
-                              `Superset ${String.fromCharCode(64 + draft.superset)} `,
-                            ),
-                          )
-                            ? `Superset ${String.fromCharCode(64 + draft.superset)} must be fixed before paired rounds.`
-                          : mates.length === 0
-                            ? `Group ${letter} — nothing else is in it yet. Put another exercise in ${letter} to pair them.`
-                          : mates.length > 1
-                            ? `This group has ${mates.length + 1} exercises and stays in the workout overview until circuit Focus is available.`
-                            : `Alternates with ${mates.join(", ")}.`}
-                        </div>
-                      );
-                    })()}
+                              <div className="microcopy">
+                                Put two exercises in the same group to alternate
+                                between them, resting once at the end rather
+                                than after each.
+                              </div>
+                              <div className="seg seg-types">
+                                {SUPERSET_CHOICES.map(([value, label]) => (
+                                  <button
+                                    key={value}
+                                    type="button"
+                                    className={`seg-btn ${draft.superset === value ? "seg-on" : ""}`}
+                                    onClick={() =>
+                                      setDraft({ ...draft, superset: value })
+                                    }
+                                  >
+                                    {label === "NONE" ? "None" : label}
+                                  </button>
+                                ))}
+                              </div>
+                              {draft.superset !== 0 &&
+                                (() => {
+                                  const mates = Array.from(
+                                    new Map(
+                                      (rx ?? [])
+                                        .filter(
+                                          (o) =>
+                                            o.exercise_id !== r.exercise_id &&
+                                            o.superset_group === draft.superset,
+                                        )
+                                        .map((o) => [
+                                          o.exercise_id,
+                                          o.exercise_name,
+                                        ]),
+                                    ).values(),
+                                  );
+                                  const letter = String.fromCharCode(
+                                    64 + draft.superset,
+                                  );
+                                  return (
+                                    <div className="ss-pairing">
+                                      {supersetIssues.some((issue) =>
+                                        issue.startsWith(
+                                          `Superset ${String.fromCharCode(64 + draft.superset)} `,
+                                        ),
+                                      )
+                                        ? `Superset ${String.fromCharCode(64 + draft.superset)} must be fixed before paired rounds.`
+                                        : mates.length === 0
+                                          ? `Group ${letter} — nothing else is in it yet. Put another exercise in ${letter} to pair them.`
+                                          : mates.length > 1
+                                            ? `This group has ${mates.length + 1} exercises and stays in the workout overview until circuit Focus is available.`
+                                            : `Alternates with ${mates.join(", ")}.`}
+                                    </div>
+                                  );
+                                })()}
 
-                  <div className="seg seg-types">
-                    <button
-                      type="button"
-                      className={`seg-btn ${draft.hasRest ? "seg-on" : ""}`}
-                      onClick={() => setDraft({ ...draft, hasRest: true })}
-                    >
-                      TIMED REST
-                    </button>
-                    <button
-                      type="button"
-                      className={`seg-btn ${!draft.hasRest ? "seg-on" : ""}`}
-                      onClick={() => setDraft({ ...draft, hasRest: false })}
-                    >
-                      NO TARGET
-                    </button>
-                  </div>
-                  {draft.hasRest && (
-                    <Stepper
-                      label="rest seconds"
-                      compact
-                      display={`${draft.rest_seconds}s rest`}
-                      value={draft.rest_seconds}
-                      min={0}
-                      max={3600}
-                      onChange={(v) =>
-                        setDraft({ ...draft, rest_seconds: Math.round(v) })
-                      }
-                      steps={[
-                        { label: "−", delta: -15 },
-                        { label: "+", delta: 15 },
-                      ]}
-                    />
-                  )}
+                              <div className="seg seg-types">
+                                <button
+                                  type="button"
+                                  className={`seg-btn ${draft.hasRest ? "seg-on" : ""}`}
+                                  onClick={() =>
+                                    setDraft({ ...draft, hasRest: true })
+                                  }
+                                >
+                                  TIMED REST
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`seg-btn ${!draft.hasRest ? "seg-on" : ""}`}
+                                  onClick={() =>
+                                    setDraft({ ...draft, hasRest: false })
+                                  }
+                                >
+                                  NO TARGET
+                                </button>
+                              </div>
+                              {draft.hasRest && (
+                                <Stepper
+                                  label="rest seconds"
+                                  compact
+                                  display={`${draft.rest_seconds}s rest`}
+                                  value={draft.rest_seconds}
+                                  min={0}
+                                  max={3600}
+                                  onChange={(v) =>
+                                    setDraft({
+                                      ...draft,
+                                      rest_seconds: Math.round(v),
+                                    })
+                                  }
+                                  steps={[
+                                    { label: "−", delta: -15 },
+                                    { label: "+", delta: 15 },
+                                  ]}
+                                />
+                              )}
 
-                  {/* Order is part of the plan: an exercise added last used
+                              {/* Order is part of the plan: an exercise added last used
                       to be stuck last, with nothing anywhere that writes
                       `position`. */}
-                  <div className="section-head">
-                    <span className="field-label">ORDER</span>
-                    <span className="section-meta">
-                      {ei + 1} of {entries.length}
-                    </span>
-                  </div>
-                  <div className="chip-row">
-                    <button
-                      type="button"
-                      className="chip"
-                      aria-label={`Move exercise block up: ${entryName}`}
-                      disabled={
-                        busy || moveEntry(shownBlocks, entry.key, -1) === null
-                      }
-                      onClick={() => moveExercise(entry, r, -1)}
-                    >
-                      ↑ Move exercise block up
-                    </button>
-                    <button
-                      type="button"
-                      className="chip"
-                      aria-label={`Move exercise block down: ${entryName}`}
-                      disabled={
-                        busy || moveEntry(shownBlocks, entry.key, 1) === null
-                      }
-                      onClick={() => moveExercise(entry, r, 1)}
-                    >
-                      ↓ Move exercise block down
-                    </button>
-                  </div>
-                  {block.section !== null && (
-                    <div className="microcopy">
-                      Moves it within {block.section}. To take it out, pick a
-                      different section above.
-                    </div>
-                  )}
+                              <div className="section-head">
+                                <span className="field-label">ORDER</span>
+                                <span className="section-meta">
+                                  {ei + 1} of {entries.length}
+                                </span>
+                              </div>
+                              <div className="chip-row">
+                                <button
+                                  type="button"
+                                  className="chip"
+                                  aria-label={`Move exercise block up: ${entryName}`}
+                                  disabled={
+                                    busy ||
+                                    moveEntry(shownBlocks, entry.key, -1) ===
+                                      null
+                                  }
+                                  onClick={() => moveExercise(entry, r, -1)}
+                                >
+                                  ↑ Move exercise block up
+                                </button>
+                                <button
+                                  type="button"
+                                  className="chip"
+                                  aria-label={`Move exercise block down: ${entryName}`}
+                                  disabled={
+                                    busy ||
+                                    moveEntry(shownBlocks, entry.key, 1) ===
+                                      null
+                                  }
+                                  onClick={() => moveExercise(entry, r, 1)}
+                                >
+                                  ↓ Move exercise block down
+                                </button>
+                              </div>
+                              {block.section !== null && (
+                                <div className="microcopy">
+                                  Moves it within {block.section}. To take it
+                                  out, pick a different section above.
+                                </div>
+                              )}
 
-                  <div className="detail-actions">
-                    {/* Saves on collapse; this is the same action with a
+                              <div className="detail-actions">
+                                {/* Saves on collapse; this is the same action with a
                         label, for anyone who wants to press something. */}
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      disabled={busy}
-                      onClick={() => void saveRx(r)}
-                    >
-                      Save planned sets
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => {
-                        setEditingRx(null);
-                        setDraft(null);
-                      }}
-                    >
-                      Discard changes
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Remove planned exercise"
-                      className={`btn ${confirming === `rx:${r.id}` ? "btn-danger" : "btn-ghost"}`}
-                      disabled={busy}
-                      onClick={() =>
-                        confirming === `rx:${r.id}`
-                          ? removeRx(r)
-                          : setConfirming(`rx:${r.id}`)
-                      }
-                    >
-                      {confirming === `rx:${r.id}`
-                        ? "Remove planned exercise?"
-                        : "Remove planned exercise"}
-                    </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  disabled={busy}
+                                  onClick={() => void saveRx(r)}
+                                >
+                                  Save planned sets
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={() => {
+                                    setEditingRx(null);
+                                    setDraft(null);
+                                  }}
+                                >
+                                  Discard changes
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label="Remove planned exercise"
+                                  className={`btn ${confirming === `rx:${r.id}` ? "btn-danger" : "btn-ghost"}`}
+                                  disabled={busy}
+                                  onClick={() =>
+                                    confirming === `rx:${r.id}`
+                                      ? removeRx(r)
+                                      : setConfirming(`rx:${r.id}`)
+                                  }
+                                >
+                                  {confirming === `rx:${r.id}`
+                                    ? "Remove planned exercise?"
+                                    : "Remove planned exercise"}
+                                </button>
+                              </div>
+                              {confirming === `rx:${r.id}` && (
+                                <div className="microcopy">
+                                  Removes this exercise from the planned day.
+                                  Sets you have already logged against it are
+                                  not touched.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                  {confirming === `rx:${r.id}` && (
-                    <div className="microcopy">
-                      Removes this exercise from the planned day. Sets you have
-                      already logged against it are not touched.
-                    </div>
-                  )}
-                </div>
-              )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
           </Fragment>
         ))}
         <button
@@ -1763,12 +1961,13 @@ export function Plan() {
         <button
           type="button"
           className="btn btn-primary btn-block plan-done"
-          onClick={() => navigate("/")}
+          onClick={() => void finishPlanning()}
         >
           Done planning
         </button>
         <div className="microcopy">
-          Everything here saves as you go. This just takes you back to Today.
+          Changes save as you go. An exercise you still have open is saved when
+          you tap this, then it takes you back to Today.
         </div>
       </section>
 
@@ -1960,7 +2159,10 @@ export function Plan() {
           exercises={allExercises}
           failed={exercisesFailed}
           onPick={(ex) => {
-            if (pendingSuperset !== null && ex.id === pendingSuperset.exercise.id) {
+            if (
+              pendingSuperset !== null &&
+              ex.id === pendingSuperset.exercise.id
+            ) {
               toast("Choose a different exercise for this superset.", "error");
               return;
             }
@@ -1995,7 +2197,10 @@ export function Plan() {
           initialName={newName}
           exercises={allExercises}
           onPickExisting={(ex) => {
-            if (pendingSuperset !== null && ex.id === pendingSuperset.exercise.id) {
+            if (
+              pendingSuperset !== null &&
+              ex.id === pendingSuperset.exercise.id
+            ) {
               toast("Choose a different exercise for this superset.", "error");
               return;
             }

@@ -40,16 +40,52 @@ describe("SetRow", () => {
 
   it("shows exactly what was typed in the unit it was typed in", () => {
     // 11.25 kg per side would read 11.3 through a one-decimal conversion
-    render(<SetRow set={{ ...set(22.5, "per_side"), entered_load: 11.25, entered_unit: "kg" }} unit="kg" />);
+    render(
+      <SetRow
+        set={{
+          ...set(22.5, "per_side"),
+          entered_load: 11.25,
+          entered_unit: "kg",
+        }}
+        unit="kg"
+      />,
+    );
     expect(screen.getByText(/11\.25 kg\/side × 8/)).toBeTruthy();
     cleanup();
     // typed in lb, viewed in lb: 225, never 224.9 or 225.0
-    render(<SetRow set={{ ...set(102.06, "total"), entered_load: 225, entered_unit: "lb" }} unit="lb" />);
+    render(
+      <SetRow
+        set={{ ...set(102.06, "total"), entered_load: 225, entered_unit: "lb" }}
+        unit="lb"
+      />,
+    );
     expect(screen.getByText(/225 lb × 8/)).toBeTruthy();
     cleanup();
     // typed in lb, viewed in kg: the one-decimal conversion of the total
-    render(<SetRow set={{ ...set(102.06, "total"), entered_load: 225, entered_unit: "lb" }} unit="kg" />);
+    render(
+      <SetRow
+        set={{ ...set(102.06, "total"), entered_load: 225, entered_unit: "lb" }}
+        unit="kg"
+      />,
+    );
     expect(screen.getByText(/102\.1 kg × 8/)).toBeTruthy();
+  });
+
+  it("UI-17: shows a timed carry's seconds, never 'x 0'", () => {
+    render(
+      <SetRow
+        set={{ ...set(40, "per_side"), reps: 0, duration_seconds: 45 }}
+        unit="kg"
+      />,
+    );
+    expect(screen.getByText(/0:45/)).toBeTruthy();
+    expect(screen.queryByText(/× 0/)).toBeNull();
+  });
+
+  it("UI-17: shows a tick as done, not '0 kg × 0'", () => {
+    render(<SetRow set={{ ...set(0, null), reps: 0 }} unit="kg" />);
+    expect(screen.getByText(/Done/)).toBeTruthy();
+    expect(screen.queryByText(/× 0/)).toBeNull();
   });
 
   it("shows a total set as the whole system", () => {
@@ -133,12 +169,7 @@ describe("SetRow", () => {
 
   it("makes the second historical action explicitly confirm a void", () => {
     render(
-      <SetRow
-        set={set(100, "total")}
-        unit="kg"
-        onVoid={() => {}}
-        voidArmed
-      />,
+      <SetRow set={set(100, "total")} unit="kg" onVoid={() => {}} voidArmed />,
     );
 
     expect(

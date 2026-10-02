@@ -17,8 +17,98 @@ vi.mock("./coachContext", () => ({
 }));
 vi.mock("./errors", () => ({ reportError: vi.fn() }));
 
-import { askCoach, readAttachment, wrapCoachContext } from "./coach";
+import {
+  askCoach,
+  pollForAnswer,
+  readAttachment,
+  rewindForRetry,
+  wrapCoachContext,
+} from "./coach";
 import { reportError } from "./errors";
+
+describe("PLAN-6: rewindForRetry", () => {
+  const att = (name: string, data: string) => ({
+    kind: "image" as const,
+    media_type: "image/jpeg",
+    name,
+    data,
+  });
+
+  it("removes the failed answer AND the question, and refills the box", () => {
+    const back = rewindForRetry([
+      { role: "user" as const, text: "earlier" },
+      { role: "assistant" as const, text: "ok" },
+      { role: "user" as const, text: "squat?" },
+      { role: "assistant" as const, text: "(error)" },
+    ]);
+    expect(back?.thread.map((m) => m.text)).toEqual(["earlier", "ok"]);
+    expect(back?.draft).toBe("squat?");
+  });
+
+  it("does not carry attachments whose bytes were stripped by persistence", () => {
+    const back = rewindForRetry([
+      {
+        role: "user" as const,
+        text: "form?",
+        attachments: [att("live.jpg", "AAAA"), att("gone.jpg", "")],
+      },
+    ]);
+    expect(back?.attachments.map((a) => a.name)).toEqual(["live.jpg"]);
+    expect(back?.droppedFiles).toEqual(["gone.jpg"]);
+  });
+
+  it("does not put the attachment-only placeholder in the box", () => {
+    const back = rewindForRetry([
+      { role: "user" as const, text: "(see attached)" },
+    ]);
+    expect(back?.draft).toBe("");
+  });
+
+  it("has nothing to retry without a question", () => {
+    expect(
+      rewindForRetry([{ role: "assistant" as const, text: "hi" }]),
+    ).toBeNull();
+  });
+});
+
+describe("PLAN-7: pollForAnswer", () => {
+  const sleep = () => Promise.resolve();
+
+  it("keeps looking while the turn is still running, then returns the answer", async () => {
+    const recover = vi
+      .fn<(id: string) => Promise<string | null>>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("the answer");
+    expect(await pollForAnswer("t", { recover, sleep })).toEqual({
+      kind: "answer",
+      text: "the answer",
+    });
+    expect(recover).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports pending, not interrupted, when the window runs out", async () => {
+    const recover = vi.fn().mockResolvedValue(null);
+    expect(await pollForAnswer("t", { recover, sleep, attempts: 3 })).toEqual({
+      kind: "pending",
+    });
+    expect(recover).toHaveBeenCalledTimes(3);
+  });
+
+  it("a failed lookup is unknown and is reported, not swallowed", async () => {
+    const recover = vi.fn().mockRejectedValue(new Error("offline"));
+    expect(await pollForAnswer("t", { recover, sleep })).toEqual({
+      kind: "unknown",
+    });
+    expect(reportError).toHaveBeenCalled();
+  });
+
+  it("stops looking once cancelled", async () => {
+    const recover = vi.fn().mockResolvedValue(null);
+    await pollForAnswer("t", { recover, sleep, isCancelled: () => true });
+    expect(recover).not.toHaveBeenCalled();
+  });
+});
 
 /** A Response whose body streams the given SSE text in arbitrary chunks. */
 function sseResponse(text: string, chunkSize = 7): Response {

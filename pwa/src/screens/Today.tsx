@@ -17,7 +17,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { discardOutcome } from "../lib/discardOutcome";
 import { Note } from "../components/Note";
 import { BodyweightRow } from "../components/BodyweightRow";
 import { RateSessionCard } from "../components/RateSessionCard";
@@ -35,6 +36,7 @@ import {
   applyTemplate,
   createPlannedWorkout,
   deleteTemplate,
+  ensureConfirmedProgramId,
   getDoneWorkoutIds,
   getExercises,
   getLastActuals,
@@ -176,6 +178,82 @@ const PARK_GUARD_MS = 250;
  */
 export function weekPages(selected: string, weekStart: number): string[][] {
   return [-7, 0, 7].map((n) => weekDates(addDays(selected, n), weekStart));
+}
+
+/**
+ * The day a link asked Program to open on (`/program?date=2026-09-30`), or
+ * null. Train's week strip used to send all seven days to the same bare
+ * `/program`, so tapping Wednesday landed on today (UI-02). Only a real
+ * calendar date is honoured: a malformed or impossible one is ignored rather
+ * than selecting a day nobody can reach.
+ */
+export function requestedDateFrom(search: string): string | null {
+  const raw = new URLSearchParams(search).get("date");
+  if (raw === null || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  return todayLocalIso(parseLocalDate(raw)) === raw ? raw : null;
+}
+
+/**
+ * The strip's one-line tally, for the days SHOWN. It used to count every day
+ * of the program, so a header over this week read "3 to go" when those three
+ * were missed days from August and nothing was ahead (UI-08). Words follow the
+ * states: upcoming work is TO GO, a past undone day is MISSED (or NOT CHECKED
+ * when completion could not be read). Counts, never a ratio.
+ */
+export function weekTally(
+  workouts: readonly PlannedWorkoutRow[],
+  states: ReadonlyMap<string, WorkoutState>,
+  weekDates: readonly string[],
+): string {
+  const n = { done: 0, ahead: 0, missed: 0, past: 0, skipped: 0 };
+  for (const w of workouts) {
+    if (!w.scheduled_date || !weekDates.includes(w.scheduled_date)) continue;
+    switch (states.get(w.id)) {
+      case "DONE":
+        n.done += 1;
+        break;
+      case "SKIPPED":
+        n.skipped += 1;
+        break;
+      case "MISSED":
+        n.missed += 1;
+        break;
+      case "PAST":
+        n.past += 1;
+        break;
+      case "TODAY":
+      case "UPCOMING":
+        n.ahead += 1;
+        break;
+      // DRAFT and NO DATE were never asked of anyone
+    }
+  }
+  return [
+    `${n.done} DONE`,
+    `${n.ahead} TO GO`,
+    n.missed > 0 ? `${n.missed} MISSED` : null,
+    n.past > 0 ? `${n.past} NOT CHECKED` : null,
+    n.skipped > 0 ? `${n.skipped} SKIPPED` : null,
+  ]
+    .filter((p): p is string => p !== null)
+    .join(" · ");
+}
+
+/**
+ * Split the days outside the shown week into those BEFORE it and those after
+ * it (or undated). One list called LATER held August's finished workouts and
+ * next month's together (UI-08).
+ */
+export function splitOutsideWeek(
+  outside: readonly PlannedWorkoutRow[],
+  weekDates: readonly string[],
+): { earlier: PlannedWorkoutRow[]; later: PlannedWorkoutRow[] } {
+  const first = weekDates[0] ?? "";
+  const earlier: PlannedWorkoutRow[] = [];
+  const later: PlannedWorkoutRow[] = [];
+  for (const w of outside)
+    (w.scheduled_date && w.scheduled_date < first ? earlier : later).push(w);
+  return { earlier, later };
 }
 
 /**
@@ -453,7 +531,15 @@ export function Today({
   // against the wrong planned day is not correctable afterwards.
   const today = useLocalToday();
   // week strip selection + LATER-list accordion
-  const [selectedDate, setSelectedDate] = useState<string>(today);
+  const requestedDate = requestedDateFrom(useLocation().search);
+  const [selectedDate, setSelectedDate] = useState<string>(
+    requestedDate ?? today,
+  );
+  // A link from Train's week strip names the day it means; honour it even
+  // when this screen was already mounted on the other route.
+  useEffect(() => {
+    if (requestedDate !== null) setSelectedDate(requestedDate);
+  }, [requestedDate]);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -816,7 +902,6 @@ export function Today({
     (w) => states.get(w.id) === "SKIPPED",
   ).length;
 
-
   // calendar derivations
   const byDate = useMemo(() => {
     const m = new Map<string, PlannedWorkoutRow>();
@@ -853,6 +938,10 @@ export function Today({
           byDate.get(w.scheduled_date)?.id !== w.id, // same-day overflow
       ),
     [workouts, weekDates, byDate],
+  );
+  const outsideWeek = useMemo(
+    () => splitOutsideWeek(laterWorkouts, weekDates),
+    [laterWorkouts, weekDates],
   );
   const selectedWorkout = anyDates ? (byDate.get(selectedDate) ?? null) : null;
 
@@ -998,17 +1087,9 @@ export function Today({
       try {
         const actuals = (await getLastActuals()).data;
         // A template needs a program to live in. Reuse the confirmed one when
-        // there is one; otherwise make the day first (which creates a program)
-        // and read its program_id back.
-        let pid = program?.id ?? null;
-        if (pid === null) {
-          const seedId = await createPlannedWorkout(selectedDate, "");
-          const fresh = await getPlannedWorkouts();
-          pid =
-            fresh.data.workouts.find((w) => w.id === seedId)?.program_id ??
-            null;
-          if (pid === null) throw new Error("could not resolve a program");
-        }
+        // there is one; otherwise make only the program, never a throwaway
+        // dated day beside the template's own (PLAN-4).
+        const pid = program?.id ?? (await ensureConfirmedProgramId());
         const res = await applyTemplate(templateId, pid, selectedDate, actuals);
         setTemplatesOpen(false);
         toast(
@@ -1192,10 +1273,25 @@ export function Today({
         id: s.id,
         patch: { discarded_at: new Date().toISOString() },
       });
+      // Queued is not accepted. Let the queue say which it was before
+      // claiming anything about the record (UI-18).
+      await outbox.flush();
+      const outcome = discardOutcome(await outbox.inspect(), s.id);
+      if (outcome === "refused") {
+        toast(
+          "The server won't discard a session that has sets. Open it to finish it instead.",
+          "error",
+        );
+        return;
+      }
       await invalidateForSessionClose();
       setOrphan(null);
       setDoneTick((t) => t + 1);
-      toast("Session discarded");
+      toast(
+        outcome === "queued"
+          ? "Discard saved on this phone. It applies when you're back online."
+          : "Session discarded",
+      );
     } catch (e) {
       reportError(e, "discard open session");
     }
@@ -1274,13 +1370,12 @@ export function Today({
   const nextTrainWorkout = nextActionableWorkout(workouts, states, today);
   const promoteNextWorkout =
     trainWorkoutToday?.state === "DONE" && nextTrainWorkout !== null;
-  const trainWorkout =
-    promoteNextWorkout
-      ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
-      : trainWorkoutToday ??
-        (nextTrainWorkout
-          ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
-          : null);
+  const trainWorkout = promoteNextWorkout
+    ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
+    : (trainWorkoutToday ??
+      (nextTrainWorkout
+        ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
+        : null));
   const trainWorkoutId = trainWorkout?.workout.id ?? null;
   const trainPrescriptions = trainWorkout
     ? (rx[trainWorkout.workout.id] ?? null)
@@ -1327,7 +1422,8 @@ export function Today({
   >(null);
   // Only the finished-today confirmation speaks about the server, so only it
   // pays for the read.
-  const needsSyncLine = presentation === "train" && trainWorkoutToday?.state === "DONE";
+  const needsSyncLine =
+    presentation === "train" && trainWorkoutToday?.state === "DONE";
   useEffect(() => {
     if (!needsSyncLine) return;
     let cancelled = false;
@@ -1468,8 +1564,7 @@ export function Today({
     <div className="train-recovery" role="alert">
       <p>
         Your session was saved locally, but we couldn’t open it because this
-        device could not save its session pointer. Do not start another
-        workout.
+        device could not save its session pointer. Do not start another workout.
       </p>
       <button
         type="button"
@@ -1735,6 +1830,50 @@ export function Today({
     );
   };
 
+  /** A list of days outside the shown week: EARLIER (before it) or LATER
+   *  (after it, or undated). Two names because one list called LATER held
+   *  August's finished workouts too (UI-08). */
+  const outsideSection = (
+    title: "EARLIER" | "LATER",
+    list: PlannedWorkoutRow[],
+  ) => (
+    <section className="rule-section" key={title}>
+      <div className="section-head">
+        <span className="field-label">{title}</span>
+        <span className="section-meta">{list.length}</span>
+      </div>
+      {list.map((w) => {
+        const state = states.get(w.id) ?? "UPCOMING";
+        const open = laterExpanded === w.id;
+        return (
+          <div key={w.id} className="week-item">
+            <button
+              type="button"
+              className="week-row"
+              onClick={() => {
+                setLaterExpanded(open ? null : w.id);
+                loadRx(w.id);
+              }}
+            >
+              <span className="week-day">{dayLabel(w)}</span>
+              <span className="week-label">
+                {workoutName(w)}
+                {w.plan_note ? <span className="note-dot"> ·</span> : ""}
+              </span>
+              <span
+                className={`week-state ${state === "MISSED" ? "week-state-missed" : ""} ${state === "NO DATE" ? "week-state-nodate" : ""}`}
+              >
+                {stateLabel(state)}
+              </span>
+              <span className="chev">{open ? "▾" : "▸"}</span>
+            </button>
+            {open && <div className="week-detail">{dayDetail(w)}</div>}
+          </div>
+        );
+      })}
+    </section>
+  );
+
   return (
     <div className="screen" data-presentation={presentation}>
       {active && (
@@ -1837,9 +1976,7 @@ export function Today({
               <span aria-hidden="true">▾</span>
             </button>
             <span className="section-meta">
-              {doneCount} DONE · {workouts.length - doneCount - skippedCount} TO
-              GO
-              {skippedCount > 0 ? ` · ${skippedCount} SKIPPED` : ""}
+              {weekTally(workouts, states, weekDates)}
             </span>
           </div>
 
@@ -1968,42 +2105,13 @@ export function Today({
         </section>
       )}
 
-      {program && anyDates && laterWorkouts.length > 0 && (
-        <section className="rule-section">
-          <div className="section-head">
-            <span className="field-label">LATER</span>
-            <span className="section-meta">{laterWorkouts.length}</span>
-          </div>
-          {laterWorkouts.map((w) => {
-            const state = states.get(w.id) ?? "UPCOMING";
-            const open = laterExpanded === w.id;
-            return (
-              <div key={w.id} className="week-item">
-                <button
-                  type="button"
-                  className="week-row"
-                  onClick={() => {
-                    setLaterExpanded(open ? null : w.id);
-                    loadRx(w.id);
-                  }}
-                >
-                  <span className="week-day">{dayLabel(w)}</span>
-                  <span className="week-label">
-                    {workoutName(w)}
-                    {w.plan_note ? <span className="note-dot"> ·</span> : ""}
-                  </span>
-                  <span
-                    className={`week-state ${state === "MISSED" ? "week-state-missed" : ""} ${state === "NO DATE" ? "week-state-nodate" : ""}`}
-                  >
-                    {stateLabel(state)}
-                  </span>
-                  <span className="chev">{open ? "▾" : "▸"}</span>
-                </button>
-                {open && <div className="week-detail">{dayDetail(w)}</div>}
-              </div>
-            );
-          })}
-        </section>
+      {program && anyDates && (
+        <>
+          {outsideWeek.earlier.length > 0 &&
+            outsideSection("EARLIER", outsideWeek.earlier)}
+          {outsideWeek.later.length > 0 &&
+            outsideSection("LATER", outsideWeek.later)}
+        </>
       )}
 
       {program && !anyDates && (

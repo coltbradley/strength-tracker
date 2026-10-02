@@ -20,6 +20,11 @@ import { outbox } from "./sync";
 import { uuid } from "./uuid";
 import { countRefreshed, refreshedLoads } from "./templateLoads";
 import {
+  PRESCRIPTION_COPY_COLUMNS,
+  copyPrescriptionRow,
+  type PrescriptionCopySource,
+} from "./prescriptionCopy";
+import {
   buildRecordIndex,
   type RecordE1rmRow,
   type RecordIndex,
@@ -470,6 +475,25 @@ export async function swapWorkoutOrder(
   await invalidatePlanCaches();
 }
 
+/**
+ * Does any session point at this planned day? Once one does, the database
+ * locks the day's structure for good (finished, open or discarded alike, since
+ * another phone may still hold sets for it), so the editor can say so BEFORE
+ * someone types into a row and meets the refusal. Null = could not find out;
+ * the caller says nothing rather than guess.
+ */
+export async function isPlannedDayLocked(
+  plannedWorkoutId: string,
+): Promise<boolean | null> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("id")
+    .eq("planned_workout_id", plannedWorkoutId)
+    .limit(1);
+  if (error) return null;
+  return (data ?? []).length > 0;
+}
+
 /** Copy a workout (and its prescriptions) onto another calendar date, at the
  *  end of the program's day order. */
 export async function duplicatePlannedWorkout(
@@ -499,15 +523,15 @@ export async function duplicatePlannedWorkout(
 
   const { data: rx, error: rErr } = await supabase
     .from("prescriptions")
-    .select(
-      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,superset_group,load_entry,entered_load,entered_unit",
-    )
-    .eq("planned_workout_id", workout.id);
+    .select(PRESCRIPTION_COPY_COLUMNS)
+    .eq("planned_workout_id", workout.id)
+    .order("position");
   throwIf(rErr);
   if (rx && rx.length > 0) {
-    const { error: iErr } = await supabase
-      .from("prescriptions")
-      .insert(rx.map((r) => ({ ...r, id: uuid(), planned_workout_id: newId })));
+    const rows = (rx as unknown as PrescriptionCopySource[]).map((r) =>
+      copyPrescriptionRow(r, { id: uuid(), planned_workout_id: newId }),
+    );
+    const { error: iErr } = await supabase.from("prescriptions").insert(rows);
     throwIf(iErr);
   }
   await invalidatePlanCaches();
@@ -746,23 +770,9 @@ export async function saveWorkoutAsTemplate(
   throwIf(error);
 
   if (rx.length > 0) {
-    const rows: PrescriptionInsert[] = rx.map((r, i) => ({
-      id: uuid(),
-      planned_workout_id: id,
-      exercise_id: r.exercise_id,
-      position: i,
-      sets: r.sets,
-      reps_min: r.reps_min,
-      reps_max: r.reps_max,
-      load_kg: r.load_kg,
-      load_pct_tm: r.load_pct_tm,
-      rest_seconds: r.rest_seconds,
-      notes: r.notes,
-      set_type: r.set_type ?? "working",
-      load_entry: r.load_entry ?? null,
-      entered_load: r.entered_load ?? null,
-      entered_unit: r.entered_unit ?? null,
-    }));
+    const rows: PrescriptionInsert[] = rx.map((r, i) =>
+      copyPrescriptionRow(r, { id: uuid(), planned_workout_id: id, position: i }),
+    );
     const { error: rxErr } = await supabase.from("prescriptions").insert(rows);
     throwIf(rxErr);
   }
@@ -806,9 +816,7 @@ export async function applyTemplate(
 
   const { data: rxRows, error: rErr } = await supabase
     .from("prescriptions")
-    .select(
-      "exercise_id,position,sets,reps_min,reps_max,load_kg,load_pct_tm,rest_seconds,notes,set_type,superset_group,load_entry,entered_load,entered_unit",
-    )
+    .select(PRESCRIPTION_COPY_COLUMNS)
     .eq("planned_workout_id", templateId)
     .order("position");
   throwIf(rErr);
@@ -855,13 +863,10 @@ export async function applyTemplate(
         : next[i] == null
           ? { entered_load: r.entered_load ?? null, entered_unit: r.entered_unit ?? null }
           : { entered_load: null, entered_unit: null };
-    const row = {
-      ...r,
-      id: uuid(),
-      planned_workout_id: workoutId,
-      load_kg: total,
-      ...authored,
-    };
+    const row = copyPrescriptionRow(
+      { ...r, load_kg: total, ...authored },
+      { id: uuid(), planned_workout_id: workoutId },
+    );
     assertAcceptedAuthoredLoad(row, "prescriptions", "prescription");
     return row;
   });
@@ -1034,6 +1039,17 @@ export async function createPlannedWorkout(
   scheduledDate: string,
   label: string,
 ): Promise<string> {
+  const programId = await ensureConfirmedProgramId();
+  return createPlannedWorkoutIn(programId, scheduledDate, label);
+}
+
+/**
+ * The newest confirmed program's id, creating a plain confirmed one when the
+ * user has none. Split out so a caller that only needs a program to put a day
+ * INTO (applying a template) does not first mint a throwaway dated day just to
+ * learn the program id (PLAN-4).
+ */
+export async function ensureConfirmedProgramId(): Promise<string> {
   const { data: programs, error: pErr } = await supabase
     .from("programs")
     .select("id")
@@ -1055,7 +1071,14 @@ export async function createPlannedWorkout(
     throwIf(error);
     programId = created;
   }
+  return programId;
+}
 
+async function createPlannedWorkoutIn(
+  programId: string,
+  scheduledDate: string,
+  label: string,
+): Promise<string> {
   // `unique (program_id, day_index)` — take the next free index in this program.
   const { data: siblings, error: sErr } = await supabase
     .from("planned_workouts")

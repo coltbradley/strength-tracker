@@ -11,6 +11,7 @@
 // the lifter can distinguish it from correcting the set or removing a plan.
 
 import { formatSetLoad } from "../lib/displayLoad";
+import { formatSetLine } from "../lib/setLine";
 import type { Unit } from "../lib/units";
 import type { SetInsert } from "../lib/types";
 
@@ -40,11 +41,24 @@ export function SetRow({
   onEdit,
   editing = false,
 }: SetRowProps) {
+  // A hold and a tick are stored as reps 0 (a timed set keeps its seconds in
+  // duration_seconds); "× 0" is the encoding, not what happened (UI-17).
+  const tracking: "reps" | "time" | "done" =
+    set.duration_seconds != null && set.duration_seconds > 0
+      ? "time"
+      : set.reps === 0
+        ? "done"
+        : "reps";
   const numbers = (
     <>
-      {formatSetLoad(set, unit)}{" "}
-      {unit}
-      {set.load_entry === "per_side" ? "/side" : ""} × {set.reps}
+      {tracking !== "reps" ? (
+        formatSetLine(set, { unit, tracking })
+      ) : (
+        <>
+          {formatSetLoad(set, unit)} {unit}
+          {set.load_entry === "per_side" ? "/side" : ""} × {set.reps}
+        </>
+      )}
       {/* The rating rides INSIDE the numbers rather than in a column of its
           own. It is one of the things a correction changes, so it belongs in
           the tap target that starts one — and a per-row column would be

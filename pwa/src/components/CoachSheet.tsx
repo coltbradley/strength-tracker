@@ -20,8 +20,9 @@ import {
   askCoach,
   getCoachSpend,
   newTurnId,
+  pollForAnswer,
   readAttachment,
-  recoverAnswer,
+  rewindForRetry,
   type CoachAttachment,
   type CoachSpend,
   type CoachTurn,
@@ -144,25 +145,38 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
     const last = msgs[msgs.length - 1];
     if (!last?.streaming || !last.turnId || busy) return;
     let cancelled = false;
-    void recoverAnswer(last.turnId).then((text) => {
-      if (cancelled) return;
-      setMsgs((prev) =>
-        prev.map((m, i) =>
-          i === prev.length - 1
-            ? {
+    void pollForAnswer(last.turnId, { isCancelled: () => cancelled }).then(
+      (outcome) => {
+        if (cancelled) return;
+        setMsgs((prev) =>
+          prev.map((m, i) => {
+            if (i !== prev.length - 1) return m;
+            if (outcome.kind === "answer")
+              return {
                 ...m,
                 streaming: false,
                 tool: null,
                 thinking: false,
-                text:
-                  text ??
-                  (m.text ||
-                    "(That answer was interrupted and didn't finish. Ask again.)"),
-              }
-            : m,
-        ),
-      );
-    });
+                text: outcome.text,
+              };
+            // Not answered yet, or we could not ask. Neither is "interrupted":
+            // the server may still be writing it, and "ask again" would bill
+            // the same question twice. Leave the turn recoverable (streaming
+            // stays set, so the next open looks again) and say what is known.
+            return {
+              ...m,
+              tool: null,
+              thinking: false,
+              text:
+                m.text ||
+                (outcome.kind === "unknown"
+                  ? "(Couldn't check whether this answer finished. Close and reopen the coach to look again.)"
+                  : "(This answer is taking longer than usual. Close and reopen the coach to look again.)"),
+            };
+          }),
+        );
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -197,7 +211,11 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
       try {
         const a = await readAttachment(f);
         if (a) next.push(a);
-        else toast(`Can't read ${f.name} — try a photo, PDF, CSV or text file`, "error");
+        else
+          toast(
+            `Can't read ${f.name} — try a photo, PDF, CSV or text file`,
+            "error",
+          );
       } catch (e) {
         reportError(e, "read file");
       }
@@ -233,7 +251,9 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
     abort.current = ctrl;
 
     const patchLast = (fn: (m: Msg) => Msg) =>
-      setMsgs((prev) => prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)));
+      setMsgs((prev) =>
+        prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)),
+      );
 
     void askCoach(
       history.map(({ role, text: t, attachments }) => ({
@@ -327,22 +347,20 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
     );
   };
 
-  /** Ask the last question again, dropping the answer that failed. */
+  /** Ask the last question again: the failed answer AND the question leave the
+   *  thread and the question goes back in the box, so Ask sends it once. */
   const retry = () => {
     if (busy) return;
-    const lastUser = [...msgs].reverse().find((m) => m.role === "user");
-    if (!lastUser) return;
-    setMsgs((prev) => {
-      const cut = [...prev];
-      while (cut.length > 0 && cut[cut.length - 1]!.role === "assistant")
-        cut.pop();
-      return cut;
-    });
-    // Re-send on the next tick, once the failed turn is out of the thread.
-    setTimeout(() => {
-      setDraft(lastUser.text);
-      setFiles(lastUser.attachments ?? []);
-    }, 0);
+    const back = rewindForRetry(msgs);
+    if (!back) return;
+    setMsgs(back.thread);
+    setDraft(back.draft);
+    setFiles(back.attachments);
+    if (back.droppedFiles.length > 0)
+      toast(
+        `Re-attach ${back.droppedFiles.join(", ")} — files aren't kept after a reload`,
+        "error",
+      );
   };
 
   const clear = () => {

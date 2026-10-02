@@ -7,7 +7,26 @@
 // than counted down, so this is the whole of its arithmetic.
 
 import { describe, expect, it } from "vitest";
-import { cooldownSeconds } from "./Login";
+import { cooldownSeconds, sixDigitCode } from "./Login";
+
+describe("PLAN-14: sixDigitCode", () => {
+  it("accepts a plain code", () => {
+    expect(sixDigitCode("123456")).toBe("123456");
+  });
+
+  it("accepts the spaced and hyphenated forms mail clients display", () => {
+    expect(sixDigitCode("123 456")).toBe("123456");
+    expect(sixDigitCode(" 123-456 ")).toBe("123456");
+    expect(sixDigitCode("123 456")).toBe("123456");
+  });
+
+  it("rejects anything that is not exactly six digits", () => {
+    expect(sixDigitCode("12345")).toBeNull();
+    expect(sixDigitCode("1234567")).toBeNull();
+    expect(sixDigitCode("12a456")).toBeNull();
+    expect(sixDigitCode("https://x.test/verify?token=abc")).toBeNull();
+  });
+});
 
 describe("cooldownSeconds", () => {
   it("is zero before anything has been sent", () => {

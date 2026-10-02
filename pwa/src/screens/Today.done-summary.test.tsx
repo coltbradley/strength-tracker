@@ -13,6 +13,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateMock,
+  useLocation: () => ({ search: "" }),
   Link: ({
     to,
     children,
@@ -234,7 +235,7 @@ describe("Today Train week navigation", () => {
       name: new RegExp(`${dayName(tomorrow)}, upcoming, open program`, "i"),
     });
     expect(week.contains(tomorrowLink)).toBe(true);
-    expect(tomorrowLink.getAttribute("href")).toBe("/program");
+    expect(tomorrowLink.getAttribute("href")).toBe(`/program?date=${tomorrow}`);
     expect(tomorrowLink.getAttribute("aria-current")).toBeNull();
     expect((await screen.findByRole("link", { name: todayButtonName })).getAttribute("aria-current")).toBe("date");
     expect(navigateMock).not.toHaveBeenCalledWith("/session");

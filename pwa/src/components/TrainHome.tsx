@@ -338,8 +338,7 @@ export function TrainHome({
     finishedToday ?? (workout?.state === "DONE" ? workout.workout : null);
   const confirmation = finished ? (
     <div className="train-finished" role="status">
-      <span aria-hidden="true">✓</span>{" "}
-      {finished.label ?? "Workout"} finished
+      <span aria-hidden="true">✓</span> {finished.label ?? "Workout"} finished
       {sync ? ` · ${syncLine(sync)}` : ""}
     </div>
   ) : null;
@@ -348,11 +347,12 @@ export function TrainHome({
       See the plan
     </Link>
   );
-  const recordLink = completedToday || finished ? (
-    <Link className="train-link" to="/history">
-      View record
-    </Link>
-  ) : null;
+  const recordLink =
+    completedToday || finished ? (
+      <Link className="train-link" to="/history">
+        View record
+      </Link>
+    ) : null;
 
   return (
     <section className="train-home" aria-label="Train">
@@ -371,7 +371,7 @@ export function TrainHome({
             return (
               <Link
                 key={d.iso}
-                to="/program"
+                to={`/program?date=${d.iso}`}
                 className={`train-day train-day-${d.state
                   .toLowerCase()
                   .replace(" ", "-")}${d.isToday ? " train-day-today" : ""}`}
@@ -491,7 +491,9 @@ export function TrainHome({
           <div className="train-kicker train-kicker-dim">REST DAY</div>
           <h1 className="train-title">Recover.</h1>
           <div className="train-next-workout">
-            <span>NEXT · {formatPlannedDate(workout.workout.scheduled_date!)}</span>
+            <span>
+              NEXT · {formatPlannedDate(workout.workout.scheduled_date!)}
+            </span>
             <strong>{workout.workout.label ?? "Workout"}</strong>
             {shapeLine}
           </div>

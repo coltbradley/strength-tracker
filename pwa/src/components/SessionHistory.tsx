@@ -59,6 +59,13 @@ interface SessionListProps {
   onToggle: (sessionId: string) => void;
   /** sets of the open session; undefined while they are still being read */
   openSets: SetInsert[] | undefined;
+  /** reading the open session's sets failed and nothing was cached: that is
+   *  "unavailable", never "no sets" (UI-15) */
+  openFailed?: boolean;
+  onRetryOpen?: () => void;
+  /** reading the session log failed and there is nothing to draw */
+  logFailed?: boolean;
+  onRetryLog?: () => void;
   /** exercise id -> name; a missing id renders as the raw id rather than
    *  blank, because a set that happened must never render as nothing */
   exerciseName: (id: string) => string;
@@ -72,8 +79,23 @@ export function SessionList({
   openId,
   onToggle,
   openSets,
+  openFailed = false,
+  onRetryOpen,
+  logFailed = false,
+  onRetryLog,
   exerciseName,
 }: SessionListProps) {
+  if (sessions.length === 0 && !loading && logFailed)
+    return (
+      <div role="alert">
+        <p className="muted">Couldn’t load your sessions. Nothing was lost.</p>
+        {onRetryLog && (
+          <button type="button" className="btn" onClick={onRetryLog}>
+            Try again
+          </button>
+        )}
+      </div>
+    );
   if (sessions.length === 0)
     return (
       <p className="muted">
@@ -111,7 +133,25 @@ export function SessionList({
             </button>
             {open && (
               <div className="log-open">
-                {openSets === undefined && <p className="muted">Loading…</p>}
+                {openSets === undefined && openFailed && (
+                  <div role="alert">
+                    <p className="muted">
+                      Couldn’t load this session’s sets. They’re still saved.
+                    </p>
+                    {onRetryOpen && (
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={onRetryOpen}
+                      >
+                        Try again
+                      </button>
+                    )}
+                  </div>
+                )}
+                {openSets === undefined && !openFailed && (
+                  <p className="muted">Loading…</p>
+                )}
                 {openSets !== undefined && openSets.length === 0 && (
                   // the count on the row came from the same view, so this is
                   // a session whose sets have since been voided one by one —

@@ -101,7 +101,9 @@ describe("TrainHome", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
 
-    expect(screen.getByRole("dialog", { name: "Upper strength preview" })).toBeTruthy();
+    expect(
+      screen.getByRole("dialog", { name: "Upper strength preview" }),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start workout" })).toBeTruthy();
     expect(onStart).not.toHaveBeenCalled();
   });
@@ -111,7 +113,9 @@ describe("TrainHome", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
-    expect(screen.queryByRole("dialog", { name: "Upper strength preview" })).toBeNull();
+    expect(
+      screen.queryByRole("dialog", { name: "Upper strength preview" }),
+    ).toBeNull();
     expect(onStart).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
@@ -192,7 +196,9 @@ describe("TrainHome", () => {
     expect(screen.queryByText(/rest day/i)).toBeNull();
     expect(screen.queryByRole("button", { name: "Go" })).toBeNull();
     expect(
-      screen.getByRole("link", { name: "Fill in this day" }).getAttribute("href"),
+      screen
+        .getByRole("link", { name: "Fill in this day" })
+        .getAttribute("href"),
     ).toBe("/plan/push");
   });
 
@@ -323,6 +329,25 @@ describe("week strip state words", () => {
     expect(trainDayWord("DRAFT")).toBe("DRAFT");
   });
 
+  it("UI-02: each day's link carries its own date into Program", () => {
+    renderHome({
+      week: [
+        day("2026-09-07", "M", "DONE"),
+        day("2026-09-08", "T", "REST"),
+        day("2026-09-12", "S", "TODAY", true),
+      ],
+    });
+    const nav = screen.getByRole("navigation", { name: "This week" });
+    const hrefs = [...nav.querySelectorAll("a")].map((a) =>
+      a.getAttribute("href"),
+    );
+    expect(hrefs).toEqual([
+      "/program?date=2026-09-07",
+      "/program?date=2026-09-08",
+      "/program?date=2026-09-12",
+    ]);
+  });
+
   it("draws a word under each glyph and never reads a DRAFT as missed", () => {
     renderHome({
       week: [
@@ -339,10 +364,20 @@ describe("week strip state words", () => {
     const words = [...nav.querySelectorAll(".train-day-word")].map(
       (n) => n.textContent,
     );
-    expect(words).toEqual(["DONE", "SKIP", "DRAFT", "REST", "NEXT", "TODAY", "MISSED"]);
+    expect(words).toEqual([
+      "DONE",
+      "SKIP",
+      "DRAFT",
+      "REST",
+      "NEXT",
+      "TODAY",
+      "MISSED",
+    ]);
     // the DRAFT cell is named draft, not missed
     const draft = nav.querySelector(".train-day-draft")!;
-    expect(draft.getAttribute("aria-label")).toBe("Day 2026-09-09, draft, open program");
+    expect(draft.getAttribute("aria-label")).toBe(
+      "Day 2026-09-09, draft, open program",
+    );
     expect(draft.className).not.toContain("missed");
     expect(nav.querySelector("[aria-current=date]")?.className).toContain(
       "train-day-today",
@@ -367,7 +402,10 @@ const sync = (over: Partial<TrainSyncSummary> = {}): TrainSyncSummary => ({
 
 describe("finished today", () => {
   const props = {
-    workout: { workout: { ...workout, id: "next", label: "Lower B" }, state: "UPCOMING" as const },
+    workout: {
+      workout: { ...workout, id: "next", label: "Lower B" },
+      state: "UPCOMING" as const,
+    },
     finishedToday: { ...workout, label: "Lower A" },
     completedToday: true,
   };
@@ -433,10 +471,14 @@ describe("finished today", () => {
     ).toBe("2 of 6 sets not confirmed on the server");
     // queued sets are already counted by the queue: never twice
     expect(
-      syncLine(sync({ waiting: 2, proof: { sets: 6, confirmed: 4, unconfirmed: 2 } })),
+      syncLine(
+        sync({ waiting: 2, proof: { sets: 6, confirmed: 4, unconfirmed: 2 } }),
+      ),
     ).toBe("2 waiting on this phone");
     // no proof read: only what the phone can see is claimed, never "on the server"
-    expect(syncLine(sync({ proof: null }))).toBe("nothing waiting on this phone");
+    expect(syncLine(sync({ proof: null }))).toBe(
+      "nothing waiting on this phone",
+    );
     expect(syncLine(sync({ proof: null }))).not.toContain("on the server");
   });
 
@@ -468,8 +510,12 @@ describe("in-progress card", () => {
   it("does not read a day-old open session as minutes (T7)", () => {
     const now = Date.parse("2026-10-01T10:00:00");
     expect(inProgressClock("2026-10-01T09:30:00", now)).toBe("30 MIN");
-    expect(inProgressClock("2026-09-30T09:00:00", now)).toBe("STARTED YESTERDAY");
-    expect(inProgressClock("2026-09-25T09:00:00", now)).toMatch(/^STARTED 25 SEP/);
+    expect(inProgressClock("2026-09-30T09:00:00", now)).toBe(
+      "STARTED YESTERDAY",
+    );
+    expect(inProgressClock("2026-09-25T09:00:00", now)).toMatch(
+      /^STARTED 25 SEP/,
+    );
   });
 });
 
@@ -490,7 +536,9 @@ describe("PAST", () => {
 describe("other confirmed programs", () => {
   it("names a confirmed program it is not showing", () => {
     renderHome({ otherPrograms: ["Spring block"] });
-    expect(screen.getByText(/Also confirmed, not shown here: Spring block/)).toBeTruthy();
+    expect(
+      screen.getByText(/Also confirmed, not shown here: Spring block/),
+    ).toBeTruthy();
   });
 });
 
@@ -498,13 +546,35 @@ describe("TrainHome: decimals sweep", () => {
   for (const unit of ["kg", "lb"] as const) {
     it(`up-next targets read at human precision in ${unit}`, () => {
       const ugly = [
-        { ...prescription("a", "bench", "Bench press", 3), load_kg: 102.06, resolved_load_kg: 102.06,
-          load_entry: "total" as const, entered_load: 225, entered_unit: "lb" as const },
-        { ...prescription("b", "row", "Row", 3), load_kg: 21.25, resolved_load_kg: 21.25,
-          load_entry: "total" as const, entered_load: 21.25, entered_unit: "kg" as const },
-        { ...prescription("c", "sq", "Squat", 3), load_kg: 100, resolved_load_kg: 100 },
-        { ...prescription("d", "db", "Dumbbell press", 3), load_kg: 99.79, resolved_load_kg: 99.79,
-          load_entry: "per_side" as const, entered_load: 110, entered_unit: "lb" as const },
+        {
+          ...prescription("a", "bench", "Bench press", 3),
+          load_kg: 102.06,
+          resolved_load_kg: 102.06,
+          load_entry: "total" as const,
+          entered_load: 225,
+          entered_unit: "lb" as const,
+        },
+        {
+          ...prescription("b", "row", "Row", 3),
+          load_kg: 21.25,
+          resolved_load_kg: 21.25,
+          load_entry: "total" as const,
+          entered_load: 21.25,
+          entered_unit: "kg" as const,
+        },
+        {
+          ...prescription("c", "sq", "Squat", 3),
+          load_kg: 100,
+          resolved_load_kg: 100,
+        },
+        {
+          ...prescription("d", "db", "Dumbbell press", 3),
+          load_kg: 99.79,
+          resolved_load_kg: 99.79,
+          load_entry: "per_side" as const,
+          entered_load: 110,
+          entered_unit: "lb" as const,
+        },
       ];
       render(
         <MemoryRouter>
