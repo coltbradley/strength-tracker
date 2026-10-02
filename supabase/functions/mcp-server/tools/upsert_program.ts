@@ -154,6 +154,8 @@ function summaryTable(
           `| ${
             p.tracking === "done"
               ? "tick"
+              : p.tracking === "time"
+              ? `${p.sets}x timed`
               : formatRepRange(p.sets, p.reps_min, p.reps_max)
           } ` +
           `| ${p.tracking === "done" ? "" : loadLabel(p, tms)} ` +

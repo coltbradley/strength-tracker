@@ -105,8 +105,10 @@ export function registerGetProgram(
         "consecutive rows naming the same exercise are one ramp (e.g. a warmup " +
         "build-up into a top set) and the app renders them as a single entry. " +
         "`section` groups consecutive rows under a heading ('Activations', " +
-        "'Abs'); `tracking` is 'reps' or 'done', where 'done' is a completion " +
-        "tick for movements nobody counts. " +
+        "'Abs'); `tracking` is 'reps', 'done' or 'time': 'done' is a " +
+        "completion tick for movements nobody counts, 'time' is a hold or " +
+        "carry logged in seconds (restate it as 'time' when you rewrite the " +
+        "day). " +
         "`notes` on a day is the COACH's words from a parse; `plan_note` is " +
         "the user's own and must never be overwritten by a parse.\n\n" +
         "With no program_id this returns the NEWEST program only, which is " +

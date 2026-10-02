@@ -88,7 +88,7 @@ export interface RxRow {
   superset_group: number | null;
   section: string | null;
   set_type: "warmup" | "working" | "backoff";
-  tracking: "reps" | "done";
+  tracking: "reps" | "done" | "time";
 }
 
 /** A logged set as `v_live_sets` returns it, with the note joined on. */

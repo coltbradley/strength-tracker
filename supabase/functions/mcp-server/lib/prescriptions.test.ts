@@ -410,3 +410,18 @@ Deno.test("no %TM rows means no lookups and an empty report", async () => {
   assertEquals(res.unresolved_pct, []);
   assertEquals(res.note, null);
 });
+
+Deno.test("MCP-10: tracking 'time' is accepted and written as 'time', not collapsed to reps", () => {
+  const parsed = prescriptionSchema.parse({
+    ...base,
+    exercise_id: "Farmers_Walk",
+    reps_min: 1,
+    reps_max: 1,
+    tracking: "time",
+  });
+  const rows = prescriptionRows(OWNER, DAY, [
+    parsed,
+    { ...base, exercise_id: "Barbell_Squat" },
+  ]);
+  assertEquals(rows.map((r) => r.tracking), ["time", "reps"]);
+});
