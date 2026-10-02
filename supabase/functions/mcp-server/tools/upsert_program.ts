@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
+import { chunk } from "../lib/chunk.ts";
 import { must } from "../lib/db.ts";
 import {
   guard,
@@ -625,14 +626,15 @@ async function addDaysToProgram(
     const { error } = await db.client.from("prescriptions").insert(rxRows);
     if (error) throw new Error(`insert prescriptions: ${error.message}`);
   } catch (err) {
-    const { error: rollbackError } = await db.client
-      .from("planned_workouts")
-      .delete()
-      .eq("user_id", db.ownerId)
-      .in(
-        "id",
-        workoutRows.map((w) => w.id),
-      );
+    let rollbackError: { message: string } | null = null;
+    for (const part of chunk(workoutRows.map((w) => w.id))) {
+      const { error: partError } = await db.client
+        .from("planned_workouts")
+        .delete()
+        .eq("user_id", db.ownerId)
+        .in("id", part);
+      if (partError) rollbackError = partError;
+    }
     if (rollbackError) {
       log("error", "upsert_program_add_days_cleanup_failed", {
         request_id: ctx.requestId,

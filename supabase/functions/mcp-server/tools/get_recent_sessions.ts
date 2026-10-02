@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
+import { inChunks } from "../lib/chunk.ts";
 import { must } from "../lib/db.ts";
 import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
 
@@ -159,7 +160,9 @@ export function registerGetRecentSessions(
                 "session_id",
                 sessions.map((s) => s.id),
               )
-              .order("performed_at", { ascending: true })
+              // Newest first, then reversed: capping an ascending read drops
+              // the NEWEST sets, which is "how did yesterday go" (MCP-5).
+              .order("performed_at", { ascending: false })
               .limit(SET_CAP),
             "session sets",
           ) as unknown as {
@@ -168,6 +171,7 @@ export function registerGetRecentSessions(
             exercise_id: string;
           }[];
           setsTruncated = setRows.length === SET_CAP;
+          setRows.reverse();
 
           // Names, so a reader is not handed exercise slugs, and notes, which
           // are the only place the lifter says how it felt.
@@ -175,26 +179,24 @@ export function registerGetRecentSessions(
           const [nameRows, noteRows] = await Promise.all([
             exIds.length === 0
               ? Promise.resolve([])
-              : (must(
-                  await db.client
-                    .from("exercises")
-                    .select("id, name")
-                    .in("id", exIds),
+              : await inChunks<{ id: string; name: string }>(
+                  exIds,
                   "exercise names",
-                ) as unknown as { id: string; name: string }[]),
+                  (ids) =>
+                    db.client.from("exercises").select("id, name").in("id", ids),
+                ),
             setRows.length === 0
               ? Promise.resolve([])
-              : (must(
-                  await db.client
-                    .from("set_notes")
-                    .select("set_id, note")
-                    .eq("user_id", db.ownerId)
-                    .in(
-                      "set_id",
-                      setRows.map((r) => r.id),
-                    ),
+              : await inChunks<{ set_id: string; note: string }>(
+                  setRows.map((r) => r.id),
                   "set notes",
-                ) as unknown as { set_id: string; note: string }[]),
+                  (ids) =>
+                    db.client
+                      .from("set_notes")
+                      .select("set_id, note")
+                      .eq("user_id", db.ownerId)
+                      .in("set_id", ids),
+                ),
           ]);
           const nameById = new Map(nameRows.map((e) => [e.id, e.name] as const));
           const noteById = new Map(

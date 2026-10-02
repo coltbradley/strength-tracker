@@ -11,6 +11,7 @@
 // in a warm isolate, and every tool trusts `ownerId` completely.
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { inChunks } from "./chunk.ts";
 import { ToolError } from "./errors.ts";
 
 export interface Db {
@@ -101,12 +102,15 @@ export async function visibleExerciseIds(
   exerciseIds: string[],
 ): Promise<Set<string>> {
   if (exerciseIds.length === 0) return new Set();
-  const { data, error } = await db.client
-    .from("exercises")
-    .select("id, source, exercise_owners(user_id)")
-    .in("id", exerciseIds);
-  if (error) throw new Error(`look up exercises: ${error.message}`);
-  const rows = (data ?? []) as OwnedExerciseRow[];
+  const rows = await inChunks<OwnedExerciseRow>(
+    exerciseIds,
+    "look up exercises",
+    (ids) =>
+      db.client
+        .from("exercises")
+        .select("id, source, exercise_owners(user_id)")
+        .in("id", ids),
+  );
   return new Set(
     rows.filter((r) => canSeeExercise(r, db.ownerId)).map((r) => r.id),
   );

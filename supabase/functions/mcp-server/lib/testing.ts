@@ -96,6 +96,10 @@ class FakeQuery {
     return this.f("lte", c, v);
   }
   in(c: string, v: unknown[]) {
+    // Like the real thing, narrow by the list when the fixture row carries
+    // the column. Rows without it are left alone, so older fixtures that
+    // never modelled the join column behave as before.
+    this.inFilters.push([c, v]);
     return this.f("in", c, v);
   }
   gt(c: string, v: unknown) {
@@ -119,8 +123,8 @@ class FakeQuery {
   overlaps(c: string, v: unknown[]) {
     return this.f("overlaps", c, v);
   }
-  order(column: string, opts: { ascending: boolean }) {
-    this.rec.order.push({ column, ascending: opts.ascending });
+  order(column: string, opts?: { ascending?: boolean }) {
+    this.rec.order.push({ column, ascending: opts?.ascending ?? true });
     return this;
   }
   limit(n: number) {
@@ -133,11 +137,18 @@ class FakeQuery {
     return this;
   }
   private one = false;
+  private inFilters: [string, unknown[]][] = [];
   then<R>(resolve: (r: { data: unknown; error: FakeError | null }) => R) {
     if (this.error) {
       return Promise.resolve({ data: null, error: this.error }).then(resolve);
     }
     let rows = this.rows;
+    for (const [c, v] of this.inFilters) {
+      rows = rows.filter((r) => {
+        const val = (r as Record<string, unknown>)[c];
+        return val === undefined || v.includes(val);
+      });
+    }
     if (this.rec.range) {
       rows = rows.slice(this.rec.range[0], this.rec.range[1] + 1);
     }
@@ -215,6 +226,7 @@ export function toolHarness(
   return {
     calls,
     rpcCalls,
+    db,
     meta,
     run: async (args: Record<string, unknown>) =>
       await call(parse.parse(args) as Record<string, unknown>),
@@ -225,4 +237,22 @@ export function toolHarness(
 // deno-lint-ignore no-explicit-any
 export function payload(res: ToolResult): any {
   return JSON.parse(res.content[res.content.length - 1].text);
+}
+
+/** A fake Db alone, for helpers in lib/ that take a Db rather than a tool. */
+export function fakeDb(
+  fixtures: Record<string, unknown[]> = {},
+  opts: HarnessOptions = {},
+) {
+  const t = toolHarness(
+    (server, _db, _ctx) => {
+      server.registerTool("noop", { inputSchema: {} }, () => ({}));
+    },
+    "noop",
+    fixtures,
+    TEST_USER,
+    undefined,
+    opts,
+  );
+  return { db: t.db, calls: t.calls };
 }
