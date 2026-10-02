@@ -59,7 +59,25 @@ const FILES = [
   "pwa/src/lib/checkins.ts",
   "pwa/src/lib/coachAccess.ts",
   "pwa/src/lib/sessionHistory.ts",
+  "pwa/src/lib/export.ts",
+  "pwa/src/lib/prescriptionCopy.ts",
 ];
+
+/**
+ * String-literal column lists declared as constants (`const SET_COLUMNS =
+ * "a,b"`), so a `.select(SET_COLUMNS)` is checked like a literal one. Names are
+ * resolved in the selecting file first, then across every scanned file, which
+ * covers a list exported from one module and selected in another
+ * (PRESCRIPTION_COPY_COLUMNS). Without this, moving a literal into a shared
+ * constant silently drops it from the check.
+ */
+function constantsOf(source) {
+  const out = new Map();
+  const re = /(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\s*=\s*"([^"]*)"/g;
+  let m;
+  while ((m = re.exec(source)) !== null) out.set(m[1], m[2]);
+  return out;
+}
 
 /**
  * `.from("x")` … `.select("a, b")` within the same statement.
@@ -68,7 +86,7 @@ const FILES = [
  * `.select(...)` after it. A false pair would only ever cause a spurious
  * failure, which is cheap to notice, unlike the silent one this exists to stop.
  */
-function pairs(source) {
+function pairs(source, local = new Map(), global = new Map()) {
   const out = [];
   // The gap must not contain another `.from(` or the pair spans two
   // statements and the columns get checked against the wrong relation.
@@ -81,7 +99,10 @@ function pairs(source) {
     // The first argument is the PostgREST column list. Other string literals
     // belong to options (for example `{ count: "exact" }`) and are not
     // column names.
-    const literal = rawArg.match(/^\s*"([^"]*)"/)?.[1] ?? "";
+    const name = rawArg.match(/^\s*([A-Z][A-Z0-9_]*)\s*(?:,|$)/)?.[1];
+    const literal =
+      rawArg.match(/^\s*"([^"]*)"/)?.[1] ??
+      (name ? (local.get(name) ?? global.get(name) ?? "") : "");
     if (!literal.trim()) continue;
     if (literal.includes("*")) continue;
     out.push({ relation, columns: literal });
@@ -114,9 +135,20 @@ for (const r of rows.rows) {
 
 let failures = 0;
 let checked = 0;
+const sources = new Map(
+  FILES.map((file) => [file, readFileSync(join(ROOT, file), "utf8")]),
+);
+const allConstants = new Map();
+for (const source of sources.values()) {
+  for (const [k, v] of constantsOf(source)) allConstants.set(k, v);
+}
 for (const file of FILES) {
-  const source = readFileSync(join(ROOT, file), "utf8");
-  for (const { relation, columns } of pairs(source)) {
+  const source = sources.get(file);
+  for (const { relation, columns } of pairs(
+    source,
+    constantsOf(source),
+    allConstants,
+  )) {
     const cols = known.get(relation);
     if (!cols) {
       console.log(`  FAIL  ${file}: unknown relation "${relation}"`);
