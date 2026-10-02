@@ -13,9 +13,7 @@
 // - The app root goes `inert` while any sheet is open, so a screen reader
 //   cannot read through the scrim into the page behind it. Every sheet under
 //   the top one is inert and aria-hidden too, so a nested sheet is the only
-//   modal layer exposed (UI-11). Likewise every
-//   sheet under the top one is inert and aria-hidden, so a nested sheet is the
-//   only modal layer exposed (UI-11).
+//   modal layer exposed (UI-11).
 //
 // Scroll ownership lives here: `.sheet` is overflow-y:auto with contained
 // overscroll, so a sheet taller than its cap (Settings is ~2000px at 320px
