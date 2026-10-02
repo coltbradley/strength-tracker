@@ -1782,6 +1782,7 @@ export function Plan() {
             className="input date-input"
             type="date"
             value={dateValue}
+            aria-label="Scheduled day"
             disabled={busy || workoutLocked}
             onChange={(e) => {
               setDateValue(e.target.value);
@@ -1840,6 +1841,7 @@ export function Plan() {
           className="input note-input"
           placeholder="What's the intent for this one? Cues, targets, context…"
           rows={3}
+          aria-label="Plan note"
           value={planNote}
           disabled={busy || workoutLocked}
           onChange={(e) => {
@@ -1909,6 +1911,7 @@ export function Plan() {
             className="input date-input"
             type="date"
             value={duplicateDate}
+            aria-label="Duplicate to day"
             onChange={(e) => setDuplicateDate(e.target.value)}
           />
           <button

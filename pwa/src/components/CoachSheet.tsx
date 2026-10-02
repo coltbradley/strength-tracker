@@ -502,6 +502,7 @@ export function CoachSheet({ onClose, prefill }: CoachSheetProps) {
           ref={inputRef}
           className="input coach-input"
           rows={3}
+          aria-label="Message to your coach"
           placeholder="Squat felt heavy today — should I drop the last set?"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

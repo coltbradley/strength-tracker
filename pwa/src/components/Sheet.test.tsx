@@ -142,7 +142,7 @@ describe("Sheet", () => {
       );
     }
     const { rerender, unmount } = render(<Nested padOpen />);
-    expect(screen.getAllByRole("dialog")).toHaveLength(2);
+    expect(screen.getAllByRole("dialog", { hidden: true })).toHaveLength(2);
     expect(root.hasAttribute("inert")).toBe(true);
 
     rerender(<Nested padOpen={false} />);
@@ -224,5 +224,44 @@ describe("ExercisePicker", () => {
       .filter((b) => b.className.includes("drawer-row"));
     expect(rows[0].textContent).toContain("Plank");
     expect(rows[0].textContent).toContain("LOGGED");
+  });
+});
+
+describe("Sheet nesting", () => {
+  it("UI-11: a parent sheet is inert and aria-hidden while a child is open, and live again after", () => {
+    appRoot();
+    function Nested() {
+      const [child, setChild] = useState(false);
+      return (
+        <Sheet title="PARENT" onClose={() => undefined}>
+          <button type="button" onClick={() => setChild(true)}>
+            open child
+          </button>
+          {child && (
+            <Sheet title="CHILD" onClose={() => setChild(false)}>
+              <button type="button">in child</button>
+            </Sheet>
+          )}
+        </Sheet>
+      );
+    }
+    render(<Nested />);
+    const parentLayer = () =>
+      screen.getByRole("dialog", { name: "PARENT", hidden: true }).parentElement as HTMLElement;
+    expect(parentLayer().hasAttribute("inert")).toBe(false);
+
+    const opener = screen.getByRole("button", { name: "open child" });
+    opener.focus();
+    fireEvent.click(opener);
+    expect(parentLayer().hasAttribute("inert")).toBe(true);
+    expect(parentLayer().getAttribute("aria-hidden")).toBe("true");
+    const child = screen.getByRole("dialog", { name: "CHILD" });
+    expect((child.parentElement as HTMLElement).hasAttribute("inert")).toBe(false);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+
+    fireEvent.keyDown(child, { key: "Escape" });
+    expect(parentLayer().hasAttribute("inert")).toBe(false);
+    expect(parentLayer().hasAttribute("aria-hidden")).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "open child" }));
   });
 });

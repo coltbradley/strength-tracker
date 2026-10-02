@@ -13,6 +13,8 @@
 // the buttons were clipped and unreachable. They are different jobs, so they
 // are different variants rather than one variant that guesses.
 
+import { useId } from "react";
+
 export interface StepDef {
   label: string;
   delta: number;
@@ -106,6 +108,13 @@ export function Stepper({
   label,
   snap = false,
 }: StepperProps) {
+  // The button's name stays "<label> value — tap to type"; aria-label hides
+  // the visible text from the name, so the CURRENT value rides as the
+  // description (UI-06). It is read from the same nodes that are drawn, so it
+  // cannot lag the display after an increment.
+  const uid = useId();
+  const displayId = `${uid}-display`;
+  const subId = `${uid}-sub`;
   const bump = (delta: number) => {
     onChange(stepTo(value, delta, min, max, snap));
   };
@@ -119,8 +128,11 @@ export function Stepper({
       className={`stepper-value ${accent ? "stepper-value-accent" : ""}`}
       onClick={onTapValue}
       aria-label={`${label} value — tap to type`}
+      aria-describedby={
+        subText !== undefined ? `${displayId} ${subId}` : displayId
+      }
     >
-      {display}
+      <span id={displayId}>{display}</span>
     </button>
   ) : (
     <span className={`stepper-value ${accent ? "stepper-value-accent" : ""}`}>
@@ -148,7 +160,7 @@ export function Stepper({
         <div className={`stepper-inline${compact ? " stepper-field" : ""}`}>
           {valueEl}
           {subText !== undefined && (
-            <span className="stepper-sub">{subText}</span>
+            <span id={subId} className="stepper-sub">{subText}</span>
           )}
           {buttons}
         </div>
@@ -161,7 +173,7 @@ export function Stepper({
       <div className="stepper-value-row">
         {valueEl}
         {subText !== undefined && (
-          <span className="stepper-sub">{subText}</span>
+          <span id={subId} className="stepper-sub">{subText}</span>
         )}
       </div>
       <div className="stepper-row">{buttons}</div>
