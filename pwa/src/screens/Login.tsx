@@ -15,6 +15,18 @@ import { reportError, toast } from "../lib/errors";
 const RESEND_COOLDOWN_MS = 30_000;
 
 /**
+ * The 6 digits in a pasted code, or null when it is not one. Mail clients show
+ * a code as "123 456" or "123-456", and a copied one can carry a non-breaking
+ * space; stripping separators INSIDE the paste means those work, while a magic
+ * link (which has far more than six characters) still falls through to the
+ * link branch (PLAN-14).
+ */
+export function sixDigitCode(raw: string): string | null {
+  const squeezed = raw.replace(/[\s ​-]/g, "");
+  return /^\d{6}$/.test(squeezed) ? squeezed : null;
+}
+
+/**
  * Whole seconds left on the cooldown. Pure, so the countdown can be tested
  * without a clock, and `ceil` rather than `round` so the label never reads
  * "0s" on a button that is still disabled.
@@ -97,11 +109,12 @@ export function Login() {
     setBusy(true);
     try {
       const raw = code.trim();
+      const digits = sixDigitCode(raw);
       let error;
-      if (/^\d{6}$/.test(raw)) {
+      if (digits !== null) {
         ({ error } = await supabase.auth.verifyOtp({
           email,
-          token: raw,
+          token: digits,
           type: "email",
         }));
       } else {

@@ -225,10 +225,89 @@ export async function recoverAnswer(turnId: string): Promise<string | null> {
     .select("response, refused")
     .eq("turn_id", turnId)
     .maybeSingle();
-  if (error || !data) return null;
+  // A failed read is not "still running": it is "we could not ask", and the
+  // caller has to tell the two apart or it tells the lifter to ask again while
+  // the first answer is still being written (PLAN-7).
+  if (error) throw new Error(error.message);
+  if (!data) return null;
   const row = data as { response: string | null; refused: string | null };
   if (row.refused) return `(${row.refused})`;
   return row.response && row.response.length > 0 ? row.response : null;
+}
+
+export type RecoveryOutcome =
+  | { kind: "answer"; text: string }
+  /** the server never produced one inside the window: still running, or lost */
+  | { kind: "pending" }
+  /** the lookup itself failed, so nothing is known about the turn */
+  | { kind: "unknown" };
+
+/**
+ * Wait for a turn that was running when this device went away. A phone locked
+ * mid-answer and reopened a few seconds later finds the turn still running;
+ * one lookup says "not there yet" and declaring it interrupted invites a
+ * re-ask that bills the same question twice. Poll a few times first.
+ */
+export async function pollForAnswer(
+  turnId: string,
+  opts: {
+    attempts?: number;
+    delayMs?: number;
+    recover?: (turnId: string) => Promise<string | null>;
+    sleep?: (ms: number) => Promise<void>;
+    isCancelled?: () => boolean;
+  } = {},
+): Promise<RecoveryOutcome> {
+  const attempts = opts.attempts ?? 6;
+  const delayMs = opts.delayMs ?? 4000;
+  const recover = opts.recover ?? recoverAnswer;
+  const sleep =
+    opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let i = 0; i < attempts; i++) {
+    if (opts.isCancelled?.()) return { kind: "pending" };
+    try {
+      const text = await recover(turnId);
+      if (text !== null) return { kind: "answer", text };
+    } catch (e) {
+      reportSilently(e, "recover coach answer");
+      return { kind: "unknown" };
+    }
+    if (i < attempts - 1) await sleep(delayMs);
+  }
+  return { kind: "pending" };
+}
+
+/**
+ * Put the thread back to the moment before the last question was sent, with
+ * that question in the compose box. Retry used to drop only the failed answer
+ * and refill the box, so pressing Ask appended the same question a second
+ * time: two user turns in the history, billed twice (PLAN-6).
+ *
+ * Attachments persist with their bytes stripped (`data: ""`), and a file with
+ * no bytes is rejected by the server, so those are not carried into the box;
+ * `droppedFiles` names them so the caller can say so.
+ */
+export function rewindForRetry<T extends CoachTurn>(
+  msgs: T[],
+): {
+  thread: T[];
+  draft: string;
+  attachments: CoachAttachment[];
+  droppedFiles: string[];
+} | null {
+  const cut = [...msgs];
+  while (cut.length > 0 && cut[cut.length - 1]!.role === "assistant")
+    cut.pop();
+  const last = cut[cut.length - 1];
+  if (!last || last.role !== "user") return null;
+  cut.pop();
+  const all = last.attachments ?? [];
+  return {
+    thread: cut,
+    draft: last.text === "(see attached)" ? "" : last.text,
+    attachments: all.filter((a) => a.data !== ""),
+    droppedFiles: all.filter((a) => a.data === "").map((a) => a.name),
+  };
 }
 
 export interface CoachSpend {
