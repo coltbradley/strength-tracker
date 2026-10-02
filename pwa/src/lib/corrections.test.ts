@@ -21,6 +21,23 @@ const old: SetInsert = {
 };
 
 describe("correctedSet", () => {
+  it("SESS-6: a rating correction of a timed set keeps its duration and place", () => {
+    const timed: SetInsert = { ...old, reps: 0, load_kg: 20, duration_seconds: 60 };
+    const next = correctedSet(timed, {
+      load_kg: 20,
+      reps: 0,
+      set_type: "working",
+      load_entry: "total",
+      rpe: 8,
+    });
+    expect(next.duration_seconds).toBe(60);
+    expect(next.set_index).toBe(timed.set_index);
+    expect(next.performed_at).toBe(timed.performed_at);
+    expect(next.rest_seconds_actual).toBe(timed.rest_seconds_actual);
+    expect(next.prescription_id).toBe(timed.prescription_id);
+    expect(next.rpe).toBe(8);
+  });
+
   it("keeps the old row's place and changes only the numbers", () => {
     const next = correctedSet(old, {
       load_kg: 102.5,

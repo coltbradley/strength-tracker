@@ -2157,6 +2157,23 @@ describe("successful operation subscribers", () => {
       expect(calls).toEqual([]);
     });
 
+    it("SESS-3: refuses a timed set outside 1..7200 s on every enqueue path, queues nothing", async () => {
+      const { calls, transport } = makeTransport();
+      const box = createOutbox({ getDb, transport, isOnline: () => false });
+      for (const seconds of [0, -5, 7201, 12.5, Number.NaN]) {
+        const timed = { ...setA, reps: 0, duration_seconds: seconds };
+        await expect(box.enqueue({ kind: "insert", table: "sets", payload: timed })).rejects.toThrow(/duration/i);
+        await expect(box.enqueueCorrection("s1", timed, "old-id")).rejects.toThrow(/duration/i);
+      }
+      expect(await box.inspect()).toEqual([]);
+      expect(calls).toEqual([]);
+      // the bounds themselves, and null (a non-timed set), are fine
+      for (const seconds of [1, 60, 7200, null]) {
+        await box.enqueue({ kind: "insert", table: "sets", payload: { ...setA, id: crypto.randomUUID(), duration_seconds: seconds } });
+      }
+      expect(await box.inspect()).toHaveLength(4);
+    });
+
     it("accepts consistent authored sets and legacy sets without provenance", async () => {
       const { transport } = makeTransport();
       const box = createOutbox({ getDb, transport, isOnline: () => false });
