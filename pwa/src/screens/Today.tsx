@@ -2223,9 +2223,9 @@ export function Today({
               </div>
 
               <p className="first-run-body">
-                You don’t have to build a plan by hand. Tap the speech-bubble
-                button floating over the app, describe how you train or paste in
-                what your coach wrote, and it will write the plan for you.
+                You don’t have to build a plan by hand. Tap the coach button
+                in the header, describe how you train or paste in what your
+                coach wrote, and it will write the plan for you.
               </p>
               <div className="microcopy">
                 Those conversations are saved, and whoever runs this deployment

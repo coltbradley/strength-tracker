@@ -221,9 +221,12 @@ export function Login() {
             void send();
           }}
         >
-          <div className="field-label">EMAIL</div>
+          <div className="field-label" id="login-email-label">
+            EMAIL
+          </div>
           <input
             className="input"
+            aria-labelledby="login-email-label"
             type="email"
             inputMode="email"
             autoComplete="email"
