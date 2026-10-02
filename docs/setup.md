@@ -146,7 +146,8 @@ without printing it, use the curl below with the token read from its config.
 
 ### Other MCP clients
 
-The endpoint is a standard streamable-HTTP MCP server with static bearer auth.
+The endpoint is a standard streamable-HTTP MCP server with bearer auth (OAuth sign-in is
+also accepted, see below).
 Most developer clients accept that directly. The consumer chat apps are the
 exception, because their connector UIs are built around OAuth.
 

@@ -30,7 +30,7 @@ the generated seed are gitignored; `.env.example` documents shape only.
    `security_invoker = true` would silently become a definer-rights hole;
    treat that as a review blocker.
 3. **The MCP path uses the service role, deliberately constrained.** MCP
-   requests carry a static bearer token, not a user session, so `auth.uid()`
+   requests carry a bearer or OAuth token, not a user session, so `auth.uid()`
    is null on that path and RLS cannot scope it. Instead: the token IS the
    identity — it is hashed and looked up in `mcp_tokens` to resolve a user —
    the service client is constructed in exactly one module, every query
@@ -39,8 +39,10 @@ the generated seed are gitignored; `.env.example` documents shape only.
    `sets`, so the training record is unreachable from MCP by construction.
    The identity is resolved PER REQUEST and never cached: edge isolates are
    reused across callers, so a cached owner id would be a cross-user leak.
-   The tradeoff (service role behind a bearer check vs. running a full
-   OAuth 2.1 server) is argued in decisions.md.
+   OAuth sign-in is accepted alongside bearer tokens (`lib/oauth.ts`): only an
+   access token carrying `client_id` counts, and a plain session JWT is
+   refused. The tradeoff (service role behind a token check) is argued in
+   decisions.md.
 4. **Auth check before parsing.** The edge function rejects unauthenticated
    requests before touching the request body, with a constant-time
    comparison (hash both sides, `timingSafeEqual`) so token checking leaks

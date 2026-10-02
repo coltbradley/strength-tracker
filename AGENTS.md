@@ -306,6 +306,13 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   instruction-like set notes RETURNED as `notes_to_consider` and never copied.
   `find_similar_days` (Jaccard >= 0.6 over exercise ids) is called before
   `upsert_program` so the same screenshot does not become a second program.
+- No SECURITY DEFINER function in `public` is callable by `anon` or
+  `authenticated`: `validate-db` asserts it against an EMPTY allowlist, and
+  adding to it needs a decision entry. The history triggers
+  (`refuse_rewriting_used_training_max`, `refuse_orphaning_logged_sets`) are
+  definer functions with a pinned `search_path` and execute revoked, because an
+  invoker cannot read `auth.users` (decisions.md 2026-10-01). A view rewrite
+  starts from `pg_get_viewdef` of the replayed chain, never an old migration.
 - Derived metrics (e1RM, volume, adherence, rest) live in SQL views only,
   never stored. Views are `security_invoker` so RLS applies, and every
   set-derived view reads `v_live_sets` (voids and discards excluded) — never
@@ -593,7 +600,11 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   view, chart or MCP tool would know how to read it. Volume and e1RM exclude
   all of it through the filters they already have; do NOT add a `tracking`
   filter to those views, which would couple the analysis to the plan the way
-  `v_adherence` deliberately does not.
+  `v_adherence` deliberately does not. The count views do filter on `reps`
+  rather than `tracking`: a set with reps 0 is not a working set, and
+  `rep_outcome` is null (undefined), not 'missed', for done and time
+  prescriptions. Timed-set `duration_seconds` is 1 to 7200, enforced in the
+  outbox admission gate as well as the column check.
   Seconds are NOT stored in `reps`, and the reason is worth keeping: `reps` is
   checked `between 0 and 100`, so a three minute carry is not representable at
   all, and a 45 second carry at 64 kg would otherwise fall inside `v_e1rm`'s
@@ -818,7 +829,11 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   `run_alert_sweep()`, which uses `pg_net` to POST `push-alerts/sweep` with
   credentials read from VAULT at run time -- never a migration literal, because
   this repository is public. Missing Vault rows make it do nothing and say so,
-  rather than firing unauthenticated requests forever. `rest_alerts.kind`
+  rather than firing unauthenticated requests forever. `push-alerts` is
+  deployed with the gateway's JWT check OFF (`verify_jwt = false`,
+  `--no-verify-jwt`): the cron caller has no Supabase JWT, user routes
+  authenticate through `auth.getUser`, and `/sweep` checks `x-sweep-secret`.
+  `rest_alerts.kind`
   separates a rest (delivered by `POST /schedule`, which holds a worker open and
   refuses anything longer than it can survive) from a prompt (`POST /arm` writes
   the row, the sweep delivers it); the one-live-alert rule and the service
@@ -842,7 +857,12 @@ null` is false: without it, saving an unrated set unrated writes a void and a
   tokens (anything a person pastes into a client) have `expires_at` NULL and
   must keep working untouched.
 - `delete_program`, `delete_exercise` and `update_exercise` are disabled for
-  the coach at the connector layer. Claude Desktop keeps them. The first two
+  the coach at the connector layer. Claude Desktop keeps them. Also off for the
+  coach: `set_training_plan`, `confirm_training_plan` (strategy is a desk
+  decision) and `confirm_program` (the coach drafts; a person confirms outside
+  the in-app coach). `upsert_program` stays on, since drafts land unconfirmed.
+  The destructive and shared-row tools also refuse ephemeral coach tokens in
+  code, not only at the connector. The first two
   are destructive; the third writes OTHER PEOPLE's data, because the library is
   SHARED and renaming a seeded row puts that name in every other account's
   model context — and a screenshot the coach is asked to parse is exactly the
@@ -1037,8 +1057,9 @@ done.
   design). Do not add a delete or update policy to an append-only table.
   Do not re-add a removed delete policy without reading why it was removed.
 - **The MCP tool surface exposed to the in-app coach** (disabled tools in
-  `supabase/functions/coach`): `delete_program`, `delete_exercise`, and
-  `update_exercise` are deliberately off for the coach. Re-enabling them for
+  `supabase/functions/coach`): `delete_program`, `delete_exercise`,
+  `update_exercise`, `set_training_plan`, `confirm_training_plan` and
+  `confirm_program` are deliberately off for the coach. Re-enabling them for
   the coach is a security-relevant product decision, not a bug fix.
 - **`sets`, `sessions`, `set_voids`, `set_notes`**: written only by the PWA.
   MCP tools must never gain a write path to these.

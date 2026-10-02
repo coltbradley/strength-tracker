@@ -997,8 +997,8 @@ Vite supports a `PAGES_BASE` subpath
 ### A-133. History's chart data is unavailable to nonvisual users
 
 The e1RM chart exposes only a latest-value summary
-([pwa/src/components/E1rmChart.tsx:67-89](../../pwa/src/components/E1rmChart.tsx)), and the volume chart exposes only a generic weekly label
-([pwa/src/components/VolumeChart.tsx:27-51](../../pwa/src/components/VolumeChart.tsx)). Individual historical points and weekly values have no accessible table or text equivalent, so Record's primary progress information cannot be inspected with a screen reader.
+([pwa/src/components/charts/E1rmChart.tsx:67-89](../../pwa/src/components/charts/E1rmChart.tsx)), and the volume chart exposes only a generic weekly label
+([pwa/src/components/charts/VolumeChart.tsx:27-51](../../pwa/src/components/charts/VolumeChart.tsx)). Individual historical points and weekly values have no accessible table or text equivalent, so Record's primary progress information cannot be inspected with a screen reader.
 
 ### A-134. Deployment can publish a commit whose CI failed
 

@@ -3,7 +3,7 @@
 MCP server for the strength tracker, running as a Supabase Edge Function.
 Streamable HTTP, stateless (every POST is independent, no session ids). Claude
 connects through `mcp-remote` with a **per-user** bearer token from
-`scripts/issue-mcp-token.mjs` and gets 14 tools.
+`scripts/issue-mcp-token.mjs` and gets the tools listed below.
 
 Read (`readOnlyHint`): `search_exercises`, `resolve_exercises` (the same
 lookup for many names at once, in one round trip), `get_lift_history`,

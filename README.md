@@ -6,11 +6,12 @@ analyzes progress, the phone app captures sets — and an in-app coach answers
 questions about your own training, mid-session, from the same tools.
 
 ```
-Coach screenshot ──► Claude Desktop ──► mcp-remote (static bearer, local)
+Coach screenshot ──► Claude Desktop ──► mcp-remote (bearer token)
+                      or claude.ai / ChatGPT (OAuth sign-in)
                                              │ HTTPS
                                              ▼
                                   Supabase Edge Function (MCP server)
-                                             │ service role, pinned user id
+                                             │ service role, user resolved per request
                                              ▼
 Phone (PWA, offline-first) ─────► Supabase Postgres (Auth + RLS + views)
 ```
@@ -39,21 +40,21 @@ and [docs/security.md](docs/security.md); the short version:
 5. **A token is an identity, not a password.** Each person gets their own MCP
    bearer token; the server stores only its SHA-256, hashes what it is given
    and resolves the user from `mcp_tokens`. Every tool then filters and stamps
-   that user. Static bearer auth is what every MCP client supports today —
-   `mcp-remote --header` for Claude Desktop, a URL-plus-key field for
-   claude.ai and ChatGPT custom connectors — so it works everywhere without
-   running an OAuth 2.1 authorization server. OAuth would change only how a
-   token is obtained, not what it authorizes; the upgrade path is documented,
-   not built.
+   that user. A bearer token (`mcp_tokens`, SHA-256 stored) or a Supabase OAuth
+   access token carrying `client_id` (`lib/oauth.ts`, shipped 2026-09-13)
+   resolves to a user; the server never trusts a plain session JWT. Bearer
+   covers `mcp-remote --header` for Claude Desktop, and OAuth sign-in covers
+   claude.ai and ChatGPT connectors. Either way the token only decides who is
+   asking, not what they may reach.
 
 ## Layout
 
 ```
 supabase/migrations/       schema, RLS, derived-metric views
-supabase/functions/mcp-server/   MCP server (Deno edge function, 22 tools)
+supabase/functions/mcp-server/   MCP server (Deno edge function)
 supabase/functions/coach/        in-app coach (Sonnet + the MCP tools above)
 supabase/seed/             generated exercise seed (873 exercises)
-pwa/                       React + Vite PWA, IndexedDB outbox, 6 screens
+pwa/                       React + Vite PWA, IndexedDB outbox
 scripts/                   seed generator, database validation harness
 docs/                      spec, architecture, decisions, security, setup
 ```
@@ -79,7 +80,7 @@ node scripts/validate-db.mjs           # runs migrations+seed+fixtures in PGlite
   service-role-behind-a-bearer is acceptable here
 - [docs/plan.md](docs/plan.md): historical build log (not the current plan)
 - [docs/roadmaps/2026-09-19-consolidated-roadmap.md](docs/roadmaps/2026-09-19-consolidated-roadmap.md):
-  active product and release roadmap. Phase 0 merged; Phase 1 is next.
+  active product and release roadmap (current phase and status are in it).
 - [docs/roadmaps/release-ledger.md](docs/roadmaps/release-ledger.md):
   stop-release finding status
 

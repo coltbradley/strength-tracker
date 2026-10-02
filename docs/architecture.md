@@ -8,11 +8,11 @@ What to build next is
 (Phase 0 merged; Phase 1 is next).
 
 ```
-Coach screenshot ──► Claude Desktop ──► mcp-remote (local, static bearer)
+Coach screenshot ──► Claude Desktop ──► mcp-remote (bearer) or OAuth sign-in
                                               │
                                               ▼ HTTPS
                                    Supabase Edge Function (mcp-server)
-                                              │ service role, pinned user id
+                                              │ service role, user per request
                                               ▼
 Phone (PWA, offline-first) ──► Supabase Postgres (Auth + RLS + views)
         IndexedDB queue          ▲
@@ -51,7 +51,8 @@ discards excluded). `sets.prescription_id` joins actual to planned, which is
 the analytical core: prescribed vs achieved, measured not self-reported.
 `training_maxes` and `goals` make %TM prescriptions resolvable and progress
 measurable. `goals` is written by Claude via MCP `set_goal` AND by the PWA's
-Record pin (direct PostgREST under owner RLS, online only, not the outbox). `load_kg` is always the TOTAL system load on both sides of that
+Record pin (direct PostgREST under owner RLS, online only, not the outbox), a
+write class of its own beside `exercise_prefs` below. `load_kg` is always the TOTAL system load on both sides of that
 join (a pair of 30 kg dumbbells is 60); `load_entry` on `sets` and
 `prescriptions` records whether the number was entered per side or as a
 total, with NULL meaning "not asserted" rather than "total". `session_skips`
@@ -124,7 +125,7 @@ service-role (MCP) path. The MCP server calls the same function for its own
 trained. The PWA uses the device clock instead, on purpose: the phone travels
 with the lifter. See [decisions.md](decisions.md).
 
-## MCP tool surface (41 tools)
+## MCP tool surface (42 tools)
 
 Read (`readOnlyHint: true`):
 
