@@ -281,6 +281,12 @@ function classify(op: OutboxOp, err: TransportError): ErrorClass {
     return "dead";
   if (err.status !== null && [400, 403, 404, 409, 422].includes(err.status))
     return "dead";
+  // Deterministic refusals of the REQUEST itself: too large, wrong media type,
+  // method not allowed. The same bytes get the same answer, and "retry" stops
+  // the whole flush, so one of these at the head used to stall every write
+  // queued behind it for good (CORE-6). Dead keeps flushing past it.
+  if (err.status !== null && [405, 413, 414, 415, 431].includes(err.status))
+    return "dead";
   return "retry"; // network errors, 5xx, timeouts, anything unknown
 }
 
@@ -327,6 +333,11 @@ export function deadKind(
   // 409 (a conflict on the row) does not
   if (code != null && /^23\d{3}$/.test(code)) return "rejected";
   if (status === 400 || status === 409 || status === 422) return "rejected";
+  // The request itself was too big / the wrong type / too long: a judgement on
+  // these bytes, which no retry changes. (405 is about the endpoint, like a
+  // 404, and stays 'unknown'.)
+  if (status === 413 || status === 414 || status === 415 || status === 431)
+    return "rejected";
   return "unknown";
 }
 
