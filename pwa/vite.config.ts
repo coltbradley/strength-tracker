@@ -109,5 +109,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Storage shim for Node 25+, whose built-in localStorage shadows jsdom's.
+    setupFiles: ["src/test-setup.ts"],
   },
 });
