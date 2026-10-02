@@ -24,3 +24,16 @@ before making changes. This file only adds Claude Code-specific notes.
 - This repo is also worked on by Codex, GitHub Copilot CLI, and the GitHub
   Copilot cloud agent. Keep anything that isn't Claude-specific in
   `AGENTS.md` so the other agents see it too.
+
+## Cloud sessions (claude.ai/code)
+
+- The environment's setup script is `scripts/cloud/environment-setup.sh`
+  (pasted into the environment dialog; Deno, Supabase CLI, Playwright
+  Chromium). Repo dependencies come from the SessionStart hook in
+  `.claude/settings.json` -> `scripts/cloud/session-start.sh`, which is a
+  no-op unless `CLAUDE_CODE_REMOTE=true`.
+- The environment holds no production credentials, on purpose: its variables
+  are readable by anyone using it and this repo is public. Work against PGlite
+  (`scripts/validate-db.mjs`) or a local `supabase start` stack, never prod.
+- Pushing `main` deploys to production. A cloud session works on a branch and
+  opens a PR; it does not push `main`.
