@@ -17,6 +17,10 @@
 # Playwright's browser CDN is NOT in Trusted; add these under Custom:
 #   cdn.playwright.dev
 #   playwright.download.prss.microsoft.com
+# public.ecr.aws serves image manifests, but the layers redirect to a
+# CloudFront host that Trusted refuses (403), so `supabase start` cannot pull
+# its images without this one too:
+#   d2glxqk2uabbnd.cloudfront.net
 
 log() { echo "[env-setup] $*"; }
 
