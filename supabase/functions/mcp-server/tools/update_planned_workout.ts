@@ -24,6 +24,7 @@ import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
 import { assertIsoDate } from "../lib/dates.ts";
 import {
+  dbRefusal,
   guard,
   jsonResult,
   refuseIfEphemeral,
@@ -285,7 +286,15 @@ export function registerUpdatePlannedWorkout(
               p_workout_patch: dayPatch,
             },
           );
-          if (error) throw new Error(`update planned day: ${error.message}`);
+          // 55000 (open session) and 23001 (a session references the day) are
+          // the plan-lock triggers refusing correctly. The DB stays the
+          // authority; the model gets its message and hint, not a 500.
+          if (error) {
+            throw dbRefusal(error, "Editing this planned day", [
+              "55000",
+              "23001",
+            ]);
+          }
         }
 
         return jsonResult({

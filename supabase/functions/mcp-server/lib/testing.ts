@@ -17,6 +17,8 @@ export interface Recorded {
   insert?: unknown;
   /** The patch passed to .update(), if this call chain used it. */
   update?: unknown;
+  /** The [from, to] passed to .range(), if the chain paged. */
+  range?: [number, number];
 }
 
 export interface ToolResult {
@@ -24,11 +26,41 @@ export interface ToolResult {
   content: { type: string; text: string }[];
 }
 
+export interface FakeError {
+  code?: string;
+  message: string;
+  hint?: string;
+  details?: string;
+}
+
+export interface HarnessOptions {
+  /** Resolve EVERY query on this table with a PostgREST-shaped error. */
+  errors?: Record<string, FakeError>;
+  /** Handlers for `client.rpc(name, args)`; default resolves `{data:null}`. */
+  rpc?: Record<
+    string,
+    (args: unknown) => { data?: unknown; error?: FakeError | null }
+  >;
+}
+
 class FakeQuery {
   constructor(
     private readonly rec: Recorded,
     private readonly rows: unknown[],
+    private readonly error: FakeError | null = null,
   ) {}
+  upsert(row: unknown, _opts?: unknown) {
+    this.rec.insert = row;
+    return this;
+  }
+  maybeSingle() {
+    this.one = true;
+    return this;
+  }
+  range(from: number, to: number) {
+    this.rec.range = [from, to];
+    return this;
+  }
   select(columns: string) {
     this.rec.columns = columns;
     return this;
@@ -66,6 +98,24 @@ class FakeQuery {
   in(c: string, v: unknown[]) {
     return this.f("in", c, v);
   }
+  gt(c: string, v: unknown) {
+    return this.f("gt", c, v);
+  }
+  lt(c: string, v: unknown) {
+    return this.f("lt", c, v);
+  }
+  neq(c: string, v: unknown) {
+    return this.f("neq", c, v);
+  }
+  not(c: string, op: string, v: unknown) {
+    return this.f(`not.${op}`, c, v);
+  }
+  or(expr: string) {
+    return this.f("or", "", expr);
+  }
+  contains(c: string, v: unknown[]) {
+    return this.f("contains", c, v);
+  }
   overlaps(c: string, v: unknown[]) {
     return this.f("overlaps", c, v);
   }
@@ -83,9 +133,16 @@ class FakeQuery {
     return this;
   }
   private one = false;
-  then<R>(resolve: (r: { data: unknown; error: null }) => R) {
+  then<R>(resolve: (r: { data: unknown; error: FakeError | null }) => R) {
+    if (this.error) {
+      return Promise.resolve({ data: null, error: this.error }).then(resolve);
+    }
+    let rows = this.rows;
+    if (this.rec.range) {
+      rows = rows.slice(this.rec.range[0], this.rec.range[1] + 1);
+    }
     return Promise.resolve({
-      data: this.one ? this.rows[0] ?? null : this.rows,
+      data: this.one ? rows[0] ?? null : rows,
       error: null,
     }).then(resolve);
   }
@@ -100,9 +157,16 @@ export function toolHarness(
   fixtures: Record<string, unknown[]> = {},
   ownerId: string = TEST_USER,
   ctx: RequestContext = { requestId: "test-request" },
+  opts: HarnessOptions = {},
 ) {
   const calls: Recorded[] = [];
+  const rpcCalls: { name: string; args: unknown }[] = [];
   const client = {
+    rpc(name: string, args: unknown) {
+      rpcCalls.push({ name, args });
+      const r = opts.rpc?.[name]?.(args) ?? { data: null };
+      return Promise.resolve({ data: r.data ?? null, error: r.error ?? null });
+    },
     from(table: string) {
       const rec: Recorded = {
         table,
@@ -112,7 +176,11 @@ export function toolHarness(
         limit: null,
       };
       calls.push(rec);
-      return new FakeQuery(rec, fixtures[table] ?? []);
+      return new FakeQuery(
+        rec,
+        fixtures[table] ?? [],
+        opts.errors?.[table] ?? null,
+      );
     },
   };
   const db = { client, ownerId } as unknown as Db;
@@ -146,6 +214,7 @@ export function toolHarness(
   ) => Promise<ToolResult>;
   return {
     calls,
+    rpcCalls,
     meta,
     run: async (args: Record<string, unknown>) =>
       await call(parse.parse(args) as Record<string, unknown>),

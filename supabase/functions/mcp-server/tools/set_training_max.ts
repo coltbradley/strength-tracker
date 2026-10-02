@@ -3,7 +3,12 @@ import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must, requireExercise } from "../lib/db.ts";
 import { assertIsoDate, todayIso } from "../lib/dates.ts";
-import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
+import {
+  dbRefusal,
+  guard,
+  jsonResult,
+  type RequestContext,
+} from "../lib/errors.ts";
 
 export function registerSetTrainingMax(
   server: McpServer,
@@ -17,8 +22,9 @@ export function registerSetTrainingMax(
       description:
         "Record a training max for an exercise, in kg, effective from a date " +
         "(default today). History is kept: a new effective date adds a row, the " +
-        "same date overwrites. %TM prescriptions resolve against the TM current " +
-        "on the relevant date. Returns the previous current TM and the new value.",
+        "same date overwrites unless logged %TM sets already used that max, " +
+        "in which case add a new row dated from today instead. %TM prescriptions " +
+        "resolve against the TM current on the relevant date. Returns the previous current TM and the new value.",
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -64,8 +70,7 @@ export function registerSetTrainingMax(
           .maybeSingle();
         if (prevError) throw new Error(`previous TM: ${prevError.message}`);
 
-        const row = must(
-          await db.client
+        const upserted = await db.client
             .from("training_maxes")
             .upsert(
               {
@@ -77,9 +82,18 @@ export function registerSetTrainingMax(
               { onConflict: "user_id,exercise_id,effective_date" },
             )
             .select("value_kg, effective_date")
-            .single(),
-          "upsert training max",
-        ) as { value_kg: number; effective_date: string };
+            .single();
+        // 23514: logged %TM sets already resolved against this TM, so the
+        // trigger refuses to rewrite it. A new date is the correction.
+        if (upserted.error) {
+          throw dbRefusal(upserted.error, "Overwriting this training max", [
+            "23514",
+          ]);
+        }
+        const row = must(upserted, "upsert training max") as {
+          value_kg: number;
+          effective_date: string;
+        };
 
         // A future-dated TM is legal but invisible to v_current_tm (and to
         // %TM resolution) until the date arrives — make that explicit.

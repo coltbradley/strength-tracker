@@ -19,6 +19,34 @@ export interface RequestContext {
   toolError?: string;
 }
 
+/** The PostgREST error fields the mappers below read. */
+export interface DbErrorLike {
+  code?: string | null;
+  message: string;
+  hint?: string | null;
+}
+
+/**
+ * A database refusal that is the system working, not a bug: the plan-lock
+ * triggers (55000 open session, 23001 day referenced by a session) and the
+ * training-max history trigger (23514). The DB message and hint are written
+ * for exactly this reader, so they go to the model verbatim; anything else
+ * stays a plain Error and reaches Sentry via guard().
+ */
+export function dbRefusal(
+  error: DbErrorLike,
+  what: string,
+  codes: readonly string[],
+): Error {
+  if (error.code && codes.includes(error.code)) {
+    return new ToolError(
+      `${what} was refused: ${error.message}.` +
+        (error.hint ? ` ${error.hint}` : ""),
+    );
+  }
+  return new Error(`${what}: ${error.message}`);
+}
+
 export function refuseIfEphemeral(ctx: RequestContext, action: string): void {
   if (ctx.ephemeral) {
     throw new ToolError(
