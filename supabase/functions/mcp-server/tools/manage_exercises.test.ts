@@ -158,3 +158,91 @@ Deno.test(
 Deno.test("update_exercise is still destructive-hinted", () => {
   assertEquals(h("update_exercise").meta.readOnly, false);
 });
+
+// --- audit regressions --------------------------------------------------------
+
+const ephemeralCtx = { requestId: "test-request", ephemeral: true };
+
+Deno.test("MCP-1: update_exercise stamps updated_by with the token's user", async () => {
+  const t = h("update_exercise", {
+    exercises: [
+      {
+        id: "Barbell_Squat",
+        name: "Barbell Squat",
+        source: "free-exercise-db",
+        exercise_owners: null,
+      },
+    ],
+  });
+  await t.run({ id: "Barbell_Squat", name: "Barbell Back Squat" });
+  const update = t.calls[1].update as Record<string, unknown>;
+  assertEquals(update.updated_by, TEST_USER);
+  assertEquals(update.source, "edited");
+});
+
+Deno.test("MCP-11: a duplicate id never confirms that the id exists", async () => {
+  const t = toolHarness(
+    registerManageExercises,
+    "add_exercise",
+    {},
+    TEST_USER,
+    undefined,
+    {
+      errors: {
+        exercises: { code: "23505", message: "duplicate key value" },
+      },
+    },
+  );
+  const result = await t.run({
+    name: "Pallof Press",
+    primary_muscles: ["abdominals"],
+    equipment: "cable",
+  });
+  assertEquals(result.isError, true);
+  const text = result.content[0].text;
+  assertEquals(text.includes("already exists"), false, text);
+  assertEquals(text.includes("update_exercise"), false, text);
+  assertStringIncludes(text, "different id");
+});
+
+Deno.test("MCP-11: a name with no Latin letters asks for an explicit id instead of colliding on '_'", async () => {
+  const t = h("add_exercise");
+  const result = await t.run({
+    name: "スクワット",
+    primary_muscles: ["quadriceps"],
+    equipment: "barbell",
+  });
+  assertEquals(result.isError, true);
+  assertStringIncludes(result.content[0].text, "pass id explicitly");
+  assertEquals(t.calls.length, 0, "refused before any write");
+});
+
+Deno.test("MCP-11: accents fold to ASCII in the derived id", async () => {
+  const t = h("add_exercise");
+  await t.run({
+    name: "Écarté Machine",
+    primary_muscles: ["chest"],
+    equipment: "machine",
+  });
+  const insert = t.calls[0].insert as Record<string, unknown>;
+  assertEquals(insert.id, "Ecarte_Machine");
+});
+
+Deno.test("MCP-17: update_exercise and delete_exercise refuse ephemeral callers", async () => {
+  for (const [tool, args] of [
+    ["update_exercise", { id: "X", name: "Y" }],
+    ["delete_exercise", { id: "X" }],
+  ] as const) {
+    const t = toolHarness(
+      registerManageExercises,
+      tool,
+      {},
+      TEST_USER,
+      ephemeralCtx,
+    );
+    const result = await t.run(args);
+    assertEquals(result.isError, true);
+    assertStringIncludes(result.content[0].text, "in-app coach cannot");
+    assertEquals(t.calls.length, 0, `${tool} refused before any query`);
+  }
+});

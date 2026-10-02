@@ -11,6 +11,7 @@ import { must } from "../lib/db.ts";
 import {
   guard,
   jsonResult,
+  refuseIfEphemeral,
   ToolError,
   type RequestContext,
 } from "../lib/errors.ts";
@@ -62,6 +63,9 @@ export function registerDeleteProgram(
           throw new ToolError(`No program with id ${args.program_id}.`);
         }
         const program = rows[0];
+        if (program.confirmed_at !== null) {
+          refuseIfEphemeral(ctx, "delete a confirmed plan");
+        }
         if (program.confirmed_at !== null && !args.confirm_delete_confirmed) {
           throw new ToolError(
             `'${program.name}' is CONFIRMED — the active plan. Ask the user ` +
