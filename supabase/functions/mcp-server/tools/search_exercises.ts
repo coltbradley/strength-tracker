@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
+import { inChunks } from "../lib/chunk.ts";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
 import {
@@ -9,6 +10,9 @@ import {
   ToolError,
 } from "../lib/errors.ts";
 import { safeFilterTerm } from "../lib/filters.ts";
+
+/** Candidates ranked before the cut to `limit`. */
+const CANDIDATE_CAP = 300;
 
 export function registerSearchExercises(
   server: McpServer,
@@ -102,16 +106,67 @@ export function registerSearchExercises(
         if (args.muscle)
           query = query.contains("primary_muscles", [args.muscle]);
 
-        const rows = must(
-          await query.order("name").limit(args.limit),
+        // Rank BEFORE cutting. Cutting to `limit` alphabetically first meant a
+        // broad term ("press", "squat") could push the variant the lifter
+        // actually trains past the page, so the model picked an untrained
+        // twin and split their history (MCP-6). Pull a wider candidate page,
+        // rank it, then take `limit`.
+        const candidates = must(
+          await query.order("name").limit(CANDIDATE_CAP),
           "search exercises",
         ) as unknown as { id: string }[];
+        const candidateIds = candidates.map((r) => r.id);
+
+        // The seeded library carries a dozen near-identical variants of most
+        // movements — eleven lateral raises, five bench presses — in
+        // alphabetical order. Handing that back unranked is how a program ends
+        // up prescribing three squats that are the same squat. What the lifter
+        // has ACTUALLY trained is the signal: it is the movement they have a
+        // bar loaded for, a history in, and a working weight for.
+        const trained = await inChunks<{
+          exercise_id: string;
+          performed_at: string;
+        }>(
+          candidateIds,
+          "trained exercises",
+          (ids) =>
+            db.client
+              .from("v_live_sets")
+              .select("exercise_id, performed_at")
+              .eq("user_id", db.ownerId)
+              .in("exercise_id", ids)
+              .order("performed_at", { ascending: false })
+              .limit(400),
+        );
+
+        const lastTrained = new Map<string, string>();
+        const setCount = new Map<string, number>();
+        for (const t of trained) {
+          const prev = lastTrained.get(t.exercise_id);
+          if (prev === undefined || t.performed_at > prev) {
+            lastTrained.set(t.exercise_id, t.performed_at);
+          }
+          setCount.set(t.exercise_id, (setCount.get(t.exercise_id) ?? 0) + 1);
+        }
+
+        // Trained first, most recent first within that; everything else keeps
+        // its name order behind them (Array.sort is stable).
+        const rows = candidates
+          .map((r) => ({ r, last: lastTrained.get(r.id) }))
+          .sort((a, b) => {
+            if (a.last && b.last) return b.last.localeCompare(a.last);
+            if (a.last) return -1;
+            if (b.last) return 1;
+            return 0;
+          })
+          .slice(0, args.limit)
+          .map((x) => x.r);
 
         // Notes travel WITH the exercise. Programming a movement without
         // seeing what the lifter has said about it is how a plan ends up
         // prescribing the thing their shoulder does not like — and making the
         // assistant fetch history per exercise to find that out is a round
-        // trip it will usually skip.
+        // trip it will usually skip. Only the returned rows need them.
         const ids = rows.map((r) => r.id);
         const [standing, setNotes] = ids.length === 0
           ? [[], []]
@@ -154,33 +209,6 @@ export function registerSearchExercises(
           }
         }
 
-        // The seeded library carries a dozen near-identical variants of most
-        // movements — eleven lateral raises, five bench presses — in
-        // alphabetical order. Handing that back unranked is how a program ends
-        // up prescribing three squats that are the same squat. What the lifter
-        // has ACTUALLY trained is the signal: it is the movement they have a
-        // bar loaded for, a history in, and a working weight for.
-        const trained = ids.length === 0
-          ? []
-          : (must(
-              await db.client
-                .from("v_live_sets")
-                .select("exercise_id, performed_at")
-                .eq("user_id", db.ownerId)
-                .in("exercise_id", ids)
-                .order("performed_at", { ascending: false })
-                .limit(400),
-              "trained exercises",
-            ) as unknown as { exercise_id: string; performed_at: string }[]);
-
-        const lastTrained = new Map<string, string>();
-        const setCount = new Map<string, number>();
-        for (const t of trained) {
-          if (!lastTrained.has(t.exercise_id))
-            lastTrained.set(t.exercise_id, t.performed_at);
-          setCount.set(t.exercise_id, (setCount.get(t.exercise_id) ?? 0) + 1);
-        }
-
         const enriched = rows.map((r) => {
           const note = standingBy.get(r.id);
           const recent = recentBy.get(r.id);
@@ -193,17 +221,6 @@ export function registerSearchExercises(
               ? { last_trained: last, logged_sets: setCount.get(r.id) ?? 0 }
               : {}),
           };
-        });
-
-        // Trained first, most recent first within that; everything else keeps
-        // its name order behind them.
-        enriched.sort((a, b) => {
-          const at = "last_trained" in a ? (a.last_trained as string) : "";
-          const bt = "last_trained" in b ? (b.last_trained as string) : "";
-          if (at && bt) return bt.localeCompare(at);
-          if (at) return -1;
-          if (bt) return 1;
-          return 0;
         });
 
         return jsonResult({

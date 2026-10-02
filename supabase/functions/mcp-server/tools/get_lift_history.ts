@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must, requireExercise } from "../lib/db.ts";
+import { inChunks } from "../lib/chunk.ts";
 import { assertIsoDate } from "../lib/dates.ts";
 import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
 
@@ -141,17 +142,16 @@ export function registerGetLiftHistory(
             const noteRows =
               rows.length === 0
                 ? []
-                : (must(
-                    await db.client
-                      .from("set_notes")
-                      .select("set_id, note")
-                      .eq("user_id", db.ownerId)
-                      .in(
-                        "set_id",
-                        rows.map((r) => r.id),
-                      ),
+                : await inChunks<{ set_id: string; note: string }>(
+                    rows.map((r) => r.id),
                     "set_notes",
-                  ) as unknown as { set_id: string; note: string }[]);
+                    (ids) =>
+                      db.client
+                        .from("set_notes")
+                        .select("set_id, note")
+                        .eq("user_id", db.ownerId)
+                        .in("set_id", ids),
+                  );
             const noteBySet = new Map(
               noteRows.map((n) => [n.set_id, n.note] as const),
             );

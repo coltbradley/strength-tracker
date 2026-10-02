@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import type { Db } from "../lib/db.ts";
+import { inChunksPaged } from "../lib/chunk.ts";
 import { must } from "../lib/db.ts";
 import {
   guard,
@@ -104,8 +105,10 @@ export function registerGetProgram(
         "consecutive rows naming the same exercise are one ramp (e.g. a warmup " +
         "build-up into a top set) and the app renders them as a single entry. " +
         "`section` groups consecutive rows under a heading ('Activations', " +
-        "'Abs'); `tracking` is 'reps' or 'done', where 'done' is a completion " +
-        "tick for movements nobody counts. " +
+        "'Abs'); `tracking` is 'reps', 'done' or 'time': 'done' is a " +
+        "completion tick for movements nobody counts, 'time' is a hold or " +
+        "carry logged in seconds (restate it as 'time' when you rewrite the " +
+        "day). " +
         "`notes` on a day is the COACH's words from a parse; `plan_note` is " +
         "the user's own and must never be overwritten by a parse.\n\n" +
         "With no program_id this returns the NEWEST program only, which is " +
@@ -181,40 +184,45 @@ export function registerGetProgram(
           });
         }
 
-        const workouts = must(
-          await db.client
-            // v_plan_workouts excludes saved templates, which are dateless
-            // planned days and are not part of the plan.
-            .from("v_plan_workouts")
-            .select("id, day_index, label, scheduled_date, notes, plan_note")
-            .eq("user_id", db.ownerId)
-            .eq("program_id", program.id)
-            .order("day_index", { ascending: true }),
+        const workouts = await inChunksPaged<WorkoutRow>(
+          [program.id],
           "v_plan_workouts",
-        ) as unknown as WorkoutRow[];
+          (ids, from, to) =>
+            db.client
+              // v_plan_workouts excludes saved templates, which are dateless
+              // planned days and are not part of the plan.
+              .from("v_plan_workouts")
+              .select("id, day_index, label, scheduled_date, notes, plan_note")
+              .eq("user_id", db.ownerId)
+              .in("program_id", ids)
+              .order("day_index", { ascending: true })
+              .range(from, to),
+        );
 
-        const rx =
-          workouts.length === 0
-            ? []
-            : (must(
-                await db.client
-                  .from("v_resolved_prescriptions")
-                  .select(
-                    "id, planned_workout_id, position, exercise_id, exercise_name, " +
-                      "set_type, section, tracking, sets, reps_min, reps_max, load_kg, load_pct_tm, " +
-                      "resolved_load_kg, load_entry, rest_seconds, superset_group, notes, " +
-                      "entered_load, entered_unit",
-                  )
-                  .eq("user_id", db.ownerId)
-                  .in(
-                    "planned_workout_id",
-                    workouts.map((w) => w.id),
-                  )
-                  .order("position", { ascending: true }),
-                "v_resolved_prescriptions",
-              ) as unknown as (PrescriptionRow & {
-                planned_workout_id: string;
-              })[]);
+        // A program the app keeps appending days to can pass PostgREST's
+        // 1000-row cap, which truncates with no error: chunk the day ids (the
+        // URL) and page inside each chunk (the cap). The model edits from this
+        // read, so a silent cut would drop prescriptions on the next rewrite.
+        const rx = await inChunksPaged<
+          PrescriptionRow & { planned_workout_id: string }
+        >(
+          workouts.map((w) => w.id),
+          "v_resolved_prescriptions",
+          (ids, from, to) =>
+            db.client
+              .from("v_resolved_prescriptions")
+              .select(
+                "id, planned_workout_id, position, exercise_id, exercise_name, " +
+                  "set_type, section, tracking, sets, reps_min, reps_max, load_kg, load_pct_tm, " +
+                  "resolved_load_kg, load_entry, rest_seconds, superset_group, notes, " +
+                  "entered_load, entered_unit",
+              )
+              .eq("user_id", db.ownerId)
+              .in("planned_workout_id", ids)
+              .order("planned_workout_id", { ascending: true })
+              .order("position", { ascending: true })
+              .range(from, to),
+        );
 
         const byWorkout = new Map<string, PrescriptionRow[]>();
         for (const r of rx) {
@@ -312,22 +320,21 @@ export function registerListPrograms(
         // a program's day count here is the number of days it will actually
         // return: templates (dateless saved days) and days of a discarded
         // program are already gone at the view.
-        const days = programs.length === 0
-          ? []
-          : (must(
-              await db.client
-                .from("v_plan_workouts")
-                .select("program_id, scheduled_date")
-                .eq("user_id", db.ownerId)
-                .in(
-                  "program_id",
-                  programs.map((p) => p.id),
-                ),
-              "v_plan_workouts",
-            ) as unknown as {
-              program_id: string;
-              scheduled_date: string | null;
-            }[]);
+        const days = await inChunksPaged<{
+          program_id: string;
+          scheduled_date: string | null;
+        }>(
+          programs.map((p) => p.id),
+          "v_plan_workouts",
+          (ids, from, to) =>
+            db.client
+              .from("v_plan_workouts")
+              .select("program_id, scheduled_date, id")
+              .eq("user_id", db.ownerId)
+              .in("program_id", ids)
+              .order("id", { ascending: true })
+              .range(from, to),
+        );
 
         const stats = new Map<
           string,

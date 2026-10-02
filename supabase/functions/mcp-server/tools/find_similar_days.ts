@@ -18,6 +18,7 @@ import { z } from "zod";
 import type { Db } from "../lib/db.ts";
 import { must } from "../lib/db.ts";
 import { guard, jsonResult, type RequestContext } from "../lib/errors.ts";
+import { chunk, inChunks } from "../lib/chunk.ts";
 import { lastTimeFor } from "../lib/lastTime.ts";
 import {
   jaccard,
@@ -127,25 +128,28 @@ export function registerFindSimilarDays(
 
         const dayIds = days.map((d) => d.id);
         const exercisesByDay = new Map<string, string[]>();
-        for (let from = 0;; from += PAGE) {
-          const page = must(
-            await db.client
-              .from("prescriptions")
-              .select("planned_workout_id, exercise_id, position")
-              .eq("user_id", db.ownerId)
-              .in("planned_workout_id", dayIds)
-              .order("planned_workout_id", { ascending: true })
-              .order("position", { ascending: true })
-              .range(from, from + PAGE - 1),
-            "prescriptions",
-          ) as RxRow[];
-          for (const r of page) {
-            const list = exercisesByDay.get(r.planned_workout_id);
-            if (list === undefined) {
-              exercisesByDay.set(r.planned_workout_id, [r.exercise_id]);
-            } else list.push(r.exercise_id);
+        // Chunked by day id (the URL), then paged within a chunk (the row cap).
+        for (const part of chunk(dayIds)) {
+          for (let from = 0;; from += PAGE) {
+            const page = must(
+              await db.client
+                .from("prescriptions")
+                .select("planned_workout_id, exercise_id, position")
+                .eq("user_id", db.ownerId)
+                .in("planned_workout_id", part)
+                .order("planned_workout_id", { ascending: true })
+                .order("position", { ascending: true })
+                .range(from, from + PAGE - 1),
+              "prescriptions",
+            ) as RxRow[];
+            for (const r of page) {
+              const list = exercisesByDay.get(r.planned_workout_id);
+              if (list === undefined) {
+                exercisesByDay.set(r.planned_workout_id, [r.exercise_id]);
+              } else list.push(r.exercise_id);
+            }
+            if (page.length < PAGE) break;
           }
-          if (page.length < PAGE) break;
         }
 
         const matched = days
@@ -170,14 +174,16 @@ export function registerFindSimilarDays(
         }
 
         const programIds = [...new Set(matched.map((m) => m.day.program_id))];
-        const programs = must(
-          await db.client
+        const programs = await inChunks<{
+          id: string;
+          name: string;
+          confirmed_at: string | null;
+        }>(programIds, "programs", (ids) =>
+          db.client
             .from("programs")
             .select("id, name, confirmed_at")
             .eq("user_id", db.ownerId)
-            .in("id", programIds),
-          "programs",
-        ) as { id: string; name: string; confirmed_at: string | null }[];
+            .in("id", ids));
         const programById = new Map(programs.map((p) => [p.id, p] as const));
 
         const { byDay: lastTime, sets_truncated } = await lastTimeFor(
@@ -190,10 +196,11 @@ export function registerFindSimilarDays(
         const allIds = [
           ...new Set([...query, ...matched.flatMap((m) => m.planned)]),
         ];
-        const names = must(
-          await db.client.from("exercises").select("id, name").in("id", allIds),
+        const names = await inChunks<{ id: string; name: string }>(
+          allIds,
           "exercise names",
-        ) as { id: string; name: string }[];
+          (ids) => db.client.from("exercises").select("id, name").in("id", ids),
+        );
         const nameOf = new Map(names.map((e) => [e.id, e.name] as const));
 
         const querySet = new Set(query);

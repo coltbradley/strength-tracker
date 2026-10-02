@@ -8,7 +8,7 @@
 // lifter corrected would carry the typo forward.
 
 import type { Db } from "./db.ts";
-import { must } from "./db.ts";
+import { inChunks } from "./chunk.ts";
 import {
   type LoggedSet,
   performedOrder,
@@ -87,68 +87,119 @@ export async function lastTimeFor(
   const byDay = new Map<string, LastTime>();
   if (plannedWorkoutIds.length === 0) return { byDay, sets_truncated: false };
 
-  const sessions = must(
-    await db.client
-      .from("sessions")
-      .select("id, planned_workout_id, started_at, ended_at, session_rpe, notes")
-      .eq("user_id", db.ownerId)
-      .is("discarded_at", null)
-      .in("planned_workout_id", plannedWorkoutIds)
-      .order("started_at", { ascending: false }),
-    "sessions against planned days",
-  ) as SessionRow[];
+  // Day ids come from find_similar_days (up to 300), so the list is chunked.
+  // Each chunk is its own request; the newest-first order is restored here.
+  const sessions = (
+    await inChunks<SessionRow>(
+      plannedWorkoutIds,
+      "sessions against planned days",
+      (ids) =>
+        db.client
+          .from("sessions")
+          .select(
+            "id, planned_workout_id, started_at, ended_at, session_rpe, notes",
+          )
+          .eq("user_id", db.ownerId)
+          .is("discarded_at", null)
+          .in("planned_workout_id", ids)
+          .order("started_at", { ascending: false }),
+    )
+  ).sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
 
-  // newest first, so the first session seen per day is the last time
-  const latest = new Map<string, SessionRow>();
+  // Candidates per day, newest first. A session with no live sets (an
+  // abandoned start, or a foreign empty session the sweep leaves OPEN) is not
+  // "last time": it would mask the real previous session and carry no loads
+  // forward. So walk back, a round at a time, until a day finds a session
+  // that has sets. Bounded: a day with more than MAX_ROUNDS empty sessions
+  // reads as untrained rather than costing unbounded queries.
+  const candidates = new Map<string, SessionRow[]>();
   for (const s of sessions) {
-    if (!latest.has(s.planned_workout_id)) latest.set(s.planned_workout_id, s);
+    const list = candidates.get(s.planned_workout_id);
+    if (list === undefined) candidates.set(s.planned_workout_id, [s]);
+    else list.push(s);
+  }
+  const MAX_ROUNDS = 10;
+  const latest = new Map<string, SessionRow>();
+  const setRows: SetRow[] = [];
+  let truncated = false;
+  let pending = new Map<string, number>(
+    [...candidates.keys()].map((dayId) => [dayId, 0]),
+  );
+  for (let round = 0; round < MAX_ROUNDS && pending.size > 0; round++) {
+    const probe = new Map<string, string>(); // session id -> day id
+    for (const [dayId, idx] of pending) {
+      probe.set(candidates.get(dayId)![idx].id, dayId);
+    }
+    // Newest first with a cap, then re-sorted: a capped ascending read would
+    // drop the NEWEST sets of the session being carried forward.
+    const got = await inChunks<SetRow>(
+      [...probe.keys()],
+      "last time's sets",
+      (ids) =>
+        db.client
+          .from("v_live_sets")
+          .select(
+            "id, session_id, exercise_id, set_index, set_type, load_kg, " +
+              "load_entry, reps, performed_at, entered_load, entered_unit",
+          )
+          .eq("user_id", db.ownerId)
+          .in("session_id", ids)
+          .order("performed_at", { ascending: false })
+          .limit(SET_CAP),
+    );
+    if (got.length >= SET_CAP) truncated = true;
+    const withSets = new Set(got.map((r) => r.session_id));
+    const next = new Map<string, number>();
+    for (const [dayId, idx] of pending) {
+      const cand = candidates.get(dayId)![idx];
+      if (withSets.has(cand.id)) {
+        latest.set(dayId, cand);
+      } else if (idx + 1 < candidates.get(dayId)!.length) {
+        next.set(dayId, idx + 1);
+      }
+    }
+    setRows.push(...got.filter((r) => latest.get(probe.get(r.session_id)!)?.id === r.session_id));
+    pending = next;
   }
   if (latest.size === 0) return { byDay, sets_truncated: false };
+  setRows.sort((a, b) =>
+    a.performed_at < b.performed_at ? -1 : a.performed_at > b.performed_at ? 1 : 0
+  );
   const sessionIds = [...latest.values()].map((s) => s.id);
-
-  const setRows = must(
-    await db.client
-      .from("v_live_sets")
-      .select(
-        "id, session_id, exercise_id, set_index, set_type, load_kg, " +
-          "load_entry, reps, performed_at, entered_load, entered_unit",
-      )
-      .eq("user_id", db.ownerId)
-      .in("session_id", sessionIds)
-      .order("performed_at", { ascending: true })
-      .limit(SET_CAP),
-    "last time's sets",
-  ) as unknown as SetRow[];
-  const truncated = setRows.length === SET_CAP;
 
   const exIds = [...new Set(setRows.map((r) => r.exercise_id))];
   const setIds = setRows.map((r) => r.id);
   // Three small reads, in sequence: PostgREST calls from an edge function are
   // milliseconds apart and the code that reads them stays flat.
-  const nameRows = exIds.length === 0 ? [] : must(
-    await db.client.from("exercises").select("id, name").in("id", exIds),
+  const nameRows = await inChunks<{ id: string; name: string }>(
+    exIds,
     "exercise names",
-  ) as { id: string; name: string }[];
-  const noteRows = setIds.length === 0 ? [] : must(
-    await db.client
-      .from("set_notes")
-      .select("set_id, note")
-      .eq("user_id", db.ownerId)
-      .in("set_id", setIds),
+    (ids) => db.client.from("exercises").select("id, name").in("id", ids),
+  );
+  const noteRows = await inChunks<{ set_id: string; note: string }>(
+    setIds,
     "set notes",
-  ) as { set_id: string; note: string }[];
-  const adherenceRows = must(
-    await db.client
-      .from("v_adherence")
-      .select("set_id, prescribed_load_kg, rep_outcome")
-      .eq("user_id", db.ownerId)
-      .in("session_id", sessionIds),
-    "adherence",
-  ) as {
+    (ids) =>
+      db.client
+        .from("set_notes")
+        .select("set_id, note")
+        .eq("user_id", db.ownerId)
+        .in("set_id", ids),
+  );
+  const adherenceRows = await inChunks<{
     set_id: string;
     prescribed_load_kg: number | null;
     rep_outcome: "missed" | "hit" | "exceeded";
-  }[];
+  }>(
+    sessionIds,
+    "adherence",
+    (ids) =>
+      db.client
+        .from("v_adherence")
+        .select("set_id, prescribed_load_kg, rep_outcome")
+        .eq("user_id", db.ownerId)
+        .in("session_id", ids),
+  );
   const nameById = new Map(nameRows.map((e) => [e.id, e.name] as const));
   const noteById = new Map(noteRows.map((n) => [n.set_id, n.note] as const));
   const adherenceById = new Map(

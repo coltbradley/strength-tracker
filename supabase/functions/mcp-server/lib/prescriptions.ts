@@ -47,14 +47,21 @@ export const prescriptionSchema = z
           "not invent sections they did not write.",
       ),
     tracking: z
-      .enum(["reps", "done"])
+      .enum(["reps", "done", "time"])
       .optional()
       .describe(
         "How it is logged. 'reps' (the default) is weight and reps. 'done' " +
           "is a completion tick, for movements nobody counts — band " +
           "activations, mobility drills, anything the coach wrote without a " +
           "load or a rep target. A 'done' set records reps 0 at load 0 and " +
-          "stays out of volume and e1RM.",
+          "stays out of volume and e1RM. 'time' is a hold or a carry measured " +
+          "in seconds (plank, farmer's carry, dead hang): the lifter logs the " +
+          "seconds at the set, in the app, so the prescription holds no " +
+          "duration. reps_min and reps_max are still required by the " +
+          "database (use 1 and 1) and mean nothing for a timed row; put a " +
+          "duration the coach wrote ('45s') in `notes`. Restate a day's " +
+          "'time' rows as 'time' when you rewrite the day, or they come back " +
+          "as rep sets.",
       ),
     set_type: z
       .enum(["warmup", "working", "backoff"])

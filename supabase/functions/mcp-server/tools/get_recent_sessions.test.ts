@@ -111,3 +111,43 @@ Deno.test(
 Deno.test("is read-only", () => {
   assertEquals(h().meta.readOnly, true);
 });
+
+Deno.test("MCP-5: include_sets reads newest-first so the cap cuts the OLDEST sets, and returns each session oldest-first", async () => {
+  const f = baseFixtures();
+  // As a desc-ordered query would return them.
+  f.v_live_sets = [
+    { id: "c", session_id: SESSION_ID, exercise_id: "X", set_index: 2, performed_at: "2026-09-16T09:30:00Z" },
+    { id: "b", session_id: SESSION_ID, exercise_id: "X", set_index: 1, performed_at: "2026-09-16T09:20:00Z" },
+    { id: "a", session_id: SESSION_ID, exercise_id: "X", set_index: 0, performed_at: "2026-09-16T09:10:00Z" },
+  ];
+  const t = h(f);
+  const body = payload(await t.run({ include_sets: true }));
+  const setsCall = t.calls.find((c) => c.table === "v_live_sets")!;
+  assertEquals(setsCall.order[0], { column: "performed_at", ascending: false });
+  assertEquals(
+    body.sessions[0].sets.map((s: { id: string }) => s.id),
+    ["a", "b", "c"],
+  );
+});
+
+Deno.test("MCP-4: include_sets chunks the set_notes id list", async () => {
+  const f = baseFixtures();
+  f.v_live_sets = Array.from({ length: 250 }, (_, i) => ({
+    id: `set-${i}`,
+    session_id: SESSION_ID,
+    exercise_id: "X",
+    set_index: i,
+    performed_at: "2026-09-16T09:10:00Z",
+  }));
+  f.set_notes = [{ set_id: "set-249", note: "tweaky" }];
+  const t = h(f);
+  const body = payload(await t.run({ include_sets: true }));
+  const noteCalls = t.calls.filter((c) => c.table === "set_notes");
+  assertEquals(noteCalls.length, 3);
+  for (const c of noteCalls) {
+    const list = c.filters.find((x) => x.startsWith("in:"))!;
+    assertEquals(list.slice(list.indexOf("=") + 1).split(",").length <= 100, true);
+  }
+  const last = body.sessions[0].sets.find((s: { id: string }) => s.id === "set-249");
+  assertEquals(last.note, "tweaky");
+});

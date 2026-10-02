@@ -21,6 +21,7 @@ import { must } from "../lib/db.ts";
 import {
   guard,
   jsonResult,
+  refuseIfEphemeral,
   ToolError,
   type RequestContext,
 } from "../lib/errors.ts";
@@ -182,8 +183,18 @@ export function registerManageExercises(
     },
     (args) =>
       guard(ctx, "add_exercise", async () => {
-        const id = args.id ?? args.name.replace(/[^0-9a-zA-Z]+/g, "_");
-        if (!/^[0-9a-zA-Z_-]+$/.test(id)) {
+        // Accents fold to ASCII first ("Écarté" -> "Ecarte"). A name with no
+        // Latin letters at all would otherwise collapse to "_" and collide
+        // with the next such name from ANY account, since ids are global.
+        const derived = args.name
+          .normalize("NFKD")
+          .replace(/\p{M}/gu, "")
+          .replace(/[^0-9a-zA-Z]+/g, "_");
+        const id = args.id ?? derived;
+        if (
+          !/^[0-9a-zA-Z_-]+$/.test(id) ||
+          (args.id === undefined && !/[0-9a-zA-Z]/.test(derived))
+        ) {
           throw new ToolError(
             `Derived id '${id}' is not a valid slug; pass id explicitly.`,
           );
@@ -203,9 +214,12 @@ export function registerManageExercises(
         });
         if (error) {
           if (error.code === "23505") {
+            // Deliberately neutral: the id is in one global space, so "already
+            // exists" would confirm that another account owns it. A caller who
+            // meant an existing movement finds it with search_exercises.
             throw new ToolError(
-              `Exercise id '${id}' already exists. Use update_exercise to ` +
-                "modify it, or pick a different id.",
+              `Exercise id '${id}' is not available. Pass a different id ` +
+                "(or search_exercises if you meant an existing exercise).",
             );
           }
           throw new Error(`insert exercise: ${error.message}`);
@@ -264,6 +278,7 @@ export function registerManageExercises(
     },
     (args) =>
       guard(ctx, "update_exercise", async () => {
+        refuseIfEphemeral(ctx, "edit the exercise library");
         const existing = must(
           await db.client
             .from("exercises")
@@ -309,6 +324,9 @@ export function registerManageExercises(
         // it out of the plan. See 20260901010000_edited_exercise_source.sql.
         // A custom row stays custom; its owner is not disturbed by an edit.
         if (existing[0].source !== "custom") patch.source = "edited";
+        // Audit trail only: the service role has no auth.uid(), so the
+        // trigger cannot name who edited. Nothing may branch on this column.
+        patch.updated_by = db.ownerId;
 
         const { error } = await db.client
           .from("exercises")
@@ -345,6 +363,7 @@ export function registerManageExercises(
     },
     (args) =>
       guard(ctx, "delete_exercise", async () => {
+        refuseIfEphemeral(ctx, "delete an exercise");
         const existing = must(
           await db.client
             .from("exercises")

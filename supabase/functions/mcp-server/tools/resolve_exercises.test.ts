@@ -230,3 +230,18 @@ Deno.test("a repeated name is answered twice, not deduped away", () => {
     ["Face_Pull", "Face_Pull"],
   );
 });
+
+Deno.test("MCP-6: a trained variant beyond the 20th alphabetical match still wins", () => {
+  const many = Array.from({ length: 30 }, (_, i) =>
+    seeded(`Press_${String(i).padStart(2, "0")}`, `Press ${String(i).padStart(2, "0")}`)
+  );
+  const [entry] = resolveNames(
+    ["press"],
+    many,
+    trainedMap([["Press_24", "2026-09-30T10:00:00Z", 12]]),
+    ME,
+  );
+  assertEquals(entry.exercise_id, "Press_24");
+  assertEquals(entry.trained, true);
+  assertEquals(entry.status, "ok");
+});
