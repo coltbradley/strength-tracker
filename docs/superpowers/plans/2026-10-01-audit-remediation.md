@@ -40,8 +40,9 @@ Open:
 - **Turning the sweep on.** Manual: `SWEEP_SECRET`, both Vault rows, then read
   `net._http_response` (docs/deploy.md). A-137 and A-138 stay open until then.
 - **P3 list.** Unchanged.
-- **Memory files.** Not touched here; the fixes are listed in the re-verification
-  notes and belong to their owner.
+- **Memory files.** Updated outside the repo (Claude auto-memory): project note
+  rewritten, stale roadmap pointer and worktree path fixed, missing index entry
+  added.
 
 ## What changed since the audit
 
