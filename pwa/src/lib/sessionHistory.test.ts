@@ -14,6 +14,7 @@ import {
   liveFinishedSessions,
   liveSets,
   sessionSeconds,
+  volumeWeekLabel,
   weekStartIso,
   type RawSessionRow,
   type WeeklySummaryRow,
@@ -166,6 +167,28 @@ describe("sessionSeconds", () => {
         ended_at: "2026-09-01T17:00:00.000Z",
       }),
     ).toBeNull();
+  });
+});
+
+describe("UI-13: volumeWeekLabel", () => {
+  it("calls the current week this week, not last week", () => {
+    expect(volumeWeekLabel("2026-09-28", "2026-09-28")).toBe("THIS WEEK");
+  });
+
+  it("calls the week before it last week", () => {
+    expect(volumeWeekLabel("2026-09-21", "2026-09-28")).toBe("LAST WEEK");
+  });
+
+  it("dates anything older instead of calling it last week", () => {
+    expect(volumeWeekLabel("2026-08-03", "2026-09-28")).toBe(
+      "WEEK OF MON 3 AUG",
+    );
+  });
+
+  it("accepts a timestamp-shaped bucket", () => {
+    expect(volumeWeekLabel("2026-09-28T00:00:00+00:00", "2026-09-28")).toBe(
+      "THIS WEEK",
+    );
   });
 });
 

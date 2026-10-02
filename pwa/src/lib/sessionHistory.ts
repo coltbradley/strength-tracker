@@ -15,7 +15,16 @@
 
 import { supabase } from "./supabase";
 import { cacheGet, cacheSet } from "./db";
-import { parseLocalDate, todayLocalIso, workoutName } from "./format";
+// data.ts's throwIf keeps the PostgREST code on the error, which is what lets
+// the cache wrapper tell "the server said no" from "no answer at all".
+import { makeFetchWithCache, throwIf, type CacheRead } from "./data";
+import { reportError } from "./errors";
+import {
+  formatSessionDate,
+  parseLocalDate,
+  todayLocalIso,
+  workoutName,
+} from "./format";
 import type { Unit } from "./units";
 import { convertedLoadValue } from "./displayLoad";
 import type { SetInsert } from "./types";
@@ -41,27 +50,15 @@ export const SESSION_LOG_LIMIT = 20;
  *  a pathological read, the way `SESSION_SET_CAP` does in data.ts. */
 const SESSION_LOG_SET_CAP = 2000;
 
-/** Mirror of `data.ts`'s private helper — online first, cache on failure,
- *  rethrow when there is no cache either. Copied rather than imported
- *  because it is not exported; the semantics must not drift. */
-async function fetchWithCache<T>(
-  key: string,
-  fetcher: () => Promise<T>,
-): Promise<{ data: T; fromCache: boolean }> {
-  try {
-    const data = await fetcher();
-    await cacheSet(key, data);
-    return { data, fromCache: false };
-  } catch (e) {
-    const cached = await cacheGet<T>(key);
-    if (cached !== undefined) return { data: cached, fromCache: true };
-    throw e;
-  }
-}
-
-function throwIf(error: { message: string } | null): void {
-  if (error) throw new Error(error.message);
-}
+/** The same online-first read as every other screen: `data.ts`'s factory, so
+ *  a server ANSWER of no (a broken view column, a refused query) is reported
+ *  and tagged "error" rather than passing as "offline" (PLAN-10). It used to
+ *  be a private copy that swallowed both. */
+const fetchWithCache = makeFetchWithCache({
+  cacheGet,
+  cacheSet,
+  report: reportError,
+});
 
 // ---- the session log -------------------------------------------------------
 
@@ -193,10 +190,7 @@ export function sessionSeconds(row: {
  */
 export async function getSessionLog(
   pendingDiscards: ReadonlySet<string> = new Set(),
-): Promise<{
-  data: SessionLogEntry[];
-  fromCache: boolean;
-}> {
+): Promise<CacheRead<SessionLogEntry[]>> {
   const res = await fetchWithCache(KEY_SESSION_LOG, async () => {
     const { data: rows, error } = await supabase
       .from("sessions")
@@ -268,8 +262,8 @@ export async function getSessionLog(
     }));
   });
   return {
+    ...res,
     data: res.data.filter((s) => !pendingDiscards.has(s.id)),
-    fromCache: res.fromCache,
   };
 }
 
@@ -304,12 +298,31 @@ export function weekStartIso(iso: string): string {
   );
 }
 
+/**
+ * Name a volume bucket by what it IS. The chart head used to call the newest
+ * bucket "last week" whatever its date, so a lift last trained in August
+ * labelled August "last week", and the current week's partial total read as
+ * the finished week before (UI-13).
+ */
+export function volumeWeekLabel(
+  bucketWeekStart: string,
+  currentWeekStart: string,
+): string {
+  const bucket = bucketWeekStart.slice(0, 10);
+  if (bucket === currentWeekStart) return "THIS WEEK";
+  const prev = parseLocalDate(currentWeekStart);
+  const lastWeek = todayLocalIso(
+    new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() - 7),
+  );
+  if (bucket === lastWeek) return "LAST WEEK";
+  return `WEEK OF ${formatSessionDate(parseLocalDate(bucket))}`;
+}
+
 /** The summary row for one week, or null when the person has neither trained
  *  nor planned anything in it. */
-export async function getWeeklySummary(weekStart: string): Promise<{
-  data: WeeklySummaryRow | null;
-  fromCache: boolean;
-}> {
+export async function getWeeklySummary(
+  weekStart: string,
+): Promise<CacheRead<WeeklySummaryRow | null>> {
   return fetchWithCache(keyWeekSummary(weekStart), async () => {
     const { data, error } = await supabase
       .from("v_weekly_summary")

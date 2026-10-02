@@ -64,13 +64,18 @@ import {
   getSessionLog,
   getWeeklySummary,
   liveSets,
+  volumeWeekLabel,
   weekStartIso,
   type SessionLogEntry,
   type WeeklySummaryRow,
 } from "../lib/sessionHistory";
 import { useLocalToday } from "../hooks/useLocalToday";
 import { reportError, toast } from "../lib/errors";
-import { formatAuthoredLoad, formatRepRange, formatSessionDate } from "../lib/format";
+import {
+  formatAuthoredLoad,
+  formatRepRange,
+  formatSessionDate,
+} from "../lib/format";
 import { cacheGet, cacheKeys } from "../lib/db";
 import { getCurrentUserId } from "../lib/currentUser";
 import { outbox } from "../lib/sync";
@@ -242,10 +247,15 @@ export function History({ userId }: { userId: string }) {
   /** sets of the open session; undefined means "still reading", which is not
    *  the same claim as the empty array */
   const [openSets, setOpenSets] = useState<SetInsert[] | undefined>(undefined);
+  /** the open session's sets could not be read and nothing was cached */
+  const [openFailed, setOpenFailed] = useState(false);
+  /** the session log could not be read and nothing is drawn */
+  const [logFailed, setLogFailed] = useState(false);
+  /** the selected lift's detail reads failed: its empty charts mean
+   *  "unavailable", not "never trained" (UI-15) */
+  const [detailFailed, setDetailFailed] = useState(false);
 
-  const [observations, setObservations] = useState<CoachObservationRow[]>(
-    [],
-  );
+  const [observations, setObservations] = useState<CoachObservationRow[]>([]);
   const [obsLoading, setObsLoading] = useState(true);
   const [obsDeleteArm, setObsDeleteArm] = useArmed();
 
@@ -338,10 +348,14 @@ export function History({ userId }: { userId: string }) {
         const log = await getSessionLog(discarded);
         if (cancelled) return;
         setSessions(log.data);
+        setLogFailed(false);
       } catch (e) {
         // leave whatever is on screen: a refetch that cannot reach the server
         // must not blank the log it already drew
-        if (!cancelled) reportError(e, "load session log");
+        if (!cancelled) {
+          setLogFailed(true);
+          reportError(e, "load session log");
+        }
       } finally {
         if (!cancelled) setLogLoading(false);
       }
@@ -390,14 +404,31 @@ export function History({ userId }: { userId: string }) {
     if (openId === null) return;
     let cancelled = false;
     setOpenSets(undefined);
+    setOpenFailed(false);
     void (async () => {
-      const [rows, voided] = await Promise.all([
-        getServerSessionSets(openId),
-        outbox.pendingVoidIds(),
-      ]);
-      // v_live_sets has already dropped voids that LANDED; this subtracts the
-      // ones still in the outbox, exactly as the per-exercise list above does
-      if (!cancelled) setOpenSets(liveSets(rows, voided));
+      try {
+        // orNull: a failed read with no cache is NOT an empty session
+        const [rows, voided] = await Promise.all([
+          getServerSessionSets(openId, { orNull: true }),
+          outbox.pendingVoidIds(),
+        ]);
+        if (cancelled) return;
+        if (rows === null) {
+          setOpenFailed(true);
+          reportError(
+            new Error("session sets unavailable"),
+            "load session sets",
+          );
+          return;
+        }
+        // v_live_sets has already dropped voids that LANDED; this subtracts
+        // the ones still in the outbox, exactly as the per-exercise list does
+        setOpenSets(liveSets(rows, voided));
+      } catch (e) {
+        if (cancelled) return;
+        setOpenFailed(true);
+        reportError(e, "load session sets");
+      }
     })();
     return () => {
       cancelled = true;
@@ -423,6 +454,7 @@ export function History({ userId }: { userId: string }) {
     }
     shownFor.current = selected;
     setDetailLoading(true);
+    setDetailFailed(false);
     void (async () => {
       try {
         const [e1, vol, rec] = await Promise.all([
@@ -499,7 +531,10 @@ export function History({ userId }: { userId: string }) {
       } catch (e) {
         // state is left untouched on failure, so a refetch that cannot reach
         // the server keeps showing what was already on screen
-        if (!cancelled) reportError(e, "load history");
+        if (!cancelled) {
+          setDetailFailed(true);
+          reportError(e, "load history");
+        }
       } finally {
         if (!cancelled) setDetailLoading(false);
       }
@@ -563,7 +598,9 @@ export function History({ userId }: { userId: string }) {
         if (chainBroken.current) return;
         try {
           if (getCurrentUserId() !== owner) {
-            throw new Error("the signed-in account changed before this was sent");
+            throw new Error(
+              "the signed-in account changed before this was sent",
+            );
           }
           await write();
           onSaved?.();
@@ -763,6 +800,13 @@ export function History({ userId }: { userId: string }) {
   }, [recent]);
 
   const tonnage = useMemo(() => latestTonnage(volume), [volume]);
+  /** every detail read failed and none left data on screen: the empty charts
+   *  would read as "never trained" (UI-15) */
+  const detailUnavailable =
+    detailFailed &&
+    series.length === 0 &&
+    volume.length === 0 &&
+    recent.length === 0;
 
   /** A set that happened must never render as nothing, so an id the library
    *  cannot name falls back to the id rather than to a blank line. */
@@ -883,8 +927,8 @@ export function History({ userId }: { userId: string }) {
       )}
       {selected === null && indexTruncated && !indexError && (
         <p className="microcopy">
-          Only your most recent exercises are listed; older ones may be
-          missing. Search the full library to find them.
+          Only your most recent exercises are listed; older ones may be missing.
+          Search the full library to find them.
         </p>
       )}
 
@@ -899,107 +943,118 @@ export function History({ userId }: { userId: string }) {
         !indexLoading &&
         exercisesLoaded &&
         !(indexError && layered.length === 0) && (
-        <>
-          {lists.pinned.length > 0 && (
-            <section className="rec-section" aria-label="Pinned goals">
-              <div className="field-label">PINNED GOALS</div>
-              {lists.pinned.map((r) => {
-                const g = r.goal as GoalProgressRow;
-                const best = g.recent_best_e1rm_kg ?? g.alltime_best_e1rm_kg;
-                const pct = g.pct_of_target;
-                return (
-                  <div key={r.exerciseId} className="rec-card">
-                    <div className="rec-card-head">
+          <>
+            {lists.pinned.length > 0 && (
+              <section className="rec-section" aria-label="Pinned goals">
+                <div className="field-label">PINNED GOALS</div>
+                {lists.pinned.map((r) => {
+                  const g = r.goal as GoalProgressRow;
+                  const best = g.recent_best_e1rm_kg ?? g.alltime_best_e1rm_kg;
+                  const pct = g.pct_of_target;
+                  return (
+                    <div key={r.exerciseId} className="rec-card">
+                      <div className="rec-card-head">
+                        <button
+                          type="button"
+                          className="rec-open"
+                          onClick={() => setSelected(r.exerciseId)}
+                        >
+                          <b className="rec-name">{r.name}</b>
+                          <span className="rec-meta">{metaOf(r)}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="rec-pin rec-pin-on"
+                          aria-pressed="true"
+                          aria-label={pinLabel(r.name)}
+                          disabled={needsConn}
+                          onClick={() => unpinExercise(r.exerciseId)}
+                        >
+                          {unpinArm === r.exerciseId ? "◆ Remove?" : "◆ Pinned"}
+                        </button>
+                      </div>
+                      {armedNote(r.exerciseId)}
                       <button
                         type="button"
-                        className="rec-open"
+                        className="rec-open rec-progress"
                         onClick={() => setSelected(r.exerciseId)}
                       >
-                        <b className="rec-name">{r.name}</b>
-                        <span className="rec-meta">{metaOf(r)}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="rec-pin rec-pin-on"
-                        aria-pressed="true"
-                        aria-label={pinLabel(r.name)}
-                        disabled={needsConn}
-                        onClick={() => unpinExercise(r.exerciseId)}
-                      >
-                        {unpinArm === r.exerciseId ? "◆ Remove?" : "◆ Pinned"}
+                        <span className="rec-progress-row">
+                          <span className="rec-e1">{e1Text(best)}</span>
+                          <span className="rec-meta">
+                            {e1Text(g.target_e1rm_kg)}
+                            {pct !== null ? ` · ${Math.round(pct)}%` : ""}
+                          </span>
+                        </span>
+                        <span className="rec-bar" aria-hidden="true">
+                          <span
+                            className="rec-bar-fill"
+                            style={{
+                              width: `${Math.min(100, Math.max(0, pct ?? 0))}%`,
+                            }}
+                          />
+                        </span>
                       </button>
                     </div>
-                    {armedNote(r.exerciseId)}
-                    <button
-                      type="button"
-                      className="rec-open rec-progress"
-                      onClick={() => setSelected(r.exerciseId)}
-                    >
-                      <span className="rec-progress-row">
-                        <span className="rec-e1">{e1Text(best)}</span>
-                        <span className="rec-meta">
-                          {e1Text(g.target_e1rm_kg)}
-                          {pct !== null ? ` · ${Math.round(pct)}%` : ""}
-                        </span>
-                      </span>
-                      <span className="rec-bar" aria-hidden="true">
-                        <span
-                          className="rec-bar-fill"
-                          style={{
-                            width: `${Math.min(100, Math.max(0, pct ?? 0))}%`,
-                          }}
-                        />
-                      </span>
-                    </button>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </section>
+            )}
+
+            <section className="rec-section" aria-label="Recent">
+              <div className="field-label">RECENT</div>
+              {lists.recent.map((r) => (
+                <div key={r.exerciseId} className="rec-row">
+                  <button
+                    type="button"
+                    className="rec-open"
+                    onClick={() => setSelected(r.exerciseId)}
+                  >
+                    <b className="rec-name">{r.name}</b>
+                    <span className="rec-meta">{metaOf(r)}</span>
+                  </button>
+                  {/* UI-05: a bare "162 kg" beside a date reads as the last
+                      load. It is the estimated 1RM from that latest session. */}
+                  <span
+                    className="rec-row-e1"
+                    aria-label={
+                      r.e1rmKg === null
+                        ? "No estimated 1RM yet"
+                        : `Estimated 1RM ${e1Text(r.e1rmKg)}, from the latest session`
+                    }
+                  >
+                    {r.e1rmKg === null ? "—" : `e1RM ${e1Text(r.e1rmKg)}`}
+                  </span>
+                  <button
+                    type="button"
+                    className="rec-pin"
+                    aria-pressed="false"
+                    aria-label={pinLabel(r.name)}
+                    disabled={r.e1rmKg === null || needsConn}
+                    onClick={() => pinExercise(r.exerciseId, r.e1rmKg)}
+                  >
+                    ◇ Pin
+                  </button>
+                </div>
+              ))}
+              {lists.recent.length === 0 &&
+                lists.pinned.length === 0 &&
+                search.trim() !== "" && (
+                  <p className="muted">
+                    Nothing matches “{search.trim()}”. Try the full library.
+                  </p>
+                )}
             </section>
-          )}
 
-          <section className="rec-section" aria-label="Recent">
-            <div className="field-label">RECENT</div>
-            {lists.recent.map((r) => (
-              <div key={r.exerciseId} className="rec-row">
-                <button
-                  type="button"
-                  className="rec-open"
-                  onClick={() => setSelected(r.exerciseId)}
-                >
-                  <b className="rec-name">{r.name}</b>
-                  <span className="rec-meta">{metaOf(r)}</span>
-                </button>
-                <span className="rec-row-e1">{e1Text(r.e1rmKg)}</span>
-                <button
-                  type="button"
-                  className="rec-pin"
-                  aria-pressed="false"
-                  aria-label={pinLabel(r.name)}
-                  disabled={r.e1rmKg === null || needsConn}
-                  onClick={() => pinExercise(r.exerciseId, r.e1rmKg)}
-                >
-                  ◇ Pin
-                </button>
-              </div>
-            ))}
-            {lists.recent.length === 0 &&
-              lists.pinned.length === 0 &&
-              search.trim() !== "" && (
-                <p className="muted">
-                  Nothing matches “{search.trim()}”. Try the full library.
-                </p>
-              )}
-          </section>
-
-          <button
-            type="button"
-            className="rec-library"
-            onClick={() => setPickerOpen(true)}
-          >
-            Search the full library
-          </button>
-        </>
-      )}
+            <button
+              type="button"
+              className="rec-library"
+              onClick={() => setPickerOpen(true)}
+            >
+              Search the full library
+            </button>
+          </>
+        )}
 
       {selected !== null && (
         <>
@@ -1059,149 +1114,179 @@ export function History({ userId }: { userId: string }) {
             )}
           </section>
           {armedNote(selected)}
-          {!goal && detailE1 === null && !detailLoading && (
-            <p className="microcopy">
-              A goal needs a working set of 1–8 reps to measure against.
-            </p>
-          )}
-
-          <section className="rule-section">
-            <div className="section-head">
-              <span className="field-label">E1RM · {unit.toUpperCase()}</span>
-              {detailE1 !== null && (
-                <span className="section-meta">LATEST {e1Text(detailE1)}</span>
-              )}
-            </div>
-            {detailLoading && series.length === 0 ? (
-              <div className="chart-empty">Loading…</div>
-            ) : (
-              <E1rmChart
-                series={series}
-                goalKg={goal?.target_e1rm_kg ?? null}
-              />
-            )}
-          </section>
-
-          <section className="rule-section">
-            <div className="section-head">
-              <span className="field-label">WEEKLY WORKING SETS</span>
-              {/* tonnage was already fetched with the bars and thrown away;
-                  it is one figure, so it rides in the head rather than
-                  earning a second chart */}
-              {tonnage !== null && (
-                <span className="section-meta">
-                  {Math.round(
-                    convertedLoadValue(tonnage.tonnage_kg, unit),
-                  ).toLocaleString()}{" "}
-                  {unit} LAST WEEK
-                </span>
-              )}
-            </div>
-            {detailLoading && volume.length === 0 ? (
-              <div className="chart-empty">Loading…</div>
-            ) : (
-              <VolumeChart weeks={volume} />
-            )}
-          </section>
-
-          <section className="rule-section">
-            <div className="section-head">
-              <span className="field-label">RECENT SETS</span>
-            </div>
-            {bySession.length === 0 && (
-              <p className="muted">
-                {detailLoading ? "Loading…" : "Nothing logged yet."}
+          {!goal &&
+            detailE1 === null &&
+            !detailLoading &&
+            !detailUnavailable && (
+              <p className="microcopy">
+                A goal needs a working set of 1–8 reps to measure against.
               </p>
             )}
-            {bySession.map(([sessionId, ss]) => {
-              const outcomes = planned.get(sessionId) ?? [];
-              const bw = meta[sessionId]?.bodyweight_kg;
-              const rpe = meta[sessionId]?.session_rpe;
-              return (
-                <div key={sessionId} className="history-session">
-                  <div className="history-date">
-                    {formatSessionDate(ss[0].performed_at)}
-                    {ss.some((x) => unsentIds.has(x.id)) && (
-                      <span className="rec-onphone">on phone, not sent yet</span>
-                    )}
-                    {/* the word, not ✕ — ✕ is reserved for single-set voids;
+
+          {detailUnavailable ? (
+            <div className="rec-empty" role="alert">
+              <p>Couldn’t load this lift’s history. Your sets are safe.</p>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setReloadTick((t) => t + 1)}
+              >
+                Try again
+              </button>
+            </div>
+          ) : (
+            <>
+              <section className="rule-section">
+                <div className="section-head">
+                  <span className="field-label">
+                    E1RM · {unit.toUpperCase()}
+                  </span>
+                  {detailE1 !== null && (
+                    <span className="section-meta">
+                      LATEST {e1Text(detailE1)}
+                    </span>
+                  )}
+                </div>
+                {detailLoading && series.length === 0 ? (
+                  <div className="chart-empty">Loading…</div>
+                ) : (
+                  <E1rmChart
+                    series={series}
+                    goalKg={goal?.target_e1rm_kg ?? null}
+                  />
+                )}
+              </section>
+
+              <section className="rule-section">
+                <div className="section-head">
+                  <span className="field-label">WEEKLY WORKING SETS</span>
+                  {/* tonnage was already fetched with the bars and thrown away;
+                  it is one figure, so it rides in the head rather than
+                  earning a second chart */}
+                  {tonnage !== null && (
+                    <span className="section-meta">
+                      {Math.round(
+                        convertedLoadValue(tonnage.tonnage_kg, unit),
+                      ).toLocaleString()}{" "}
+                      {unit} {volumeWeekLabel(tonnage.week_start, weekStart)}
+                    </span>
+                  )}
+                </div>
+                {detailLoading && volume.length === 0 ? (
+                  <div className="chart-empty">Loading…</div>
+                ) : (
+                  <VolumeChart weeks={volume} />
+                )}
+              </section>
+
+              <section className="rule-section">
+                <div className="section-head">
+                  <span className="field-label">RECENT SETS</span>
+                </div>
+                {bySession.length === 0 && (
+                  <p className="muted">
+                    {detailLoading ? "Loading…" : "Nothing logged yet."}
+                  </p>
+                )}
+                {bySession.map(([sessionId, ss]) => {
+                  const outcomes = planned.get(sessionId) ?? [];
+                  const bw = meta[sessionId]?.bodyweight_kg;
+                  const rpe = meta[sessionId]?.session_rpe;
+                  return (
+                    <div key={sessionId} className="history-session">
+                      <div className="history-date">
+                        {formatSessionDate(ss[0].performed_at)}
+                        {ss.some((x) => unsentIds.has(x.id)) && (
+                          <span className="rec-onphone">
+                            on phone, not sent yet
+                          </span>
+                        )}
+                        {/* the word, not ✕ — ✕ is reserved for single-set voids;
                       discarding takes the whole day with it */}
-                    {sessionId !== activeId && (
-                      <button
-                        type="button"
-                        className={`drawer-action ${discardArm === sessionId ? "drawer-action-armed" : ""}`}
-                        aria-label={
-                          discardArm === sessionId
-                            ? "confirm discard session"
-                            : "discard session"
-                        }
-                        onClick={() =>
-                          discardArm === sessionId
-                            ? void discardSession(sessionId)
-                            : setDiscardArm(sessionId)
-                        }
-                      >
-                        {discardArm === sessionId ? "DISCARD?" : "DISCARD"}
-                      </button>
-                    )}
-                  </div>
-                  {(rpe != null || bw != null) && (
-                    <div className="muted-mono">
-                      {[
-                        rpe != null ? `sRPE ${rpe}` : null,
-                        // captured on the End screen and, until now, never read
-                        // back anywhere
-                        bw != null ? `BW ${formatLoad(bw, unit)} ${unit}` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </div>
-                  )}
-                  {meta[sessionId]?.notes && (
-                    <div className="detail-note">
-                      <span className="detail-note-label">NOTE</span>
-                      {meta[sessionId].notes}
-                    </div>
-                  )}
-                  {/* the plan sits directly on top of the sets that answered
-                      it — nothing between them to compare across */}
-                  {outcomes.length > 0 && (
-                    <div className="muted-mono">
-                      PLANNED{" "}
-                      {outcomes.map((o) => formatPlanned(o, unit)).join(" · ")}
-                    </div>
-                  )}
-                  {outcomes.some((o) => o.entryAmbiguous) && (
-                    <div className="microcopy">
-                      Prescribed per side; these sets recorded no entry mode, so
-                      the two loads may not compare.
-                    </div>
-                  )}
-                  {ss
-                    .slice()
-                    .sort((a, b) => a.set_index - b.set_index)
-                    .map((s) => (
-                      <div key={s.id} className="logged-set-wrap">
-                        <SetRow
-                          set={s}
-                          unit={unit}
-                          onVoid={
-                            sessionId !== activeId
-                              ? () => void voidPastSet(s)
-                              : undefined
-                          }
-                          voidArmed={voidArm === s.id}
-                          onArmVoid={() => setVoidArm(s.id)}
-                        />
-                        {notes[s.id] && (
-                          <div className="set-note-preview">{notes[s.id]}</div>
+                        {sessionId !== activeId && (
+                          <button
+                            type="button"
+                            className={`drawer-action ${discardArm === sessionId ? "drawer-action-armed" : ""}`}
+                            aria-label={
+                              discardArm === sessionId
+                                ? "confirm discard session"
+                                : "discard session"
+                            }
+                            onClick={() =>
+                              discardArm === sessionId
+                                ? void discardSession(sessionId)
+                                : setDiscardArm(sessionId)
+                            }
+                          >
+                            {discardArm === sessionId ? "DISCARD?" : "DISCARD"}
+                          </button>
                         )}
                       </div>
-                    ))}
-                </div>
-              );
-            })}
-          </section>
+                      {(rpe != null || bw != null) && (
+                        <div className="muted-mono">
+                          {[
+                            rpe != null ? `sRPE ${rpe}` : null,
+                            // captured on the End screen and, until now, never read
+                            // back anywhere
+                            bw != null
+                              ? `BW ${formatLoad(bw, unit)} ${unit}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      )}
+                      {meta[sessionId]?.notes && (
+                        <div className="detail-note">
+                          <span className="detail-note-label">NOTE</span>
+                          {meta[sessionId].notes}
+                        </div>
+                      )}
+                      {/* the plan sits directly on top of the sets that answered
+                      it — nothing between them to compare across */}
+                      {outcomes.length > 0 && (
+                        <div className="muted-mono">
+                          PLANNED{" "}
+                          {outcomes
+                            .map((o) => formatPlanned(o, unit))
+                            .join(" · ")}
+                        </div>
+                      )}
+                      {outcomes.some((o) => o.entryAmbiguous) && (
+                        <div className="microcopy">
+                          Prescribed per side; these sets recorded no entry
+                          mode, so the two loads may not compare.
+                        </div>
+                      )}
+                      {ss
+                        .slice()
+                        .sort((a, b) => a.set_index - b.set_index)
+                        .map((s) => (
+                          <div key={s.id} className="logged-set-wrap">
+                            <SetRow
+                              set={s}
+                              unit={unit}
+                              onVoid={
+                                sessionId !== activeId
+                                  ? () => void voidPastSet(s)
+                                  : undefined
+                              }
+                              voidArmed={voidArm === s.id}
+                              onArmVoid={() => setVoidArm(s.id)}
+                            />
+                            {notes[s.id] && (
+                              <div className="set-note-preview">
+                                {notes[s.id]}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  );
+                })}
+              </section>
+            </>
+          )}
         </>
       )}
 
@@ -1284,6 +1369,10 @@ export function History({ userId }: { userId: string }) {
               openId={openId}
               onToggle={(id) => setOpenId((cur) => (cur === id ? null : id))}
               openSets={openSets}
+              openFailed={openFailed}
+              onRetryOpen={() => setReloadTick((t) => t + 1)}
+              logFailed={logFailed}
+              onRetryLog={() => setReloadTick((t) => t + 1)}
               exerciseName={exerciseName}
             />
           </section>
@@ -1308,6 +1397,7 @@ export function History({ userId }: { userId: string }) {
         <ExercisePicker
           title="EXERCISE"
           exercises={exercises}
+          initialQuery={search}
           badge={(ex) => (indexById.has(ex.id) ? "LOGGED" : null)}
           preferBadged
           onPick={(ex) => {

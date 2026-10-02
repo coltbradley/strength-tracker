@@ -22,6 +22,9 @@ export interface ExercisePickerProps {
   /** Head label; the library count is appended once the list has loaded. */
   title: string;
   exercises: ExerciseRow[];
+  /** Start with this search already typed (History hands over the query
+   *  from the list it came from instead of a blank box). */
+  initialQuery?: string;
   /** The library could not be loaded (offline with a cold cache). */
   failed?: boolean;
   /** Optional short badge for a row, e.g. "LOGGED". */
@@ -42,6 +45,7 @@ const LIMIT = 30;
 export function ExercisePicker({
   title,
   exercises,
+  initialQuery = "",
   failed,
   badge,
   preferBadged,
@@ -49,7 +53,7 @@ export function ExercisePicker({
   onAddNew,
   onClose,
 }: ExercisePickerProps) {
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialQuery);
 
   const q = search.trim().toLowerCase();
   // Ranked, not filtered by substring. `includes` misses the way people

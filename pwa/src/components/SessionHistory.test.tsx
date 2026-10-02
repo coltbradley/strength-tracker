@@ -125,6 +125,26 @@ describe("the session log", () => {
     expect(screen.getByText("No sets left in this session.")).toBeTruthy();
   });
 
+  it("UI-15: a failed read of the open day is unavailable, never 'no sets'", () => {
+    const onRetryOpen = vi.fn();
+    list({
+      openId: "s1",
+      openSets: undefined,
+      openFailed: true,
+      onRetryOpen,
+    });
+    expect(screen.queryByText("No sets left in this session.")).toBeNull();
+    expect(screen.getByText(/Couldn’t load this session’s sets/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetryOpen).toHaveBeenCalled();
+  });
+
+  it("UI-15: a failed log read is not 'no finished sessions yet'", () => {
+    list({ sessions: [], loading: false, logFailed: true });
+    expect(screen.queryByText("No finished sessions yet.")).toBeNull();
+    expect(screen.getByText(/Couldn’t load your sessions/)).toBeTruthy();
+  });
+
   it("says nothing has finished yet rather than drawing an empty table", () => {
     list({ sessions: [], loading: false });
     expect(screen.getByText("No finished sessions yet.")).toBeTruthy();

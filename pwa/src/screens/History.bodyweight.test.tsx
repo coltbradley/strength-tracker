@@ -50,7 +50,13 @@ vi.mock("../lib/data", async () => {
     makeFetchWithCache: actual.makeFetchWithCache,
     throwIf: actual.throwIf,
     getExercises: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
-    getRecordIndex: vi.fn().mockResolvedValue({ data: { entries: [], truncated: false }, fromCache: false, stale: null }),
+    getRecordIndex: vi
+      .fn()
+      .mockResolvedValue({
+        data: { entries: [], truncated: false },
+        fromCache: false,
+        stale: null,
+      }),
     getGoals: vi.fn().mockResolvedValue({ data: [], fromCache: false }),
     setGoal: vi.fn(),
     removeGoal: vi.fn(),
@@ -93,9 +99,9 @@ function localIsoAt(d: Date, hour: number): string {
 }
 
 vi.mock("../lib/sessionHistory", async () => {
-  const actual = await vi.importActual<
-    typeof import("../lib/sessionHistory")
-  >("../lib/sessionHistory");
+  const actual = await vi.importActual<typeof import("../lib/sessionHistory")>(
+    "../lib/sessionHistory",
+  );
   return {
     ...actual,
     getSessionLog: vi.fn(),
@@ -108,10 +114,15 @@ beforeEach(() => {
   resetDbForTests();
   vi.clearAllMocks();
   todayRef.current = todayLocalIso(new Date());
-  vi.mocked(getSessionLog).mockResolvedValue({ data: [], fromCache: false });
+  vi.mocked(getSessionLog).mockResolvedValue({
+    data: [],
+    fromCache: false,
+    stale: null,
+  });
   vi.mocked(getWeeklySummary).mockResolvedValue({
     data: null,
     fromCache: false,
+    stale: null,
   });
 });
 
