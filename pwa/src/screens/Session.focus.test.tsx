@@ -105,7 +105,7 @@ vi.mock("../lib/sync", () => ({
 import { Session } from "./Session";
 import * as sessionPrefs from "../lib/sessionPrefs";
 import { outbox } from "../lib/sync";
-import { getExercises, getExactSetReceiptIds, getLastActuals, getServerSessionSets } from "../lib/data";
+import { getExercises, getExactSetReceiptIds, getLastActuals, getServerSessionSets, getSetNotesByIds } from "../lib/data";
 
 const active: ActiveSession = {
   id: "session-focus-1",
@@ -326,6 +326,8 @@ beforeEach(async () => {
     stale: null,
   } as any);
   vi.mocked(getServerSessionSets).mockResolvedValue([] as any);
+  vi.mocked(getSetNotesByIds).mockReset();
+  vi.mocked(getSetNotesByIds).mockResolvedValue({});
   vi.mocked(outbox.enqueue).mockResolvedValue(undefined);
   vi.mocked(outbox.enqueueBatch).mockResolvedValue(undefined);
   vi.mocked(outbox.enqueueCorrection).mockResolvedValue(undefined);
@@ -436,6 +438,28 @@ describe("Session focus presentation", () => {
     expect(
       dockValue("reps"),
     ).toBe("9");
+  });
+
+  it("UI-20: Finish workout asks before it can discard a staged draft, and Stay keeps it", async () => {
+    render(
+      <MemoryRouter>
+        <Session />
+      </MemoryRouter>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "reps value — tap to type" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "9" }));
+    fireEvent.click(screen.getByRole("button", { name: "SET REPS" }));
+    fireEvent.click(screen.getByRole("button", { name: /more options for/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Finish workout" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Unlogged set changes" });
+    expect(within(dialog).getByRole("button", { name: "Finish and discard drafts" })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stay in session" }));
+
+    expect(screen.queryByRole("dialog", { name: "Unlogged set changes" })).toBeNull();
+    expect(dockValue("reps")).toBe("9");
   });
 
   it("preserves a staged draft after switching focus to another exercise", async () => {
@@ -1032,6 +1056,54 @@ describe("Session focus presentation", () => {
     await vi.waitFor(() => expect(moveDown.hasAttribute("disabled")).toBe(false));
   });
 
+  it("UI-21: a fresh server note replaces a stale acknowledged cached note", async () => {
+    resetDbForTests();
+    const old: SetInsert = {
+      id: "note-stale-1", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working", load_kg: 20,
+      reps: 8, performed_at: "2026-09-12T12:05:00.000Z", rest_seconds_actual: null,
+      load_entry: "total", rpe: null,
+    };
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+    ], [old]);
+    await cacheSet(cacheKeys.sessionSetNotes(active.id), { [old.id]: "Older cached note" });
+    vi.mocked(getServerSessionSets).mockResolvedValue([old]);
+    vi.mocked(getSetNotesByIds).mockResolvedValue({ [old.id]: "Newer server note" });
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await vi.waitFor(async () =>
+      expect((await cacheGet<Record<string, string>>(cacheKeys.sessionSetNotes(active.id)))?.[old.id]).toBe("Newer server note"),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }));
+    const note = (await screen.findByPlaceholderText(NOTE_PLACEHOLDER)) as HTMLTextAreaElement;
+    expect(note.value).toBe("Newer server note");
+  });
+
+  it("UI-21: a note still queued for the server keeps its local text over the fresh read", async () => {
+    resetDbForTests();
+    const old: SetInsert = {
+      id: "note-owed-1", session_id: active.id, exercise_id: "bench-press",
+      prescription_id: "bench", set_index: 0, set_type: "working", load_kg: 20,
+      reps: 8, performed_at: "2026-09-12T12:05:00.000Z", rest_seconds_actual: null,
+      load_entry: "total", rpe: null,
+    };
+    await seed("reps", [
+      prescription("bench", "bench-press", "Bench Press", "reps", null, 2),
+    ], [old]);
+    await cacheSet(cacheKeys.sessionSetNotes(active.id), { [old.id]: "Typed offline" });
+    vi.mocked(getServerSessionSets).mockResolvedValue([old]);
+    vi.mocked(getSetNotesByIds).mockResolvedValue({ [old.id]: "Server copy" });
+    vi.mocked(outbox.inspect).mockResolvedValue([
+      { op: { kind: "insert", table: "set_notes", payload: { set_id: old.id, note: "Typed offline" } }, table: "set_notes", state: "waiting" },
+    ] as never);
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Note" }));
+    const note = (await screen.findByPlaceholderText(NOTE_PLACEHOLDER)) as HTMLTextAreaElement;
+    expect(note.value).toBe("Typed offline");
+  });
+
   it("locks move arrows during a correction write and restores them when it settles", async () => {
     resetDbForTests();
     const old: SetInsert = {
@@ -1443,6 +1515,25 @@ describe("Session focus presentation", () => {
 
     expect(await screen.findByRole("button", { name: "DONE" })).toBeTruthy();
     expect(screen.queryByText(/Last time/i)).toBeNull();
+  });
+
+  it("SESS-4: a session-set read that failed with no cache leaves LOG disabled", async () => {
+    resetDbForTests();
+    // null is the orNull signal for "could not read"; [] would be "no sets".
+    vi.mocked(getServerSessionSets).mockResolvedValue(null as never);
+    await seed();
+    render(<MemoryRouter><Session /></MemoryRouter>);
+
+    await screen.findByText(/could not be read from this device/i);
+    expect(vi.mocked(getServerSessionSets)).toHaveBeenCalledWith(
+      expect.any(String),
+      { orNull: true },
+    );
+    const held = screen.getByRole("button", { name: /log unavailable/i }) as HTMLButtonElement;
+    expect(held.disabled).toBe(true);
+    fireEvent.click(held);
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(vi.mocked(outbox.enqueue)).not.toHaveBeenCalled();
   });
 
   it("keeps tick-only focus navigation and logging on the same entry", async () => {

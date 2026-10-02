@@ -161,6 +161,44 @@ describe("SetEditor focus variant", () => {
     expect(screen.queryByRole("button", { name: /^load /i })).toBeNull();
   });
 
+  it("UI-06: the tap-to-type button keeps its name and describes the current value", () => {
+    render(
+      <SetEditor
+        {...focus({
+          tracking: "time" as unknown as SetEditorProps["tracking"],
+          draft: { ...props().draft, durationSeconds: 75 },
+          loadPresentation: bodyweight,
+          onOpenPad: vi.fn() as SetEditorProps["onOpenPad"],
+        })}
+      />,
+    );
+    const value = screen.getByRole("button", { name: "duration value — tap to type" });
+    expect(value.getAttribute("aria-describedby")).toBeTruthy();
+    const described = value
+      .getAttribute("aria-describedby")!
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent)
+      .join(" ");
+    expect(described).toContain("75");
+    expect(described).toContain("sec");
+  });
+
+  it("SESS-3: the duration stepper bottoms out at 1 second, never 0", () => {
+    const onDraftChange = vi.fn();
+    render(
+      <SetEditor
+        {...focus({
+          tracking: "time" as unknown as SetEditorProps["tracking"],
+          draft: { ...props().draft, durationSeconds: 3 },
+          loadPresentation: bodyweight,
+          onDraftChange,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "decrease duration by 5 seconds" }));
+    expect(onDraftChange).toHaveBeenCalledWith({ durationSeconds: 1 });
+  });
+
   it("puts load and reps side by side as cards, with the coarse load step on the load card", () => {
     const { container } = render(<SetEditor {...focus()} />);
 

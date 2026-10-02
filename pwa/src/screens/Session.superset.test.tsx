@@ -426,6 +426,31 @@ describe("Session supersets", () => {
     expect(screen.queryByRole("heading", { name: "Superset A" })).toBeNull();
   });
 
+  it("UI-14: a three-member circuit rests after the round, not after each station", async () => {
+    await seed([
+      ...pair(),
+      { ...rx("curl", "cable-curl", "Cable Curl", 20, 2), superset_group: 1, position: 2 },
+    ]);
+    renderSession();
+    await screen.findByText("This workout opens in List because Superset A has 3 exercises.");
+    const logOpen = async (name: string | null, n: number) => {
+      if (name) fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${name} —`) }));
+      fireEvent.click(await screen.findByRole("button", { name: "LOG SET" }));
+      await vi.waitFor(() => expect(queuedSets()).toHaveLength(n));
+      await new Promise((r) => setTimeout(r, 450));
+    };
+    await logOpen(null, 1);
+    // station 1 of 3: nobody has finished the round, so no rest strip
+    expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
+    await logOpen("Barbell Row", 2);
+    expect(screen.queryByRole("timer", { name: /^rest timer/ })).toBeNull();
+    // the stations after the first record no rest (the gap is not a rest)
+    expect(queuedSets()[1]!.rest_seconds_actual ?? null).toBeNull();
+    await logOpen("Cable Curl", 3);
+    // the round closes on the last station
+    expect(await screen.findByRole("timer", { name: /^rest timer/ })).toBeTruthy();
+  });
+
   it("finishes an unequal tail with the remaining member only", async () => {
     await seed([
       { ...rx("bench", "bench-press", "Bench Press", 20, 2), superset_group: 1 },

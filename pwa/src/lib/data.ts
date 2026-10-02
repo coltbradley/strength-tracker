@@ -60,7 +60,7 @@ import type {
  *  screen on the next reload even though Postgres still holds it. Null here
  *  means unrated, which is the ordinary case and never an error. */
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,rpe,entered_load,entered_unit";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,rpe,entered_load,entered_unit,duration_seconds";
 
 /** Why a read came back from the device cache rather than the server. */
 export type StaleReason = "offline" | "error";

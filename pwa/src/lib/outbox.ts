@@ -347,6 +347,15 @@ const LOAD_CONSISTENCY_ERROR = LOAD_MISMATCH_MESSAGE;
 function assertQueueable(op: OutboxOp): void {
   if (op.kind === "insert" && op.table === "sets") {
     assertAcceptedAuthoredLoad(op.payload, "sets", "set");
+    // sets.duration_seconds is int, null or 1..7200 (20260906030000). A 0 s
+    // hold would be refused as a permanent constraint violation and park the
+    // only copy of the set as dead.
+    const d = op.payload.duration_seconds;
+    if (d != null && !(Number.isInteger(d) && d >= 1 && d <= 7200)) {
+      throw new Error(
+        "A timed set needs a duration of 1 to 7200 seconds, so it was not saved.",
+      );
+    }
   }
 }
 

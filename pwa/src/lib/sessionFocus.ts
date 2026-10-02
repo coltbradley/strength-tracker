@@ -251,3 +251,22 @@ export function roundPlacement(
     roundOpenAfter: partner.progress <= mine.progress,
   };
 }
+
+/**
+ * `roundPlacement` for a circuit of three or more members, which the paired
+ * round UI does not cover (UI-14). Same two questions, asked of every other
+ * member: is anyone already AHEAD of me this round (then the time since their
+ * set is the gap between stations, not a rest), and does anyone still owe this
+ * round (then rest waits for them). A circuit with nobody unfinished behaves
+ * like a straight set.
+ */
+export function circuitPlacement(
+  mine: Pick<RoundCount, "progress">,
+  others: readonly RoundCount[],
+): RoundPlacement {
+  const live = others.filter((o) => !o.finished);
+  return {
+    secondOfRound: live.some((o) => o.progress > mine.progress),
+    roundOpenAfter: live.some((o) => o.progress <= mine.progress),
+  };
+}

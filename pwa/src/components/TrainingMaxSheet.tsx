@@ -37,6 +37,7 @@ import {
   type StaleReason,
 } from "../lib/data";
 import { reportError, toast } from "../lib/errors";
+import { notifyPlanChanged } from "../lib/planChanges";
 import { formatPlannedDate, todayLocalIso } from "../lib/format";
 import { useArmed } from "../hooks/useArmed";
 import { useUnit } from "../hooks/useUnit";
@@ -97,19 +98,20 @@ export function TrainingMaxSheet({ onClose }: { onClose: () => void }) {
 
   /**
    * A training max is an input to `v_resolved_prescriptions`, so setting one
-   * changes what Today and the open session render — and those screens hold
-   * their resolved prescriptions in component state. Every other cross-screen
-   * invalidation in this app rides on a route change remounting the screen
-   * (History's void, the plan editor's edits); a settings sheet floats OVER
-   * the current route and never gets one, so the badge that sent the user
-   * here would still read "NO TM SET" when they closed this. The write caches
-   * are already cleared, so this reload is only about the screen behind: it
-   * costs a repaint, keeps the route, and IndexedDB holds the outbox, the
-   * active session and the rest timer across it by design.
+   * changes what Today renders, and Today holds its resolved prescriptions in
+   * component state. A settings sheet floats OVER the current route and never
+   * gets a remount, so closing it after a write announces the change on the
+   * plan-changed channel instead and Today refetches (PLAN-5).
+   *
+   * It used to call `window.location.reload()`. This sheet is reachable from
+   * /session through the gear, and a reload there takes the staged reps, load
+   * and half-typed note with it, the loss the service-worker rule exists to
+   * prevent. The open session deliberately keeps its own prescription snapshot
+   * (cached at start), so it has nothing to refetch and is left untouched.
    */
   const close = () => {
-    if (dirty) window.location.reload();
-    else onClose();
+    if (dirty) notifyPlanChanged();
+    onClose();
   };
 
   const today = todayLocalIso();
