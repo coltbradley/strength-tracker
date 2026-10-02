@@ -12,7 +12,7 @@
 // (CorrectionSheet), so there is no second, differently-styled copy of these
 // controls to keep in step.
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { stepTo, type StepDef } from "../Stepper";
 import type { BracketKind, ExerciseEntry } from "../../lib/entries";
 import { stagedDisplayLoad, type Unit } from "../../lib/units";
@@ -103,11 +103,17 @@ export function DockNumber({
 }) {
   const say = (def: StepDef) =>
     `${def.delta > 0 ? "increase" : "decrease"} ${label} by ${def.announce ?? Math.abs(def.delta)}`;
+  // The tap-to-type button keeps its stable name ("load value — tap to type");
+  // the CURRENT value and unit reach assistive tech as its description (UI-06).
+  const uid = useId();
+  const valueId = `${uid}-v`;
+  const captionId = `${uid}-c`;
+  const noteId = `${uid}-n`;
   const valueBody = (
     <>
-      <span className="dock-num-value">{display}</span>
-      <span className="dock-num-caption">{caption}</span>
-      {note && <span className="dock-num-note">{note}</span>}
+      <span id={valueId} className="dock-num-value">{display}</span>
+      <span id={captionId} className="dock-num-caption">{caption}</span>
+      {note && <span id={noteId} className="dock-num-note">{note}</span>}
     </>
   );
   return (
@@ -125,6 +131,7 @@ export function DockNumber({
           type="button"
           className="dock-num-body"
           aria-label={`${label} value — tap to type`}
+          aria-describedby={`${valueId} ${captionId}${note ? ` ${noteId}` : ""}`}
           onClick={onTap}
         >
           {valueBody}
@@ -229,7 +236,7 @@ export function SetEditor({
           display={String(durationSeconds)}
           caption="sec"
           value={durationSeconds}
-          min={0}
+          min={1}
           max={3600}
           down={{ label: "−", delta: -5, announce: "5 seconds" }}
           up={{ label: "+", delta: 5, announce: "5 seconds" }}

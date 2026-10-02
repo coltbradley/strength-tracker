@@ -135,6 +135,7 @@ import {
 } from "../lib/entries";
 import { SetSchemeSheet, type SetGroup } from "../components/SetSchemeSheet";
 import { outbox } from "../lib/sync";
+import { mergeSetNotes, pendingNoteSetIds } from "../lib/setNotes";
 import { getCurrentUserId, onUserChange } from "../lib/currentUser";
 import { readPersistedUserId } from "../lib/persistedSession";
 import {
@@ -145,9 +146,11 @@ import {
 } from "../lib/setReceipt";
 import type { OutboxEntry } from "../lib/outbox";
 import {
+  circuitPlacement,
   roundPlacement,
   supersetGroupEntries,
   supersetRoundView,
+  type RoundCount,
 } from "../lib/sessionFocus";
 import { uuid } from "../lib/uuid";
 import { correctedSet, isNoopCorrection } from "../lib/corrections";
@@ -424,6 +427,8 @@ export function Session() {
    *  has work to do. */
   const [roundNowOverride, setRoundNowOverride] = useState<string | null>(null);
   const [leavePromptOpen, setLeavePromptOpen] = useState(false);
+  // Where "Leave and discard drafts" goes: Home from Train, /end from Finish.
+  const [leaveDest, setLeaveDest] = useState<"/" | "/end">("/");
   const [extraSetArmed, setExtraSetArmed] = useState(false);
   /** Bodyweight movements show added load only once somebody asks for it. */
   const [bwAddOpen, setBwAddOpen] = useState<string | null>(null);
@@ -523,6 +528,9 @@ export function Session() {
 
   // per-set notes (set_id -> note); "" = cleared
   const [setNotes, setSetNotes] = useState<Record<string, string>>({});
+  // Set ids whose note was written on this screen: a fresh server read that
+  // lands mid-save must not undo them before the queue shows the write.
+  const notesTouchedRef = useRef<Set<string>>(new Set());
   /** the set the Note sheet is open on; always a live row */
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [rpeSheetOpen, setRpeSheetOpen] = useState(false);
@@ -1008,10 +1016,13 @@ export function Session() {
         const localSets =
           (await cacheGet<SetInsert[]>(cacheKeys.sessionSets(a.id))) ?? [];
         const [server, pending] = await Promise.all([
-          getServerSessionSets(a.id),
+          // orNull: a failed read with no cache is NOT an empty log. Throwing
+          // lands in the catch below, which disables LOG (SESS-4 / UI-19).
+          getServerSessionSets(a.id, { orNull: true }),
           outbox.pendingSets(a.id),
         ]);
         if (cancelled) return;
+        if (server === null) throw new Error("session sets could not be read");
         const knownEntry = new Map<string, LoadEntry>();
         for (const s of [...localSets, ...pending])
           if (s.load_entry != null) knownEntry.set(s.id, s.load_entry);
@@ -1030,10 +1041,22 @@ export function Session() {
         );
         // notes may have been written on another device — best-effort merge
         getSetNotesByIds(merged.map((s) => s.id))
-          .then((fresh) => {
+          .then(async (fresh) => {
             if (cancelled || Object.keys(fresh).length === 0) return;
+            // Only a note still OWED to the server beats the fresh read; an
+            // acknowledged cached copy is stale by definition (UI-21). If the
+            // queue can't be read we can't tell, so every local note is kept.
+            let owed: Set<string> | null = null;
+            try {
+              owed = pendingNoteSetIds(await outbox.inspect());
+            } catch (e) {
+              reportError(e, "read pending set notes");
+            }
+            if (cancelled) return;
             setSetNotes((prev) => {
-              const next = { ...fresh, ...prev }; // local unsynced edits win
+              const keep = owed ?? new Set(Object.keys(prev));
+              for (const id of notesTouchedRef.current) keep.add(id);
+              const next = mergeSetNotes(fresh, prev, keep);
               cacheSet(cacheKeys.sessionSetNotes(a.id), next).catch(
                 (e: unknown) => reportError(e, "cache set notes"),
               );
@@ -1966,8 +1989,10 @@ export function Session() {
     editing !== null;
 
   const goHome = () => {
-    if (hasUnloggedChanges()) setLeavePromptOpen(true);
-    else navigate("/");
+    if (hasUnloggedChanges()) {
+      setLeaveDest("/");
+      setLeavePromptOpen(true);
+    } else navigate("/");
   };
 
   /** Build every ordinary set shape before it reaches the durable outbox. */
@@ -2004,7 +2029,9 @@ export function Session() {
       entered_load: load.entered_load,
       entered_unit: load.entered_unit,
       rpe: tick ? null : draft.rpe,
-      duration_seconds: timed ? Math.round(draft.durationSeconds ?? 60) : null,
+      duration_seconds: timed
+        ? Math.max(1, Math.round(draft.durationSeconds ?? 60))
+        : null,
     };
   };
 
@@ -2085,7 +2112,30 @@ export function Session() {
         ? pair[1]
         : pair[0]
       : null;
-    const placement = roundPlacement(
+    // A group of three or more is a circuit: no paired UI, but the same rest
+    // rule (UI-14). Rest follows the round, not each station.
+    const circuit =
+      pair === null
+        ? supersetGroupEntries(orderedEntries, entryToLog.key).filter(
+            (m) => m.key !== entryToLog.key,
+          )
+        : [];
+    const isCircuit = circuit.length >= 2;
+    const roundCountOf = (m: ExerciseEntry): RoundCount =>
+      kind === "warmup"
+        ? {
+            progress: warmupCount(m),
+            finished: m.key in skips || warmupCount(m) >= warmupSets(m),
+          }
+        : { progress: entryProgress(m), finished: entryDone(m) };
+    const mineProgress =
+      kind === "warmup" ? warmupCount(entryToLog) : entryProgress(entryToLog);
+    const placement = isCircuit
+      ? circuitPlacement(
+          { progress: mineProgress },
+          circuit.map(roundCountOf),
+        )
+      : roundPlacement(
       {
         progress:
           kind === "warmup" ? warmupCount(entryToLog) : entryProgress(entryToLog),
@@ -2172,8 +2222,9 @@ export function Session() {
       // No rest after the pair's own last set either: what follows is the
       // next exercise, and the same as the old "Log round" the clock keeps
       // measuring for it.
-      const pairFinished =
-        partner !== null && doneAfter(entryToLog) && doneAfter(partner);
+      const pairFinished = isCircuit
+        ? doneAfter(entryToLog) && circuit.every(doneAfter)
+        : partner !== null && doneAfter(entryToLog) && doneAfter(partner);
       const showStrip = autoStartRest && !placement.roundOpenAfter && !pairFinished;
       if (showStrip)
         setRest({ startedAt: now, targetSeconds: targetRestSeconds, forLabel });
@@ -2437,6 +2488,7 @@ export function Session() {
         reportError(e, "cache session sets"),
       );
       if (note) {
+        notesTouchedRef.current.add(next.id);
         const nextNotes = { ...setNotes, [next.id]: note };
         delete nextNotes[old.id];
         setSetNotes(nextNotes);
@@ -2770,6 +2822,7 @@ export function Session() {
       reportError(e, "save set note");
       return false;
     }
+    notesTouchedRef.current.add(setId);
     const next = { ...setNotes, [setId]: note };
     setSetNotes(next);
     cacheSet(cacheKeys.sessionSetNotes(sessionId), next).catch((e: unknown) =>
@@ -2897,7 +2950,7 @@ export function Session() {
           initial: String(draft.durationSeconds ?? 60),
           allowDecimal: false,
           onCommit: (value) => {
-            updateDraft({ durationSeconds: Math.min(3600, Math.max(0, Math.round(value))) });
+            updateDraft({ durationSeconds: Math.min(3600, Math.max(1, Math.round(value))) });
             setPad(null);
           },
           onCancel: () => setPad(null),
@@ -2987,7 +3040,7 @@ export function Session() {
         initial: String(durationSeconds),
         allowDecimal: false,
         onCommit: (value) => {
-          const next = Math.min(3600, Math.max(0, Math.round(value)));
+          const next = Math.min(3600, Math.max(1, Math.round(value)));
           rememberStagedDraft(openEntry, { durationSeconds: next });
           setDurationSeconds(next);
           setPad(null);
@@ -3209,6 +3262,14 @@ export function Session() {
   // unplanned extra set.
   const workoutDone = entries.length > 0 && entries.every(entryDone);
   const finishWorkout = () => {
+    // Drafts live in this component, so /end unmounts them. Going Back from
+    // the review would otherwise return to the saved values with no warning
+    // (UI-20); ask the same question the Train exit asks.
+    if (hasUnloggedChanges()) {
+      setLeaveDest("/end");
+      setLeavePromptOpen(true);
+      return;
+    }
     // ending the session ends the rest; nothing to announce
     disarmRestAlert();
     navigate("/end");
@@ -4601,7 +4662,8 @@ export function Session() {
         >
           <p className="microcopy">
             Set values you haven’t logged, including an edit in progress, are
-            held only on this screen. Stay to keep them, or leave to discard
+            held only on this screen. Stay to keep them, or{" "}
+            {leaveDest === "/end" ? "continue to finish" : "leave"} to discard
             them.
           </p>
           <button
@@ -4616,10 +4678,13 @@ export function Session() {
             className="btn btn-danger btn-block"
             onClick={() => {
               setLeavePromptOpen(false);
-              navigate("/");
+              if (leaveDest === "/end") disarmRestAlert();
+              navigate(leaveDest);
             }}
           >
-            Leave and discard drafts
+            {leaveDest === "/end"
+              ? "Finish and discard drafts"
+              : "Leave and discard drafts"}
           </button>
         </Sheet>
       )}
