@@ -44,7 +44,14 @@ export interface ExportSet {
   /** Exact authored value and unit. Null marks a legacy set. */
   entered_load: number | null;
   entered_unit: "kg" | "lb" | null;
+  /** How hard it felt, 5 to 10 in half points. Null is the ordinary case. */
+  rpe: number | null;
+  /** Seconds held, for a timed set (reps is 0 there). Null for a rep set. */
+  duration_seconds: number | null;
 }
+
+/** A row of a table exported as the database holds it. */
+export type ExportRow = Record<string, unknown>;
 
 export interface ExportBundle {
   exported_at: string;
@@ -55,6 +62,22 @@ export interface ExportBundle {
   sessions: ExportSession[];
   sets: ExportSet[];
   set_notes: Record<string, string>;
+  /** The rest of the record, verbatim rows. `sets` above are the live ones;
+   *  `set_voids` says which were corrected away. Plans and training maxes are
+   *  what the sets were measured against. */
+  bodyweight_log: ExportRow[];
+  session_skips: ExportRow[];
+  set_voids: ExportRow[];
+  checkins: ExportRow[];
+  programs: ExportRow[];
+  planned_workouts: ExportRow[];
+  prescriptions: ExportRow[];
+  training_maxes: ExportRow[];
+  training_plans: ExportRow[];
+  plan_phases: ExportRow[];
+  /** Tables that could not be read, so a file with an empty list says whether
+   *  that list is empty or missing. Empty when everything was read. */
+  unavailable: string[];
 }
 
 const SESSION_COLUMNS =
@@ -65,68 +88,130 @@ const SESSION_COLUMNS =
 // archive; dropping it makes that unrecoverable, and `sets` is append-only so
 // it can never be reconstructed.
 const SET_COLUMNS =
-  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,entered_load,entered_unit";
+  "id,session_id,exercise_id,prescription_id,set_index,set_type,load_kg,reps,performed_at,rest_seconds_actual,load_entry,entered_load,entered_unit,rpe,duration_seconds";
 
-/** Page through a PostgREST relation until it stops returning full pages.
+/** The rows strictly after `last` in (c1, c2) order, as a PostgREST `or`
+ *  filter. Values are double-quoted so a colon or a plus in a timestamp is
+ *  never read as filter syntax. */
+export function afterFilter(
+  cols: readonly [string, string] | readonly [string],
+  last: ExportRow,
+): string {
+  const q = (v: unknown) => `"${String(v).replace(/"/g, '\\"')}"`;
+  if (cols.length === 1) return `${cols[0]}.gt.${q(last[cols[0]])}`;
+  const [c1, c2] = cols;
+  return `${c1}.gt.${q(last[c1])},and(${c1}.eq.${q(last[c1])},${c2}.gt.${q(last[c2])})`;
+}
+
+/**
+ * Walk a relation by KEYSET: each page asks for the rows after the last one
+ * seen, in a total order, rather than for an OFFSET. LIMIT/OFFSET over a live
+ * table moves under the reader: a set synced mid-export with an earlier
+ * `performed_at` shifts every later page by one, so a row repeats or, worse
+ * and silently, never appears in the user's own archive.
  *
- *  Every caller MUST pass a total order. `range()` is LIMIT/OFFSET, and
- *  without an ORDER BY Postgres makes no promise that two queries walk the
- *  rows in the same sequence — so past one page, rows can repeat and rows can
- *  vanish. In an export that is meant to be the user's own complete archive,
- *  vanishing is the bad one, and it is silent. */
-async function fetchAll<T>(
+ * Every caller must order by exactly the columns it passes in `cols`, which
+ * together must be unique.
+ */
+export async function fetchAllKeyset<T extends ExportRow>(
+  cols: readonly [string, string] | readonly [string],
   build: (
-    from: number,
-    to: number,
+    after: string | null,
+    limit: number,
   ) => PromiseLike<{
     data: unknown;
     error: { message: string } | null;
   }>,
+  pageSize: number = PAGE,
 ): Promise<T[]> {
   const out: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await build(from, from + PAGE - 1);
+  let after: string | null = null;
+  for (;;) {
+    const { data, error } = await build(after, pageSize);
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as T[];
     out.push(...rows);
-    if (rows.length < PAGE) return out;
+    if (rows.length < pageSize) return out;
+    after = afterFilter(cols, rows[rows.length - 1]!);
   }
 }
 
 export async function buildExport(appVersion: string): Promise<ExportBundle> {
-  const sessions = await fetchAll<ExportSession>((from, to) =>
-    supabase
-      .from("sessions")
-      .select(SESSION_COLUMNS)
-      .is("discarded_at", null)
-      // started_at alone is not unique, and a tie can shuffle between pages
-      .order("started_at")
-      .order("id")
-      .range(from, to),
+  const sessions = await fetchAllKeyset<ExportSession & ExportRow>(
+    ["started_at", "id"],
+    (after, limit) => {
+      const q = supabase
+        .from("sessions")
+        .select(SESSION_COLUMNS)
+        .is("discarded_at", null)
+        // started_at alone is not unique; id breaks the tie
+        .order("started_at")
+        .order("id")
+        .limit(limit);
+      return after === null ? q : q.or(after);
+    },
   );
 
-  const sets = await fetchAll<ExportSet>((from, to) =>
-    supabase
-      .from("v_live_sets")
-      .select(SET_COLUMNS)
-      // two sets can share a timestamp; id breaks the tie so the walk is stable
-      .order("performed_at")
-      .order("id")
-      .range(from, to),
+  const sets = await fetchAllKeyset<ExportSet & ExportRow>(
+    ["performed_at", "id"],
+    (after, limit) => {
+      const q = supabase
+        .from("v_live_sets")
+        .select(SET_COLUMNS)
+        // two sets can share a timestamp; id breaks the tie
+        .order("performed_at")
+        .order("id")
+        .limit(limit);
+      return after === null ? q : q.or(after);
+    },
   );
 
-  const notes = await fetchAll<{ set_id: string; note: string }>((from, to) =>
-    supabase
-      .from("set_notes")
-      .select("set_id,note")
-      // set_id is the primary key here, so this is a total order
-      .order("set_id")
-      .range(from, to),
+  const notes = await fetchAllKeyset<{ set_id: string; note: string }>(
+    ["set_id"],
+    (after, limit) => {
+      const q = supabase
+        .from("set_notes")
+        .select("set_id,note")
+        // set_id is the primary key here, so this is a total order
+        .order("set_id")
+        .limit(limit);
+      return after === null ? q : q.or(after);
+    },
   );
 
   const { data: exercises } = await getExercises();
   const names: Record<string, string> = {};
   for (const e of exercises) names[e.id] = e.name;
+
+  // The rest of the record. One table failing to read must not cost the
+  // person the sets they asked for, so each is tried alone and a miss is
+  // NAMED in the file rather than left looking like an empty table.
+  const unavailable: string[] = [];
+  const table = async (name: string, key: string): Promise<ExportRow[]> => {
+    try {
+      return await fetchAllKeyset<ExportRow>([key], (after, limit) => {
+        const q = supabase
+          .from(name)
+          .select("*")
+          .order(key)
+          .limit(limit);
+        return after === null ? q : q.or(after);
+      });
+    } catch {
+      unavailable.push(name);
+      return [];
+    }
+  };
+  const bodyweight_log = await table("bodyweight_log", "id");
+  const session_skips = await table("session_skips", "id");
+  const set_voids = await table("set_voids", "set_id");
+  const checkins = await table("checkins", "id");
+  const programs = await table("programs", "id");
+  const planned_workouts = await table("planned_workouts", "id");
+  const prescriptions = await table("prescriptions", "id");
+  const training_maxes = await table("training_maxes", "id");
+  const training_plans = await table("training_plans", "id");
+  const plan_phases = await table("plan_phases", "id");
 
   return {
     exported_at: new Date().toISOString(),
@@ -136,6 +221,17 @@ export async function buildExport(appVersion: string): Promise<ExportBundle> {
     sessions,
     sets,
     set_notes: Object.fromEntries(notes.map((n) => [n.set_id, n.note])),
+    bodyweight_log,
+    session_skips,
+    set_voids,
+    checkins,
+    programs,
+    planned_workouts,
+    prescriptions,
+    training_maxes,
+    training_plans,
+    plan_phases,
+    unavailable,
   };
 }
 
@@ -156,15 +252,22 @@ const CSV_HEADER = [
   "performed_at",
   "rest_seconds_actual",
   "set_note",
+  // Appended, not inserted, so a script reading by position keeps working.
+  "prescription_id",
+  "load_entry",
+  "entered_load",
+  "entered_unit",
+  "rpe",
+  "duration_seconds",
 ] as const;
 
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
   const s = String(v);
-  // A leading =, +, - or @ is a formula in Excel/Sheets. Training notes are
-  // free text, so prefix them out of formula position rather than trusting
-  // whatever the user typed.
-  const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
+  // A leading =, +, - or @ is a formula in Excel/Sheets, and so is a leading
+  // TAB or CR (CORE-10). Training notes are free text, so prefix them out of
+  // formula position rather than trusting whatever the user typed.
+  const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
   return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
@@ -192,6 +295,12 @@ export function toCsv(bundle: ExportBundle): string {
         set.performed_at,
         set.rest_seconds_actual,
         bundle.set_notes[set.id] ?? null,
+        set.prescription_id,
+        set.load_entry,
+        set.entered_load,
+        set.entered_unit,
+        set.rpe,
+        set.duration_seconds,
       ]
         .map(csvCell)
         .join(","),
