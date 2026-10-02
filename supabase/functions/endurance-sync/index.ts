@@ -15,15 +15,19 @@
 // is testable without a running edge function.
 import { createClient } from "@supabase/supabase-js";
 import { fetchIntervals, fetchStrava, ProviderError } from "./providers.ts";
-import type { NormalizedActivity } from "./normalize.ts";
+import {
+  measurementsOnly,
+  type NormalizedActivity,
+  pollSince,
+} from "./normalize.ts";
 
 type Provider = "intervals_icu" | "strava";
 const PROVIDERS: Provider[] = ["intervals_icu", "strava"];
 
 /** Poll re-reads a window before the newest row held, because upstream
- * activities get EDITED after upload (a renamed run, a corrected sport, a
- * device re-upload). Syncing strictly after the newest start time would never
- * see any of it. 48 hours is cheap: the unique key makes a re-read a no-op. */
+ * activities get EDITED after upload (a corrected sport, a device re-upload).
+ * writeActivities refreshes the measurements of rows already held (never the
+ * owner's `name`), so this window is what lets those edits land. */
 const OVERLAP_MS = 48 * 60 * 60 * 1000;
 const BACKFILL_DEFAULT_DAYS = 400;
 const PAGE_LIMIT = 200;
@@ -80,8 +84,11 @@ interface ProviderResult {
 /**
  * Write a provider's page.
  *
- * `on conflict do nothing` on (user_id, source, external_id) is what makes a
- * replay free, the same guarantee the outbox gets from client-generated uuids.
+ * Two passes on (user_id, source, external_id). The first is `on conflict do
+ * nothing`, so a replay inserts nothing twice and `inserted` still means NEW
+ * rows, the same guarantee the outbox gets from client-generated uuids. The
+ * second upserts the measurements only (no `name`, which the owner may have
+ * edited), so a corrected sport or re-uploaded device file lands (EDGE-4).
  * Chunked because PostgREST has a request size, and one chunk failing must not
  * lose the ones that already landed -- there are no transactions here.
  */
@@ -105,6 +112,14 @@ async function writeActivities(
       })
       .select("id, duplicate_of, descent_m");
     if (error) throw new Error(`write: ${error.message}`);
+    // ON CONFLICT DO UPDATE sets only the columns in the payload, so leaving
+    // `name` out keeps the stored one. duplicate_of is not a payload column
+    // either, so a refresh never re-decides a dedup.
+    const { error: refreshErr } = await db.from("activities").upsert(
+      chunk.map((r) => ({ ...measurementsOnly(r), user_id: userId })),
+      { onConflict: "user_id,source,external_id" },
+    );
+    if (refreshErr) throw new Error(`refresh: ${refreshErr.message}`);
     for (const row of data ?? []) {
       inserted += 1;
       if ((row as { duplicate_of: string | null }).duplicate_of !== null) {
@@ -122,7 +137,7 @@ async function runProvider(
   db: ReturnType<typeof serviceClient>,
   userId: string,
   provider: Provider,
-  since: Date,
+  sinceFor: (provider: Provider) => Promise<Date>,
 ): Promise<ProviderResult> {
   const { data: cred, error } = await db
     .from("integration_credentials")
@@ -144,6 +159,7 @@ async function runProvider(
     ...(cred.external_id ? { athlete_id: cred.external_id } : {}),
   };
   try {
+    const since = await sinceFor(provider);
     const fetched =
       provider === "intervals_icu"
         ? await fetchIntervals(secret, { since, limit: PAGE_LIMIT })
@@ -200,33 +216,43 @@ Deno.serve(async (req: Request) => {
   const db = serviceClient();
   const startedAt = Date.now();
 
-  let since: Date;
+  // A poll starts each provider from ITS OWN newest row (EDGE-5): a global
+  // newest would leave a newly connected source, or one that failed for days
+  // while the other kept syncing, with a gap nothing ever fills.
+  let sinceFor: (provider: Provider) => Promise<Date>;
+  let since: Date | null = null;
   if (mode === "backfill") {
     const asked = typeof body.since === "string" ? new Date(body.since) : null;
-    since =
+    const fixed =
       asked && !Number.isNaN(asked.getTime())
         ? asked
         : new Date(Date.now() - BACKFILL_DEFAULT_DAYS * 86_400_000);
+    since = fixed;
+    sinceFor = async () => fixed;
   } else {
-    const { data } = await db
-      .from("activities")
-      .select("started_at")
-      .eq("user_id", userId)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const newest = data?.started_at
-      ? new Date(data.started_at as string)
-      : null;
-    since = newest
-      ? new Date(newest.getTime() - OVERLAP_MS)
-      : new Date(Date.now() - BACKFILL_DEFAULT_DAYS * 86_400_000);
+    sinceFor = async (provider) => {
+      const { data, error } = await db
+        .from("activities")
+        .select("started_at")
+        .eq("user_id", userId)
+        .eq("source", provider)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(`since: ${error.message}`);
+      return pollSince(
+        (data?.started_at as string | undefined) ?? null,
+        Date.now(),
+        OVERLAP_MS,
+        BACKFILL_DEFAULT_DAYS,
+      );
+    };
   }
 
   const results: ProviderResult[] = [];
   for (const p of PROVIDERS) {
     try {
-      results.push(await runProvider(db, userId, p, since));
+      results.push(await runProvider(db, userId, p, sinceFor));
     } catch (e) {
       // A failure that is OURS (the database, not the provider) rather than
       // one provider's. Still does not stop the other.
@@ -248,7 +274,7 @@ Deno.serve(async (req: Request) => {
   log({
     user_id: userId,
     mode,
-    since: since.toISOString(),
+    since: since ? since.toISOString() : "per-provider",
     ms: Date.now() - startedAt,
     results,
   });

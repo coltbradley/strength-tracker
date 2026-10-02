@@ -6,6 +6,7 @@ import {
   nonNeg,
   num,
   NormalizedActivity,
+  intervalsStartedAt,
   secs,
   when,
 } from "./normalize.ts";
@@ -52,7 +53,11 @@ export async function fetchIntervals(
   const athlete =
     typeof secret.athlete_id === "string" ? secret.athlete_id : "0";
   if (!key) {
-    throw new ProviderError("intervals_icu", "no api_key in credentials", false);
+    throw new ProviderError(
+      "intervals_icu",
+      "no api_key in credentials",
+      false,
+    );
   }
   const url =
     `https://intervals.icu/api/v1/athlete/${encodeURIComponent(athlete)}/activities` +
@@ -76,10 +81,14 @@ export async function fetchIntervals(
   for (const r of rows) {
     if (typeof r !== "object" || r === null) continue;
     const a = r as Record<string, unknown>;
-    const startedAt = when(a.start_date_local ?? a.start_date);
+    const startedAt = intervalsStartedAt(a);
     const elapsed = secs(a.elapsed_time);
     const id = a.id;
-    if (!startedAt || elapsed === null || (typeof id !== "string" && typeof id !== "number")) {
+    if (
+      !startedAt ||
+      elapsed === null ||
+      (typeof id !== "string" && typeof id !== "number")
+    ) {
       continue; // no start, no duration, or no id: not placeable, so not stored
     }
     activities.push({
@@ -122,7 +131,8 @@ export async function fetchStrava(
   secret: Record<string, unknown>,
   opts: FetchOpts,
 ): Promise<Fetched> {
-  const token = typeof secret.access_token === "string" ? secret.access_token : null;
+  const token =
+    typeof secret.access_token === "string" ? secret.access_token : null;
   if (!token) {
     throw new ProviderError("strava", "no access_token in credentials", false);
   }
@@ -154,17 +164,22 @@ export async function fetchStrava(
     const startedAt = when(a.start_date);
     const elapsed = secs(a.elapsed_time);
     const id = a.id;
-    if (!startedAt || elapsed === null || (typeof id !== "string" && typeof id !== "number")) {
+    if (
+      !startedAt ||
+      elapsed === null ||
+      (typeof id !== "string" && typeof id !== "number")
+    ) {
       continue;
     }
     activities.push({
       source: "strava",
       external_id: String(id),
-      sport: typeof a.sport_type === "string"
-        ? a.sport_type
-        : typeof a.type === "string"
-          ? a.type
-          : "Workout",
+      sport:
+        typeof a.sport_type === "string"
+          ? a.sport_type
+          : typeof a.type === "string"
+            ? a.type
+            : "Workout",
       started_at: startedAt,
       elapsed_s: elapsed,
       moving_s: secs(a.moving_time),
