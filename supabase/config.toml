@@ -64,3 +64,9 @@ sender_name = "Strength Log"
 # Supabase JWT. Deploy with --no-verify-jwt as well.
 [functions.mcp-server]
 verify_jwt = false
+
+# push-alerts: the pg_cron /sweep caller has no Supabase JWT and authenticates
+# with x-sweep-secret; every other route calls auth.getUser itself. With
+# verify_jwt on, the gateway 401s the sweep before the function runs.
+[functions.push-alerts]
+verify_jwt = false

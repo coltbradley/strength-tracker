@@ -24,7 +24,10 @@
 // PUSH_WALL_CLOCK_SECONDS is the plan's limit; unset, it assumes Free.
 //
 // SECURITY. The caller proves who they are with their Supabase session
-// (verify_jwt is ON; resolveUser is the coach's). Everything else runs as the
+// (resolveUser is the coach's). The gateway's verify_jwt is OFF for this
+// function because the pg_cron /sweep caller has no session; every other route
+// authenticates here through auth.getUser before it does anything. Everything
+// else runs as the
 // service role, scoped by that user id in every query. The VAPID private key
 // is generated here on first use and lives only in push_config, a table with
 // RLS on and NO policies, so no client can read it and no secret has to be
@@ -33,6 +36,7 @@
 // the logs are readable by whoever runs the deployment.
 import { createClient } from "@supabase/supabase-js";
 import { isAllowedPushEndpoint } from "./lib/endpoint.ts";
+import { processDue, sendStamp } from "./lib/sweep.ts";
 import { postToPushEndpoint } from "./lib/push-to-endpoint.ts";
 import {
   buildPushRequest,
@@ -483,14 +487,15 @@ async function sendAlertNow(
     }),
   );
   const ok = results.some(Boolean);
-  await stamp(db, a.id, ok ? {} : { error: "every endpoint failed" });
+  await stamp(db, a.id, sendStamp(ok, new Date().toISOString()));
   log("alert_swept", { ...base, ok });
   return ok ? "sent" : "failed";
 }
 
 /**
- * Send everything due. Idempotent: `stamp` sets sent_at, and the query only
- * takes rows where it is null, so running the sweep twice sends nothing twice.
+ * Send everything due. Idempotent: a successful send stamps sent_at (sendStamp),
+ * and the query only takes rows where it is null, so running the sweep twice
+ * sends nothing twice.
  *
  * Authenticated by a shared secret rather than a user session, because the
  * caller is a machine. Compared by digest so the check does not leak length
@@ -530,25 +535,28 @@ async function sweep(req: Request, db: Db): Promise<Response> {
     .limit(200);
   if (error) throw new Error(`sweep: ${error.message}`);
 
-  let sent = 0;
-  let stale = 0;
-  let failed = 0;
-  for (const row of (due ?? []) as {
-    id: string;
-    user_id: string;
-    kind: string;
-    label: string;
-    fire_at: string;
-  }[]) {
-    if (now - Date.parse(row.fire_at) > graceMs) {
-      await stamp(db, row.id, { error: "stale; not sent" });
-      stale += 1;
-      continue;
-    }
-    const outcome = await sendAlertNow(db, row);
-    if (outcome === "sent") sent += 1;
-    else failed += 1;
-  }
+  const { sent, stale, failed } = await processDue(
+    (due ?? []) as {
+      id: string;
+      user_id: string;
+      kind: string;
+      label: string;
+      fire_at: string;
+    }[],
+    now,
+    graceMs,
+    {
+      stamp: (id, patch) => stamp(db, id, patch),
+      send: (row) => sendAlertNow(db, row),
+      onError: (row, e) =>
+        logError("sweep_row_failed", {
+          user_id: row.user_id,
+          alert_id: row.id,
+          kind: row.kind,
+          error: message(e),
+        }),
+    },
+  );
   log("sweep_done", { considered: due?.length ?? 0, sent, stale, failed });
   return json({ ok: true, considered: due?.length ?? 0, sent, stale, failed });
 }
