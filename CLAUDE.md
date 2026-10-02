@@ -31,7 +31,10 @@ before making changes. This file only adds Claude Code-specific notes.
   (pasted into the environment dialog; Deno, Supabase CLI, Playwright
   Chromium). Repo dependencies come from the SessionStart hook in
   `.claude/settings.json` -> `scripts/cloud/session-start.sh`, which is a
-  no-op unless `CLAUDE_CODE_REMOTE=true`.
+  no-op unless `CLAUDE_CODE_REMOTE=true`. It also starts `dockerd` (not
+  running by default), so `supabase start` works without setup. Containers
+  do not get the session's egress proxy, so the stack's edge runtime cannot
+  download npm packages; run edge functions and their tests with host Deno.
 - The environment holds no production credentials, on purpose: its variables
   are readable by anyone using it and this repo is public. Work against PGlite
   (`scripts/validate-db.mjs`) or a local `supabase start` stack, never prod.

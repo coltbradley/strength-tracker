@@ -9,6 +9,19 @@ cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
 log() { echo "[session-start] $*" >&2; }
 
+# Docker is preinstalled but its daemon is not running, so `supabase start`
+# fails until something starts it. Launch it first, detached so it outlives
+# this hook, and let it boot while the installs below run.
+dockerd_started=
+if command -v dockerd >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
+  sudo_=
+  [ "$(id -u)" = 0 ] || sudo_="sudo -n"
+  log "starting dockerd (log: /tmp/dockerd.log)"
+  # In a subshell, so the `wait`s below do not wait on the daemon.
+  ( $sudo_ setsid nohup dockerd >/tmp/dockerd.log 2>&1 </dev/null & )
+  dockerd_started=1
+fi
+
 # npm ci only when the lockfile changed since the last install.
 ci_if_stale() {
   local dir=$1 stamp="$1/node_modules/.lock-sha"
@@ -46,6 +59,11 @@ if command -v deno >/dev/null 2>&1; then
   wait
 else
   log "deno missing: add scripts/cloud/environment-setup.sh to the environment"
+fi
+
+if [ -n "$dockerd_started" ]; then
+  for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
+  docker info >/dev/null 2>&1 || log "dockerd did not come up (see /tmp/dockerd.log)"
 fi
 
 exit 0
