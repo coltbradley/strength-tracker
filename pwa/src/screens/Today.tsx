@@ -35,6 +35,7 @@ import {
   applyTemplate,
   createPlannedWorkout,
   deleteTemplate,
+  ensureConfirmedProgramId,
   getDoneWorkoutIds,
   getExercises,
   getLastActuals,
@@ -816,7 +817,6 @@ export function Today({
     (w) => states.get(w.id) === "SKIPPED",
   ).length;
 
-
   // calendar derivations
   const byDate = useMemo(() => {
     const m = new Map<string, PlannedWorkoutRow>();
@@ -998,17 +998,9 @@ export function Today({
       try {
         const actuals = (await getLastActuals()).data;
         // A template needs a program to live in. Reuse the confirmed one when
-        // there is one; otherwise make the day first (which creates a program)
-        // and read its program_id back.
-        let pid = program?.id ?? null;
-        if (pid === null) {
-          const seedId = await createPlannedWorkout(selectedDate, "");
-          const fresh = await getPlannedWorkouts();
-          pid =
-            fresh.data.workouts.find((w) => w.id === seedId)?.program_id ??
-            null;
-          if (pid === null) throw new Error("could not resolve a program");
-        }
+        // there is one; otherwise make only the program, never a throwaway
+        // dated day beside the template's own (PLAN-4).
+        const pid = program?.id ?? (await ensureConfirmedProgramId());
         const res = await applyTemplate(templateId, pid, selectedDate, actuals);
         setTemplatesOpen(false);
         toast(
@@ -1274,13 +1266,12 @@ export function Today({
   const nextTrainWorkout = nextActionableWorkout(workouts, states, today);
   const promoteNextWorkout =
     trainWorkoutToday?.state === "DONE" && nextTrainWorkout !== null;
-  const trainWorkout =
-    promoteNextWorkout
-      ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
-      : trainWorkoutToday ??
-        (nextTrainWorkout
-          ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
-          : null);
+  const trainWorkout = promoteNextWorkout
+    ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
+    : (trainWorkoutToday ??
+      (nextTrainWorkout
+        ? { workout: nextTrainWorkout, state: "UPCOMING" as const }
+        : null));
   const trainWorkoutId = trainWorkout?.workout.id ?? null;
   const trainPrescriptions = trainWorkout
     ? (rx[trainWorkout.workout.id] ?? null)
@@ -1327,7 +1318,8 @@ export function Today({
   >(null);
   // Only the finished-today confirmation speaks about the server, so only it
   // pays for the read.
-  const needsSyncLine = presentation === "train" && trainWorkoutToday?.state === "DONE";
+  const needsSyncLine =
+    presentation === "train" && trainWorkoutToday?.state === "DONE";
   useEffect(() => {
     if (!needsSyncLine) return;
     let cancelled = false;
@@ -1468,8 +1460,7 @@ export function Today({
     <div className="train-recovery" role="alert">
       <p>
         Your session was saved locally, but we couldn’t open it because this
-        device could not save its session pointer. Do not start another
-        workout.
+        device could not save its session pointer. Do not start another workout.
       </p>
       <button
         type="button"
