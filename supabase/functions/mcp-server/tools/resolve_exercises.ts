@@ -35,11 +35,6 @@ import { safeFilterTerm } from "../lib/filters.ts";
  *  week of them, and past that the caller is doing something else. */
 export const MAX_NAMES = 25;
 
-/** search_exercises' default `limit`. Candidates for one name are cut here in
- *  the same alphabetical order the database returned them and ranked after,
- *  so this tool truncates where search_exercises truncates and nowhere else. */
-const PER_NAME_CANDIDATES = 20;
-
 /** How many runners-up an ambiguous answer carries. Enough for the model to
  *  ask a real question, not so many that it reads as a search result. */
 const MAX_ALTERNATIVES = 4;
@@ -191,9 +186,11 @@ function resolveOne(
   const lower = term.toLowerCase();
   const slug = lower.replace(/\s+/g, "_");
 
-  const candidates = rows
-    .filter((r) => matches(r, lower, slug))
-    .slice(0, PER_NAME_CANDIDATES);
+  // Every match is ranked; nothing is cut first. An alphabetical cut before
+  // ranking let a trained variant sorted past row 20 vanish, and the answer
+  // came back "ok" on an untrained twin (MCP-6). The reply stays small:
+  // alternatives are capped below.
+  const candidates = rows.filter((r) => matches(r, lower, slug));
   if (candidates.length === 0) {
     return {
       query,
